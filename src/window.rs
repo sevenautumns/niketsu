@@ -1,4 +1,7 @@
-use iced::{Application, Theme};
+use iced::{
+    widget::{column, container},
+    Application, Command, Element, Renderer, Subscription, Theme,
+};
 
 #[derive(Debug)]
 pub enum MainWindow {
@@ -7,7 +10,20 @@ pub enum MainWindow {
 }
 
 #[derive(Debug, Clone)]
-pub enum Message {}
+pub enum Message {
+    Server(ServerMessage),
+    Mpv(MpvMessage),
+    User(UserMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum ServerMessage {}
+
+#[derive(Debug, Clone)]
+pub enum MpvMessage {}
+
+#[derive(Debug, Clone)]
+pub enum UserMessage {}
 
 impl Application for MainWindow {
     type Executor = tokio::runtime::Runtime;
@@ -18,19 +34,26 @@ impl Application for MainWindow {
 
     type Flags = ();
 
-    fn new(flags: Self::Flags) -> (Self, iced::Command<Self::Message>) {
-        todo!()
+    fn new(_flags: Self::Flags) -> (Self, Command<Self::Message>) {
+        (Self::Running(), Command::none())
     }
 
     fn title(&self) -> String {
-        todo!()
+        "Sync2".into()
     }
 
-    fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
-        todo!()
+    fn update(&mut self, _message: Self::Message) -> Command<Self::Message> {
+        // todo!()
+        Command::none()
     }
 
-    fn view(&self) -> iced::Element<'_, Self::Message, iced::Renderer<Self::Theme>> {
-        todo!()
+    fn view(&self) -> Element<'_, Self::Message, Renderer<Self::Theme>> {
+        // todo!()
+        container(column![].spacing(20).padding(20).max_width(600)).into()
+    }
+
+    fn subscription(&self) -> Subscription<Self::Message> {
+        // todo!()
+        Subscription::none()
     }
 }
