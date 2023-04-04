@@ -1,12 +1,13 @@
-use std::{ffi::CString, mem::MaybeUninit, time::Duration};
-
-use crate::mpv::bindings::*;
-use anyhow::Result;
-
 use std::convert::TryInto;
+use std::ffi::CString;
+use std::mem::MaybeUninit;
+use std::time::Duration;
+
+use anyhow::Result;
 use strum::AsRefStr;
 
 use self::event::MpvEventPipe;
+use crate::mpv::bindings::*;
 
 pub mod bindings;
 pub mod error;

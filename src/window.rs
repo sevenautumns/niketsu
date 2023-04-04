@@ -1,7 +1,7 @@
-use iced::{
-    widget::{column, container},
-    Application, Command, Element, Renderer, Subscription, Theme,
-};
+use iced::widget::{column, container};
+use iced::{Application, Command, Element, Renderer, Subscription, Theme};
+
+use crate::ws::ServerMessage;
 
 #[derive(Debug)]
 pub enum MainWindow {
@@ -15,9 +15,6 @@ pub enum Message {
     Mpv(MpvMessage),
     User(UserMessage),
 }
-
-#[derive(Debug, Clone)]
-pub enum ServerMessage {}
 
 #[derive(Debug, Clone)]
 pub enum MpvMessage {}

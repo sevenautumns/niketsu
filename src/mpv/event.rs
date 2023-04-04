@@ -1,15 +1,13 @@
 #![allow(non_upper_case_globals)]
 
-use std::{
-    ffi::c_void,
-    sync::Arc,
-    task::{Poll, Waker},
-};
+use std::ffi::c_void;
+use std::sync::Arc;
+use std::task::{Poll, Waker};
 
-use crate::mpv::bindings::*;
 use arc_swap::ArcSwapOption;
 
 use super::MpvHandle;
+use crate::mpv::bindings::*;
 
 unsafe extern "C" fn on_mpv_event(_: *mut c_void) {
     if let Some(waker) = EVENT_WAKER.load().as_ref() {

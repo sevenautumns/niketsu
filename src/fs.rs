@@ -1,12 +1,15 @@
-use anyhow::{bail, Result};
-use arc_swap::ArcSwapOption;
-use std::sync::Arc;
-use std::{collections::HashMap, ffi::OsString, path::PathBuf};
-use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
-use tokio::sync::{Mutex, RwLock};
-use uuid::Uuid;
+use std::collections::HashMap;
+use std::ffi::OsString;
+use std::path::PathBuf;
 
+use anyhow::{bail, Result};
 use async_recursion::async_recursion;
+use atomic_counter::{AtomicCounter, RelaxedCounter};
+use futures::future::join_all;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+use log::trace;
+use tokio::sync::{Notify, RwLock, Semaphore};
 
 #[derive(Debug)]
 pub struct File {
@@ -14,20 +17,24 @@ pub struct File {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FileDatabase {
-    stop_tx: ArcSwapOption<WatchSender<bool>>,
-    update_lock: Mutex<()>,
-    // update_id: <Uuid>,
+    stop: RwLock<Notify>,
     database: RwLock<HashMap<OsString, File>>,
+    database_counter: RelaxedCounter,
     search_paths: RwLock<Vec<PathBuf>>,
+    semaphore: Semaphore,
 }
 
-// TODO
-// - combine async requests
 impl FileDatabase {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            stop: Default::default(),
+            database: Default::default(),
+            database_counter: Default::default(),
+            search_paths: Default::default(),
+            semaphore: Semaphore::new(100),
+        }
     }
 
     pub fn database(&self) -> &RwLock<HashMap<OsString, File>> {
@@ -38,71 +45,109 @@ impl FileDatabase {
         self.search_paths.write().await.push(path);
     }
 
+    pub async fn clear_search_paths(&self) {
+        self.search_paths.write().await.clear();
+    }
+
     pub fn stop_update(&self) {
-        // TODO wait for stop
-        // TODO also make sure we do not wait on a potential next update
-        if let Some(tx) = self.stop_tx.swap(None) {
-            tx.send(true).unwrap();
-        }
+        self.stop.try_read().map(|s| s.notify_one()).ok();
+    }
+
+    pub fn database_counter(&self) -> usize {
+        self.database_counter.get()
     }
 
     pub async fn update(&self) -> Result<()> {
-        let update_lock = match self.update_lock.try_lock() {
+        let mut stop = match self.stop.try_write() {
             Ok(lock) => lock,
-            Err(_) => bail!("Already update in progress"),
+            Err(_) => bail!("Update or stop already in progress"),
         };
-        // self.update_id.store(Some(Arc::new(Uuid::new_v4())));
 
-        let (tx, rx) = tokio::sync::watch::channel(false);
-        self.stop_tx.store(Some(Arc::new(tx)));
-
+        *stop = Notify::new();
         self.database.write().await.clear();
+        self.database_counter.inc();
         let paths = self.search_paths.read().await.clone();
+        let stop = stop.downgrade();
+
+        let mut join = vec![];
         for p in paths {
-            if self.update_inner(p.to_path_buf(), rx.clone()).await.is_ok() {
-                // for f in files {
-                //     self.database.insert(f.name.clone(), f);
-                // }
-            }
+            join.push(self.update_inner(p.to_path_buf()));
         }
 
-        self.stop_tx.store(None);
-        // self.update_id.store(None);
-        drop(update_lock);
+        tokio::select! {
+            _ = join_all(join) => { }
+            _ = stop.notified() => trace!("update stop requested")
+        }
+
+        drop(stop);
         Ok(())
     }
 
     #[async_recursion]
-    async fn update_inner(&self, path: PathBuf, stop: WatchReceiver<bool>) -> Result<()> {
+    async fn update_inner(&self, path: PathBuf) -> Result<()> {
+        let sem = self.semaphore.acquire().await;
         let mut files = vec![];
-        let mut dir = tokio::fs::read_dir(path).await?;
-        while let Some(entry) = dir.next_entry().await? {
-            // Early exit
-            if *stop.borrow() {
-                return Ok(());
-            }
+        let mut join_rec = FuturesUnordered::new();
+        let mut join_type = FuturesUnordered::new();
+        let mut dir = tokio::fs::read_dir(path).await.unwrap();
 
-            let typ = entry.file_type().await?;
-            if typ.is_dir() {
-                if self.update_inner(entry.path(), stop.clone()).await.is_ok() {
-                    // for f in inner {
-                    //     out.push(f)
-                    // }
+        loop {
+            tokio::select! {
+                entry = dir.next_entry() => {
+                    match entry? {
+                        Some(entry) => {
+                            join_type.push(async move {
+                                (entry.file_name(), entry.path(), entry.file_type().await)
+                            });
+                        },
+                        None => break,
+                    }
+                },
+                Some((name, path, typ)) = join_type.next() => {
+                    if let Ok(typ) = typ {
+                        if typ.is_dir() {
+                            join_rec.push(self.update_inner(path))
+                        } else if typ.is_file() {
+                            files.push(File {
+                                name,
+                                path,
+                            })
+                        }
+                    }
                 }
-            } else if typ.is_file() {
-                files.push(File {
-                    name: entry.file_name(),
-                    path: entry.path(),
-                })
+                Some(_) = join_rec.next() => {}
             }
-            // TODO follow symlink?
         }
+        loop {
+            tokio::select! {
+                res = join_type.next() => {
+                    if let Some((name, path, typ)) = res {
+                        if let Ok(typ) = typ {
+                            if typ.is_dir() {
+                                join_rec.push(self.update_inner(path))
+                            } else if typ.is_file() {
+                                files.push(File {
+                                    name,
+                                    path,
+                                })
+                            }
+                        }
+                    } else {
+                        drop(sem);
+                        break
+                    }
+                }
+                Some(_) = join_rec.next() => {}
+            }
+        }
+        while let Some(_) = join_rec.next().await {}
+
         let mut lock = self.database.write().await;
         for f in files {
             lock.insert(f.name.clone(), f);
         }
+        self.database_counter.inc();
 
         Ok(())
-        // Ok(out)
     }
 }

@@ -1,22 +1,23 @@
-use std::{env, io::Error, path::PathBuf};
+use std::env;
+use std::io::Error;
+use std::path::PathBuf;
 
-use bindgen::{
-    callbacks::{DeriveInfo, ParseCallbacks},
-    EnumVariation,
-};
+use bindgen::callbacks::{DeriveInfo, ParseCallbacks};
+use bindgen::EnumVariation;
 
 fn main() -> Result<(), Error> {
     let outdir = match env::var_os("OUT_DIR") {
         None => return Ok(()),
         Some(outdir) => outdir,
     };
-    let mpv = match env::var_os("MPV_DIR") {
-        None => String::from("mpv"),
-        Some(outdir) => outdir.into_string().unwrap(),
-    };
+    // let mpv = match env::var_os("MPV_DIR") {
+    //     None => String::from("mpv"),
+    //     Some(outdir) => outdir.into_string().unwrap(),
+    // };
 
     let bindings = bindgen::Builder::default()
-        .header(format!("{mpv}/libmpv/client.h"))
+        // .header(format!("{mpv}/libmpv/client.h"))
+        .header_contents("mpv.h", "#include <mpv/client.h>")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .parse_callbacks(Box::new(CustomCallback))
         .default_enum_style(EnumVariation::Rust {
