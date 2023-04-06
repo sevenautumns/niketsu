@@ -8,8 +8,11 @@ use atomic_counter::{AtomicCounter, RelaxedCounter};
 use futures::future::join_all;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use iced::Subscription;
 use log::trace;
 use tokio::sync::{Notify, RwLock, Semaphore};
+
+use crate::window::{MainMessage, MainWindow};
 
 #[derive(Debug)]
 pub struct File {
@@ -26,8 +29,8 @@ pub struct FileDatabase {
     semaphore: Semaphore,
 }
 
-impl FileDatabase {
-    pub fn new() -> Self {
+impl Default for FileDatabase {
+    fn default() -> Self {
         Self {
             stop: Default::default(),
             database: Default::default(),
@@ -35,6 +38,16 @@ impl FileDatabase {
             search_paths: Default::default(),
             semaphore: Semaphore::new(100),
         }
+    }
+}
+
+impl FileDatabase {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn subscription(&self) -> Subscription<MainMessage> {
+        todo!()
     }
 
     pub fn database(&self) -> &RwLock<HashMap<OsString, File>> {

@@ -10,7 +10,7 @@ pub enum MainWindow {
 }
 
 #[derive(Debug, Clone)]
-pub enum Message {
+pub enum MainMessage {
     Server(ServerMessage),
     Mpv(MpvMessage),
     User(UserMessage),
@@ -25,7 +25,7 @@ pub enum UserMessage {}
 impl Application for MainWindow {
     type Executor = tokio::runtime::Runtime;
 
-    type Message = Message;
+    type Message = MainMessage;
 
     type Theme = Theme;
 
