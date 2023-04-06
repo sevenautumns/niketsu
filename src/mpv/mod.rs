@@ -1,13 +1,18 @@
 use std::convert::TryInto;
-use std::ffi::CString;
+use std::ffi::{c_void, CString};
 use std::mem::MaybeUninit;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use futures::StreamExt;
+use iced::Subscription;
 use strum::AsRefStr;
+use tokio::sync::Mutex;
 
 use self::event::MpvEventPipe;
 use crate::mpv::bindings::*;
+use crate::window::MainMessage;
 
 pub mod bindings;
 pub mod error;
@@ -48,24 +53,35 @@ impl TryFrom<MpvCommand> for CString {
 }
 
 #[derive(Debug)]
-pub struct Mpv(MpvHandle);
+pub struct Mpv {
+    handle: MpvHandle,
+    event_pipe: Arc<Mutex<MpvEventPipe>>,
+}
 
 impl Mpv {
     // TODO remove clippy here, when we allow for configuration
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let ctx = unsafe { mpv_create() };
-        let mpv = MpvHandle(ctx);
-        Self(mpv)
+        let handle = MpvHandle(ctx);
+        let event_pipe = Arc::new(Mutex::new(MpvEventPipe::new(handle)));
+        Self { handle, event_pipe }
     }
 
     pub fn init(&self) -> Result<()> {
-        let ret = unsafe { mpv_initialize(self.0 .0) };
+        let ret = unsafe { mpv_initialize(self.handle.0) };
         Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
     }
 
-    pub fn event_pipe(&self) -> MpvEventPipe {
-        MpvEventPipe::new(self.0)
+    pub fn subscribe(&self) -> Subscription<MainMessage> {
+        iced::subscription::unfold(
+            std::any::TypeId::of::<Self>(),
+            self.event_pipe.clone(),
+            |event_pipe| async move {
+                let event = event_pipe.lock().await.next().await.map(|e| e.into());
+                (event, event_pipe)
+            },
+        )
     }
 
     fn send_command(&self, cmd: &[&CString]) -> Result<()> {
@@ -74,7 +90,7 @@ impl Mpv {
             cmd_ptr.push(c.as_ptr())
         }
         cmd_ptr.push(std::ptr::null());
-        let ret = unsafe { mpv_command_async(self.0 .0, 0, cmd_ptr.as_mut_ptr()) };
+        let ret = unsafe { mpv_command_async(self.handle.0, 0, cmd_ptr.as_mut_ptr()) };
         Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
     }
 
@@ -89,10 +105,10 @@ impl Mpv {
         let mut flag = set as isize;
         unsafe {
             let ret = mpv_set_property(
-                self.0 .0,
+                self.handle.0,
                 osc.as_ptr(),
                 mpv_format::MPV_FORMAT_FLAG,
-                &mut flag as *mut _ as *mut _,
+                &mut flag as *mut isize as *mut c_void,
             );
             Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
         }
@@ -103,10 +119,10 @@ impl Mpv {
         let mut data: MaybeUninit<f64> = MaybeUninit::uninit();
         unsafe {
             let ret = mpv_get_property(
-                self.0 .0,
+                self.handle.0,
                 duration.as_ptr(),
                 mpv_format::MPV_FORMAT_DOUBLE,
-                data.as_mut_ptr() as *mut _,
+                data.as_mut_ptr() as *mut c_void,
             );
             TryInto::<mpv_error>::try_into(ret)?.try_into()?;
             let seconds = data.assume_init();
@@ -119,10 +135,10 @@ impl Mpv {
         let pos = pos.as_secs_f64();
         unsafe {
             let ret = mpv_set_property(
-                self.0 .0,
+                self.handle.0,
                 duration.as_ptr(),
                 mpv_format::MPV_FORMAT_DOUBLE,
-                &pos as *const _ as *mut _,
+                &pos as *const f64 as *mut c_void,
             );
             Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
         }
@@ -131,6 +147,6 @@ impl Mpv {
 
 impl Drop for Mpv {
     fn drop(&mut self) {
-        unsafe { mpv_terminate_destroy(self.0 .0) };
+        unsafe { mpv_terminate_destroy(self.handle.0) };
     }
 }

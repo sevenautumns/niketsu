@@ -13,22 +13,35 @@ pub enum ServerMessage {
         position: Duration,
     },
     StatusList(#[serde(rename = "users")] Vec<UserStatus>),
-    Pause(#[serde(rename = "filename")] String),
-    Start(#[serde(rename = "filename")] String),
+    Pause {
+        filename: String,
+        username: String,
+    },
+    Start {
+        filename: String,
+        username: String,
+    },
     Seek {
         filename: String,
         #[serde(with = "serde_millis")]
         position: Duration,
+        username: String,
     },
-    Select(#[serde(rename = "filename")] String),
+    Select {
+        filename: String,
+        username: String,
+    },
     Message {
-        username: String,
         message: String,
-    },
-    Playlist(#[serde(rename = "playlist")] Vec<String>),
-    Status {
         username: String,
+    },
+    Playlist {
+        playlist: Vec<String>,
+        username: String,
+    },
+    Status {
         ready: bool,
+        username: String,
     },
 }
 
