@@ -4,15 +4,15 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use async_recursion::async_recursion;
-use atomic_counter::{AtomicCounter, RelaxedCounter};
 use futures::future::join_all;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use iced::Subscription;
 use log::trace;
+use tokio::sync::watch::{Receiver as WatchRec, Sender as WatchSend};
 use tokio::sync::{Notify, RwLock, Semaphore};
 
-use crate::window::{MainMessage, MainWindow};
+use crate::window::MainMessage;
 
 #[derive(Debug)]
 pub struct File {
@@ -24,7 +24,7 @@ pub struct File {
 pub struct FileDatabase {
     stop: RwLock<Notify>,
     database: RwLock<HashMap<OsString, File>>,
-    database_counter: RelaxedCounter,
+    database_counter: (WatchSend<usize>, WatchRec<usize>),
     search_paths: RwLock<Vec<PathBuf>>,
     semaphore: Semaphore,
 }
@@ -34,7 +34,7 @@ impl Default for FileDatabase {
         Self {
             stop: Default::default(),
             database: Default::default(),
-            database_counter: Default::default(),
+            database_counter: tokio::sync::watch::channel(0),
             search_paths: Default::default(),
             semaphore: Semaphore::new(100),
         }
@@ -47,7 +47,15 @@ impl FileDatabase {
     }
 
     pub fn subscription(&self) -> Subscription<MainMessage> {
-        todo!()
+        iced::subscription::unfold(
+            std::any::TypeId::of::<Self>(),
+            self.database_counter.1.clone(),
+            |mut dc| async move {
+                // TODO do something in error case?
+                dc.changed().await.ok();
+                (Some(MainMessage::DatabaseChanged), dc)
+            },
+        )
     }
 
     pub fn database(&self) -> &RwLock<HashMap<OsString, File>> {
@@ -67,7 +75,7 @@ impl FileDatabase {
     }
 
     pub fn database_counter(&self) -> usize {
-        self.database_counter.get()
+        *self.database_counter.1.borrow()
     }
 
     pub async fn update(&self) -> Result<()> {
@@ -78,7 +86,7 @@ impl FileDatabase {
 
         *stop = Notify::new();
         self.database.write().await.clear();
-        self.database_counter.inc();
+        self.database_counter.0.send_modify(|i| *i += 1);
         let paths = self.search_paths.read().await.clone();
         let stop = stop.downgrade();
 
@@ -153,13 +161,13 @@ impl FileDatabase {
                 Some(_) = join_rec.next() => {}
             }
         }
-        while let Some(_) = join_rec.next().await {}
+        while join_rec.next().await.is_some() {}
 
         let mut lock = self.database.write().await;
         for f in files {
             lock.insert(f.name.clone(), f);
         }
-        self.database_counter.inc();
+        self.database_counter.0.send_modify(|i| *i += 1);
 
         Ok(())
     }
