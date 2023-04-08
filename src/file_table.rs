@@ -6,7 +6,7 @@ use iced::theme::{Button as ButtonTheme, Rule as RuleTheme};
 use iced::widget::button::{Appearance as ButtonAp, StyleSheet as ButtonSS};
 use iced::widget::rule::{Appearance as RuleAp, FillMode, StyleSheet as RuleSS};
 use iced::widget::{Button, Column, Rule, Scrollable};
-use iced::{Element, Length, Rectangle, Renderer, Theme, Vector};
+use iced::{Element, Length, Renderer, Theme, Vector};
 use iced_native::widget::Tree;
 use iced_native::Widget;
 use log::*;
@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::window::MainMessage;
 
-pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(300);
+pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 pub enum FileTableMessage {
@@ -229,6 +229,51 @@ impl<'a> Widget<MainMessage, Renderer> for FileTable<'a> {
 
     fn diff(&self, tree: &mut Tree) {
         tree.diff_children(std::slice::from_ref(&self.base))
+    }
+
+    fn operate(
+        &self,
+        state: &mut Tree,
+        layout: iced_native::Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn iced_native::widget::Operation<MainMessage>,
+    ) {
+        self.base
+            .as_widget()
+            .operate(&mut state.children[0], layout, renderer, operation);
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &Tree,
+        layout: iced_native::Layout<'_>,
+        cursor_position: iced::Point,
+        viewport: &iced::Rectangle,
+        renderer: &Renderer,
+    ) -> iced_native::mouse::Interaction {
+        //TODO Change mouse interaction
+
+        self.base.as_widget().mouse_interaction(
+            &state.children[0],
+            layout,
+            cursor_position,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        state: &'b mut Tree,
+        layout: iced_native::Layout<'_>,
+        renderer: &Renderer,
+    ) -> Option<iced_native::overlay::Element<'b, MainMessage, Renderer>> {
+        // TODO move insert hint to overlay
+        self.base.as_widget_mut().overlay(
+            &mut state.children[0],
+            layout.children().next().unwrap(),
+            renderer,
+        )
     }
 
     fn on_event(
