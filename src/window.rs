@@ -59,21 +59,13 @@ impl Application for MainWindow {
                     // MainMessage::User(_) => todo!(),
                     // MainMessage::DatabaseChanged => todo!(),
                     MainMessage::FileTable(event) => match event {
-                        PlaylistWidgetMessage::FilePress(f) => {
-                            info!("pressed: {f:?}");
-                            state.file_press(f);
-                        }
-                        PlaylistWidgetMessage::MouseRelease => {
-                            state.mouse_release();
-                            info!("released");
-                        }
                         PlaylistWidgetMessage::FileDoubleClick(f) => {
                             info!("double: {f:?}")
                         }
-                        PlaylistWidgetMessage::MoveIndicator(indicator) => {
-                            state.move_indicator(indicator);
-                            info!("move indicator: {indicator:?}")
-                        }
+                        // PlaylistWidgetMessage::MoveIndicator(indicator) => {
+                        //     state.move_indicator(indicator);
+                        //     info!("move indicator: {indicator:?}")
+                        // }
                         PlaylistWidgetMessage::FileMove(f, i) => {
                             info!("move file: {f:?}, {i}");
                             state.move_file(f, i);
@@ -81,6 +73,10 @@ impl Application for MainWindow {
                         PlaylistWidgetMessage::FileDelete(f) => {
                             info!("delete file: {f:?}");
                             state.delete_file(f);
+                        }
+                        PlaylistWidgetMessage::FileInteraction(f, i) => {
+                            info!("file interaction: {f:?}, {i:?}");
+                            state.file_interaction(f, i)
                         }
 
                         _ => {}
