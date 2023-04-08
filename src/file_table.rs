@@ -6,9 +6,9 @@ use iced::theme::{Button as ButtonTheme, Rule as RuleTheme};
 use iced::widget::button::{Appearance as ButtonAp, StyleSheet as ButtonSS};
 use iced::widget::rule::{Appearance as RuleAp, FillMode, StyleSheet as RuleSS};
 use iced::widget::{Button, Column, Rule, Scrollable};
-use iced::{Element, Length, Renderer, Theme, Vector};
+use iced::{Alignment, Element, Length, Renderer, Size, Theme, Vector};
 use iced_native::widget::Tree;
-use iced_native::Widget;
+use iced_native::{layout, Widget};
 use log::*;
 use uuid::Uuid;
 
@@ -17,7 +17,7 @@ use crate::window::MainMessage;
 pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
-pub enum FileTableMessage {
+pub enum PlaylistWidgetMessage {
     FilePress(File),
     FileDoubleClick(File),
     FileDelete(File),
@@ -26,30 +26,23 @@ pub enum FileTableMessage {
     MouseRelease,
 }
 
-impl From<FileTableMessage> for MainMessage {
-    fn from(msg: FileTableMessage) -> Self {
+impl From<PlaylistWidgetMessage> for MainMessage {
+    fn from(msg: PlaylistWidgetMessage) -> Self {
         MainMessage::FileTable(msg)
     }
 }
 
-pub struct FileTable<'a> {
+pub struct PlaylistWidget<'a> {
     base: Element<'a, MainMessage>,
-    state: &'a FileTableState,
+    state: &'a PlaylistWidgetState,
 }
 
-impl<'a> FileTable<'a> {
-    pub fn new(state: &'a FileTableState) -> Self {
+impl<'a> PlaylistWidget<'a> {
+    pub fn new(state: &'a PlaylistWidgetState) -> Self {
         // TODO Add context menu
         let mut file_btns = vec![];
         let hint_index = state.insert_hint.unwrap_or(state.files.len() + 2);
         for (i, f) in state.files.iter().enumerate() {
-            file_btns.push(
-                Rule::horizontal(1)
-                    .style(RuleTheme::Custom(Box::new(FileRuleTheme {
-                        visible: i == hint_index,
-                    })))
-                    .into(),
-            );
             let pressed = state
                 .last_press
                 .as_ref()
@@ -63,14 +56,6 @@ impl<'a> FileTable<'a> {
             );
         }
 
-        file_btns.push(
-            Rule::horizontal(1)
-                .style(RuleTheme::Custom(Box::new(FileRuleTheme {
-                    visible: state.files.len() == hint_index,
-                })))
-                .into(),
-        );
-
         Self {
             state,
             base: Scrollable::new(Column::with_children(file_btns)).into(),
@@ -78,18 +63,44 @@ impl<'a> FileTable<'a> {
     }
 }
 
-impl<'a> FileTable<'a> {
-    fn closest_rule_index(
+impl<'a> PlaylistWidget<'a> {
+    fn index_position(&self, index: usize, layout: iced_native::Layout<'_>) -> Option<iced::Point> {
+        let mut files = layout.children().next()?.children();
+        if let Some(p) = files.nth(index) {
+            return Some(p.position());
+        }
+        files = layout.children().next()?.children();
+        if let Some(p) = files.last() {
+            let mut pos = p.position();
+            pos.y += p.bounds().height;
+            return Some(pos);
+        }
+
+        None
+    }
+
+    fn closest_index(
         &self,
         layout: iced_native::Layout<'_>,
         cursor_position: iced_native::Point,
     ) -> Option<usize> {
-        let rules = layout.children().next()?.children().step_by(2);
+        let files = layout.children().next()?.children();
         let mut closest = (f32::INFINITY, 0);
-        for (i, layout) in rules.enumerate() {
+        for (i, layout) in files.enumerate() {
             let dist = layout.position().distance(cursor_position);
             if dist < closest.0 {
                 closest = (dist, i)
+            }
+        }
+        if closest.1 == self.state.files.len() - 1 {
+            if let Some(l) = layout.children().next()?.children().last() {
+                let top = l.position();
+                let mut bottom = top;
+                bottom.y += l.bounds().height;
+                let dist = bottom.distance(cursor_position);
+                if dist < closest.0 {
+                    closest = (dist, self.state.files.len())
+                }
             }
         }
         if closest.0.is_infinite() {
@@ -107,7 +118,7 @@ impl<'a> FileTable<'a> {
             .state
             .files
             .iter()
-            .zip(layout.children().next()?.children().skip(1).step_by(2));
+            .zip(layout.children().next()?.children());
         for (file, lay) in files {
             if lay.bounds().contains(cursor_position) {
                 return Some(file.clone());
@@ -125,11 +136,11 @@ impl<'a> FileTable<'a> {
     ) {
         if let Some(file) = self.file_at_position(layout, cursor_position) {
             if let Some(i) = self.state.file_index(&file) {
-                shell.publish(FileTableMessage::FilePress(file.clone()).into());
+                shell.publish(PlaylistWidgetMessage::FilePress(file.clone()).into());
 
                 if let Some((prev_file, when)) = &self.state.last_press {
                     if file.uuid.eq(&prev_file.uuid) && when.elapsed() < MAX_DOUBLE_CLICK_INTERVAL {
-                        shell.publish(FileTableMessage::FileDoubleClick(file).into());
+                        shell.publish(PlaylistWidgetMessage::FileDoubleClick(file).into());
                     }
                 }
             }
@@ -137,11 +148,11 @@ impl<'a> FileTable<'a> {
     }
 
     fn released(&self, shell: &mut iced_native::Shell<'_, MainMessage>) {
-        shell.publish(FileTableMessage::MouseRelease.into());
+        shell.publish(PlaylistWidgetMessage::MouseRelease.into());
 
         if let Some(i) = self.state.insert_hint {
             if let Some((f, _)) = &self.state.last_press {
-                shell.publish(FileTableMessage::FileMove(f.clone(), i).into())
+                shell.publish(PlaylistWidgetMessage::FileMove(f.clone(), i).into())
             }
         }
     }
@@ -166,7 +177,7 @@ impl<'a> FileTable<'a> {
             None => return,
         };
 
-        let mut closest = self.closest_rule_index(layout, cursor_position);
+        let mut closest = self.closest_index(layout, cursor_position);
         if let Some(c) = closest {
             if c == selected || c == selected + 1 {
                 closest = None
@@ -174,18 +185,18 @@ impl<'a> FileTable<'a> {
         }
 
         if closest != self.state.insert_hint {
-            shell.publish(FileTableMessage::MoveIndicator(closest).into());
+            shell.publish(PlaylistWidgetMessage::MoveIndicator(closest).into());
         }
     }
 
     fn deleted(&self, shell: &mut iced_native::Shell<'_, MainMessage>) {
         if let Some((f, _)) = &self.state.last_press {
-            shell.publish(FileTableMessage::FileDelete(f.clone()).into())
+            shell.publish(PlaylistWidgetMessage::FileDelete(f.clone()).into())
         }
     }
 }
 
-impl<'a> Widget<MainMessage, Renderer> for FileTable<'a> {
+impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
     fn width(&self) -> iced_native::Length {
         self.base.as_widget().width()
     }
@@ -264,16 +275,19 @@ impl<'a> Widget<MainMessage, Renderer> for FileTable<'a> {
 
     fn overlay<'b>(
         &'b mut self,
-        state: &'b mut Tree,
+        _state: &'b mut Tree,
         layout: iced_native::Layout<'_>,
-        renderer: &Renderer,
+        _renderer: &Renderer,
     ) -> Option<iced_native::overlay::Element<'b, MainMessage, Renderer>> {
-        // TODO move insert hint to overlay
-        self.base.as_widget_mut().overlay(
-            &mut state.children[0],
-            layout.children().next().unwrap(),
-            renderer,
-        )
+        if let Some(index) = self.state.insert_hint {
+            if let Some(pos) = self.index_position(index, layout) {
+                return Some(iced::overlay::Element::new(
+                    layout.position(),
+                    Box::new(InsertHint::new(pos)),
+                ));
+            }
+        }
+        None
     }
 
     fn on_event(
@@ -352,14 +366,14 @@ impl<'a> Widget<MainMessage, Renderer> for FileTable<'a> {
 }
 
 #[derive(Debug, Default)]
-pub struct FileTableState {
+pub struct PlaylistWidgetState {
     files: Vec<File>,
     last_press: Option<(File, Instant)>,
     pressing: bool,
     insert_hint: Option<usize>,
 }
 
-impl FileTableState {
+impl PlaylistWidgetState {
     pub fn file_press(&mut self, file: File) {
         self.last_press = Some((file, Instant::now()));
         self.pressing = true;
@@ -441,8 +455,8 @@ impl Hash for File {
     }
 }
 
-impl<'a> From<FileTable<'a>> for Element<'a, MainMessage> {
-    fn from(table: FileTable<'a>) -> Self {
+impl<'a> From<PlaylistWidget<'a>> for Element<'a, MainMessage> {
+    fn from(table: PlaylistWidget<'a>) -> Self {
         Self::new(table)
     }
 }
@@ -500,5 +514,69 @@ impl RuleSS for FileRuleTheme {
             radius: 0.0,
             fill_mode: FillMode::Full,
         }
+    }
+}
+
+pub struct InsertHint {
+    rule: Rule<Renderer>,
+    pos: iced::Point,
+}
+
+impl Default for InsertHint {
+    fn default() -> Self {
+        Self {
+            rule: Rule::horizontal(1)
+                .style(RuleTheme::Custom(Box::new(FileRuleTheme { visible: true }))),
+            pos: iced::Point::default(),
+        }
+    }
+}
+
+impl InsertHint {
+    pub fn new(pos: iced::Point) -> Self {
+        Self {
+            pos,
+            ..Default::default()
+        }
+    }
+}
+
+impl iced_native::overlay::Overlay<MainMessage, Renderer> for InsertHint {
+    fn layout(
+        &self,
+        renderer: &Renderer,
+        bounds: iced::Size,
+        _position: iced::Point,
+    ) -> iced_native::layout::Node {
+        let limits = iced_native::layout::Limits::new(Size::ZERO, bounds)
+            .width(Length::Fill)
+            .height(1);
+
+        let mut node = <iced::widget::Rule<Renderer> as Widget<MainMessage, Renderer>>::layout(
+            &self.rule, renderer, &limits,
+        );
+        node.move_to(self.pos);
+
+        node
+    }
+
+    fn draw(
+        &self,
+        renderer: &mut Renderer,
+        theme: &<Renderer as iced_native::Renderer>::Theme,
+        style: &iced_native::renderer::Style,
+        layout: iced_native::Layout<'_>,
+        cursor_position: iced::Point,
+    ) {
+        <iced::widget::Rule<Renderer> as iced_native::Widget<MainMessage, Renderer>>::draw(
+            &self.rule,
+            &Tree::empty(),
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor_position,
+            &layout.bounds(),
+        )
     }
 }

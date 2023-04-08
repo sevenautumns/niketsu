@@ -3,13 +3,13 @@ use iced::{Application, Command, Element, Renderer, Subscription, Theme};
 use log::info;
 use uuid::Uuid;
 
-use crate::file_table::{File, FileTable, FileTableMessage, FileTableState};
+use crate::file_table::{File, PlaylistWidget, PlaylistWidgetMessage, PlaylistWidgetState};
 use crate::mpv::event::MpvEvent;
 use crate::ws::WebSocketMessage;
 
 #[derive(Debug)]
 pub enum MainWindow {
-    Startup(FileTableState),
+    Startup(PlaylistWidgetState),
     Running(),
 }
 
@@ -19,7 +19,7 @@ pub enum MainMessage {
     Mpv(MpvEvent),
     User(UserMessage),
     DatabaseChanged,
-    FileTable(FileTableMessage),
+    FileTable(PlaylistWidgetMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -41,7 +41,7 @@ impl Application for MainWindow {
             String::from("File 3"),
             String::from("File 4"),
         ];
-        let mut state = FileTableState::default();
+        let mut state = PlaylistWidgetState::default();
         state.replace_files(files.clone());
         (Self::Startup(state), Command::none())
     }
@@ -59,26 +59,26 @@ impl Application for MainWindow {
                     // MainMessage::User(_) => todo!(),
                     // MainMessage::DatabaseChanged => todo!(),
                     MainMessage::FileTable(event) => match event {
-                        FileTableMessage::FilePress(f) => {
+                        PlaylistWidgetMessage::FilePress(f) => {
                             info!("pressed: {f:?}");
                             state.file_press(f);
                         }
-                        FileTableMessage::MouseRelease => {
+                        PlaylistWidgetMessage::MouseRelease => {
                             state.mouse_release();
                             info!("released");
                         }
-                        FileTableMessage::FileDoubleClick(f) => {
+                        PlaylistWidgetMessage::FileDoubleClick(f) => {
                             info!("double: {f:?}")
                         }
-                        FileTableMessage::MoveIndicator(indicator) => {
+                        PlaylistWidgetMessage::MoveIndicator(indicator) => {
                             state.move_indicator(indicator);
                             info!("move indicator: {indicator:?}")
                         }
-                        FileTableMessage::FileMove(f, i) => {
+                        PlaylistWidgetMessage::FileMove(f, i) => {
                             info!("move file: {f:?}, {i}");
                             state.move_file(f, i);
                         }
-                        FileTableMessage::FileDelete(f) => {
+                        PlaylistWidgetMessage::FileDelete(f) => {
                             info!("delete file: {f:?}");
                             state.delete_file(f);
                         }
@@ -100,7 +100,7 @@ impl Application for MainWindow {
         match self {
             MainWindow::Startup(state) => {
                 //
-                FileTable::new(state).into()
+                PlaylistWidget::new(state).into()
             }
             MainWindow::Running() => todo!(),
         }
