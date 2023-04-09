@@ -7,9 +7,9 @@ use iced::theme::{Button as ButtonTheme, Rule as RuleTheme};
 use iced::widget::button::{Appearance as ButtonAp, StyleSheet as ButtonSS};
 use iced::widget::rule::{Appearance as RuleAp, FillMode, StyleSheet as RuleSS};
 use iced::widget::{Button, Column, Rule, Scrollable};
-use iced::{Alignment, Element, Length, Renderer, Size, Theme, Vector};
+use iced::{Element, Length, Renderer, Size, Theme, Vector};
 use iced_native::widget::Tree;
-use iced_native::{layout, Widget};
+use iced_native::Widget;
 use log::*;
 use uuid::Uuid;
 
@@ -21,7 +21,6 @@ pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 pub enum PlaylistWidgetMessage {
     FileDoubleClick(File),
     FileDelete(File),
-    // MoveIndicator(Option<usize>),
     FileMove(File, usize),
     FileInteraction(Option<File>, Interaction),
 }
@@ -206,45 +205,7 @@ impl<'a> PlaylistWidget<'a> {
             }
             Interaction::None => (),
         }
-
-        // if let Some(i) = self.state.insert_hint {
-        //     if let Some((f, _)) = &self.state.last_press {
-        //         shell.publish(PlaylistWidgetMessage::FileMove(f.clone(), i).into())
-        //     }
-        // }
     }
-
-    // fn moved(
-    //     &self,
-    //     layout: iced_native::Layout<'_>,
-    //     cursor_position: iced_native::Point,
-    //     shell: &mut iced_native::Shell<'_, MainMessage>,
-    // ) {
-    //     if !self.state.pressing {
-    //         return;
-    //     }
-
-    //     let selected = match &self
-    //         .state
-    //         .last_press
-    //         .as_ref()
-    //         .and_then(|(f, _)| self.state.file_index(f))
-    //     {
-    //         Some(selected) => *selected,
-    //         None => return,
-    //     };
-
-    //     let mut closest = self.closest_index(layout, cursor_position);
-    //     if let Some(c) = closest {
-    //         if c == selected || c == selected + 1 {
-    //             closest = None
-    //         }
-    //     }
-
-    //     if closest != self.state.insert_hint {
-    //         shell.publish(PlaylistWidgetMessage::MoveIndicator(closest).into());
-    //     }
-    // }
 
     fn deleted(&self, shell: &mut iced_native::Shell<'_, MainMessage>) {
         if let Some(f) = &self.state.selected {
@@ -372,7 +333,7 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
 
         // Workaround for if we touch the overlay
         // trace!("{cursor_position:?}")
-        if cursor_position != iced::Point::new(-1.0, -1.0) {
+        if cursor_position.x.is_sign_positive() && cursor_position.y.is_sign_positive() {
             inner_state.cursor_position = cursor_position;
         }
 
@@ -383,7 +344,6 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
             }) => {
                 status = iced_native::event::Status::Captured;
                 // TODO arrow keys
-                // TODO rename lastpressed to selected
                 if modifiers.is_empty() && *key_code == KeyCode::Delete {
                     self.deleted(shell)
                 }
@@ -391,10 +351,6 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
             iced::Event::Mouse(event) => {
                 status = iced_native::event::Status::Captured;
                 match event {
-                    // iced::mouse::Event::CursorMoved { position } => {
-                    //     inner_state.cursor_position = cursor_position;
-                    //     // self.moved(layout, *position, shell)
-                    // }
                     iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left) => {
                         self.pressed(layout, cursor_position, shell)
                     }
@@ -410,10 +366,6 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
                     iced::touch::Event::FingerPressed { id: _, position } => {
                         self.pressed(layout, *position, shell)
                     }
-                    // iced::touch::Event::FingerMoved { id: _, position } => {
-                    //     inner_state.cursor_position = cursor_position;
-                    //     // self.moved(layout, *position, shell)
-                    // }
                     iced::touch::Event::FingerLifted { id: _, position: _ } => {
                         self.released(None, inner_state, layout, shell)
                     }
@@ -476,8 +428,6 @@ struct InnerState {
 pub struct PlaylistWidgetState {
     files: Vec<File>,
     selected: Option<File>,
-    // last_press: Option<(File, Instant)>,
-    // pressing: bool,
     interaction: Interaction,
 }
 
@@ -506,11 +456,6 @@ impl Interaction {
 }
 
 impl PlaylistWidgetState {
-    // pub fn file_press(&mut self, file: File) {
-    //     self.last_press = Some((file, Instant::now()));
-    //     self.pressing = true;
-    // }
-
     pub fn move_file(&mut self, file: File, index: usize) -> Vec<File> {
         // TODO reuse for insert of a dropped file at index
         let mut index = index;
@@ -542,10 +487,6 @@ impl PlaylistWidgetState {
         todo!()
     }
 
-    // pub fn mouse_release(&mut self) {
-    //     self.pressing = false;
-    // }
-
     pub fn replace_files(&mut self, files: Vec<String>) {
         // TODO take uuids from old Vec
         let mut files = files;
@@ -556,7 +497,7 @@ impl PlaylistWidgetState {
                 uuid: Uuid::new_v4(),
             })
             .collect();
-        // TODO If last pressed file does not exist anymore do something better with the interaction
+        // TODO If last pressed file does not exist anymore, change interaction
         // if let Some((file, _)) = &self.last_press {
         //     if !self.files.iter().any(|f| file.uuid.eq(&f.uuid)) {
         //         self.last_press = None;

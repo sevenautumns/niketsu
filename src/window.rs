@@ -1,9 +1,7 @@
-use iced::widget::{column, container};
 use iced::{Application, Command, Element, Renderer, Subscription, Theme};
 use log::info;
-use uuid::Uuid;
 
-use crate::file_table::{File, PlaylistWidget, PlaylistWidgetMessage, PlaylistWidgetState};
+use crate::file_table::{PlaylistWidget, PlaylistWidgetMessage, PlaylistWidgetState};
 use crate::mpv::event::MpvEvent;
 use crate::ws::WebSocketMessage;
 
