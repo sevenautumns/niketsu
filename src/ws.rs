@@ -28,28 +28,34 @@ pub enum ServerMessage {
     StatusList(#[serde(rename = "users")] Vec<UserStatus>),
     Pause {
         filename: String,
+        #[serde(skip_serializing)]
         username: String,
     },
     Start {
         filename: String,
+        #[serde(skip_serializing)]
         username: String,
     },
     Seek {
         filename: String,
         #[serde(with = "serde_millis")]
         position: Duration,
+        #[serde(skip_serializing)]
         username: String,
     },
     Select {
         filename: String,
+        #[serde(skip_serializing)]
         username: String,
     },
     Message {
         message: String,
+        #[serde(skip_serializing)]
         username: String,
     },
     Playlist {
         playlist: Vec<String>,
+        #[serde(skip_serializing)]
         username: String,
     },
     Status {

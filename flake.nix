@@ -50,7 +50,7 @@
         rec {
           devShells.default = (pkgs.devshell.mkShell {
             imports = [ "${devshell}/extra/git/hooks.nix" ];
-            name = "sync2-dev-shell";
+            name = "niketsu-dev-shell";
             packages = with pkgs; [
               rust-toolchain
               rust-analyzer
@@ -106,47 +106,6 @@
               }
             ];
           });
-          # devShells.default = (pkgs.mkShell {
-          #   shellHook = ''
-          #     export LIBCLANG_PATH=${LIBCLANG_PATH}
-          #     # https://github.com/iced-rs/iced/issues/256#issuecomment-671027246 
-          #     # export LD_LIBRARY_PATH=${pkgs.vulkan-loader}/lib
-          #     export LD_LIBRARY_PATH=${pkgs.libclang.lib}/lib
-          #     export LIBRARY_PATH=${pkgs.xorg.libX11}/lib
-          #     export C_INCLUDE_PATH=${C_INCLUDE_PATH}
-          #     export LIBCLANG_PATH=${pkgs.llvmPackages.libclang.lib}/lib
-          #   '';
-          #   buildInputs = with pkgs; [
-          #     clang
-          #     # musl.dev
-          #     gcc
-          #     rust-toolchain
-          #     rust-analyzer
-          #     cargo-outdated
-          #     cargo-udeps
-          #     cargo-audit
-          #     cargo-watch
-          #     nixpkgs-fmt
-          #     vulkan-loader
-          #     vulkan-headers
-          #   ];
-          #   nativeBuildInputs = with pkgs; [
-          #     fontconfig
-          #     mpv
-          #     libclang.lib
-          #     xorg.libX11
-          #     xorg.libXcursor
-          #     xorg.libXi
-          #     xorg.libXrandr
-          #     libGL
-          #     freetype
-          #     pkgconfig
-          #     freetype.dev
-          #     expat
-          #     # vulkan-loader
-          #     # vulkan-headers
-          #   ];
-          # });
           checks = {
             nixpkgs-fmt = pkgs.runCommand "nixpkgs-fmt"
               {

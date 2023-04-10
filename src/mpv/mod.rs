@@ -1,4 +1,3 @@
-use std::borrow::BorrowMut;
 use std::convert::TryInto;
 use std::ffi::{c_void, CString};
 use std::mem::MaybeUninit;
@@ -98,7 +97,6 @@ impl Mpv {
         match event {
             MpvEvent::Shutdown => Ok(Some(MpvResultingAction::Exit)),
             MpvEvent::PropertyChanged(prop, value) => match (prop, value) {
-                // (MpvProperty::PlaybackTime, PropertyValue::Double(pos)) => todo!(),
                 (MpvProperty::Pause, PropertyValue::Flag(paused)) if paused != self.paused => {
                     self.paused = paused;
                     match paused {
@@ -199,9 +197,9 @@ impl Mpv {
     pub fn load_file(&mut self, file: &str) -> Result<()> {
         let cmd = MpvCommand::Loadfile.try_into()?;
         let file_cstring = CString::new(file)?;
-        let ok = self.send_command(&[&cmd, &file_cstring])?;
+        self.send_command(&[&cmd, &file_cstring])?;
         self.file = Some(file.to_string());
-        Ok(ok)
+        Ok(())
     }
 
     fn set_property(&self, prop: MpvProperty, value: PropertyValue) -> Result<()> {
@@ -246,12 +244,12 @@ impl Mpv {
     }
 
     pub fn set_playback_position(&mut self, pos: Duration) -> Result<()> {
-        let res = self.set_property(
+        self.set_property(
             MpvProperty::PlaybackTime,
             PropertyValue::Double(pos.as_secs_f64()),
         )?;
         self.last_seek = Some(SeekEvent::new(pos));
-        Ok(res)
+        Ok(())
     }
 }
 
