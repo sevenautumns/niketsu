@@ -3,12 +3,18 @@ use log::info;
 
 use crate::file_table::{PlaylistWidget, PlaylistWidgetMessage, PlaylistWidgetState};
 use crate::mpv::event::MpvEvent;
+use crate::mpv::Mpv;
 use crate::ws::WebSocketMessage;
 
 #[derive(Debug)]
 pub enum MainWindow {
-    Startup(PlaylistWidgetState),
-    Running(),
+    Startup {
+        url: String,
+    },
+    Running {
+        playlist_widget: PlaylistWidgetState,
+        mpv: Mpv,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -41,7 +47,12 @@ impl Application for MainWindow {
         ];
         let mut state = PlaylistWidgetState::default();
         state.replace_files(files.clone());
-        (Self::Startup(state), Command::none())
+        (
+            Self::Startup {
+                url: String::default(),
+            },
+            Command::none(),
+        )
     }
 
     fn title(&self) -> String {
@@ -50,10 +61,13 @@ impl Application for MainWindow {
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match self {
-            MainWindow::Startup(state) => {
+            MainWindow::Startup { url } => {}
+            MainWindow::Running {
+                playlist_widget,
+                mpv,
+            } => {
                 match message {
                     // MainMessage::WebSocket(_) => todo!(),
-                    // MainMessage::Mpv(_) => todo!(),
                     // MainMessage::User(_) => todo!(),
                     // MainMessage::DatabaseChanged => todo!(),
                     MainMessage::FileTable(event) => match event {
@@ -66,23 +80,23 @@ impl Application for MainWindow {
                         // }
                         PlaylistWidgetMessage::FileMove(f, i) => {
                             info!("move file: {f:?}, {i}");
-                            state.move_file(f, i);
+                            playlist_widget.move_file(f, i);
                         }
                         PlaylistWidgetMessage::FileDelete(f) => {
                             info!("delete file: {f:?}");
-                            state.delete_file(f);
+                            playlist_widget.delete_file(f);
                         }
                         PlaylistWidgetMessage::FileInteraction(f, i) => {
                             info!("file interaction: {f:?}, {i:?}");
-                            state.file_interaction(f, i)
+                            playlist_widget.file_interaction(f, i)
                         }
-
-                        _ => {}
                     },
+                    MainMessage::Mpv(event) => {
+                        let ac = mpv.react_to(event);
+                    }
                     _ => {}
                 }
             }
-            MainWindow::Running() => todo!(),
             _ => {}
         }
         Command::none()
@@ -92,11 +106,15 @@ impl Application for MainWindow {
         // todo!()
         // container(column![].spacing(20).padding(20).max_width(600)).into()
         match self {
-            MainWindow::Startup(state) => {
+            MainWindow::Startup { url } => {
                 //
-                PlaylistWidget::new(state).into()
+                // PlaylistWidget::new(state).into()
+                todo!()
             }
-            MainWindow::Running() => todo!(),
+            MainWindow::Running {
+                playlist_widget,
+                mpv,
+            } => todo!(),
         }
     }
 
