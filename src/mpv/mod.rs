@@ -1,6 +1,7 @@
 use std::convert::TryInto;
 use std::ffi::{c_void, CString};
 use std::mem::MaybeUninit;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -107,9 +108,7 @@ impl Mpv {
                 (MpvProperty::Filename, PropertyValue::String(file)) => {
                     let file = file.to_str()?;
                     match &self.file {
-                        Some(sf) if sf.ne(file) => {
-                            Ok(Some(MpvResultingAction::OpenFile(sf.to_string())))
-                        }
+                        Some(sf) if sf.ne(file) => Ok(Some(MpvResultingAction::ReOpenFile)),
                         None => {
                             let cmd = MpvCommand::Stop.try_into()?;
                             self.send_command(&[&cmd])?;
@@ -179,7 +178,7 @@ impl Mpv {
             self.event_pipe.clone(),
             |event_pipe| async move {
                 let event = event_pipe.lock().await.next().await.map(|e| e.into());
-                (event, event_pipe)
+                (event.unwrap(), event_pipe)
             },
         )
     }
@@ -194,11 +193,20 @@ impl Mpv {
         Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
     }
 
-    pub fn load_file(&mut self, file: &str) -> Result<()> {
+    pub fn load_file(&mut self, file: PathBuf) -> Result<()> {
         let cmd = MpvCommand::Loadfile.try_into()?;
-        let file_cstring = CString::new(file)?;
+        // TODO do not unwrap
+        let filename = file
+            .as_path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        // TODO do not unwrap
+        let file_cstring = CString::new(file.as_os_str().to_str().unwrap())?;
         self.send_command(&[&cmd, &file_cstring])?;
-        self.file = Some(file.to_string());
+        self.file = Some(filename);
         Ok(())
     }
 
@@ -278,7 +286,7 @@ impl SeekEvent {
 pub enum MpvResultingAction {
     PlayNext,
     Seek(Duration),
-    OpenFile(String),
+    ReOpenFile,
     Pause,
     Start,
     Exit,

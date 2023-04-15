@@ -10,7 +10,6 @@ use iced::widget::{Button, Column, Rule, Scrollable};
 use iced::{Element, Length, Renderer, Size, Theme, Vector};
 use iced_native::widget::Tree;
 use iced_native::Widget;
-use log::*;
 use uuid::Uuid;
 
 use crate::window::MainMessage;
@@ -426,6 +425,8 @@ struct InnerState {
 
 #[derive(Debug, Default)]
 pub struct PlaylistWidgetState {
+    //TODO
+    // active: bool,
     files: Vec<File>,
     selected: Option<File>,
     interaction: Interaction,
@@ -456,6 +457,10 @@ impl Interaction {
 }
 
 impl PlaylistWidgetState {
+    // pub fn activate(&mut self, activate: bool) {
+    //     self.active = activate;
+    // }
+
     pub fn move_file(&mut self, file: File, index: usize) -> Vec<File> {
         // TODO reuse for insert of a dropped file at index
         let mut index = index;
@@ -483,8 +488,12 @@ impl PlaylistWidgetState {
         self.files.clone()
     }
 
-    pub fn insert_file(&mut self, file: String, index: usize) -> Vec<File> {
-        todo!()
+    pub fn insert_file(&mut self, file: String) -> Vec<File> {
+        self.files.push(File {
+            name: file,
+            uuid: Uuid::new_v4(),
+        });
+        self.files.clone()
     }
 
     pub fn replace_files(&mut self, files: Vec<String>) {

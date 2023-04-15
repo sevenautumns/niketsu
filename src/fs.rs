@@ -1,23 +1,32 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use async_recursion::async_recursion;
 use futures::future::join_all;
 use futures::stream::FuturesUnordered;
-use futures::StreamExt;
-use iced::Subscription;
+use futures::{FutureExt, StreamExt};
+use iced::{Command, Subscription};
 use log::trace;
 use tokio::sync::watch::{Receiver as WatchRec, Sender as WatchSend};
 use tokio::sync::{Notify, RwLock, Semaphore};
 
 use crate::window::MainMessage;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct File {
     pub name: OsString,
     pub path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub enum DatabaseMessage {
+    Changed,
+    UpdateFinished(Arc<Result<()>>),
+    FindFinished(Arc<Result<Option<File>>>),
 }
 
 #[derive(Debug)]
@@ -42,8 +51,11 @@ impl Default for FileDatabase {
 }
 
 impl FileDatabase {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn new(path: &[PathBuf]) -> Self {
+        Self {
+            search_paths: RwLock::new(path.to_vec()),
+            ..Default::default()
+        }
     }
 
     pub fn subscription(&self) -> Subscription<MainMessage> {
@@ -53,9 +65,18 @@ impl FileDatabase {
             |mut dc| async move {
                 // TODO do something in error case?
                 dc.changed().await.ok();
-                (Some(MainMessage::DatabaseChanged), dc)
+                (MainMessage::Database(DatabaseMessage::Changed), dc)
             },
         )
+    }
+
+    pub fn update_command(db: &Arc<Self>) -> Command<MainMessage> {
+        async fn update(db: Arc<FileDatabase>) -> MainMessage {
+            MainMessage::Database(DatabaseMessage::UpdateFinished(Arc::new(db.update().await)))
+        }
+        Command::single(iced_native::command::Action::Future(
+            update(db.clone()).boxed(),
+        ))
     }
 
     pub fn database(&self) -> &RwLock<HashMap<OsString, File>> {
@@ -68,6 +89,22 @@ impl FileDatabase {
 
     pub async fn clear_search_paths(&self) {
         self.search_paths.write().await.clear();
+    }
+
+    pub fn find_command(db: &Arc<Self>, name: &str) -> Command<MainMessage> {
+        async fn find(db: Arc<FileDatabase>, name: String) -> MainMessage {
+            MainMessage::Database(DatabaseMessage::FindFinished(Arc::new(
+                db.find_file(&name).await,
+            )))
+        }
+        Command::single(iced_native::command::Action::Future(
+            find(db.clone(), name.to_string()).boxed(),
+        ))
+    }
+
+    pub async fn find_file(&self, name: &str) -> Result<Option<File>> {
+        let name = OsString::from_str(name)?;
+        Ok(self.database.read().await.get(&name).cloned())
     }
 
     pub fn stop_update(&self) {

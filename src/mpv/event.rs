@@ -59,7 +59,7 @@ impl From<mpv_event> for MpvEvent {
                     }
                     match PropertyValue::from_ptr(prop.data, prop.format) {
                         Some(v) => Self::PropertyChanged(name, v),
-                        None => return Self::Unparsed,
+                        None => Self::Unparsed,
                     }
                 }
             }
@@ -108,6 +108,9 @@ impl PropertyValue {
         }
     }
 
+    ///
+    /// # Safety
+    /// `typ` must represent the type behind the `data` pointer
     pub unsafe fn from_ptr(data: *mut c_void, typ: mpv_format) -> Option<Self> {
         match typ {
             mpv_format::MPV_FORMAT_STRING => {

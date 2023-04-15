@@ -14,8 +14,8 @@ clap = { version = "4", features = [ "derive" ] }
 log = "0.4"
 arc-swap = "1.6"
 pretty_env_logger = "0.4"
-iced = { version = "0.8", features = [ "tokio"] }
-iced_native = "0.9"
+iced = { version = "0.9", features = [ "tokio"] }
+iced_native = "0.10"
 tokio = { version = "1.27", features = [ "full", "rt-multi-thread"  ]}
 futures = "0.3"
 num-traits = "0.2"

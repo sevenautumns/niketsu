@@ -7,8 +7,8 @@ use async_tungstenite::tokio::TokioAdapter;
 use async_tungstenite::tungstenite::{Error as TsError, Message as TsMessage};
 use async_tungstenite::WebSocketStream;
 use futures::stream::{SplitSink, SplitStream};
-use futures::{SinkExt, StreamExt};
-use iced::Subscription;
+use futures::{FutureExt, SinkExt, StreamExt};
+use iced::{Command, Subscription};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
@@ -93,6 +93,7 @@ pub enum WebSocketMessage {
     },
     WsStreamEnded,
     Connected,
+    SendFinished(Arc<Result<()>>),
 }
 
 impl From<WebSocketMessage> for MainMessage {
@@ -123,11 +124,20 @@ enum WsState {
 }
 
 impl ServerWebsocket {
-    pub async fn new(addr: String) -> Self {
+    pub fn new(addr: String) -> Self {
         Self {
             sink: Default::default(),
             addr,
         }
+    }
+
+    pub fn send_command(ws: &Arc<Self>, msg: ServerMessage) -> Command<MainMessage> {
+        async fn send(ws: Arc<ServerWebsocket>, msg: ServerMessage) -> MainMessage {
+            MainMessage::WebSocket(WebSocketMessage::SendFinished(Arc::new(ws.send(msg).await)))
+        }
+        Command::single(iced_native::command::Action::Future(
+            send(ws.clone(), msg).boxed(),
+        ))
     }
 
     pub async fn send(&self, msg: ServerMessage) -> Result<()> {
@@ -160,7 +170,7 @@ impl ServerWebsocket {
                                 let (tx, stream) = ws.split();
                                 sink.store(Some(Arc::new(Mutex::new(tx))));
                                 (
-                                    Some(WebSocketMessage::Connected.into()),
+                                    WebSocketMessage::Connected.into(),
                                     WsState::Connected { sink, addr, stream },
                                 )
                             }
@@ -168,7 +178,7 @@ impl ServerWebsocket {
                                 // TODO is 1 second sensible?
                                 tokio::time::sleep(Duration::from_secs(1)).await;
                                 (
-                                    Some(WebSocketMessage::TungError { err: Arc::new(err) }.into()),
+                                    WebSocketMessage::TungError { err: Arc::new(err) }.into(),
                                     WsState::Disconnected { sink, addr },
                                 )
                             }
@@ -183,38 +193,34 @@ impl ServerWebsocket {
                             Ok(msg) => match msg.clone().into_text() {
                                 Ok(msg) => match serde_json::from_str::<ServerMessage>(&msg) {
                                     Ok(server_msg) => (
-                                        Some(server_msg.into()),
+                                        server_msg.into(),
                                         WsState::Connected { sink, addr, stream },
                                     ),
                                     Err(err) => (
-                                        Some(
-                                            WebSocketMessage::SerdeError {
-                                                msg,
-                                                err: Arc::new(err),
-                                            }
-                                            .into(),
-                                        ),
-                                        WsState::Connected { sink, addr, stream },
-                                    ),
-                                },
-                                Err(err) => (
-                                    Some(
-                                        WebSocketMessage::TungStringError {
+                                        WebSocketMessage::SerdeError {
                                             msg,
                                             err: Arc::new(err),
                                         }
                                         .into(),
+                                        WsState::Connected { sink, addr, stream },
                                     ),
+                                },
+                                Err(err) => (
+                                    WebSocketMessage::TungStringError {
+                                        msg,
+                                        err: Arc::new(err),
+                                    }
+                                    .into(),
                                     WsState::Connected { sink, addr, stream },
                                 ),
                             },
                             Err(err) => (
-                                Some(WebSocketMessage::TungError { err: Arc::new(err) }.into()),
+                                WebSocketMessage::TungError { err: Arc::new(err) }.into(),
                                 WsState::Disconnected { sink, addr },
                             ),
                         },
                         None => (
-                            Some(WebSocketMessage::WsStreamEnded.into()),
+                            WebSocketMessage::WsStreamEnded.into(),
                             WsState::Disconnected { sink, addr },
                         ),
                     },
