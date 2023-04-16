@@ -314,28 +314,29 @@ impl Application for MainWindow {
                                     username: _,
                                 } => {
                                     debug!("Socket: received seek {position:?}");
-                                    if let Some(last_playing) = playing.as_mut() {
-                                        if last_playing.filename.ne(&filename) {
-                                            *playing = Some(PlayingFile {
-                                                filename,
-                                                path: None,
-                                                heartbeat: false,
-                                                last_seek: position,
-                                            });
-                                            if let Some(playing) = playing.as_mut() {
-                                                if let Ok(Some(file)) =
-                                                    db.find_file(&playing.filename)
-                                                {
-                                                    playing.path = Some(file.path.clone());
-                                                    //TODO do not unwrap
-                                                    mpv.load_file(file.path).unwrap();
-                                                }
+                                    if filename.ne(playing
+                                        .as_ref()
+                                        .map(|p| p.filename.as_str())
+                                        .unwrap_or_default())
+                                    {
+                                        *playing = Some(PlayingFile {
+                                            filename,
+                                            path: None,
+                                            heartbeat: false,
+                                            last_seek: position,
+                                        });
+                                        if let Some(playing) = playing.as_mut() {
+                                            if let Ok(Some(file)) = db.find_file(&playing.filename)
+                                            {
+                                                playing.path = Some(file.path.clone());
+                                                //TODO do not unwrap
+                                                mpv.load_file(file.path).unwrap();
                                             }
-                                        } else {
-                                            last_playing.last_seek = position;
-                                            //TODO do not unwrap
-                                            mpv.set_playback_position(position).unwrap();
                                         }
+                                    } else if let Some(last_playing) = playing.as_mut() {
+                                        last_playing.last_seek = position;
+                                        //TODO do not unwrap
+                                        mpv.set_playback_position(position).unwrap();
                                     }
                                 }
                                 ServerMessage::Select {
