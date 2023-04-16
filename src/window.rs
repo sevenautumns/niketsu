@@ -212,15 +212,40 @@ impl Application for MainWindow {
                     },
                     MainMessage::Mpv(event) => match mpv.react_to(event) {
                         Ok(Some(MpvResultingAction::PlayNext)) => {
+                            debug!("Mpv process: play next");
                             if let Some(prev_playing) = playing.as_mut() {
                                 if let Some(next) = playlist_widget.next_video(&prev_playing.video)
                                 {
+                                    let ws_cmd = ServerWebsocket::send_command(
+                                        ws,
+                                        ServerMessage::Select {
+                                            filename: next.as_str().to_string(),
+                                            username: user.clone(),
+                                        },
+                                    );
                                     *playing = Some(PlayingFile {
                                         video: next,
                                         path: None,
                                         heartbeat: false,
                                         last_seek: Duration::ZERO,
                                     });
+                                    if let Some(playing) = playing.as_mut() {
+                                        match &playing.video {
+                                            Video::File(filename) => {
+                                                if let Ok(Some(file)) = db.find_file(&filename) {
+                                                    playing.path = Some(file.path.clone());
+                                                    // TODO do not unwrap
+                                                    mpv.load_file(file.path).unwrap();
+                                                }
+                                            }
+                                            Video::Url(url) => {
+                                                playing.path = Some(PathBuf::default());
+                                                // TODO do not unwrap
+                                                mpv.load_url(url.clone()).unwrap();
+                                            }
+                                        }
+                                    }
+                                    return ws_cmd;
                                 }
                             }
                         }

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use futures::StreamExt;
 use iced::Subscription;
+use log::*;
 use strum::{AsRefStr, EnumString};
 use tokio::sync::Mutex;
 use url::Url;
@@ -36,8 +37,10 @@ pub enum MpvProperty {
     Pause,
     Filename,
     KeepOpen,
+    KeepOpenPause,
     ForceWindow,
     Idle,
+    PercentPos,
     Config,
 }
 
@@ -60,6 +63,8 @@ impl MpvProperty {
             MpvProperty::ForceWindow => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Idle => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Config => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::KeepOpenPause => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::PercentPos => mpv_format::MPV_FORMAT_DOUBLE,
         }
     }
 }
@@ -111,7 +116,14 @@ impl Mpv {
                 (MpvProperty::Pause, PropertyValue::Flag(paused)) if paused != self.paused => {
                     self.paused = paused;
                     match paused {
-                        true => Ok(Some(MpvResultingAction::Pause)),
+                        true => {
+                            let pos = self.get_pos_percent()?;
+                            trace!("Pause percent: {pos}");
+                            if pos >= 100f64 {
+                                return Ok(Some(MpvResultingAction::PlayNext));
+                            }
+                            Ok(Some(MpvResultingAction::Pause))
+                        }
                         false => Ok(Some(MpvResultingAction::Start)),
                     }
                 }
@@ -164,6 +176,7 @@ impl Mpv {
         // TODO remove config from here
         self.set_ocs(true)?;
         self.set_keep_open(true)?;
+        self.set_keep_open_pause(true)?;
         self.set_idle_mode(true)?;
         self.set_force_window(true)?;
         self.set_config(true)?;
@@ -274,6 +287,13 @@ impl Mpv {
         self.set_property(MpvProperty::KeepOpen, PropertyValue::Flag(keep_open))
     }
 
+    pub fn set_keep_open_pause(&self, keep_open_pause: bool) -> Result<()> {
+        self.set_property(
+            MpvProperty::KeepOpenPause,
+            PropertyValue::Flag(keep_open_pause),
+        )
+    }
+
     pub fn set_idle_mode(&self, idle_mode: bool) -> Result<()> {
         self.set_property(MpvProperty::Idle, PropertyValue::Flag(idle_mode))
     }
@@ -293,6 +313,10 @@ impl Mpv {
     pub fn get_playback_position(&self) -> Result<Duration> {
         let duration = self.get_property_f64(MpvProperty::PlaybackTime)?;
         Ok(Duration::from_secs_f64(duration))
+    }
+
+    pub fn get_pos_percent(&self) -> Result<f64> {
+        self.get_property_f64(MpvProperty::PercentPos)
     }
 
     pub fn set_playback_position(&mut self, pos: Duration) -> Result<()> {
