@@ -80,6 +80,7 @@ impl From<ServerMessage> for MainMessage {
 #[derive(Debug, Clone)]
 pub enum WebSocketMessage {
     Received(ServerMessage),
+    // TODO collapse errors into one variant
     TungError {
         err: Arc<TsError>,
     },

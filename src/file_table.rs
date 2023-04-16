@@ -1,4 +1,3 @@
-use std::hash::Hash;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -10,18 +9,19 @@ use iced::widget::{Button, Column, Rule, Scrollable};
 use iced::{Element, Length, Renderer, Size, Theme, Vector};
 use iced_native::widget::Tree;
 use iced_native::Widget;
-use uuid::Uuid;
+use log::*;
 
 use crate::window::MainMessage;
 
+// TODO make configurable
 pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 pub enum PlaylistWidgetMessage {
-    FileDoubleClick(File),
-    FileDelete(File),
-    FileMove(File, usize),
-    FileInteraction(Option<File>, Interaction),
+    FileDoubleClick(String),
+    FileDelete(String),
+    FileMove(String, usize),
+    FileInteraction(Option<String>, Interaction),
 }
 
 impl From<PlaylistWidgetMessage> for MainMessage {
@@ -41,12 +41,9 @@ impl<'a> PlaylistWidget<'a> {
 
         let mut file_btns = vec![];
         for f in state.files.iter() {
-            let pressed = state
-                .selected
-                .as_ref()
-                .map_or(false, |f_i| f.uuid.eq(&f_i.uuid));
+            let pressed = state.selected.as_ref().map_or(false, |f_i| f.eq(f_i));
             file_btns.push(
-                Button::new(f.name.as_str())
+                Button::new(f.as_str())
                     .padding(0)
                     .width(Length::Fill)
                     .style(ButtonTheme::Custom(Box::new(FileTheme { pressed })))
@@ -56,7 +53,14 @@ impl<'a> PlaylistWidget<'a> {
 
         Self {
             state,
-            base: Scrollable::new(Column::with_children(file_btns)).into(),
+            base: Scrollable::new(
+                Column::with_children(file_btns)
+                    .height(Length::Fill)
+                    .width(Length::Fill),
+            )
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .into(),
         }
     }
 }
@@ -98,12 +102,12 @@ impl<'a> PlaylistWidget<'a> {
         if let Interaction::Pressing(_) = self.state.interaction {
             if let Some(sele) = &self.state.selected {
                 if let Some(clos) = self.state.files.get(closest.1.saturating_sub(1)) {
-                    if clos.uuid.eq(&sele.uuid) {
+                    if clos.eq(sele) {
                         return None;
                     }
                 }
                 if let Some(clos) = self.state.files.get(closest.1) {
-                    if clos.uuid.eq(&sele.uuid) {
+                    if clos.eq(sele) {
                         return None;
                     }
                 }
@@ -116,7 +120,7 @@ impl<'a> PlaylistWidget<'a> {
         &self,
         layout: iced_native::Layout<'_>,
         cursor_position: iced_native::Point,
-    ) -> Option<File> {
+    ) -> Option<String> {
         let files = self
             .state
             .files
@@ -146,7 +150,7 @@ impl<'a> PlaylistWidget<'a> {
 
             if let Some(prev_file) = &self.state.selected {
                 if let Interaction::Released(when) = self.state.interaction {
-                    if file.uuid.eq(&prev_file.uuid) && when.elapsed() < MAX_DOUBLE_CLICK_INTERVAL {
+                    if file.eq(prev_file) && when.elapsed() < MAX_DOUBLE_CLICK_INTERVAL {
                         shell.publish(PlaylistWidgetMessage::FileDoubleClick(file).into());
                     }
                 }
@@ -164,19 +168,15 @@ impl<'a> PlaylistWidget<'a> {
     ) {
         match &self.state.interaction {
             Interaction::PressingExternal => {
-                let pos = state.cursor_position;
-                if let Some((i, _)) = self.closest_index(layout, pos) {
-                    if let Some(name) = file.and_then(|f| {
-                        f.file_name()
-                            .and_then(|f| f.to_str().map(|f| f.to_string()))
-                    }) {
-                        let file = File {
-                            name,
-                            uuid: Uuid::new_v4(),
-                        };
-                        shell.publish(PlaylistWidgetMessage::FileMove(file, i).into());
-                    }
+                // let pos = state.cursor_position;
+                // if let Some((i, _)) = self.closest_index(layout, pos) {
+                if let Some(name) = file.and_then(|f| {
+                    f.file_name()
+                        .and_then(|f| f.to_str().map(|f| f.to_string()))
+                }) {
+                    shell.publish(PlaylistWidgetMessage::FileMove(name, 0).into());
                 }
+                // }
             }
             Interaction::Pressing(_) => {
                 let pos = state.cursor_position;
@@ -386,6 +386,7 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
                         }
                     }
                     iced::window::Event::FileDropped(file) => {
+                        trace!("File dropped: {file:?}");
                         self.released(Some(file.clone()), inner_state, layout, shell)
                     }
                     iced::window::Event::FilesHoveredLeft => shell.publish(
@@ -427,8 +428,8 @@ struct InnerState {
 pub struct PlaylistWidgetState {
     //TODO
     // active: bool,
-    files: Vec<File>,
-    selected: Option<File>,
+    files: Vec<String>,
+    selected: Option<String>,
     interaction: Interaction,
 }
 
@@ -461,8 +462,7 @@ impl PlaylistWidgetState {
     //     self.active = activate;
     // }
 
-    pub fn move_file(&mut self, file: File, index: usize) -> Vec<File> {
-        // TODO reuse for insert of a dropped file at index
+    pub fn move_file(&mut self, file: String, index: usize) -> Vec<String> {
         let mut index = index;
         if let Some(i) = self.file_index(&file) {
             if index > i {
@@ -470,17 +470,26 @@ impl PlaylistWidgetState {
             }
             self.files.remove(i);
             self.files.insert(index, file)
+        } else {
+            self.files.push(file)
         }
 
         self.files.clone()
     }
 
-    pub fn file_interaction(&mut self, file: Option<File>, interaction: Interaction) {
+    pub fn next_file(&mut self, file: &str) -> Option<String> {
+        if let Some(i) = self.file_index(&file) {
+            return self.files.get(i + 1).cloned();
+        }
+        None
+    }
+
+    pub fn file_interaction(&mut self, file: Option<String>, interaction: Interaction) {
         self.selected = file;
         self.interaction = interaction;
     }
 
-    pub fn delete_file(&mut self, file: File) -> Vec<File> {
+    pub fn delete_file(&mut self, file: &str) -> Vec<String> {
         // TODO on delete move selected file to file above (or below if non are above)
         if let Some(i) = self.file_index(&file) {
             self.files.remove(i);
@@ -488,24 +497,18 @@ impl PlaylistWidgetState {
         self.files.clone()
     }
 
-    pub fn insert_file(&mut self, file: String) -> Vec<File> {
-        self.files.push(File {
-            name: file,
-            uuid: Uuid::new_v4(),
-        });
-        self.files.clone()
-    }
+    // pub fn insert_file(&mut self, file: String) -> Vec<File> {
+    //     self.files.push(File {
+    //         name: file,
+    //         uuid: Uuid::new_v4(),
+    //     });
+    //     self.files.clone()
+    // }
 
     pub fn replace_files(&mut self, files: Vec<String>) {
         // TODO take uuids from old Vec
         let mut files = files;
-        self.files = files
-            .drain(..)
-            .map(|f| File {
-                name: f,
-                uuid: Uuid::new_v4(),
-            })
-            .collect();
+        self.files = files.drain(..).collect();
         // TODO If last pressed file does not exist anymore, change interaction
         // if let Some((file, _)) = &self.last_press {
         //     if !self.files.iter().any(|f| file.uuid.eq(&f.uuid)) {
@@ -516,25 +519,13 @@ impl PlaylistWidgetState {
         self.interaction = Interaction::None;
     }
 
-    pub fn file_index(&self, file: &File) -> Option<usize> {
+    pub fn file_index(&self, file: &str) -> Option<usize> {
         for (i, f) in self.files.iter().enumerate() {
-            if f.uuid.eq(&file.uuid) {
+            if f.eq(file) {
                 return Some(i);
             }
         }
         None
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct File {
-    pub name: String,
-    pub uuid: Uuid,
-}
-
-impl Hash for File {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.uuid.hash(state)
     }
 }
 

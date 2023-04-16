@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -6,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use async_recursion::async_recursion;
+use dashmap::DashMap;
 use futures::future::join_all;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
@@ -26,13 +26,12 @@ pub struct File {
 pub enum DatabaseMessage {
     Changed,
     UpdateFinished(Arc<Result<()>>),
-    FindFinished(Arc<Result<Option<File>>>),
 }
 
 #[derive(Debug)]
 pub struct FileDatabase {
     stop: RwLock<Notify>,
-    database: RwLock<HashMap<OsString, File>>,
+    database: Arc<DashMap<OsString, File>>,
     database_counter: (WatchSend<usize>, WatchRec<usize>),
     search_paths: RwLock<Vec<PathBuf>>,
     semaphore: Semaphore,
@@ -79,9 +78,9 @@ impl FileDatabase {
         ))
     }
 
-    pub fn database(&self) -> &RwLock<HashMap<OsString, File>> {
-        &self.database
-    }
+    // pub fn database(&self) -> Arc<DashMap<OsString, File>> {
+    //     self.database.clone()
+    // }
 
     pub async fn add_search_path(&self, path: PathBuf) {
         self.search_paths.write().await.push(path);
@@ -91,20 +90,9 @@ impl FileDatabase {
         self.search_paths.write().await.clear();
     }
 
-    pub fn find_command(db: &Arc<Self>, name: &str) -> Command<MainMessage> {
-        async fn find(db: Arc<FileDatabase>, name: String) -> MainMessage {
-            MainMessage::Database(DatabaseMessage::FindFinished(Arc::new(
-                db.find_file(&name).await,
-            )))
-        }
-        Command::single(iced_native::command::Action::Future(
-            find(db.clone(), name.to_string()).boxed(),
-        ))
-    }
-
-    pub async fn find_file(&self, name: &str) -> Result<Option<File>> {
+    pub fn find_file(&self, name: &str) -> Result<Option<File>> {
         let name = OsString::from_str(name)?;
-        Ok(self.database.read().await.get(&name).cloned())
+        Ok(self.database.get(&name).map(|p| p.value().clone()))
     }
 
     pub fn stop_update(&self) {
@@ -122,7 +110,7 @@ impl FileDatabase {
         };
 
         *stop = Notify::new();
-        self.database.write().await.clear();
+        self.database.clear();
         self.database_counter.0.send_modify(|i| *i += 1);
         let paths = self.search_paths.read().await.clone();
         let stop = stop.downgrade();
@@ -200,9 +188,8 @@ impl FileDatabase {
         }
         while join_rec.next().await.is_some() {}
 
-        let mut lock = self.database.write().await;
         for f in files {
-            lock.insert(f.name.clone(), f);
+            self.database.insert(f.name.clone(), f);
         }
         self.database_counter.0.send_modify(|i| *i += 1);
 

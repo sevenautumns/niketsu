@@ -121,7 +121,7 @@ impl Mpv {
             },
             // MpvEvent::StartFile(_) => todo!(),
             // MpvEvent::EndFile(_) => todo!(),
-            // MpvEvent::FileLoaded => todo!(),
+            MpvEvent::FileLoaded => Ok(Some(MpvResultingAction::StartHeartbeat)),
             // MpvEvent::Seek => todo!(),
             MpvEvent::PlaybackRestart => {
                 let new_pos = self.get_playback_position()?;
@@ -150,6 +150,7 @@ impl Mpv {
     }
 
     pub fn init(&self) -> Result<()> {
+        // TODO open the mpv window here somehow
         // TODO remove config from here
         self.set_ocs(true)?;
         // TODO remove config from here
@@ -216,7 +217,7 @@ impl Mpv {
             let ret = mpv_set_property(
                 self.handle.0,
                 prop.as_ptr(),
-                mpv_format::MPV_FORMAT_FLAG,
+                value.format(),
                 value.as_mut_ptr(),
             );
             Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
@@ -287,6 +288,7 @@ pub enum MpvResultingAction {
     PlayNext,
     Seek(Duration),
     ReOpenFile,
+    StartHeartbeat,
     Pause,
     Start,
     Exit,

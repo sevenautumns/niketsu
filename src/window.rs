@@ -2,6 +2,7 @@ use std::borrow::BorrowMut;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use iced::widget::{column, Button, TextInput};
 use iced::{Application, Command, Element, Renderer, Subscription, Theme};
@@ -25,10 +26,39 @@ pub enum MainWindow {
         ws: Arc<ServerWebsocket>,
         playlist_widget: PlaylistWidgetState,
         mpv: Mpv,
-        filename: Option<String>,
+        playing: Option<PlayingFile>,
         user: String,
         ready: bool,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct PlayingFile {
+    filename: String,
+    path: Option<PathBuf>,
+    heartbeat: bool,
+    last_seek: Duration,
+}
+
+impl PlayingFile {
+    pub fn subscribe(&self) -> Subscription<MainMessage> {
+        if self.heartbeat {
+            iced::subscription::channel(
+                std::any::TypeId::of::<Self>(),
+                1,
+                |mut output| async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        if let Err(e) = output.try_send(MainMessage::Heartbeat) {
+                            error!("{e:?}");
+                        }
+                    }
+                },
+            )
+        } else {
+            Subscription::none()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +68,7 @@ pub enum MainMessage {
     User(UserMessage),
     Database(DatabaseMessage),
     FileTable(PlaylistWidgetMessage),
+    Heartbeat,
 }
 
 #[derive(Debug, Clone)]
@@ -92,8 +123,9 @@ impl Application for MainWindow {
                         db,
                         ready: false,
                         user: user.clone(),
-                        filename: None,
+                        playing: None,
                     };
+                    info!("Changed Mode to Running");
                     return cmd;
                 }
                 _ => todo!(),
@@ -105,29 +137,37 @@ impl Application for MainWindow {
                 db,
                 ready,
                 user,
-                filename,
+                playing,
             } => {
                 match message {
                     MainMessage::FileTable(event) => match event {
                         PlaylistWidgetMessage::FileDoubleClick(f) => {
-                            trace!("double: {f:?}");
+                            debug!("FileTable doubleclick: {f:?}");
                             let ws_cmd = ServerWebsocket::send_command(
                                 ws,
                                 ServerMessage::Select {
-                                    filename: f.name.clone(),
+                                    filename: f.clone(),
                                     username: user.clone(),
                                 },
                             );
-                            let find_cmd = FileDatabase::find_command(db, &f.name);
-                            return Command::batch([ws_cmd, find_cmd]);
+                            *playing = Some(PlayingFile {
+                                filename: f,
+                                path: None,
+                                last_seek: Duration::ZERO,
+                                heartbeat: false,
+                            });
+                            if let Some(playing) = playing.as_mut() {
+                                if let Ok(Some(file)) = db.find_file(&playing.filename) {
+                                    playing.path = Some(file.path.clone());
+                                    // TODO do not unwrap
+                                    mpv.load_file(file.path).unwrap();
+                                }
+                            }
+                            return ws_cmd;
                         }
                         PlaylistWidgetMessage::FileMove(f, i) => {
-                            trace!("move file: {f:?}, {i}");
-                            let playlist = playlist_widget
-                                .move_file(f, i)
-                                .drain(..)
-                                .map(|f| f.name)
-                                .collect();
+                            debug!("FileTable move file: {f:?}, {i}");
+                            let playlist = playlist_widget.move_file(f, i).drain(..).collect();
                             return ServerWebsocket::send_command(
                                 ws,
                                 ServerMessage::Playlist {
@@ -137,12 +177,8 @@ impl Application for MainWindow {
                             );
                         }
                         PlaylistWidgetMessage::FileDelete(f) => {
-                            trace!("delete file: {f:?}");
-                            let playlist = playlist_widget
-                                .delete_file(f)
-                                .drain(..)
-                                .map(|f| f.name)
-                                .collect();
+                            debug!("FileTable delete file: {f:?}");
+                            let playlist = playlist_widget.delete_file(&f).drain(..).collect();
                             return ServerWebsocket::send_command(
                                 ws,
                                 ServerMessage::Playlist {
@@ -152,18 +188,32 @@ impl Application for MainWindow {
                             );
                         }
                         PlaylistWidgetMessage::FileInteraction(f, i) => {
-                            trace!("file interaction: {f:?}, {i:?}");
+                            debug!("FileTable file interaction: {f:?}, {i:?}");
                             playlist_widget.file_interaction(f, i)
                         }
                     },
                     MainMessage::Mpv(event) => match mpv.react_to(event) {
-                        Ok(Some(MpvResultingAction::PlayNext)) => {}
+                        Ok(Some(MpvResultingAction::PlayNext)) => {
+                            if let Some(prev_playing) = playing.as_mut() {
+                                if let Some(next) =
+                                    playlist_widget.next_file(&prev_playing.filename)
+                                {
+                                    *playing = Some(PlayingFile {
+                                        filename: next,
+                                        path: None,
+                                        heartbeat: false,
+                                        last_seek: Duration::ZERO,
+                                    });
+                                }
+                            }
+                        }
                         Ok(Some(MpvResultingAction::Seek(position))) => {
-                            if let Some(filename) = filename.clone() {
+                            debug!("Mpv process: seek {position:?}");
+                            if let Some(playing) = playing.clone() {
                                 return ServerWebsocket::send_command(
                                     ws,
                                     ServerMessage::Seek {
-                                        filename,
+                                        filename: playing.filename,
                                         position,
                                         username: user.clone(),
                                     },
@@ -171,45 +221,67 @@ impl Application for MainWindow {
                             }
                         }
                         Ok(Some(MpvResultingAction::ReOpenFile)) => {
-                            if let Some(file) = filename {
-                                return FileDatabase::find_command(db, file);
+                            debug!("Mpv process: re-open file");
+                            if let Some(playing) = playing.as_mut() {
+                                if let Ok(Some(file)) = db.find_file(&playing.filename) {
+                                    playing.path = Some(file.path.clone());
+                                    // TODO do not unwrap
+                                    mpv.load_file(file.path).unwrap();
+                                } else {
+                                    playing.path = None;
+                                }
                             }
                         }
                         Ok(Some(MpvResultingAction::Pause)) => {
-                            if let Some(filename) = filename.clone() {
+                            debug!("Mpv process: pause");
+                            if let Some(playing) = playing.clone() {
                                 return ServerWebsocket::send_command(
                                     ws,
                                     ServerMessage::Pause {
-                                        filename,
+                                        filename: playing.filename,
                                         username: user.clone(),
                                     },
                                 );
                             }
                         }
                         Ok(Some(MpvResultingAction::Start)) => {
-                            if let Some(filename) = filename.clone() {
+                            debug!("Mpv process: start");
+                            if let Some(playing) = playing.clone() {
                                 return ServerWebsocket::send_command(
                                     ws,
                                     ServerMessage::Start {
-                                        filename,
+                                        filename: playing.filename,
                                         username: user.clone(),
                                     },
                                 );
                             }
                         }
-                        Ok(Some(MpvResultingAction::Exit)) => panic!("Mpv ended"),
-                        Ok(None) => {}
-                        Err(e) => error!("{e:?}"),
+                        Ok(Some(MpvResultingAction::Exit)) => {
+                            debug!("Mpv process: exit");
+                            return iced::window::close();
+                        }
+                        Ok(Some(MpvResultingAction::StartHeartbeat)) => {
+                            debug!("Mpv process: start heartbeat");
+                            if let Some(playing) = playing.as_mut() {
+                                //TODO Is this a race condition?
+                                playing.heartbeat = true;
+                                // TODO do not unwrap here
+                                mpv.set_playback_position(playing.last_seek).unwrap();
+                            }
+                        }
+                        Ok(None) => debug!("Mpv process: None"),
+                        Err(e) => error!("Mpv error: {e:?}"),
                     },
                     MainMessage::WebSocket(event) => match event {
                         WebSocketMessage::Received(msg) => {
                             //
                             match msg {
                                 ServerMessage::Ping(uuid) => {
+                                    debug!("Socket: received ping {uuid}");
                                     return ServerWebsocket::send_command(
                                         ws,
                                         ServerMessage::Ping(uuid),
-                                    )
+                                    );
                                 }
                                 ServerMessage::VideoStatus { filename, position } => {
                                     trace!("{filename}, {position:?}")
@@ -219,6 +291,7 @@ impl Application for MainWindow {
                                     filename: _,
                                     username: _,
                                 } => {
+                                    debug!("Socket: received pause");
                                     //TODO do not unwrap
                                     mpv.pause(true).unwrap();
                                 }
@@ -226,6 +299,7 @@ impl Application for MainWindow {
                                     filename: _,
                                     username: _,
                                 } => {
+                                    debug!("Socket: received start");
                                     //TODO do not unwrap
                                     mpv.pause(false).unwrap();
                                 }
@@ -234,16 +308,33 @@ impl Application for MainWindow {
                                     position,
                                     username: _,
                                 } => {
+                                    debug!("Socket: received seek {position:?}");
                                     //TODO do not unwrap
-                                    mpv.set_playback_position(position).unwrap();
+                                    if let Some(playing) = playing.as_mut() {
+                                        playing.last_seek = position;
+                                        mpv.set_playback_position(position).unwrap();
+                                    }
                                 }
                                 ServerMessage::Select {
                                     filename,
                                     username: _,
                                 } => {
+                                    debug!("Socket: received select: {filename}");
                                     //TODO do not unwrap
                                     mpv.pause(true).unwrap();
-                                    return FileDatabase::find_command(db, &filename);
+                                    *playing = Some(PlayingFile {
+                                        filename,
+                                        path: None,
+                                        last_seek: Duration::ZERO,
+                                        heartbeat: false,
+                                    });
+                                    if let Some(playing) = playing.as_mut() {
+                                        if let Ok(Some(file)) = db.find_file(&playing.filename) {
+                                            playing.path = Some(file.path.clone());
+                                            //TODO do not unwrap
+                                            mpv.load_file(file.path).unwrap();
+                                        }
+                                    }
                                 }
                                 ServerMessage::Message { message, username } => {
                                     trace!("{username}: {message}")
@@ -262,6 +353,7 @@ impl Application for MainWindow {
                         WebSocketMessage::SerdeError { msg, err } => error!("{msg}, {err:?}"),
                         WebSocketMessage::WsStreamEnded => error!("Websocket ended"),
                         WebSocketMessage::Connected => {
+                            trace!("Socket: connected");
                             return ServerWebsocket::send_command(
                                 ws,
                                 ServerMessage::Status {
@@ -273,6 +365,7 @@ impl Application for MainWindow {
                         WebSocketMessage::SendFinished(r) => trace!("{r:?}"),
                     },
                     MainMessage::User(UserMessage::ReadyButton) => {
+                        debug!("User: ready press");
                         *ready ^= true;
                         return ServerWebsocket::send_command(
                             ws,
@@ -282,17 +375,30 @@ impl Application for MainWindow {
                             },
                         );
                     }
-                    MainMessage::Database(DatabaseMessage::FindFinished(r)) => {
-                        trace!("{r:?}");
-                        //TODO do not unwrap
-                        if let Ok(Some(file)) = r.as_ref() {
-                            if let Ok(new_filename) = file.name.clone().into_string() {
-                                if let Some(old_filename) = filename {
-                                    if new_filename.eq(old_filename) {
-                                        mpv.load_file(file.path.clone()).unwrap();
-                                    }
+                    MainMessage::Database(DatabaseMessage::Changed) => {
+                        trace!("Database: changed");
+                        if let Some(playing) = playing.as_mut() {
+                            if playing.path.is_none() {
+                                if let Ok(Some(file)) = db.find_file(&playing.filename) {
+                                    playing.path = Some(file.path.clone());
+                                    //TODO do not unwrap here
+                                    mpv.load_file(file.path).unwrap();
                                 }
                             }
+                        }
+                    }
+                    MainMessage::Heartbeat => {
+                        debug!("Heartbeat");
+                        if let Some(playing) = playing {
+                            //TODO do not unwrap here
+                            let position = mpv.get_playback_position().unwrap();
+                            return ServerWebsocket::send_command(
+                                ws,
+                                ServerMessage::VideoStatus {
+                                    filename: playing.filename.clone(),
+                                    position,
+                                },
+                            );
                         }
                     }
                     _ => {}
@@ -322,7 +428,7 @@ impl Application for MainWindow {
                 db: _,
                 ready: _,
                 user: _,
-                filename: _,
+                playing: _,
             } => column!(
                 PlaylistWidget::new(playlist_widget),
                 Button::new("Ready").on_press(MainMessage::User(UserMessage::ReadyButton))
@@ -339,14 +445,18 @@ impl Application for MainWindow {
             db: _,
             ready: _,
             user: _,
-            filename: _,
+            playing,
         } = self
         {
             // TODO use .map() here instead
             let mpv = mpv.subscribe();
             let ws = ws.subscribe();
+            let heartbeat = playing
+                .as_ref()
+                .map(|p| p.subscribe())
+                .unwrap_or(Subscription::none());
 
-            return Subscription::batch([mpv, ws]);
+            return Subscription::batch([mpv, ws, heartbeat]);
         }
         Subscription::none()
     }
