@@ -15,15 +15,14 @@ fn main() -> Result<()> {
     pretty_env_logger::init();
 
     let maybe_config = Config::load();
-    let config;
-    match maybe_config {
-        Ok(conf) => config = conf,
+    let config = match maybe_config {
+        Ok(conf) => conf,
         Err(e) => {
             warn!("No config loaded: {e:?}");
-            config = Default::default();
+            Default::default()
         }
-    }
-
-    MainWindow::run(Settings::with_flags(config))?;
+    };
+    let settings = Settings::with_flags(config);
+    MainWindow::run(settings)?;
     Ok(())
 }

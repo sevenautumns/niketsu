@@ -48,7 +48,7 @@ impl Video {
 
     pub fn as_str(&self) -> &str {
         match self {
-            Video::File(file) => &file,
+            Video::File(file) => file,
             Video::Url(url) => url.as_str(),
         }
     }
@@ -509,7 +509,7 @@ impl PlaylistWidgetState {
     }
 
     pub fn next_video(&mut self, video: &Video) -> Option<Video> {
-        if let Some(i) = self.video_index(&video) {
+        if let Some(i) = self.video_index(video) {
             return self.videos.get(i + 1).cloned();
         }
         None
@@ -522,7 +522,7 @@ impl PlaylistWidgetState {
 
     pub fn delete_video(&mut self, video: &Video) -> Vec<Video> {
         // TODO on delete move selected file to file above (or below if non are above)
-        if let Some(i) = self.video_index(&video) {
+        if let Some(i) = self.video_index(video) {
             self.videos.remove(i);
         }
         self.videos.clone()
@@ -538,7 +538,7 @@ impl PlaylistWidgetState {
 
     pub fn replace_videos(&mut self, videos: Vec<String>) {
         let mut videos = videos;
-        self.videos = videos.drain(..).map(|v| Video::from_string(v)).collect();
+        self.videos = videos.drain(..).map(Video::from_string).collect();
         // TODO If last pressed file does not exist anymore, change interaction
         // if let Some((file, _)) = &self.last_press {
         //     if !self.files.iter().any(|f| file.uuid.eq(&f.uuid)) {

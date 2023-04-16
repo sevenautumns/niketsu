@@ -4,10 +4,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::theme::Button as ButtonTheme;
+use iced::theme::{Button as ButtonTheme, Container as ContainerTheme};
 use iced::widget::button::{Appearance as ButtonAp, StyleSheet as ButtonSS};
-use iced::widget::{column, Button, TextInput};
-use iced::{Application, Command, Element, Renderer, Subscription, Theme};
+use iced::widget::container::{Appearance as ContainerAp, StyleSheet as ContainerSS};
+use iced::widget::scrollable::Id;
+use iced::widget::{column, row, Button, Column, Container, Scrollable, Text, TextInput};
+use iced::{
+    Alignment, Application, Command, Element, Length, Padding, Renderer, Subscription, Theme,
+};
 use log::*;
 
 use crate::config::Config;
@@ -30,6 +34,8 @@ pub enum MainWindow {
         playing: Option<PlayingFile>,
         user: String,
         ready: bool,
+        messages: Vec<String>,
+        message: String,
     },
 }
 
@@ -81,6 +87,8 @@ pub enum UserMessage {
     PathInput(String),
     StartButton,
     ReadyButton,
+    SendMessage,
+    MessageInput(String),
 }
 
 impl Application for MainWindow {
@@ -104,15 +112,18 @@ impl Application for MainWindow {
         "Niketsu".into()
     }
 
-    fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
+    fn theme(&self) -> Self::Theme {
+        Self::Theme::Dark
+    }
+
+    fn update(&mut self, msg: Self::Message) -> Command<Self::Message> {
         match self.borrow_mut() {
-            MainWindow::Startup { config } => match message {
+            MainWindow::Startup { config } => match msg {
                 MainMessage::User(UserMessage::UsernameInput(u)) => config.username = u,
                 MainMessage::User(UserMessage::UrlInput(u)) => config.url = u,
                 MainMessage::User(UserMessage::PathInput(p)) => config.media_dir = p,
                 MainMessage::User(UserMessage::StartButton) => {
-                    // TODO do not unwrap here
-                    config.save().unwrap();
+                    config.save().log();
                     let mpv = Mpv::new();
                     mpv.init().unwrap();
                     let db = Arc::new(FileDatabase::new(&[
@@ -127,6 +138,8 @@ impl Application for MainWindow {
                         ready: false,
                         user: config.username.clone(),
                         playing: None,
+                        messages: vec![],
+                        message: Default::default(),
                     };
                     info!("Changed Mode to Running");
                     return cmd;
@@ -141,8 +154,10 @@ impl Application for MainWindow {
                 ready,
                 user,
                 playing,
+                messages,
+                message,
             } => {
-                match message {
+                match msg {
                     MainMessage::FileTable(event) => match event {
                         PlaylistWidgetMessage::DoubleClick(f) => {
                             debug!("FileTable doubleclick: {f:?}");
@@ -162,16 +177,14 @@ impl Application for MainWindow {
                             if let Some(playing) = playing.as_mut() {
                                 match &playing.video {
                                     Video::File(filename) => {
-                                        if let Ok(Some(file)) = db.find_file(&filename) {
+                                        if let Ok(Some(file)) = db.find_file(filename) {
                                             playing.path = Some(file.path.clone());
-                                            // TODO do not unwrap
-                                            mpv.load_file(file.path).unwrap();
+                                            mpv.load_file(file.path).log();
                                         }
                                     }
                                     Video::Url(url) => {
                                         playing.path = Some(PathBuf::default());
-                                        // TODO do not unwrap
-                                        mpv.load_url(url.clone()).unwrap();
+                                        mpv.load_url(url.clone()).log();
                                     }
                                 }
                             }
@@ -234,16 +247,14 @@ impl Application for MainWindow {
                                     if let Some(playing) = playing.as_mut() {
                                         match &playing.video {
                                             Video::File(filename) => {
-                                                if let Ok(Some(file)) = db.find_file(&filename) {
+                                                if let Ok(Some(file)) = db.find_file(filename) {
                                                     playing.path = Some(file.path.clone());
-                                                    // TODO do not unwrap
-                                                    mpv.load_file(file.path).unwrap();
+                                                    mpv.load_file(file.path).log();
                                                 }
                                             }
                                             Video::Url(url) => {
                                                 playing.path = Some(PathBuf::default());
-                                                // TODO do not unwrap
-                                                mpv.load_url(url.clone()).unwrap();
+                                                mpv.load_url(url.clone()).log();
                                             }
                                         }
                                     }
@@ -274,18 +285,16 @@ impl Application for MainWindow {
                             if let Some(playing) = playing.as_mut() {
                                 match &playing.video {
                                     Video::File(filename) => {
-                                        if let Ok(Some(file)) = db.find_file(&filename) {
+                                        if let Ok(Some(file)) = db.find_file(filename) {
                                             playing.path = Some(file.path.clone());
-                                            // TODO do not unwrap
-                                            mpv.load_file(file.path).unwrap();
+                                            mpv.load_file(file.path).log();
                                         } else {
                                             playing.path = None;
                                         }
                                     }
                                     Video::Url(url) => {
                                         playing.path = Some(PathBuf::default());
-                                        // TODO do not unwrap
-                                        mpv.load_url(url.clone()).unwrap();
+                                        mpv.load_url(url.clone()).log();
                                     }
                                 }
                             }
@@ -323,8 +332,7 @@ impl Application for MainWindow {
                             if let Some(playing) = playing.as_mut() {
                                 //TODO Is this a race condition?
                                 playing.heartbeat = true;
-                                // TODO do not unwrap here
-                                mpv.set_playback_position(playing.last_seek).unwrap();
+                                mpv.set_playback_position(playing.last_seek).log();
                             }
                         }
                         Ok(None) => debug!("Mpv process: None"),
@@ -350,16 +358,14 @@ impl Application for MainWindow {
                                     username: _,
                                 } => {
                                     debug!("Socket: received pause");
-                                    //TODO do not unwrap
-                                    mpv.pause(true).unwrap();
+                                    mpv.pause(true).log();
                                 }
                                 ServerMessage::Start {
                                     filename: _,
                                     username: _,
                                 } => {
                                     debug!("Socket: received start");
-                                    //TODO do not unwrap
-                                    mpv.pause(false).unwrap();
+                                    mpv.pause(false).log();
                                 }
                                 ServerMessage::Seek {
                                     filename,
@@ -381,17 +387,14 @@ impl Application for MainWindow {
                                         if let Some(playing) = playing.as_mut() {
                                             match &playing.video {
                                                 Video::File(filename) => {
-                                                    if let Ok(Some(file)) = db.find_file(&filename)
-                                                    {
+                                                    if let Ok(Some(file)) = db.find_file(filename) {
                                                         playing.path = Some(file.path.clone());
-                                                        //TODO do not unwrap
-                                                        mpv.load_file(file.path).unwrap();
+                                                        mpv.load_file(file.path).log();
                                                     }
                                                 }
                                                 Video::Url(url) => {
                                                     playing.path = Some(PathBuf::default());
-                                                    // TODO do not unwrap
-                                                    mpv.load_url(url.clone()).unwrap();
+                                                    mpv.load_url(url.clone()).log();
                                                 }
                                             }
                                         }
@@ -418,7 +421,7 @@ impl Application for MainWindow {
                                     if let Some(playing) = playing.as_mut() {
                                         match &playing.video {
                                             Video::File(filename) => {
-                                                if let Ok(Some(file)) = db.find_file(&filename) {
+                                                if let Ok(Some(file)) = db.find_file(filename) {
                                                     playing.path = Some(file.path.clone());
                                                     mpv.load_file(file.path).log();
                                                 }
@@ -431,7 +434,8 @@ impl Application for MainWindow {
                                     }
                                 }
                                 ServerMessage::Message { message, username } => {
-                                    trace!("{username}: {message}")
+                                    trace!("{username}: {message}");
+                                    messages.push(format!("{username}: {message}"));
                                 }
                                 ServerMessage::Playlist {
                                     playlist,
@@ -458,17 +462,32 @@ impl Application for MainWindow {
                         }
                         WebSocketMessage::SendFinished(r) => trace!("{r:?}"),
                     },
-                    MainMessage::User(UserMessage::ReadyButton) => {
-                        debug!("User: ready press");
-                        *ready ^= true;
-                        return ServerWebsocket::send_command(
-                            ws,
-                            ServerMessage::Status {
-                                ready: *ready,
-                                username: user.clone(),
-                            },
-                        );
-                    }
+                    MainMessage::User(event) => match event {
+                        UserMessage::ReadyButton => {
+                            debug!("User: ready press");
+                            *ready ^= true;
+                            return ServerWebsocket::send_command(
+                                ws,
+                                ServerMessage::Status {
+                                    ready: *ready,
+                                    username: user.clone(),
+                                },
+                            );
+                        }
+                        UserMessage::SendMessage => {
+                            if !message.is_empty() {
+                                return ServerWebsocket::send_command(
+                                    ws,
+                                    ServerMessage::Message {
+                                        message: message.clone(),
+                                        username: user.clone(),
+                                    },
+                                );
+                            }
+                        }
+                        UserMessage::MessageInput(_) => todo!(),
+                        _ => {}
+                    },
                     MainMessage::Database(event) => match event {
                         DatabaseMessage::Changed => {
                             trace!("Database: changed");
@@ -497,7 +516,6 @@ impl Application for MainWindow {
                             );
                         }
                     }
-                    _ => {}
                 }
             }
         }
@@ -507,15 +525,35 @@ impl Application for MainWindow {
     fn view(&self) -> Element<'_, Self::Message, Renderer<Self::Theme>> {
         // container(column![].spacing(20).padding(20).max_width(600)).into()
         match self {
-            MainWindow::Startup { config } => column!(
-                TextInput::new("Server Address", &config.url)
-                    .on_input(|u| MainMessage::User(UserMessage::UrlInput(u))),
-                TextInput::new("Username", &config.username)
-                    .on_input(|u| MainMessage::User(UserMessage::UsernameInput(u))),
-                TextInput::new("Filepath", &config.media_dir)
-                    .on_input(|p| MainMessage::User(UserMessage::PathInput(p))),
-                Button::new("Start").on_press(MainMessage::User(UserMessage::StartButton))
+            MainWindow::Startup { config } => Container::new(
+                Container::new(
+                    column!(
+                        TextInput::new("Server Address", &config.url)
+                            .on_input(|u| MainMessage::User(UserMessage::UrlInput(u))),
+                        TextInput::new("Username", &config.username)
+                            .on_input(|u| MainMessage::User(UserMessage::UsernameInput(u))),
+                        TextInput::new("Filepath", &config.media_dir)
+                            .on_input(|p| MainMessage::User(UserMessage::PathInput(p))),
+                        Button::new(
+                            Text::new("Start")
+                                .width(Length::Fill)
+                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        )
+                        .width(Length::Fill)
+                        .on_press(MainMessage::User(UserMessage::StartButton))
+                    )
+                    .align_items(Alignment::Center)
+                    .width(Length::Fill)
+                    .spacing(10)
+                    .padding(Padding::new(10.0)),
+                )
+                .height(Length::Shrink)
+                .style(ContainerBorder::basic()),
             )
+            .padding(Padding::new(5.0))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_y()
             .into(),
             MainWindow::Running {
                 playlist_widget,
@@ -525,14 +563,69 @@ impl Application for MainWindow {
                 ready,
                 user: _,
                 playing: _,
+                messages,
+                message,
             } => {
                 let mut btn;
                 match ready {
-                    true => btn = Button::new("Ready").style(ReadyTheme::ready()),
-                    false => btn = Button::new("Not Ready").style(ReadyTheme::not_ready()),
+                    true => {
+                        btn = Button::new(
+                            Text::new("Ready")
+                                .width(Length::Fill)
+                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        )
+                        .style(ReadyTheme::ready())
+                    }
+                    false => {
+                        btn = Button::new(
+                            Text::new("Not Ready")
+                                .width(Length::Fill)
+                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        )
+                        .style(ReadyTheme::not_ready())
+                    }
                 }
                 btn = btn.on_press(MainMessage::User(UserMessage::ReadyButton));
-                column!(PlaylistWidget::new(playlist_widget), btn).into()
+
+                let msgs = messages
+                    .iter()
+                    .cloned()
+                    .map(|m| Text::new(m).into())
+                    .collect::<Vec<_>>();
+
+                row!(
+                    column!(
+                        Container::new(
+                            Scrollable::new(Column::with_children(msgs)).id(Id::new("messages"))
+                        )
+                        .style(ContainerBorder::basic())
+                        .padding(5.0)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                        row!(
+                            TextInput::new("Message", message)
+                                .on_input(|m| MainMessage::User(UserMessage::MessageInput(m)))
+                                .on_submit(MainMessage::User(UserMessage::SendMessage)),
+                            Button::new("Send")
+                                .on_press(MainMessage::User(UserMessage::SendMessage))
+                        )
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+                    column!(
+                        Container::new(PlaylistWidget::new(playlist_widget))
+                            .style(ContainerBorder::basic())
+                            .padding(5.0)
+                            .height(Length::Fill),
+                        btn.width(Length::Fill)
+                    )
+                    // .align_items(Alignment::End)
+                    .width(Length::Fill)
+                    .spacing(5.0)
+                )
+                .spacing(5.0)
+                .padding(Padding::new(5.0))
+                .into()
             }
         }
     }
@@ -546,6 +639,8 @@ impl Application for MainWindow {
             ready: _,
             user: _,
             playing,
+            messages: _,
+            message: _,
         } = self
         {
             // TODO use .map() here instead
@@ -612,6 +707,27 @@ impl ButtonSS for ReadyTheme {
         ButtonAp {
             background: self.background(style),
             ..style.disabled(&iced::theme::Button::Text)
+        }
+    }
+}
+
+pub struct ContainerBorder;
+
+impl ContainerBorder {
+    pub fn basic() -> iced::theme::Container {
+        ContainerTheme::Custom(Box::new(Self))
+    }
+}
+
+impl ContainerSS for ContainerBorder {
+    type Style = Theme;
+
+    fn appearance(&self, style: &Self::Style) -> ContainerAp {
+        ContainerAp {
+            border_color: style.palette().text,
+            border_radius: 5.0,
+            border_width: 2.0,
+            ..Default::default()
         }
     }
 }
