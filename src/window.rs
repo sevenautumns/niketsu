@@ -466,7 +466,7 @@ impl Application for MainWindow {
             playlist_widget: _,
             mpv,
             ws,
-            db: _,
+            db,
             ready: _,
             user: _,
             playing,
@@ -479,8 +479,9 @@ impl Application for MainWindow {
                 .as_ref()
                 .map(|p| p.subscribe())
                 .unwrap_or(Subscription::none());
+            let db = db.subscribe();
 
-            return Subscription::batch([mpv, ws, heartbeat]);
+            return Subscription::batch([mpv, ws, db, heartbeat]);
         }
         Subscription::none()
     }

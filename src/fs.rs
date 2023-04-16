@@ -57,7 +57,7 @@ impl FileDatabase {
         }
     }
 
-    pub fn subscription(&self) -> Subscription<MainMessage> {
+    pub fn subscribe(&self) -> Subscription<MainMessage> {
         iced::subscription::unfold(
             std::any::TypeId::of::<Self>(),
             self.database_counter.1.clone(),
