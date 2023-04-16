@@ -8,6 +8,7 @@ use iced::widget::{column, Button, TextInput};
 use iced::{Application, Command, Element, Renderer, Subscription, Theme};
 use log::*;
 
+use crate::config::Config;
 use crate::file_table::{PlaylistWidget, PlaylistWidgetMessage, PlaylistWidgetState};
 use crate::fs::{DatabaseMessage, FileDatabase};
 use crate::mpv::event::MpvEvent;
@@ -17,9 +18,7 @@ use crate::ws::{ServerMessage, ServerWebsocket, WebSocketMessage};
 #[derive(Debug)]
 pub enum MainWindow {
     Startup {
-        url: String,
-        user: String,
-        path: String,
+        config: Config,
     },
     Running {
         db: Arc<FileDatabase>,
@@ -87,15 +86,12 @@ impl Application for MainWindow {
 
     type Theme = Theme;
 
-    type Flags = ();
+    type Flags = Config;
 
-    fn new(_flags: Self::Flags) -> (Self, Command<Self::Message>) {
+    fn new(config: Self::Flags) -> (Self, Command<Self::Message>) {
         (
-            Self::Startup {
-                url: String::default(),
-                user: String::default(),
-                path: String::default(),
-            },
+            // TODO do not unwrap here
+            Self::Startup { config },
             Command::none(),
         )
     }
@@ -106,23 +102,26 @@ impl Application for MainWindow {
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match self.borrow_mut() {
-            MainWindow::Startup { url, user, path } => match message {
-                MainMessage::User(UserMessage::UsernameInput(u)) => *user = u,
-                MainMessage::User(UserMessage::UrlInput(u)) => *url = u,
-                MainMessage::User(UserMessage::PathInput(p)) => *path = p,
+            MainWindow::Startup { config } => match message {
+                MainMessage::User(UserMessage::UsernameInput(u)) => config.username = u,
+                MainMessage::User(UserMessage::UrlInput(u)) => config.url = u,
+                MainMessage::User(UserMessage::PathInput(p)) => config.media_dir = p,
                 MainMessage::User(UserMessage::StartButton) => {
+                    // TODO do not unwrap here
+                    config.save().unwrap();
                     let mpv = Mpv::new();
                     mpv.init().unwrap();
-                    let db = Arc::new(FileDatabase::new(&[PathBuf::from_str(path).unwrap()]));
+                    let db = Arc::new(FileDatabase::new(&[
+                        PathBuf::from_str(&config.media_dir).unwrap()
+                    ]));
                     let cmd = FileDatabase::update_command(&db);
                     *self = MainWindow::Running {
                         playlist_widget: Default::default(),
                         mpv,
-                        ws: Arc::new(ServerWebsocket::new(url.clone())),
-                        // TODO do not unwrap
+                        ws: Arc::new(ServerWebsocket::new(config.url.clone())),
                         db,
                         ready: false,
-                        user: user.clone(),
+                        user: config.username.clone(),
                         playing: None,
                     };
                     info!("Changed Mode to Running");
@@ -435,12 +434,12 @@ impl Application for MainWindow {
     fn view(&self) -> Element<'_, Self::Message, Renderer<Self::Theme>> {
         // container(column![].spacing(20).padding(20).max_width(600)).into()
         match self {
-            MainWindow::Startup { url, user, path } => column!(
-                TextInput::new("Server Address", url)
+            MainWindow::Startup { config } => column!(
+                TextInput::new("Server Address", &config.url)
                     .on_input(|u| MainMessage::User(UserMessage::UrlInput(u))),
-                TextInput::new("Username", user)
+                TextInput::new("Username", &config.username)
                     .on_input(|u| MainMessage::User(UserMessage::UsernameInput(u))),
-                TextInput::new("Filepath", path)
+                TextInput::new("Filepath", &config.media_dir)
                     .on_input(|p| MainMessage::User(UserMessage::PathInput(p))),
                 Button::new("Start").on_press(MainMessage::User(UserMessage::StartButton))
             )

@@ -30,6 +30,7 @@ serde_millis = "0.1"
 atomic-counter = "1.0"
 directories = "5.0"
 dashmap = "5"
+toml = "0.7"
 
 [build-dependencies]
 clap_complete = "4"

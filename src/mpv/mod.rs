@@ -33,6 +33,9 @@ pub enum MpvProperty {
     Osc,
     Pause,
     Filename,
+    KeepOpen,
+    ForceWindow,
+    Idle,
 }
 
 impl TryFrom<MpvProperty> for CString {
@@ -50,6 +53,9 @@ impl MpvProperty {
             MpvProperty::Osc => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Pause => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Filename => mpv_format::MPV_FORMAT_STRING,
+            MpvProperty::KeepOpen => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::ForceWindow => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::Idle => mpv_format::MPV_FORMAT_FLAG,
         }
     }
 }
@@ -153,6 +159,9 @@ impl Mpv {
         // TODO open the mpv window here somehow
         // TODO remove config from here
         self.set_ocs(true)?;
+        self.set_keep_open(true)?;
+        self.set_idle_mode(true)?;
+        self.set_force_window(true)?;
         // TODO remove config from here
 
         let ret = unsafe { mpv_initialize(self.handle.0) };
@@ -241,6 +250,18 @@ impl Mpv {
 
     pub fn set_ocs(&self, ocs: bool) -> Result<()> {
         self.set_property(MpvProperty::Osc, PropertyValue::Flag(ocs))
+    }
+
+    pub fn set_keep_open(&self, keep_open: bool) -> Result<()> {
+        self.set_property(MpvProperty::KeepOpen, PropertyValue::Flag(keep_open))
+    }
+
+    pub fn set_idle_mode(&self, idle_mode: bool) -> Result<()> {
+        self.set_property(MpvProperty::Idle, PropertyValue::Flag(idle_mode))
+    }
+
+    pub fn set_force_window(&self, force_window: bool) -> Result<()> {
+        self.set_property(MpvProperty::ForceWindow, PropertyValue::Flag(force_window))
     }
 
     pub fn pause(&self, pause: bool) -> Result<()> {
