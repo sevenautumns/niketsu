@@ -4,9 +4,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use iced::theme::Button as ButtonTheme;
 use iced::widget::button::{Appearance as ButtonAp, StyleSheet as ButtonSS};
 use iced::widget::{column, Button, TextInput};
-use iced::{Application, Command, Element, Renderer, Subscription, Theme, Vector};
+use iced::{Application, Command, Element, Renderer, Subscription, Theme};
 use log::*;
 
 use crate::config::Config;
@@ -397,8 +398,7 @@ impl Application for MainWindow {
                                     } else if let Some(last_playing) = playing.as_mut() {
                                         last_playing.last_seek = position;
                                         if last_playing.path.is_some() {
-                                            //TODO do not unwrap
-                                            mpv.set_playback_position(position).unwrap();
+                                            mpv.set_playback_position(position).log();
                                         }
                                     }
                                 }
@@ -420,14 +420,12 @@ impl Application for MainWindow {
                                             Video::File(filename) => {
                                                 if let Ok(Some(file)) = db.find_file(&filename) {
                                                     playing.path = Some(file.path.clone());
-                                                    //TODO do not unwrap
-                                                    mpv.load_file(file.path).unwrap();
+                                                    mpv.load_file(file.path).log();
                                                 }
                                             }
                                             Video::Url(url) => {
                                                 playing.path = Some(PathBuf::default());
-                                                // TODO do not unwrap
-                                                mpv.load_url(url.clone()).unwrap();
+                                                mpv.load_url(url.clone()).log();
                                             }
                                         }
                                     }
@@ -478,8 +476,7 @@ impl Application for MainWindow {
                                 if playing.path.is_none() {
                                     if let Ok(Some(file)) = db.find_file(playing.video.as_str()) {
                                         playing.path = Some(file.path.clone());
-                                        //TODO do not unwrap here
-                                        mpv.load_file(file.path).unwrap();
+                                        mpv.load_file(file.path).log();
                                     }
                                 }
                             }
@@ -525,14 +522,18 @@ impl Application for MainWindow {
                 mpv: _,
                 ws: _,
                 db: _,
-                ready: _,
+                ready,
                 user: _,
                 playing: _,
-            } => column!(
-                PlaylistWidget::new(playlist_widget),
-                Button::new("Ready").on_press(MainMessage::User(UserMessage::ReadyButton))
-            )
-            .into(),
+            } => {
+                let mut btn;
+                match ready {
+                    true => btn = Button::new("Ready").style(ReadyTheme::ready()),
+                    false => btn = Button::new("Not Ready").style(ReadyTheme::not_ready()),
+                }
+                btn = btn.on_press(MainMessage::User(UserMessage::ReadyButton));
+                column!(PlaylistWidget::new(playlist_widget), btn).into()
+            }
         }
     }
 
@@ -567,6 +568,14 @@ pub struct ReadyTheme {
 }
 
 impl ReadyTheme {
+    pub fn not_ready() -> iced::theme::Button {
+        ButtonTheme::Custom(Box::new(Self { ready: false }))
+    }
+
+    pub fn ready() -> iced::theme::Button {
+        ButtonTheme::Custom(Box::new(Self { ready: true }))
+    }
+
     pub fn background(&self, style: &Theme) -> Option<iced::Background> {
         match self.ready {
             true => Some(iced::Background::Color(style.palette().success)),
@@ -603,6 +612,18 @@ impl ButtonSS for ReadyTheme {
         ButtonAp {
             background: self.background(style),
             ..style.disabled(&iced::theme::Button::Text)
+        }
+    }
+}
+
+pub trait LogResult {
+    fn log(&self);
+}
+
+impl<T> LogResult for anyhow::Result<T> {
+    fn log(&self) {
+        if let Err(e) = self {
+            error!("{e:?}")
         }
     }
 }
