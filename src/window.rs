@@ -398,18 +398,21 @@ impl Application for MainWindow {
                             },
                         );
                     }
-                    MainMessage::Database(DatabaseMessage::Changed) => {
-                        trace!("Database: changed");
-                        if let Some(playing) = playing.as_mut() {
-                            if playing.path.is_none() {
-                                if let Ok(Some(file)) = db.find_file(&playing.filename) {
-                                    playing.path = Some(file.path.clone());
-                                    //TODO do not unwrap here
-                                    mpv.load_file(file.path).unwrap();
+                    MainMessage::Database(event) => match event {
+                        DatabaseMessage::Changed => {
+                            trace!("Database: changed");
+                            if let Some(playing) = playing.as_mut() {
+                                if playing.path.is_none() {
+                                    if let Ok(Some(file)) = db.find_file(&playing.filename) {
+                                        playing.path = Some(file.path.clone());
+                                        //TODO do not unwrap here
+                                        mpv.load_file(file.path).unwrap();
+                                    }
                                 }
                             }
                         }
-                    }
+                        DatabaseMessage::UpdateFinished(_) => debug!("Database: update finished"),
+                    },
                     MainMessage::Heartbeat => {
                         debug!("Heartbeat");
                         if let Some(playing) = playing {
