@@ -210,6 +210,11 @@ impl Application for MainWindow {
                         Ok(Some(MpvResultingAction::Seek(position))) => {
                             debug!("Mpv process: seek {position:?}");
                             if let Some(playing) = playing.clone() {
+                                if let Ok(bool) = std::env::var("DEBUG_NO_SEEK") {
+                                    if bool.to_lowercase().eq("true") {
+                                        return Command::none();
+                                    }
+                                }
                                 return ServerWebsocket::send_command(
                                     ws,
                                     ServerMessage::Seek {
