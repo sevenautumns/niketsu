@@ -304,15 +304,33 @@ impl Application for MainWindow {
                                     mpv.pause(false).unwrap();
                                 }
                                 ServerMessage::Seek {
-                                    filename: _,
+                                    filename,
                                     position,
                                     username: _,
                                 } => {
                                     debug!("Socket: received seek {position:?}");
-                                    //TODO do not unwrap
-                                    if let Some(playing) = playing.as_mut() {
-                                        playing.last_seek = position;
-                                        mpv.set_playback_position(position).unwrap();
+                                    if let Some(last_playing) = playing.as_mut() {
+                                        if last_playing.filename.ne(&filename) {
+                                            *playing = Some(PlayingFile {
+                                                filename,
+                                                path: None,
+                                                heartbeat: false,
+                                                last_seek: position,
+                                            });
+                                            if let Some(playing) = playing.as_mut() {
+                                                if let Ok(Some(file)) =
+                                                    db.find_file(&playing.filename)
+                                                {
+                                                    playing.path = Some(file.path.clone());
+                                                    //TODO do not unwrap
+                                                    mpv.load_file(file.path).unwrap();
+                                                }
+                                            }
+                                        } else {
+                                            last_playing.last_seek = position;
+                                            //TODO do not unwrap
+                                            mpv.set_playback_position(position).unwrap();
+                                        }
                                     }
                                 }
                                 ServerMessage::Select {
