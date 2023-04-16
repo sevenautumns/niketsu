@@ -485,7 +485,7 @@ impl Application for MainWindow {
                                 );
                             }
                         }
-                        UserMessage::MessageInput(_) => todo!(),
+                        UserMessage::MessageInput(msg) => *message = msg,
                         _ => {}
                     },
                     MainMessage::Database(event) => match event {
@@ -609,7 +609,9 @@ impl Application for MainWindow {
                             Button::new("Send")
                                 .on_press(MainMessage::User(UserMessage::SendMessage))
                         )
+                        .spacing(5.0)
                     )
+                    .spacing(5.0)
                     .width(Length::Fill)
                     .height(Length::Fill),
                     column!(
