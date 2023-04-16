@@ -19,7 +19,7 @@ use crate::file_table::{PlaylistWidget, PlaylistWidgetMessage, PlaylistWidgetSta
 use crate::fs::{DatabaseMessage, FileDatabase};
 use crate::mpv::event::MpvEvent;
 use crate::mpv::{Mpv, MpvResultingAction};
-use crate::ws::{ServerMessage, ServerWebsocket, WebSocketMessage};
+use crate::ws::{ServerMessage, ServerWebsocket, UserStatus, WebSocketMessage};
 
 #[derive(Debug)]
 pub enum MainWindow {
@@ -36,6 +36,7 @@ pub enum MainWindow {
         ready: bool,
         messages: Vec<String>,
         message: String,
+        users: Vec<UserStatus>,
     },
 }
 
@@ -140,6 +141,7 @@ impl Application for MainWindow {
                         playing: None,
                         messages: vec![],
                         message: Default::default(),
+                        users: vec![],
                     };
                     info!("Changed Mode to Running");
                     return cmd;
@@ -156,6 +158,7 @@ impl Application for MainWindow {
                 playing,
                 messages,
                 message,
+                users,
             } => {
                 match msg {
                     MainMessage::FileTable(event) => match event {
@@ -352,7 +355,10 @@ impl Application for MainWindow {
                                 ServerMessage::VideoStatus { filename, position } => {
                                     trace!("{filename}, {position:?}")
                                 }
-                                ServerMessage::StatusList { users } => debug!("{users:?}"),
+                                ServerMessage::StatusList { users: usrs } => {
+                                    debug!("{users:?}");
+                                    *users = usrs;
+                                }
                                 ServerMessage::Pause {
                                     filename: _,
                                     username: _,
@@ -568,6 +574,7 @@ impl Application for MainWindow {
                 playing: _,
                 messages,
                 message,
+                users,
             } => {
                 let mut btn;
                 match ready {
@@ -596,6 +603,12 @@ impl Application for MainWindow {
                     .map(|m| Text::new(m).into())
                     .collect::<Vec<_>>();
 
+                let users = users
+                    .iter()
+                    .cloned()
+                    .map(|u| Text::new(format!("{}: {:?}", u.username, u.ready)).into())
+                    .collect::<Vec<_>>();
+
                 row!(
                     column!(
                         Container::new(
@@ -618,6 +631,13 @@ impl Application for MainWindow {
                     .width(Length::Fill)
                     .height(Length::Fill),
                     column!(
+                        Container::new(
+                            Scrollable::new(Column::with_children(users)).id(Id::new("users"))
+                        )
+                        .style(ContainerBorder::basic())
+                        .padding(5.0)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
                         Container::new(PlaylistWidget::new(playlist_widget))
                             .style(ContainerBorder::basic())
                             .padding(5.0)
@@ -646,6 +666,7 @@ impl Application for MainWindow {
             playing,
             messages: _,
             message: _,
+            users: _,
         } = self
         {
             // TODO use .map() here instead
