@@ -478,6 +478,7 @@ impl Application for MainWindow {
                             if !message.is_empty() {
                                 let msg = message.clone();
                                 *message = Default::default();
+                                messages.push(msg.clone());
                                 return ServerWebsocket::send_command(
                                     ws,
                                     ServerMessage::Message {

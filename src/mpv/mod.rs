@@ -42,6 +42,9 @@ pub enum MpvProperty {
     Idle,
     PercentPos,
     Config,
+    InputDefaultBindings,
+    InputVoKeyboard,
+    InputMediaKeys,
 }
 
 impl TryFrom<MpvProperty> for CString {
@@ -65,6 +68,9 @@ impl MpvProperty {
             MpvProperty::Config => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::KeepOpenPause => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::PercentPos => mpv_format::MPV_FORMAT_DOUBLE,
+            MpvProperty::InputDefaultBindings => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::InputVoKeyboard => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::InputMediaKeys => mpv_format::MPV_FORMAT_FLAG,
         }
     }
 }
@@ -180,6 +186,9 @@ impl Mpv {
         self.set_idle_mode(true)?;
         self.set_force_window(true)?;
         self.set_config(true)?;
+        self.set_input_default_bindings(true)?;
+        self.set_input_vo_keyboard(true)?;
+        self.set_input_media_keys(true)?;
         // TODO remove config from here
 
         let ret = unsafe { mpv_initialize(self.handle.0) };
@@ -304,6 +313,18 @@ impl Mpv {
 
     pub fn set_config(&self, config: bool) -> Result<()> {
         self.set_property(MpvProperty::Config, PropertyValue::Flag(config))
+    }
+
+    pub fn set_input_default_bindings(&self, flag: bool) -> Result<()> {
+        self.set_property(MpvProperty::InputDefaultBindings, PropertyValue::Flag(flag))
+    }
+
+    pub fn set_input_vo_keyboard(&self, flag: bool) -> Result<()> {
+        self.set_property(MpvProperty::InputVoKeyboard, PropertyValue::Flag(flag))
+    }
+
+    pub fn set_input_media_keys(&self, flag: bool) -> Result<()> {
+        self.set_property(MpvProperty::InputMediaKeys, PropertyValue::Flag(flag))
     }
 
     pub fn pause(&self, pause: bool) -> Result<()> {
