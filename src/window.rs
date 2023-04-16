@@ -276,17 +276,17 @@ impl Application for MainWindow {
                         WebSocketMessage::Received(msg) => {
                             //
                             match msg {
-                                ServerMessage::Ping(uuid) => {
+                                ServerMessage::Ping { uuid } => {
                                     debug!("Socket: received ping {uuid}");
                                     return ServerWebsocket::send_command(
                                         ws,
-                                        ServerMessage::Ping(uuid),
+                                        ServerMessage::Ping { uuid },
                                     );
                                 }
                                 ServerMessage::VideoStatus { filename, position } => {
                                     trace!("{filename}, {position:?}")
                                 }
-                                ServerMessage::StatusList(s) => debug!("{s:?}"),
+                                ServerMessage::StatusList { users } => debug!("{users:?}"),
                                 ServerMessage::Pause {
                                     filename: _,
                                     username: _,

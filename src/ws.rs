@@ -19,13 +19,17 @@ use crate::window::MainMessage;
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
 pub enum ServerMessage {
-    Ping(#[serde(rename = "uuid")] String),
+    Ping {
+        uuid: String,
+    },
     VideoStatus {
         filename: String,
         #[serde(with = "serde_millis")]
         position: Duration,
     },
-    StatusList(#[serde(rename = "users")] Vec<UserStatus>),
+    StatusList {
+        users: Vec<UserStatus>,
+    },
     Pause {
         filename: String,
         #[serde(skip_serializing)]
