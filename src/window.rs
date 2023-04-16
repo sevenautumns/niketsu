@@ -4,8 +4,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use iced::widget::button::{Appearance as ButtonAp, StyleSheet as ButtonSS};
 use iced::widget::{column, Button, TextInput};
-use iced::{Application, Command, Element, Renderer, Subscription, Theme};
+use iced::{Application, Command, Element, Renderer, Subscription, Theme, Vector};
 use log::*;
 
 use crate::config::Config;
@@ -395,8 +396,10 @@ impl Application for MainWindow {
                                         }
                                     } else if let Some(last_playing) = playing.as_mut() {
                                         last_playing.last_seek = position;
-                                        //TODO do not unwrap
-                                        mpv.set_playback_position(position).unwrap();
+                                        if last_playing.path.is_some() {
+                                            //TODO do not unwrap
+                                            mpv.set_playback_position(position).unwrap();
+                                        }
                                     }
                                 }
                                 ServerMessage::Select {
@@ -556,5 +559,50 @@ impl Application for MainWindow {
             return Subscription::batch([mpv, ws, db, heartbeat]);
         }
         Subscription::none()
+    }
+}
+
+pub struct ReadyTheme {
+    ready: bool,
+}
+
+impl ReadyTheme {
+    pub fn background(&self, style: &Theme) -> Option<iced::Background> {
+        match self.ready {
+            true => Some(iced::Background::Color(style.palette().success)),
+            false => Some(iced::Background::Color(style.palette().danger)),
+        }
+    }
+}
+
+impl ButtonSS for ReadyTheme {
+    type Style = Theme;
+
+    fn active(&self, style: &Self::Style) -> ButtonAp {
+        ButtonAp {
+            background: self.background(style),
+            ..style.active(&iced::theme::Button::Text)
+        }
+    }
+
+    fn hovered(&self, style: &Self::Style) -> ButtonAp {
+        ButtonAp {
+            background: self.background(style),
+            ..style.hovered(&iced::theme::Button::Text)
+        }
+    }
+
+    fn pressed(&self, style: &Self::Style) -> ButtonAp {
+        ButtonAp {
+            background: self.background(style),
+            ..style.pressed(&iced::theme::Button::Text)
+        }
+    }
+
+    fn disabled(&self, style: &Self::Style) -> ButtonAp {
+        ButtonAp {
+            background: self.background(style),
+            ..style.disabled(&iced::theme::Button::Text)
+        }
     }
 }
