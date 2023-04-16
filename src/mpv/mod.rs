@@ -10,8 +10,10 @@ use futures::StreamExt;
 use iced::Subscription;
 use strum::{AsRefStr, EnumString};
 use tokio::sync::Mutex;
+use url::Url;
 
 use self::event::{MpvEvent, MpvEventPipe, PropertyValue};
+use crate::file_table::Video;
 use crate::mpv::bindings::*;
 use crate::window::MainMessage;
 
@@ -36,6 +38,7 @@ pub enum MpvProperty {
     KeepOpen,
     ForceWindow,
     Idle,
+    Config,
 }
 
 impl TryFrom<MpvProperty> for CString {
@@ -56,6 +59,7 @@ impl MpvProperty {
             MpvProperty::KeepOpen => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::ForceWindow => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Idle => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::Config => mpv_format::MPV_FORMAT_FLAG,
         }
     }
 }
@@ -78,7 +82,7 @@ impl TryFrom<MpvCommand> for CString {
 #[derive(Debug)]
 pub struct Mpv {
     handle: MpvHandle,
-    file: Option<String>,
+    file: Option<Video>,
     paused: bool,
     last_seek: Option<SeekEvent>,
     event_pipe: Arc<Mutex<MpvEventPipe>>,
@@ -112,9 +116,9 @@ impl Mpv {
                     }
                 }
                 (MpvProperty::Filename, PropertyValue::String(file)) => {
-                    let file = file.to_str()?;
+                    let file = Video::from_string(file.to_str()?.to_string());
                     match &self.file {
-                        Some(sf) if sf.ne(file) => Ok(Some(MpvResultingAction::ReOpenFile)),
+                        Some(sf) if sf.ne(&file) => Ok(Some(MpvResultingAction::ReOpenFile)),
                         None => {
                             let cmd = MpvCommand::Stop.try_into()?;
                             self.send_command(&[&cmd])?;
@@ -162,6 +166,7 @@ impl Mpv {
         self.set_keep_open(true)?;
         self.set_idle_mode(true)?;
         self.set_force_window(true)?;
+        self.set_config(true)?;
         // TODO remove config from here
 
         let ret = unsafe { mpv_initialize(self.handle.0) };
@@ -203,21 +208,34 @@ impl Mpv {
         Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
     }
 
-    pub fn load_file(&mut self, file: PathBuf) -> Result<()> {
+    fn load(&mut self, path: CString, video: Video) -> Result<()> {
         let cmd = MpvCommand::Loadfile.try_into()?;
         // TODO do not unwrap
-        let filename = file
+        self.send_command(&[&cmd, &path])?;
+        self.file = Some(video);
+        Ok(())
+    }
+
+    pub fn load_file(&mut self, path: PathBuf) -> Result<()> {
+        // TODO do not unwrap
+        let filename = path
             .as_path()
             .file_name()
             .unwrap()
             .to_str()
             .unwrap()
             .to_string();
+        let video = Video::File(filename);
         // TODO do not unwrap
-        let file_cstring = CString::new(file.as_os_str().to_str().unwrap())?;
-        self.send_command(&[&cmd, &file_cstring])?;
-        self.file = Some(filename);
-        Ok(())
+        let path_cstring = CString::new(path.as_os_str().to_str().unwrap())?;
+        self.load(path_cstring, video)
+    }
+
+    pub fn load_url(&mut self, url: Url) -> Result<()> {
+        let video = Video::Url(url);
+        // TODO do not unwrap
+        let url_cstring = CString::new(video.as_str())?;
+        self.load(url_cstring, video)
     }
 
     fn set_property(&self, prop: MpvProperty, value: PropertyValue) -> Result<()> {
@@ -262,6 +280,10 @@ impl Mpv {
 
     pub fn set_force_window(&self, force_window: bool) -> Result<()> {
         self.set_property(MpvProperty::ForceWindow, PropertyValue::Flag(force_window))
+    }
+
+    pub fn set_config(&self, config: bool) -> Result<()> {
+        self.set_property(MpvProperty::Config, PropertyValue::Flag(config))
     }
 
     pub fn pause(&self, pause: bool) -> Result<()> {

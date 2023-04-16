@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use iced::keyboard::KeyCode;
+use iced::keyboard::{KeyCode, Modifiers};
 use iced::theme::{Button as ButtonTheme, Rule as RuleTheme};
 use iced::widget::button::{Appearance as ButtonAp, StyleSheet as ButtonSS};
 use iced::widget::rule::{Appearance as RuleAp, FillMode, StyleSheet as RuleSS};
@@ -10,6 +10,7 @@ use iced::{Element, Length, Renderer, Size, Theme, Vector};
 use iced_native::widget::Tree;
 use iced_native::Widget;
 use log::*;
+use url::Url;
 
 use crate::window::MainMessage;
 
@@ -18,15 +19,38 @@ pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 pub enum PlaylistWidgetMessage {
-    FileDoubleClick(String),
-    FileDelete(String),
-    FileMove(String, usize),
-    FileInteraction(Option<String>, Interaction),
+    DoubleClick(Video),
+    Delete(Video),
+    Move(Video, usize),
+    Interaction(Option<Video>, Interaction),
 }
 
 impl From<PlaylistWidgetMessage> for MainMessage {
     fn from(msg: PlaylistWidgetMessage) -> Self {
         MainMessage::FileTable(msg)
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Video {
+    File(String),
+    Url(Url),
+}
+
+impl Video {
+    pub fn from_string(video: String) -> Self {
+        if let Ok(url) = Url::parse(&video) {
+            Self::Url(url)
+        } else {
+            Self::File(video)
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Video::File(file) => &file,
+            Video::Url(url) => url.as_str(),
+        }
     }
 }
 
@@ -40,7 +64,7 @@ impl<'a> PlaylistWidget<'a> {
         // TODO Add context menu
 
         let mut file_btns = vec![];
-        for f in state.files.iter() {
+        for f in state.videos.iter() {
             let pressed = state.selected.as_ref().map_or(false, |f_i| f.eq(f_i));
             file_btns.push(
                 Button::new(f.as_str())
@@ -82,14 +106,14 @@ impl<'a> PlaylistWidget<'a> {
         }
         // In-case we are at the end of the file list,
         // check if we are above or below
-        if closest.1 == self.state.files.len() - 1 {
+        if closest.1 == self.state.videos.len() - 1 {
             if let Some(l) = layout.children().next()?.children().last() {
                 let top = l.position();
                 let mut bottom = top;
                 bottom.y += l.bounds().height;
                 let dist = bottom.distance(cursor_position);
                 if dist < closest.0 {
-                    closest = (dist, self.state.files.len(), bottom)
+                    closest = (dist, self.state.videos.len(), bottom)
                 }
             }
         }
@@ -101,12 +125,12 @@ impl<'a> PlaylistWidget<'a> {
         // dont send an index if we handle files within the playlist
         if let Interaction::Pressing(_) = self.state.interaction {
             if let Some(sele) = &self.state.selected {
-                if let Some(clos) = self.state.files.get(closest.1.saturating_sub(1)) {
+                if let Some(clos) = self.state.videos.get(closest.1.saturating_sub(1)) {
                     if clos.eq(sele) {
                         return None;
                     }
                 }
-                if let Some(clos) = self.state.files.get(closest.1) {
+                if let Some(clos) = self.state.videos.get(closest.1) {
                     if clos.eq(sele) {
                         return None;
                     }
@@ -120,10 +144,10 @@ impl<'a> PlaylistWidget<'a> {
         &self,
         layout: iced_native::Layout<'_>,
         cursor_position: iced_native::Point,
-    ) -> Option<String> {
+    ) -> Option<Video> {
         let files = self
             .state
-            .files
+            .videos
             .iter()
             .zip(layout.children().next()?.children());
         for (file, lay) in files {
@@ -145,13 +169,13 @@ impl<'a> PlaylistWidget<'a> {
             // if let Some(i) = self.state.file_index(&file) {
             let interaction = Interaction::Pressing(Instant::now());
             shell.publish(
-                PlaylistWidgetMessage::FileInteraction(Some(file.clone()), interaction).into(),
+                PlaylistWidgetMessage::Interaction(Some(file.clone()), interaction).into(),
             );
 
             if let Some(prev_file) = &self.state.selected {
                 if let Interaction::Released(when) = self.state.interaction {
                     if file.eq(prev_file) && when.elapsed() < MAX_DOUBLE_CLICK_INTERVAL {
-                        shell.publish(PlaylistWidgetMessage::FileDoubleClick(file).into());
+                        shell.publish(PlaylistWidgetMessage::DoubleClick(file).into());
                     }
                 }
                 // }
@@ -174,7 +198,7 @@ impl<'a> PlaylistWidget<'a> {
                     f.file_name()
                         .and_then(|f| f.to_str().map(|f| f.to_string()))
                 }) {
-                    shell.publish(PlaylistWidgetMessage::FileMove(name, 0).into());
+                    shell.publish(PlaylistWidgetMessage::Move(Video::from_string(name), 0).into());
                 }
                 // }
             }
@@ -182,11 +206,11 @@ impl<'a> PlaylistWidget<'a> {
                 let pos = state.cursor_position;
                 if let Some((i, _)) = self.closest_index(layout, pos) {
                     if let Some(file) = &self.state.selected {
-                        shell.publish(PlaylistWidgetMessage::FileMove(file.clone(), i).into())
+                        shell.publish(PlaylistWidgetMessage::Move(file.clone(), i).into())
                     }
                 }
                 shell.publish(
-                    PlaylistWidgetMessage::FileInteraction(
+                    PlaylistWidgetMessage::Interaction(
                         self.state.selected.clone(),
                         Interaction::Released(Instant::now()),
                     )
@@ -195,7 +219,7 @@ impl<'a> PlaylistWidget<'a> {
             }
             Interaction::Released(_) => {
                 shell.publish(
-                    PlaylistWidgetMessage::FileInteraction(
+                    PlaylistWidgetMessage::Interaction(
                         self.state.selected.clone(),
                         Interaction::None,
                     )
@@ -208,7 +232,7 @@ impl<'a> PlaylistWidget<'a> {
 
     fn deleted(&self, shell: &mut iced_native::Shell<'_, MainMessage>) {
         if let Some(f) = &self.state.selected {
-            shell.publish(PlaylistWidgetMessage::FileDelete(f.clone()).into())
+            shell.publish(PlaylistWidgetMessage::Delete(f.clone()).into())
         }
     }
 }
@@ -346,6 +370,13 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
                 if modifiers.is_empty() && *key_code == KeyCode::Delete {
                     self.deleted(shell)
                 }
+                if modifiers.contains(Modifiers::CTRL) && *key_code == KeyCode::V {
+                    if let Some(clipboard) = clipboard.read() {
+                        shell.publish(
+                            PlaylistWidgetMessage::Move(Video::from_string(clipboard), 0).into(),
+                        )
+                    }
+                }
             }
             iced::Event::Mouse(event) => {
                 status = iced_native::event::Status::Captured;
@@ -377,7 +408,7 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
                     iced::window::Event::FileHovered(_) => {
                         if !self.state.interaction.is_press_extern() {
                             shell.publish(
-                                PlaylistWidgetMessage::FileInteraction(
+                                PlaylistWidgetMessage::Interaction(
                                     self.state.selected.clone(),
                                     Interaction::PressingExternal,
                                 )
@@ -390,7 +421,7 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
                         self.released(Some(file.clone()), inner_state, layout, shell)
                     }
                     iced::window::Event::FilesHoveredLeft => shell.publish(
-                        PlaylistWidgetMessage::FileInteraction(
+                        PlaylistWidgetMessage::Interaction(
                             self.state.selected.clone(),
                             Interaction::None,
                         )
@@ -428,8 +459,8 @@ struct InnerState {
 pub struct PlaylistWidgetState {
     //TODO
     // active: bool,
-    files: Vec<String>,
-    selected: Option<String>,
+    videos: Vec<Video>,
+    selected: Option<Video>,
     interaction: Interaction,
 }
 
@@ -462,39 +493,39 @@ impl PlaylistWidgetState {
     //     self.active = activate;
     // }
 
-    pub fn move_file(&mut self, file: String, index: usize) -> Vec<String> {
+    pub fn move_video(&mut self, video: Video, index: usize) -> Vec<Video> {
         let mut index = index;
-        if let Some(i) = self.file_index(&file) {
+        if let Some(i) = self.video_index(&video) {
             if index > i {
                 index -= 1
             }
-            self.files.remove(i);
-            self.files.insert(index, file)
+            self.videos.remove(i);
+            self.videos.insert(index, video)
         } else {
-            self.files.push(file)
+            self.videos.push(video)
         }
 
-        self.files.clone()
+        self.videos.clone()
     }
 
-    pub fn next_file(&mut self, file: &str) -> Option<String> {
-        if let Some(i) = self.file_index(&file) {
-            return self.files.get(i + 1).cloned();
+    pub fn next_video(&mut self, video: &Video) -> Option<Video> {
+        if let Some(i) = self.video_index(&video) {
+            return self.videos.get(i + 1).cloned();
         }
         None
     }
 
-    pub fn file_interaction(&mut self, file: Option<String>, interaction: Interaction) {
-        self.selected = file;
+    pub fn file_interaction(&mut self, video: Option<Video>, interaction: Interaction) {
+        self.selected = video;
         self.interaction = interaction;
     }
 
-    pub fn delete_file(&mut self, file: &str) -> Vec<String> {
+    pub fn delete_video(&mut self, video: &Video) -> Vec<Video> {
         // TODO on delete move selected file to file above (or below if non are above)
-        if let Some(i) = self.file_index(&file) {
-            self.files.remove(i);
+        if let Some(i) = self.video_index(&video) {
+            self.videos.remove(i);
         }
-        self.files.clone()
+        self.videos.clone()
     }
 
     // pub fn insert_file(&mut self, file: String) -> Vec<File> {
@@ -505,10 +536,9 @@ impl PlaylistWidgetState {
     //     self.files.clone()
     // }
 
-    pub fn replace_files(&mut self, files: Vec<String>) {
-        // TODO take uuids from old Vec
-        let mut files = files;
-        self.files = files.drain(..).collect();
+    pub fn replace_videos(&mut self, videos: Vec<String>) {
+        let mut videos = videos;
+        self.videos = videos.drain(..).map(|v| Video::from_string(v)).collect();
         // TODO If last pressed file does not exist anymore, change interaction
         // if let Some((file, _)) = &self.last_press {
         //     if !self.files.iter().any(|f| file.uuid.eq(&f.uuid)) {
@@ -519,9 +549,9 @@ impl PlaylistWidgetState {
         self.interaction = Interaction::None;
     }
 
-    pub fn file_index(&self, file: &str) -> Option<usize> {
-        for (i, f) in self.files.iter().enumerate() {
-            if f.eq(file) {
+    pub fn video_index(&self, video: &Video) -> Option<usize> {
+        for (i, v) in self.videos.iter().enumerate() {
+            if v.eq(video) {
                 return Some(i);
             }
         }

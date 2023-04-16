@@ -62,6 +62,7 @@
               gcc
               musl.dev
               pkgconfig
+              yt-dlp
             ];
             git.hooks = {
               enable = true;
