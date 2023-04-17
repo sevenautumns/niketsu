@@ -462,7 +462,7 @@ impl Application for MainWindow {
                         WebSocketMessage::TungStringError { msg, err } => error!("{msg}, {err:?}"),
                         WebSocketMessage::SerdeError { msg, err } => error!("{msg}, {err:?}"),
                         WebSocketMessage::WsStreamEnded => {
-                            messages.push(String::from("Websocket connection error"));
+                            messages.push(String::from("Server connection ended"));
                             error!("Websocket ended")
                         }
                         WebSocketMessage::Connected => {
