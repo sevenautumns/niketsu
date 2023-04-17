@@ -77,14 +77,10 @@ impl<'a> PlaylistWidget<'a> {
 
         Self {
             state,
-            base: Scrollable::new(
-                Column::with_children(file_btns)
-                    .height(Length::Fill)
-                    .width(Length::Fill),
-            )
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .into(),
+            base: Scrollable::new(Column::with_children(file_btns).width(Length::Fill))
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .into(),
         }
     }
 }
