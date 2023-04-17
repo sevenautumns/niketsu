@@ -48,6 +48,7 @@ pub struct PlayingFile {
     path: Option<PathBuf>,
     heartbeat: bool,
     last_seek: Duration,
+    paused: bool,
 }
 
 impl PlayingFile {
@@ -176,18 +177,19 @@ impl Application for MainWindow {
                                 path: None,
                                 last_seek: Duration::ZERO,
                                 heartbeat: false,
+                                paused: true,
                             });
                             if let Some(playing) = playing.as_mut() {
                                 match &playing.video {
                                     Video::File(filename) => {
                                         if let Ok(Some(file)) = db.find_file(filename) {
                                             playing.path = Some(file.path.clone());
-                                            mpv.load_file(file.path).log();
+                                            mpv.load_file(file.path, playing.paused).log();
                                         }
                                     }
                                     Video::Url(url) => {
                                         playing.path = Some(PathBuf::default());
-                                        mpv.load_url(url.clone()).log();
+                                        mpv.load_url(url.clone(), playing.paused).log();
                                     }
                                 }
                             }
@@ -246,18 +248,19 @@ impl Application for MainWindow {
                                         path: None,
                                         heartbeat: false,
                                         last_seek: Duration::ZERO,
+                                        paused: true,
                                     });
                                     if let Some(playing) = playing.as_mut() {
                                         match &playing.video {
                                             Video::File(filename) => {
                                                 if let Ok(Some(file)) = db.find_file(filename) {
                                                     playing.path = Some(file.path.clone());
-                                                    mpv.load_file(file.path).log();
+                                                    mpv.load_file(file.path, playing.paused).log();
                                                 }
                                             }
                                             Video::Url(url) => {
                                                 playing.path = Some(PathBuf::default());
-                                                mpv.load_url(url.clone()).log();
+                                                mpv.load_url(url.clone(), playing.paused).log();
                                             }
                                         }
                                     }
@@ -279,6 +282,7 @@ impl Application for MainWindow {
                                         filename: playing.video.as_str().to_string(),
                                         position,
                                         username: user.clone(),
+                                        paused: playing.paused,
                                     },
                                 );
                             }
@@ -290,14 +294,14 @@ impl Application for MainWindow {
                                     Video::File(filename) => {
                                         if let Ok(Some(file)) = db.find_file(filename) {
                                             playing.path = Some(file.path.clone());
-                                            mpv.load_file(file.path).log();
+                                            mpv.load_file(file.path, playing.paused).log();
                                         } else {
                                             playing.path = None;
                                         }
                                     }
                                     Video::Url(url) => {
                                         playing.path = Some(PathBuf::default());
-                                        mpv.load_url(url.clone()).log();
+                                        mpv.load_url(url.clone(), playing.paused).log();
                                     }
                                 }
                             }
@@ -352,32 +356,34 @@ impl Application for MainWindow {
                                         ServerMessage::Ping { uuid },
                                     );
                                 }
-                                ServerMessage::VideoStatus { filename, position } => {
-                                    trace!("{filename}, {position:?}")
+                                ServerMessage::VideoStatus {
+                                    filename,
+                                    position,
+                                    paused,
+                                } => {
+                                    trace!("{filename}, {position:?}, {paused:?}")
                                 }
                                 ServerMessage::StatusList { users: usrs } => {
                                     debug!("{users:?}");
                                     *users = usrs;
                                 }
-                                ServerMessage::Pause {
-                                    filename: _,
-                                    username: _,
-                                } => {
+                                ServerMessage::Pause { username, .. } => {
+                                    messages.push(format!("{username} paused the video"));
                                     debug!("Socket: received pause");
                                     mpv.pause(true).log();
                                 }
-                                ServerMessage::Start {
-                                    filename: _,
-                                    username: _,
-                                } => {
+                                ServerMessage::Start { username, .. } => {
+                                    messages.push(format!("{username} started the video"));
                                     debug!("Socket: received start");
                                     mpv.pause(false).log();
                                 }
                                 ServerMessage::Seek {
                                     filename,
                                     position,
-                                    username: _,
+                                    username,
+                                    paused,
                                 } => {
+                                    messages.push(format!("{username} seeked to {position:?}"));
                                     debug!("Socket: received seek {position:?}");
                                     if filename.ne(playing
                                         .as_ref()
@@ -389,18 +395,20 @@ impl Application for MainWindow {
                                             path: None,
                                             heartbeat: false,
                                             last_seek: position,
+                                            paused,
                                         });
                                         if let Some(playing) = playing.as_mut() {
                                             match &playing.video {
                                                 Video::File(filename) => {
                                                     if let Ok(Some(file)) = db.find_file(filename) {
                                                         playing.path = Some(file.path.clone());
-                                                        mpv.load_file(file.path).log();
+                                                        mpv.load_file(file.path, playing.paused)
+                                                            .log();
                                                     }
                                                 }
                                                 Video::Url(url) => {
                                                     playing.path = Some(PathBuf::default());
-                                                    mpv.load_url(url.clone()).log();
+                                                    mpv.load_url(url.clone(), playing.paused).log();
                                                 }
                                             }
                                         }
@@ -411,30 +419,28 @@ impl Application for MainWindow {
                                         }
                                     }
                                 }
-                                ServerMessage::Select {
-                                    filename,
-                                    username: _,
-                                } => {
+                                ServerMessage::Select { filename, username } => {
+                                    messages.push(format!("{username} changed file"));
                                     debug!("Socket: received select: {filename}");
-                                    //TODO do not unwrap
                                     mpv.pause(true).unwrap();
                                     *playing = Some(PlayingFile {
                                         video: Video::from_string(filename),
                                         path: None,
                                         last_seek: Duration::ZERO,
                                         heartbeat: false,
+                                        paused: true,
                                     });
                                     if let Some(playing) = playing.as_mut() {
                                         match &playing.video {
                                             Video::File(filename) => {
                                                 if let Ok(Some(file)) = db.find_file(filename) {
                                                     playing.path = Some(file.path.clone());
-                                                    mpv.load_file(file.path).log();
+                                                    mpv.load_file(file.path, playing.paused).log();
                                                 }
                                             }
                                             Video::Url(url) => {
                                                 playing.path = Some(PathBuf::default());
-                                                mpv.load_url(url.clone()).log();
+                                                mpv.load_url(url.clone(), playing.paused).log();
                                             }
                                         }
                                     }
@@ -443,10 +449,10 @@ impl Application for MainWindow {
                                     trace!("{username}: {message}");
                                     messages.push(format!("{username}: {message}"));
                                 }
-                                ServerMessage::Playlist {
-                                    playlist,
-                                    username: _,
-                                } => playlist_widget.replace_videos(playlist),
+                                ServerMessage::Playlist { playlist, username } => {
+                                    playlist_widget.replace_videos(playlist);
+                                    messages.push(format!("{username} changed playlist"));
+                                }
                                 ServerMessage::Status { ready, username } => {
                                     warn!("{username}: {ready:?}")
                                 }
@@ -455,8 +461,12 @@ impl Application for MainWindow {
                         WebSocketMessage::TungError { err } => error!("{err:?}"),
                         WebSocketMessage::TungStringError { msg, err } => error!("{msg}, {err:?}"),
                         WebSocketMessage::SerdeError { msg, err } => error!("{msg}, {err:?}"),
-                        WebSocketMessage::WsStreamEnded => error!("Websocket ended"),
+                        WebSocketMessage::WsStreamEnded => {
+                            messages.push(String::from("Websocket connection error"));
+                            error!("Websocket ended")
+                        }
                         WebSocketMessage::Connected => {
+                            messages.push(String::from("Connected to server"));
                             trace!("Socket: connected");
                             return ServerWebsocket::send_command(
                                 ws,
@@ -504,7 +514,7 @@ impl Application for MainWindow {
                                 if playing.path.is_none() {
                                     if let Ok(Some(file)) = db.find_file(playing.video.as_str()) {
                                         playing.path = Some(file.path.clone());
-                                        mpv.load_file(file.path).log();
+                                        mpv.load_file(file.path, playing.paused).log();
                                     }
                                 }
                             }
@@ -521,6 +531,7 @@ impl Application for MainWindow {
                                 ServerMessage::VideoStatus {
                                     filename: playing.video.as_str().to_string(),
                                     position,
+                                    paused: playing.paused,
                                 },
                             );
                         }
@@ -532,7 +543,6 @@ impl Application for MainWindow {
     }
 
     fn view(&self) -> Element<'_, Self::Message, Renderer<Self::Theme>> {
-        // container(column![].spacing(20).padding(20).max_width(600)).into()
         match self {
             MainWindow::Startup { config } => Container::new(
                 Container::new(
@@ -566,15 +576,11 @@ impl Application for MainWindow {
             .into(),
             MainWindow::Running {
                 playlist_widget,
-                mpv: _,
-                ws: _,
-                db: _,
                 ready,
-                user: _,
-                playing: _,
                 messages,
                 message,
                 users,
+                ..
             } => {
                 let mut btn;
                 match ready {
@@ -644,7 +650,6 @@ impl Application for MainWindow {
                             .height(Length::Fill),
                         btn.width(Length::Fill)
                     )
-                    // .align_items(Alignment::End)
                     .width(Length::Fill)
                     .spacing(5.0)
                 )
@@ -657,16 +662,11 @@ impl Application for MainWindow {
 
     fn subscription(&self) -> Subscription<Self::Message> {
         if let MainWindow::Running {
-            playlist_widget: _,
             mpv,
             ws,
             db,
-            ready: _,
-            user: _,
             playing,
-            messages: _,
-            message: _,
-            users: _,
+            ..
         } = self
         {
             // TODO use .map() here instead

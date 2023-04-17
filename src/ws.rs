@@ -26,6 +26,7 @@ pub enum ServerMessage {
         filename: String,
         #[serde(with = "serde_millis")]
         position: Duration,
+        paused: bool,
     },
     StatusList {
         users: Vec<UserStatus>,
@@ -46,6 +47,8 @@ pub enum ServerMessage {
         position: Duration,
         #[serde(skip_serializing)]
         username: String,
+        #[serde(skip_serializing)]
+        paused: bool,
     },
     Select {
         filename: String,

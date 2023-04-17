@@ -230,15 +230,15 @@ impl Mpv {
         Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
     }
 
-    fn load(&mut self, path: CString, video: Video) -> Result<()> {
+    fn load(&mut self, path: CString, video: Video, paused: bool) -> Result<()> {
+        self.pause(paused)?;
         let cmd = MpvCommand::Loadfile.try_into()?;
-        // TODO do not unwrap
         self.send_command(&[&cmd, &path])?;
         self.file = Some(video);
         Ok(())
     }
 
-    pub fn load_file(&mut self, path: PathBuf) -> Result<()> {
+    pub fn load_file(&mut self, path: PathBuf, paused: bool) -> Result<()> {
         // TODO do not unwrap
         let filename = path
             .as_path()
@@ -250,14 +250,13 @@ impl Mpv {
         let video = Video::File(filename);
         // TODO do not unwrap
         let path_cstring = CString::new(path.as_os_str().to_str().unwrap())?;
-        self.load(path_cstring, video)
+        self.load(path_cstring, video, paused)
     }
 
-    pub fn load_url(&mut self, url: Url) -> Result<()> {
+    pub fn load_url(&mut self, url: Url, paused: bool) -> Result<()> {
         let video = Video::Url(url);
-        // TODO do not unwrap
         let url_cstring = CString::new(video.as_str())?;
-        self.load(url_cstring, video)
+        self.load(url_cstring, video, paused)
     }
 
     fn set_property(&self, prop: MpvProperty, value: PropertyValue) -> Result<()> {
@@ -327,7 +326,8 @@ impl Mpv {
         self.set_property(MpvProperty::InputMediaKeys, PropertyValue::Flag(flag))
     }
 
-    pub fn pause(&self, pause: bool) -> Result<()> {
+    pub fn pause(&mut self, pause: bool) -> Result<()> {
+        self.paused = pause;
         self.set_property(MpvProperty::Pause, PropertyValue::Flag(pause))
     }
 
