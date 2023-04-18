@@ -47,7 +47,6 @@ pub enum ServerMessage {
         position: Duration,
         #[serde(skip_serializing)]
         username: String,
-        #[serde(skip_serializing)]
         paused: bool,
     },
     Select {
@@ -183,7 +182,6 @@ impl ServerWebsocket {
                                 )
                             }
                             Err(err) => {
-                                // TODO is 1 second sensible?
                                 tokio::time::sleep(Duration::from_secs(1)).await;
                                 (
                                     WebSocketMessage::TungError { err: Arc::new(err) }.into(),
