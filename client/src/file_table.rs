@@ -10,8 +10,8 @@ use iced::{Element, Length, Renderer, Size, Theme, Vector};
 use iced_native::widget::Tree;
 use iced_native::Widget;
 use log::*;
-use url::Url;
 
+use crate::video::Video;
 use crate::window::MainMessage;
 
 // TODO make configurable
@@ -28,29 +28,6 @@ pub enum PlaylistWidgetMessage {
 impl From<PlaylistWidgetMessage> for MainMessage {
     fn from(msg: PlaylistWidgetMessage) -> Self {
         MainMessage::FileTable(msg)
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Video {
-    File(String),
-    Url(Url),
-}
-
-impl Video {
-    pub fn from_string(video: String) -> Self {
-        if let Ok(url) = Url::parse(&video) {
-            Self::Url(url)
-        } else {
-            Self::File(video)
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            Video::File(file) => file,
-            Video::Url(url) => url.as_str(),
-        }
     }
 }
 
@@ -398,34 +375,31 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
                     _ => {}
                 }
             }
-            iced::Event::Window(event) => {
-                //TODO file hover and file dropped
-                match event {
-                    iced::window::Event::FileHovered(_) => {
-                        if !self.state.interaction.is_press_extern() {
-                            shell.publish(
-                                PlaylistWidgetMessage::Interaction(
-                                    self.state.selected.clone(),
-                                    Interaction::PressingExternal,
-                                )
-                                .into(),
+            iced::Event::Window(event) => match event {
+                iced::window::Event::FileHovered(_) => {
+                    if !self.state.interaction.is_press_extern() {
+                        shell.publish(
+                            PlaylistWidgetMessage::Interaction(
+                                self.state.selected.clone(),
+                                Interaction::PressingExternal,
                             )
-                        }
-                    }
-                    iced::window::Event::FileDropped(file) => {
-                        trace!("File dropped: {file:?}");
-                        self.released(Some(file.clone()), inner_state, layout, shell)
-                    }
-                    iced::window::Event::FilesHoveredLeft => shell.publish(
-                        PlaylistWidgetMessage::Interaction(
-                            self.state.selected.clone(),
-                            Interaction::None,
+                            .into(),
                         )
-                        .into(),
-                    ),
-                    _ => {}
+                    }
                 }
-            }
+                iced::window::Event::FileDropped(file) => {
+                    trace!("File dropped: {file:?}");
+                    self.released(Some(file.clone()), inner_state, layout, shell)
+                }
+                iced::window::Event::FilesHoveredLeft => shell.publish(
+                    PlaylistWidgetMessage::Interaction(
+                        self.state.selected.clone(),
+                        Interaction::None,
+                    )
+                    .into(),
+                ),
+                _ => {}
+            },
             _ => {}
         }
 
