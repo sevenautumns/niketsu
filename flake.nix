@@ -5,9 +5,11 @@
     devshell.url = "github:numtide/devshell";
     fenix.url = "github:nix-community/fenix";
     fenix.inputs.nixpkgs.follows = "nixpkgs";
+    naersk.url = "github:nix-community/naersk";
+    naersk.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, devshell, utils, fenix, ... }@inputs:
+  outputs = { self, nixpkgs, devshell, utils, fenix, naersk, ... }@inputs:
     utils.lib.eachSystem [ "aarch64-linux" "i686-linux" "x86_64-linux" ]
       (system:
         let
@@ -24,6 +26,10 @@
               latest.rustfmt
               targets.x86_64-unknown-linux-musl.stable.rust-std
             ];
+          naersk-lib = (naersk.lib.${system}.override {
+            cargo = rust-toolchain;
+            rustc = rust-toolchain;
+          });
           # C_INCLUDE_PATH = with pkgs;
           #   lib.concatStringsSep ":" [
           #     "${mpv}/include"
@@ -34,7 +40,7 @@
           C_INCLUDE_PATH = lib.makeSearchPathOutput "dev" "include"
             (with pkgs; [ xorg.libX11 mpv fontconfig freetype expat musl ]);
           LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.libclang.lib ];
-          LIBRARY_PATH = lib.makeLibraryPath (with pkgs; [
+          libraries = with pkgs; [
             mpv
             xorg.libX11
             xorg.libXcursor
@@ -44,10 +50,51 @@
             freetype
             fontconfig
             vulkan-loader
-          ]);
-          PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig" (with pkgs; [ expat fontconfig freetype ]);
+          ];
+          LIBRARY_PATH = lib.makeLibraryPath libraries;
+          PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig"
+            (with pkgs; [ expat fontconfig freetype ]);
         in
         rec {
+          packages = {
+            default = packages.niketsu-client;
+            niketsu-client = naersk-lib.buildPackage rec {
+              pname = "niketsu";
+              root = ./.;
+              cargoBuildOptions = x:
+                x ++ [ "--target" "x86_64-unknown-linux-musl" ];
+              cargoTestOptions = x:
+                x ++ [ "--target" "x86_64-unknown-linux-musl" ];
+              nativeBuildInputs = with pkgs; [ cmake pkgconfig ] ++ libraries;
+              LIBCLANG_PATH =
+                lib.makeLibraryPath [ pkgs.llvmPackages.libclang.lib ];
+              preConfigure = ''
+                export BINDGEN_EXTRA_CLANG_ARGS='-isystem ${
+                  lib.makeSearchPathOutput "dev" "include" [ pkgs.musl ]
+                }'
+                export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}
+                export LIBRARY_PATH=${LIBRARY_PATH}
+                export C_INCLUDE_PATH=${C_INCLUDE_PATH}
+              '';
+            };
+            niketsu-server = pkgs.buildGoModule rec {
+              pname = "niketsu-server";
+              version = "0.1.0";
+              src = ./.;
+              buildInputs = with pkgs; [ stdenv go glibc.static ];
+              ldflags = [
+                "-s"
+                "-w"
+                "-linkmode external"
+                "-extldflags"
+                "-static"
+              ];
+              postInstall = ''
+                mv $out/bin/server $out/bin/niketsu-server
+              '';
+              vendorHash = "sha256-JsGAq0ETM00yN60IbnN/uRF4dtu/MQ1Hxu5OjcD/MRg=";
+            };
+          };
           devShells.default = (pkgs.devshell.mkShell {
             imports = [ "${devshell}/extra/git/hooks.nix" ];
             name = "niketsu-dev-shell";
@@ -63,6 +110,7 @@
               musl.dev
               pkgconfig
               yt-dlp
+              go
             ];
             git.hooks = {
               enable = true;

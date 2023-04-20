@@ -6,3 +6,8 @@ includes = ["*.nix"]
 command = "rustfmt"
 options = ["--edition", "2021"]
 includes = ["*.rs"]
+
+[formatter.go]
+command = "gofmt"
+options = ["-w"]
+includes = ["*.go"]
