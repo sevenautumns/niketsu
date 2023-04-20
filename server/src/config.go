@@ -29,6 +29,7 @@ var writeMutex sync.Mutex
 func GetConfig() (ServerConfig, PlaylistConfig) {
 	var configFile string
 	flag.StringVar(&configFile, "config", "server/config.toml", "path to config file (toml)")
+	flag.Parse()
 
 	var serverConfig ServerConfig
 	_, err := toml.DecodeFile(configFile, &serverConfig)
