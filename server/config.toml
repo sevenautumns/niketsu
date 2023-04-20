@@ -1,0 +1,6 @@
+title = "Server Configuration"
+
+Host = "localhost"
+Port = 7766
+SaveFile = "playlist.toml"
+Debug = true
