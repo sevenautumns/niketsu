@@ -5,8 +5,10 @@
 <p align="center">Refer to the owner of the repository for the full documentation, examples and guides *wink wink*</p>
 
 <div align="center">
-    [![Rust Report Card](https://rust-reportcard.xuri.me/report/github.com/sevenautumns/niketsu)](https://rust-reportcard.xuri.me/report/github.com/sevenautumns/niketsu)
-    [![Go Report Card](https://goreportcard.com/report/github.com/sevenautumns/niketsu)](https://goreportcard.com/report/github.com/sevenautumns/niketsu)
+
+[![Rust Report Card](https://rust-reportcard.xuri.me/badge/github.com/sevenautumns/niketsu)](https://rust-reportcard.xuri.me/report/github.com/sevenautumns/niketsu)
+[![Go Report Card](https://goreportcard.com/badge/github.com/sevenautumns/niketsu)](https://goreportcard.com/report/github.com/sevenautumns/niketsu)
+
 </div>
 
 Naive video synchronization between multiple clients of mpv.
