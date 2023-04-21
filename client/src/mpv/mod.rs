@@ -153,7 +153,8 @@ impl Mpv {
                             match p {
                                 true => {
                                     if self.get_eof_reached()? {
-                                        self.playing = None;
+                                        // TODO this should be NONE, but the the window PlayNext fails rn
+                                        // self.playing = None;
                                         return Ok(Some(MpvResultingAction::PlayNext));
                                     }
                                     return Ok(Some(MpvResultingAction::Pause));
