@@ -3,7 +3,7 @@ name = "niketsu"
 version = "0.1.0"
 edition = "2021"
 authors = ["Sven Friedrich <sven@autumnal.de>"]
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [dependencies]
 pest = "2"
