@@ -8,11 +8,13 @@ use async_tungstenite::tungstenite::{Error as TsError, Message as TsMessage};
 use async_tungstenite::WebSocketStream;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt, SinkExt, StreamExt};
-use iced::{Command, Subscription};
+use iced::widget::{Row, Text};
+use iced::{Command, Renderer, Subscription, Theme};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
+use crate::user::ThisUser;
 use crate::window::MainMessage;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -75,6 +77,21 @@ pub enum ServerMessage {
 pub struct UserStatus {
     pub username: String,
     pub ready: bool,
+}
+
+impl UserStatus {
+    pub fn to_text<'a>(&self, user: &ThisUser, theme: &Theme) -> Row<'a, MainMessage, Renderer> {
+        let mut row = Row::new();
+        if self.username.eq(&user.name()) {
+            row = row.push(Text::new("(me)"));
+        }
+        let ready = match self.ready {
+            true => Text::new("Ready").style(theme.palette().success),
+            false => Text::new("Not Ready").style(theme.palette().danger),
+        };
+        row.push(Text::new(format!("{}: ", self.username)))
+            .push(ready)
+    }
 }
 
 impl From<ServerMessage> for MainMessage {

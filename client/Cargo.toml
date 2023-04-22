@@ -32,6 +32,7 @@ directories = "5.0"
 dashmap = "5"
 toml = "0.7"
 url = "2.3"
+chrono = "0.4"
 
 [build-dependencies]
 clap_complete = "4"
