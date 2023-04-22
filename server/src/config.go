@@ -44,14 +44,14 @@ func GetConfig() (ServerConfig, PlaylistConfig) {
 		playlistConfig = PlaylistConfig{Playlist: make([]string, 0), Video: "", Position: 0}
 	}
 
-	log.Printf("Configurations sucessfully set.\nServer configuration: %+v\nPlaylist Save File: %+v", serverConfig, playlistConfig)
+	log.Printf("Configurations successfully set.\nServer configuration: %+v\nPlaylist Save File: %+v", serverConfig, playlistConfig)
 
 	return serverConfig, playlistConfig
 }
 
 func WritePlaylist(playlist []string, video string, position uint64, saveFile string) {
-	//writeMutex.Lock()
-	//defer writeMutex.Unlock()
+	writeMutex.Lock()
+	defer writeMutex.Unlock()
 
 	playlistConfig := PlaylistConfig{Playlist: playlist, Video: video, Position: position}
 
