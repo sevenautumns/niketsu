@@ -114,7 +114,7 @@
             ];
             git.hooks = {
               enable = true;
-              pre-commit.text = "nix flake check";
+              # pre-commit.text = "nix flake check";
             };
             env = [
               {
@@ -156,6 +156,8 @@
             ];
           });
           checks = {
+            client = self.packages.${system}.niketsu-client;
+            server = self.packages.${system}.niketsu-server;
             nixpkgs-fmt = pkgs.runCommand "nixpkgs-fmt"
               {
                 nativeBuildInputs = [ pkgs.nixpkgs-fmt ];
