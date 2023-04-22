@@ -11,6 +11,7 @@ use iced_native::widget::Tree;
 use iced_native::Widget;
 use log::*;
 
+use crate::mpv::Mpv;
 use crate::video::Video;
 use crate::window::MainMessage;
 
@@ -37,8 +38,9 @@ pub struct PlaylistWidget<'a> {
 }
 
 impl<'a> PlaylistWidget<'a> {
-    pub fn new(state: &'a PlaylistWidgetState) -> Self {
+    pub fn new(state: &'a PlaylistWidgetState, _mpv: &Mpv) -> Self {
         // TODO Add context menu
+        // TODO Use mpv for placing indicator on played file
 
         let mut file_btns = vec![];
         for f in state.videos.iter() {

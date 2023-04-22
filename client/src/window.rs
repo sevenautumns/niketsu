@@ -16,6 +16,7 @@ use log::*;
 use crate::config::Config;
 use crate::file_table::{PlaylistWidget, PlaylistWidgetMessage, PlaylistWidgetState};
 use crate::fs::{DatabaseMessage, FileDatabase};
+use crate::messages::ChatMessage;
 use crate::mpv::event::MpvEvent;
 use crate::mpv::{Mpv, MpvResultingAction};
 use crate::user::ThisUser;
@@ -33,7 +34,7 @@ pub enum MainWindow {
         playlist_widget: PlaylistWidgetState,
         mpv: Mpv,
         user: ThisUser,
-        messages: Vec<String>,
+        messages: Vec<ChatMessage>,
         message: String,
         users: Vec<UserStatus>,
     },
@@ -264,12 +265,12 @@ impl Application for MainWindow {
                                     *users = usrs;
                                 }
                                 ServerMessage::Pause { username, .. } => {
-                                    messages.push(format!("{username} paused the video"));
+                                    messages.push(ChatMessage::paused(username));
                                     debug!("Socket: received pause");
                                     mpv.pause(true).log();
                                 }
                                 ServerMessage::Start { username, .. } => {
-                                    messages.push(format!("{username} started the video"));
+                                    messages.push(ChatMessage::started(username));
                                     debug!("Socket: received start");
                                     mpv.pause(false).log();
                                 }
@@ -281,7 +282,11 @@ impl Application for MainWindow {
                                 } => {
                                     debug!("Socket: received seek {position:?}");
                                     if !mpv.seeking() {
-                                        messages.push(format!("{username} seeked to {position:?}"));
+                                        messages.push(ChatMessage::seek(
+                                            position,
+                                            filename.clone(),
+                                            username,
+                                        ));
                                         mpv.seek(
                                             Video::from_string(filename),
                                             position,
@@ -292,17 +297,18 @@ impl Application for MainWindow {
                                     }
                                 }
                                 ServerMessage::Select { filename, username } => {
-                                    messages.push(format!("{username} changed file"));
+                                    messages.push(ChatMessage::select(filename.clone(), username));
                                     debug!("Socket: received select: {filename}");
                                     mpv.load(Video::from_string(filename), None, true, db).log();
                                 }
                                 ServerMessage::Message { message, username } => {
+                                    messages
+                                        .push(ChatMessage::chat(message.clone(), username.clone()));
                                     trace!("{username}: {message}");
-                                    messages.push(format!("{username}: {message}"));
                                 }
                                 ServerMessage::Playlist { playlist, username } => {
+                                    messages.push(ChatMessage::playlist_changed(username));
                                     playlist_widget.replace_videos(playlist);
-                                    messages.push(format!("{username} changed playlist"));
                                 }
                                 ServerMessage::Status { ready, username } => {
                                     warn!("{username}: {ready:?}")
@@ -313,11 +319,11 @@ impl Application for MainWindow {
                         WebSocketMessage::TungStringError { msg, err } => error!("{msg}, {err:?}"),
                         WebSocketMessage::SerdeError { msg, err } => error!("{msg}, {err:?}"),
                         WebSocketMessage::WsStreamEnded => {
-                            messages.push(String::from("Server connection ended"));
+                            messages.push(ChatMessage::disconnected());
                             error!("Websocket ended")
                         }
                         WebSocketMessage::Connected => {
-                            messages.push(String::from("Connected to server"));
+                            messages.push(ChatMessage::connected());
                             trace!("Socket: connected");
                             return user.status(ws);
                         }
@@ -332,7 +338,7 @@ impl Application for MainWindow {
                             if !message.is_empty() {
                                 let msg = message.clone();
                                 *message = Default::default();
-                                messages.push(format!("{}: {msg}", user.name()));
+                                messages.push(ChatMessage::chat(msg.clone(), user.name()));
                                 return ServerWebsocket::send_command(
                                     ws,
                                     ServerMessage::Message {
@@ -411,6 +417,7 @@ impl Application for MainWindow {
                 message,
                 users,
                 user,
+                mpv,
                 ..
             } => {
                 let mut btn;
@@ -437,19 +444,13 @@ impl Application for MainWindow {
                 let msgs = messages
                     .iter()
                     .cloned()
-                    .map(|m| Text::new(m).into())
+                    .map(|m| m.to_text(self.theme()).into())
                     .collect::<Vec<_>>();
 
                 let users = users
                     .iter()
                     .cloned()
-                    .map(|u| {
-                        let mut username = u.username;
-                        if username.eq(&user.name()) {
-                            username = format!("(me) {username}");
-                        }
-                        Text::new(format!("{}: {:?}", username, u.ready)).into()
-                    })
+                    .map(|u| u.to_text(user, &self.theme()).into())
                     .collect::<Vec<_>>();
 
                 row!(
@@ -485,7 +486,7 @@ impl Application for MainWindow {
                         .padding(5.0)
                         .width(Length::Fill)
                         .height(Length::Fill),
-                        Container::new(PlaylistWidget::new(playlist_widget))
+                        Container::new(PlaylistWidget::new(playlist_widget, mpv))
                             .style(ContainerBorder::basic())
                             .padding(5.0)
                             .height(Length::Fill),
