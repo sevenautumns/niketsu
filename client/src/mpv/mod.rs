@@ -150,17 +150,17 @@ impl Mpv {
                     if let PropertyValue::Flag(p) = value {
                         if p.ne(&self.paused) {
                             self.paused = p;
-                            match p {
-                                true => {
-                                    if self.get_eof_reached()? {
-                                        // TODO this should be NONE, but the the window PlayNext fails rn
-                                        // self.playing = None;
-                                        return Ok(Some(MpvResultingAction::PlayNext));
+                            if p {
+                                if self.get_eof_reached()? {
+                                    if let Some(playing) = self.playing.take() {
+                                        return Ok(Some(MpvResultingAction::PlayNext(
+                                            playing.video,
+                                        )));
                                     }
-                                    return Ok(Some(MpvResultingAction::Pause));
                                 }
-                                false => return Ok(Some(MpvResultingAction::Start)),
+                                return Ok(Some(MpvResultingAction::Pause));
                             }
+                            return Ok(Some(MpvResultingAction::Start));
                         }
                     }
                 }
@@ -463,7 +463,7 @@ impl Drop for Mpv {
 
 #[derive(Debug, Clone)]
 pub enum MpvResultingAction {
-    PlayNext,
+    PlayNext(Video),
     Seek(Duration),
     ReOpenFile,
     Pause,

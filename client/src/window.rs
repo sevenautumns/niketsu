@@ -172,21 +172,18 @@ impl Application for MainWindow {
                         }
                     },
                     MainMessage::Mpv(event) => match mpv.react_to(event) {
-                        Ok(Some(MpvResultingAction::PlayNext)) => {
+                        Ok(Some(MpvResultingAction::PlayNext(video))) => {
                             debug!("Mpv process: play next");
-                            if let Some(prev_playing) = mpv.playing() {
-                                if let Some(next) = playlist_widget.next_video(&prev_playing.video)
-                                {
-                                    let ws_cmd = ServerWebsocket::send_command(
-                                        ws,
-                                        ServerMessage::Select {
-                                            filename: next.as_str().to_string(),
-                                            username: user.clone(),
-                                        },
-                                    );
-                                    mpv.load(next, None, true, db).log();
-                                    return ws_cmd;
-                                }
+                            if let Some(next) = playlist_widget.next_video(&video) {
+                                let ws_cmd = ServerWebsocket::send_command(
+                                    ws,
+                                    ServerMessage::Select {
+                                        filename: next.as_str().to_string(),
+                                        username: user.clone(),
+                                    },
+                                );
+                                mpv.load(next, None, true, db).log();
+                                return ws_cmd;
                             }
                         }
                         Ok(Some(MpvResultingAction::Seek(position))) => {
@@ -215,13 +212,23 @@ impl Application for MainWindow {
                         Ok(Some(MpvResultingAction::Pause)) => {
                             debug!("Mpv process: pause");
                             if let Some(playing) = mpv.playing() {
-                                return ServerWebsocket::send_command(
-                                    ws,
-                                    ServerMessage::Pause {
-                                        filename: playing.video.as_str().to_string(),
-                                        username: user.clone(),
-                                    },
-                                );
+                                *ready = false;
+                                return Command::batch([
+                                    ServerWebsocket::send_command(
+                                        ws,
+                                        ServerMessage::Status {
+                                            ready: *ready,
+                                            username: user.clone(),
+                                        },
+                                    ),
+                                    ServerWebsocket::send_command(
+                                        ws,
+                                        ServerMessage::Pause {
+                                            filename: playing.video.as_str().to_string(),
+                                            username: user.clone(),
+                                        },
+                                    ),
+                                ]);
                             }
                         }
                         Ok(Some(MpvResultingAction::Start)) => {
