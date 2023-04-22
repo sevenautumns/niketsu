@@ -18,6 +18,7 @@ use crate::file_table::{PlaylistWidget, PlaylistWidgetMessage, PlaylistWidgetSta
 use crate::fs::{DatabaseMessage, FileDatabase};
 use crate::mpv::event::MpvEvent;
 use crate::mpv::{Mpv, MpvResultingAction};
+use crate::user::ThisUser;
 use crate::video::Video;
 use crate::ws::{ServerMessage, ServerWebsocket, UserStatus, WebSocketMessage};
 
@@ -31,8 +32,7 @@ pub enum MainWindow {
         ws: Arc<ServerWebsocket>,
         playlist_widget: PlaylistWidgetState,
         mpv: Mpv,
-        user: String,
-        ready: bool,
+        user: ThisUser,
         messages: Vec<String>,
         message: String,
         users: Vec<UserStatus>,
@@ -100,8 +100,7 @@ impl Application for MainWindow {
                         mpv,
                         ws: Arc::new(ServerWebsocket::new(config.url.clone())),
                         db,
-                        ready: false,
-                        user: config.username.clone(),
+                        user: ThisUser::new(config.username.clone()),
                         messages: vec![],
                         message: Default::default(),
                         users: vec![],
@@ -116,7 +115,6 @@ impl Application for MainWindow {
                 mpv,
                 ws,
                 db,
-                ready,
                 user,
                 messages,
                 message,
@@ -130,7 +128,7 @@ impl Application for MainWindow {
                                 ws,
                                 ServerMessage::Select {
                                     filename: video.as_str().to_string(),
-                                    username: user.clone(),
+                                    username: user.name(),
                                 },
                             );
                             mpv.load(video, None, true, db).log();
@@ -147,7 +145,7 @@ impl Application for MainWindow {
                                 ws,
                                 ServerMessage::Playlist {
                                     playlist,
-                                    username: user.clone(),
+                                    username: user.name(),
                                 },
                             );
                         }
@@ -162,7 +160,7 @@ impl Application for MainWindow {
                                 ws,
                                 ServerMessage::Playlist {
                                     playlist,
-                                    username: user.clone(),
+                                    username: user.name(),
                                 },
                             );
                         }
@@ -179,7 +177,7 @@ impl Application for MainWindow {
                                     ws,
                                     ServerMessage::Select {
                                         filename: next.as_str().to_string(),
-                                        username: user.clone(),
+                                        username: user.name(),
                                     },
                                 );
                                 mpv.load(next, None, true, db).log();
@@ -199,7 +197,7 @@ impl Application for MainWindow {
                                     ServerMessage::Seek {
                                         filename: playing.video.as_str().to_string(),
                                         position,
-                                        username: user.clone(),
+                                        username: user.name(),
                                         paused: mpv.paused(),
                                     },
                                 );
@@ -212,20 +210,13 @@ impl Application for MainWindow {
                         Ok(Some(MpvResultingAction::Pause)) => {
                             debug!("Mpv process: pause");
                             if let Some(playing) = mpv.playing() {
-                                *ready = false;
                                 return Command::batch([
-                                    ServerWebsocket::send_command(
-                                        ws,
-                                        ServerMessage::Status {
-                                            ready: *ready,
-                                            username: user.clone(),
-                                        },
-                                    ),
+                                    user.set_ready(false, ws),
                                     ServerWebsocket::send_command(
                                         ws,
                                         ServerMessage::Pause {
                                             filename: playing.video.as_str().to_string(),
-                                            username: user.clone(),
+                                            username: user.name(),
                                         },
                                     ),
                                 ]);
@@ -238,7 +229,7 @@ impl Application for MainWindow {
                                     ws,
                                     ServerMessage::Start {
                                         filename: playing.video.as_str().to_string(),
-                                        username: user.clone(),
+                                        username: user.name(),
                                     },
                                 );
                             }
@@ -328,38 +319,25 @@ impl Application for MainWindow {
                         WebSocketMessage::Connected => {
                             messages.push(String::from("Connected to server"));
                             trace!("Socket: connected");
-                            return ServerWebsocket::send_command(
-                                ws,
-                                ServerMessage::Status {
-                                    ready: *ready,
-                                    username: user.clone(),
-                                },
-                            );
+                            return user.status(ws);
                         }
                         WebSocketMessage::SendFinished(r) => trace!("{r:?}"),
                     },
                     MainMessage::User(event) => match event {
                         UserMessage::ReadyButton => {
                             debug!("User: ready press");
-                            *ready ^= true;
-                            return ServerWebsocket::send_command(
-                                ws,
-                                ServerMessage::Status {
-                                    ready: *ready,
-                                    username: user.clone(),
-                                },
-                            );
+                            return user.toggle_ready(ws);
                         }
                         UserMessage::SendMessage => {
                             if !message.is_empty() {
                                 let msg = message.clone();
                                 *message = Default::default();
-                                messages.push(format!("{user}: {msg}"));
+                                messages.push(format!("{}: {msg}", user.name()));
                                 return ServerWebsocket::send_command(
                                     ws,
                                     ServerMessage::Message {
                                         message: msg,
-                                        username: user.clone(),
+                                        username: user.name(),
                                     },
                                 );
                             }
@@ -429,7 +407,6 @@ impl Application for MainWindow {
             .into(),
             MainWindow::Running {
                 playlist_widget,
-                ready,
                 messages,
                 message,
                 users,
@@ -437,7 +414,7 @@ impl Application for MainWindow {
                 ..
             } => {
                 let mut btn;
-                match ready {
+                match user.ready() {
                     true => {
                         btn = Button::new(
                             Text::new("Ready")
@@ -468,7 +445,7 @@ impl Application for MainWindow {
                     .cloned()
                     .map(|u| {
                         let mut username = u.username;
-                        if username.eq(user) {
+                        if username.eq(&user.name()) {
                             username = format!("(me) {username}");
                         }
                         Text::new(format!("{}: {:?}", username, u.ready)).into()

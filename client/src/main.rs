@@ -8,6 +8,7 @@ pub mod config;
 pub mod file_table;
 pub mod fs;
 pub mod mpv;
+pub mod user;
 pub mod video;
 pub mod window;
 pub mod ws;
