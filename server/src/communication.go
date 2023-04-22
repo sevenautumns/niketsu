@@ -23,7 +23,8 @@ const (
 
 //TODO check userstatus mutexes
 //TODO consider rtt in seek broadcast
-//TODO consider throwing away lost pings, ...
+//TODO consider throwing away lost pings, ..
+// TODO add broadcastall option to all broadcasts
 
 type Latency struct {
 	rtt        float64
@@ -66,9 +67,8 @@ func NewFactoryWorker(capitalist *Capitalist, conn net.Conn, userName string, fi
 }
 
 func (worker *FactoryWorker) close() {
-	logger.Debug("Closing connection")
-
 	worker.closeOnce.Do(func() {
+		logger.Debug("Closing connection")
 		close(worker.serviceChannel)
 		worker.capitalist.Delete(worker)
 		worker.capitalist.broadcastStatusList(worker)
@@ -237,7 +237,7 @@ func (worker *FactoryWorker) handleMessage(data []byte, op ws.OpCode, err error,
 		worker.capitalist.changeVideo(msg.Filename)
 		worker.capitalist.changePosition(0)
 		worker.capitalist.updateLastSeek(0)
-		worker.capitalist.broadcastSelect(msg.Filename, worker)
+		worker.capitalist.broadcastSelect(msg.Filename, worker, false)
 		worker.capitalist.broadcastStartOnReady(worker)
 	case UserMessageType:
 		logger.Debugw("Received user message from client", "message", msg)
@@ -248,7 +248,7 @@ func (worker *FactoryWorker) handleMessage(data []byte, op ws.OpCode, err error,
 		logger.Debugw("Received playlist from client", "message", msg)
 
 		msg := msg.(*Playlist)
-		worker.capitalist.broadcastPlaylist(worker)
+		worker.capitalist.broadcastPlaylist(msg, worker, true)
 		worker.capitalist.changePlaylist(msg.Playlist, worker)
 	case PauseType:
 		logger.Debugw("Received pause from client", "message", msg)
@@ -464,7 +464,7 @@ func (capitalist *Capitalist) broadcastSeek(filename string, position uint64, wo
 	capitalist.broadcastExcept(message, worker)
 }
 
-func (capitalist *Capitalist) broadcastSelect(filename string, worker *FactoryWorker) {
+func (capitalist *Capitalist) broadcastSelect(filename string, worker *FactoryWorker, all bool) {
 	worker.userStatusMutex.RLock()
 	defer worker.userStatusMutex.RUnlock()
 
@@ -474,7 +474,11 @@ func (capitalist *Capitalist) broadcastSelect(filename string, worker *FactoryWo
 		log.Fatal("unable to broadcast select ", err)
 	}
 
-	capitalist.broadcastExcept(message, worker)
+	if all {
+		capitalist.broadcastAll(message)
+	} else {
+		capitalist.broadcastExcept(message, worker)
+	}
 }
 
 func (capitalist *Capitalist) broadcastUserMessage(userMessage string, worker *FactoryWorker) {
@@ -490,20 +494,22 @@ func (capitalist *Capitalist) broadcastUserMessage(userMessage string, worker *F
 	capitalist.broadcastExcept(message, worker)
 }
 
-func (capitalist *Capitalist) broadcastPlaylist(worker *FactoryWorker) {
+func (capitalist *Capitalist) broadcastPlaylist(playlist *Playlist, worker *FactoryWorker, all bool) {
 	defer logger.Debugw("Successfully leaving broadcastPlaylist")
-	capitalist.playlistMutex.RLock()
 	worker.userStatusMutex.RLock()
-	defer capitalist.playlistMutex.RUnlock()
 	defer worker.userStatusMutex.RUnlock()
 
-	playlist := Playlist{Playlist: capitalist.playlist.playlist, Username: worker.userStatus.Username}
-	message, err := playlist.MarshalMessage()
+	pl := Playlist{Playlist: playlist.Playlist, Username: worker.userStatus.Username}
+	message, err := pl.MarshalMessage()
 	if err != nil {
 		log.Fatal("unable to broadcast playlist ", err)
 	}
 
-	capitalist.broadcastExcept(message, worker)
+	if all {
+		capitalist.broadcastAll(message)
+	} else {
+		capitalist.broadcastExcept(message, worker)
+	}
 }
 
 func (capitalist *Capitalist) broadcastPause(filename string, worker *FactoryWorker) {
@@ -641,17 +647,16 @@ func (capitalist *Capitalist) changePlaylist(playlist []string, worker *FactoryW
 	capitalist.playlistMutex.Lock()
 	defer capitalist.playlistMutex.Unlock()
 
-	if len(playlist) >= len(capitalist.playlist.playlist) {
+	if len(playlist) >= len(capitalist.playlist.playlist) || len(playlist) == 0 {
 		capitalist.playlist.playlist = playlist
-		return
+	} else if len(playlist) < len(capitalist.playlist.playlist) {
+		nextVideo := capitalist.findNext(playlist)
+		if nextVideo != capitalist.playlist.video {
+			capitalist.playlist.video = nextVideo
+			capitalist.broadcastSelect(capitalist.playlist.video, worker, true)
+		}
 	}
 
-	if len(playlist) < len(capitalist.playlist.playlist) {
-		capitalist.playlist.video = capitalist.findNext(playlist)
-		capitalist.broadcastSelect(capitalist.playlist.video, worker)
-	}
-
-	capitalist.playlist.playlist = playlist
 	go WritePlaylist(capitalist.playlist.playlist, capitalist.playlist.video, capitalist.playlist.position, capitalist.playlist.saveFile)
 }
 
