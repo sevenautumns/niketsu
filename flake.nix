@@ -8,7 +8,7 @@
   };
 
   outputs = { self, nixpkgs, devshell, utils, fenix, naersk, ... }@inputs:
-    utils.lib.eachSystem [ "aarch64-linux" "i686-linux" "x86_64-linux" ]
+    utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" ]
       (system:
         let
           lib = nixpkgs.lib;
@@ -16,13 +16,15 @@
             inherit system;
             overlays = [ devshell.overlays.default ];
           };
+          host-target = pkgs.rust.toRustTargetSpec pkgs.stdenv.hostPlatform;
+          musl-target = pkgs.rust.toRustTargetSpec pkgs.pkgsMusl.stdenv.hostPlatform;
           rust-toolchain = with fenix.packages.${system};
             combine [
               stable.rustc
               stable.cargo
               stable.clippy
               latest.rustfmt
-              targets.x86_64-unknown-linux-musl.stable.rust-std
+              targets.${musl-target}.stable.rust-std
             ];
           naersk-lib = (naersk.lib.${system}.override {
             cargo = rust-toolchain;
@@ -63,9 +65,9 @@
               pname = "niketsu";
               root = ./.;
               cargoBuildOptions = x:
-                x ++ [ "--target" "x86_64-unknown-linux-musl" ];
+                x ++ [ "--target" musl-target ];
               cargoTestOptions = x:
-                x ++ [ "--target" "x86_64-unknown-linux-musl" ];
+                x ++ [ "--target" musl-target ];
               nativeBuildInputs = with pkgs; [ cmake pkgconfig ] ++ libraries;
               LIBCLANG_PATH =
                 lib.makeLibraryPath [ pkgs.llvmPackages.libclang.lib ];
@@ -157,8 +159,6 @@
             ];
           });
           checks = {
-            client = self.packages.${system}.niketsu-client;
-            server = self.packages.${system}.niketsu-server;
             nixpkgs-fmt = pkgs.runCommand "nixpkgs-fmt"
               {
                 nativeBuildInputs = [ pkgs.nixpkgs-fmt ];

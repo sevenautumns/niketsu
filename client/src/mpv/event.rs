@@ -1,6 +1,6 @@
 #![allow(non_upper_case_globals)]
 
-use std::ffi::{c_void, CStr, CString};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Poll, Waker};
@@ -115,7 +115,7 @@ impl PropertyValue {
         match typ {
             mpv_format::MPV_FORMAT_STRING => {
                 let mut string = CString::default();
-                CStr::from_ptr(data as *mut i8).clone_into(&mut string);
+                CStr::from_ptr(data as *mut c_char).clone_into(&mut string);
                 Some(PropertyValue::String(string))
             }
             mpv_format::MPV_FORMAT_FLAG => Some(PropertyValue::Flag(*(data as *mut bool))),
