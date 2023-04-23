@@ -19,8 +19,8 @@ type (
 
 	PlaylistConfig struct {
 		Playlist []string
-		Video    string
-		Position uint64
+		Video    *string
+		Position *uint64
 	}
 )
 
@@ -41,17 +41,17 @@ func GetConfig() (ServerConfig, PlaylistConfig) {
 	_, err = toml.DecodeFile(serverConfig.SaveFile, &playlistConfig)
 	if err != nil {
 		log.Printf("Playlist save file does not exist at %s. Using default values instead", serverConfig.SaveFile)
-		playlistConfig = PlaylistConfig{Playlist: make([]string, 0), Video: "", Position: 0}
+		playlistConfig = PlaylistConfig{Playlist: make([]string, 0), Video: nil, Position: nil}
 	}
 
-	log.Printf("Configurations sucessfully set.\nServer configuration: %+v\nPlaylist Save File: %+v", serverConfig, playlistConfig)
+	log.Printf("Configurations successfully set.\nServer configuration: %+v\nPlaylist Save File: %+v", serverConfig, playlistConfig)
 
 	return serverConfig, playlistConfig
 }
 
-func WritePlaylist(playlist []string, video string, position uint64, saveFile string) {
-	//writeMutex.Lock()
-	//defer writeMutex.Unlock()
+func WritePlaylist(playlist []string, video *string, position *uint64, saveFile string) {
+	writeMutex.Lock()
+	defer writeMutex.Unlock()
 
 	playlistConfig := PlaylistConfig{Playlist: playlist, Video: video, Position: position}
 
