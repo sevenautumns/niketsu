@@ -20,6 +20,10 @@ impl PartialEq for Video {
 }
 
 impl Video {
+    pub fn is_url(&self) -> bool {
+        matches!(self, Self::Url(_))
+    }
+
     pub fn from_string(video: String) -> Self {
         if let Ok(url) = Url::parse(&video) {
             Self::Url(url)

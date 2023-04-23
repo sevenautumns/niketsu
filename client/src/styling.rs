@@ -1,5 +1,5 @@
 use iced::widget::rule::FillMode;
-use iced::{Theme, Vector};
+use iced::{Color, Theme, Vector};
 
 pub struct ResultButton {
     success: bool,
@@ -80,11 +80,12 @@ impl iced::widget::container::StyleSheet for ContainerBorder {
 }
 pub struct FileButton {
     pressed: bool,
+    available: bool,
 }
 
 impl FileButton {
-    pub fn new(pressed: bool) -> iced::theme::Button {
-        iced::theme::Button::Custom(Box::new(Self { pressed }))
+    pub fn new(pressed: bool, available: bool) -> iced::theme::Button {
+        iced::theme::Button::Custom(Box::new(Self { pressed, available }))
     }
 }
 
@@ -92,9 +93,10 @@ impl iced::widget::button::StyleSheet for FileButton {
     type Style = Theme;
 
     fn active(&self, style: &Self::Style) -> iced::widget::button::Appearance {
-        let background = match self.pressed {
-            true => Some(iced::Background::Color(style.palette().primary)),
-            false => None,
+        let background = match (self.pressed, self.available) {
+            (true, _) => Some(iced::Background::Color(style.palette().primary)),
+            (_, false) => Some(iced::Background::Color(style.palette().danger)),
+            _ => None,
         };
         iced::widget::button::Appearance {
             shadow_offset: Vector::ZERO,
@@ -162,6 +164,28 @@ impl iced::widget::progress_bar::StyleSheet for FileProgressBar {
             bar,
             background: style.palette().text.into(),
             border_radius: 5.0,
+        }
+    }
+}
+
+pub struct ContainerBackground {
+    color: Color,
+}
+
+impl ContainerBackground {
+    pub fn new(color: Color) -> iced::theme::Container {
+        iced::theme::Container::Custom(Box::new(Self { color }))
+    }
+}
+
+impl iced::widget::container::StyleSheet for ContainerBackground {
+    type Style = Theme;
+
+    fn appearance(&self, style: &Self::Style) -> iced::widget::container::Appearance {
+        iced::widget::container::Appearance {
+            text_color: style.palette().text.into(),
+            background: iced::Background::Color(self.color).into(),
+            ..Default::default()
         }
     }
 }

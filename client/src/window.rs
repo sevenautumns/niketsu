@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::widget::scrollable::Id;
+use iced::widget::scrollable::{Id, RelativeOffset};
 use iced::widget::{column, row, Button, Column, Container, Scrollable, Text, TextInput};
 use iced::{
     Alignment, Application, Command, Element, Length, Padding, Renderer, Subscription, Theme,
@@ -14,7 +14,7 @@ use log::*;
 use crate::config::Config;
 use crate::file_table::{PlaylistWidget, PlaylistWidgetMessage, PlaylistWidgetState};
 use crate::fs::{DatabaseMessage, FileDatabase};
-use crate::messages::ChatMessage;
+use crate::messages::Messages;
 use crate::mpv::event::MpvEvent;
 use crate::mpv::{Mpv, MpvResultingAction};
 use crate::styling::{ContainerBorder, ResultButton};
@@ -33,7 +33,7 @@ pub enum MainWindow {
         playlist_widget: PlaylistWidgetState,
         mpv: Mpv,
         user: ThisUser,
-        messages: Vec<ChatMessage>,
+        messages: Messages,
         message: String,
         users: Vec<UserStatus>,
     },
@@ -59,6 +59,7 @@ pub enum UserMessage {
     SendMessage,
     StopDbUpdate,
     StartDbUpdate,
+    ScrollMessages(RelativeOffset),
     MessageInput(String),
 }
 
@@ -103,7 +104,7 @@ impl Application for MainWindow {
                         ws: Arc::new(ServerWebsocket::new(config.url.clone())),
                         db,
                         user: ThisUser::new(config.username.clone()),
-                        messages: vec![],
+                        messages: Default::default(),
                         message: Default::default(),
                         users: vec![],
                     };
@@ -275,14 +276,14 @@ impl Application for MainWindow {
                                     *users = usrs;
                                 }
                                 ServerMessage::Pause { username, .. } => {
-                                    messages.push(ChatMessage::paused(username));
                                     debug!("Socket: received pause");
                                     mpv.pause(true).log();
+                                    return messages.push_paused(username);
                                 }
                                 ServerMessage::Start { username, .. } => {
-                                    messages.push(ChatMessage::started(username));
                                     debug!("Socket: received start");
                                     mpv.pause(false).log();
+                                    return messages.push_started(username);
                                 }
                                 ServerMessage::Seek {
                                     filename,
@@ -292,38 +293,33 @@ impl Application for MainWindow {
                                 } => {
                                     debug!("Socket: received seek {position:?}");
                                     if !mpv.seeking() {
-                                        messages.push(ChatMessage::seek(
-                                            position,
-                                            filename.clone(),
-                                            username,
-                                        ));
                                         mpv.seek(
-                                            Video::from_string(filename),
+                                            Video::from_string(filename.clone()),
                                             position,
                                             paused,
                                             db,
                                         )
                                         .log();
+                                        return messages.push_seek(position, filename, username);
                                     }
                                 }
                                 ServerMessage::Select { filename, username } => {
-                                    messages.push(ChatMessage::select(filename.clone(), username));
                                     debug!("Socket: received select: {filename:?}");
-                                    match filename {
+                                    match filename.clone() {
                                         Some(filename) => mpv
                                             .load(Video::from_string(filename), None, true, db)
                                             .log(),
                                         None => mpv.unload(),
                                     }
+                                    return messages.push_select(filename, username);
                                 }
                                 ServerMessage::Message { message, username } => {
-                                    messages
-                                        .push(ChatMessage::chat(message.clone(), username.clone()));
                                     trace!("{username}: {message}");
+                                    return messages.push_chat(message.clone(), username.clone());
                                 }
                                 ServerMessage::Playlist { playlist, username } => {
-                                    messages.push(ChatMessage::playlist_changed(username));
                                     playlist_widget.replace_videos(playlist);
+                                    return messages.push_playlist_changed(username);
                                 }
                                 ServerMessage::Status { ready, username } => {
                                     warn!("{username}: {ready:?}")
@@ -332,13 +328,12 @@ impl Application for MainWindow {
                         }
                         WebSocketMessage::Error { msg, err } => error!("{msg:?}, {err:?}"),
                         WebSocketMessage::WsStreamEnded => {
-                            messages.push(ChatMessage::disconnected());
-                            error!("Websocket ended")
+                            error!("Websocket ended");
+                            return messages.push_disconnected();
                         }
                         WebSocketMessage::Connected => {
-                            messages.push(ChatMessage::connected());
                             trace!("Socket: connected");
-                            return user.status(ws);
+                            return Command::batch([user.status(ws), messages.push_connected()]);
                         }
                         WebSocketMessage::SendFinished(r) => trace!("{r:?}"),
                     },
@@ -351,14 +346,16 @@ impl Application for MainWindow {
                             if !message.is_empty() {
                                 let msg = message.clone();
                                 *message = Default::default();
-                                messages.push(ChatMessage::chat(msg.clone(), user.name()));
-                                return ServerWebsocket::send_command(
-                                    ws,
-                                    ServerMessage::Message {
-                                        message: msg,
-                                        username: user.name(),
-                                    },
-                                );
+                                return Command::batch([
+                                    ServerWebsocket::send_command(
+                                        ws,
+                                        ServerMessage::Message {
+                                            message: msg.clone(),
+                                            username: user.name(),
+                                        },
+                                    ),
+                                    messages.push_chat(msg, user.name()),
+                                ]);
                             }
                         }
                         UserMessage::MessageInput(msg) => *message = msg,
@@ -370,6 +367,7 @@ impl Application for MainWindow {
                             trace!("Stop database update request received");
                             db.stop_update()
                         }
+                        UserMessage::ScrollMessages(off) => messages.set_offset(off),
                         _ => {}
                     },
                     MainMessage::Database(event) => match event {
@@ -462,12 +460,6 @@ impl Application for MainWindow {
                 }
                 btn = btn.on_press(MainMessage::User(UserMessage::ReadyButton));
 
-                let msgs = messages
-                    .iter()
-                    .cloned()
-                    .map(|m| m.to_text(self.theme()).into())
-                    .collect::<Vec<_>>();
-
                 let users = users
                     .iter()
                     .cloned()
@@ -476,17 +468,10 @@ impl Application for MainWindow {
 
                 row!(
                     column!(
-                        Container::new(
-                            Scrollable::new(Column::with_children(msgs))
-                                .width(Length::Fill)
-                                .id(Id::new("messages"))
-                        )
-                        .style(ContainerBorder::basic())
-                        .padding(5.0)
-                        .width(Length::Fill)
-                        .height(Length::Fill),
+                        messages.view(self.theme()),
                         row!(
                             TextInput::new("Message", message)
+                                .width(Length::Fill)
                                 .on_input(|m| MainMessage::User(UserMessage::MessageInput(m)))
                                 .on_submit(MainMessage::User(UserMessage::SendMessage)),
                             Button::new("Send")
@@ -498,7 +483,7 @@ impl Application for MainWindow {
                     .width(Length::Fill)
                     .height(Length::Fill),
                     column!(
-                        row!(db.progress_bar(), db.button()).spacing(5.0),
+                        db.view(),
                         Container::new(
                             Scrollable::new(Column::with_children(users))
                                 .width(Length::Fill)
@@ -508,7 +493,7 @@ impl Application for MainWindow {
                         .padding(5.0)
                         .width(Length::Fill)
                         .height(Length::Fill),
-                        Container::new(PlaylistWidget::new(playlist_widget, mpv))
+                        Container::new(PlaylistWidget::new(playlist_widget, mpv, db))
                             .style(ContainerBorder::basic())
                             .padding(5.0)
                             .height(Length::Fill),

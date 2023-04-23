@@ -10,13 +10,13 @@ use dashmap::DashMap;
 use futures::future::join_all;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use iced::widget::{Button, ProgressBar, Tooltip};
-use iced::{Command, Element, Renderer, Subscription};
+use iced::widget::{row, Button, Container, ProgressBar, Text, Tooltip};
+use iced::{Command, Element, Length, Renderer, Subscription};
 use log::trace;
 use tokio::sync::watch::{Receiver as WatchRec, Sender as WatchSend};
 use tokio::sync::{Notify, RwLock, Semaphore};
 
-use crate::styling::{FileProgressBar, ResultButton};
+use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
 use crate::window::MainMessage;
 
 #[derive(Debug, Clone)]
@@ -120,29 +120,48 @@ impl FileDatabase {
         *self.database_counter.1.borrow()
     }
 
-    pub fn progress_bar(&self) -> ProgressBar<Renderer> {
-        let (fin, que) = self.get_status();
-        ProgressBar::new(0.0..=(que as f32), fin as f32).style(FileProgressBar::new(fin == que))
-    }
-
-    pub fn button<'a>(&self) -> Element<'a, MainMessage, Renderer> {
+    pub fn view<'a>(&self) -> Element<'a, MainMessage, Renderer> {
         let (fin, que) = self.get_status();
         let finished = fin == que;
-        let msg = match finished {
+        let main: Element<_, _> = match finished {
+            true => {
+                let len = self.database.len();
+                Container::new(
+                    Button::new(Text::new(format!("{len} files in database")))
+                        .style(FileButton::new(false, true)),
+                )
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center)
+                .style(ContainerBorder::basic())
+                .width(Length::Fill)
+                .into()
+            }
+            false => ProgressBar::new(0.0..=(que as f32), fin as f32)
+                .style(FileProgressBar::new(fin == que))
+                .into(),
+        };
+
+        let update_msg = match finished {
             true => MainMessage::User(crate::window::UserMessage::StartDbUpdate),
             false => MainMessage::User(crate::window::UserMessage::StopDbUpdate),
         };
-        let btn = match finished {
+        let update_btn = match finished {
             true => Button::new("Update"),
             false => Button::new("Stop"),
         }
-        .on_press(msg)
+        .on_press(update_msg)
         .style(ResultButton::new(finished));
-        let text = match finished {
+        let update_text = match finished {
             true => "Update file database",
             false => "Stop update of file database",
         };
-        Tooltip::new(btn, text, iced::widget::tooltip::Position::Bottom).into()
+        let update_tooltip: Element<_, _> = Tooltip::new(
+            update_btn,
+            update_text,
+            iced::widget::tooltip::Position::Bottom,
+        )
+        .into();
+        row!(main, update_tooltip).spacing(5.0).into()
     }
 
     pub async fn update(&self) -> Result<()> {

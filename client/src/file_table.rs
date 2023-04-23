@@ -1,13 +1,15 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::keyboard::{KeyCode, Modifiers};
-use iced::widget::{Button, Column, Rule, Scrollable};
+use iced::widget::{Button, Column, Rule, Scrollable, Text};
 use iced::{Element, Length, Renderer, Size};
 use iced_native::widget::Tree;
 use iced_native::Widget;
 use log::*;
 
+use crate::fs::FileDatabase;
 use crate::mpv::Mpv;
 use crate::styling::{FileButton, FileRuleTheme};
 use crate::video::Video;
@@ -36,18 +38,29 @@ pub struct PlaylistWidget<'a> {
 }
 
 impl<'a> PlaylistWidget<'a> {
-    pub fn new(state: &'a PlaylistWidgetState, _mpv: &Mpv) -> Self {
+    pub fn new(state: &'a PlaylistWidgetState, mpv: &Mpv, db: &Arc<FileDatabase>) -> Self {
         // TODO Add context menu
-        // TODO Use mpv for placing indicator on played file
+
+        let playing = mpv.playing();
 
         let mut file_btns = vec![];
         for f in state.videos.iter() {
             let pressed = state.selected.as_ref().map_or(false, |f_i| f.eq(f_i));
+            let mut available = f.is_url();
+            if !available {
+                available = db.find_file(f.as_str()).ok().flatten().is_some();
+            }
+            let mut name = f.as_str().to_string();
+            if let Some(playing) = &playing {
+                if name.eq(playing.video.as_str()) {
+                    name = format!("> {name}");
+                }
+            };
             file_btns.push(
-                Button::new(f.as_str())
+                Button::new(Text::new(name))
                     .padding(0)
                     .width(Length::Fill)
-                    .style(FileButton::new(pressed))
+                    .style(FileButton::new(pressed, available))
                     .into(),
             );
         }
