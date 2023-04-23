@@ -275,6 +275,10 @@ impl Mpv {
         Ok(())
     }
 
+    pub fn unload(&mut self) {
+        self.playing = None;
+    }
+
     pub fn load(
         &mut self,
         mut video: Video,

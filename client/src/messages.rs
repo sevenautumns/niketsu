@@ -21,7 +21,7 @@ pub enum ChatMessage {
     Select {
         when: DateTime<Local>,
         user: String,
-        file: String,
+        file: Option<String>,
     },
     Seek {
         when: DateTime<Local>,
@@ -64,7 +64,7 @@ impl ChatMessage {
         }
     }
 
-    pub fn select(file: String, user: String) -> Self {
+    pub fn select(file: Option<String>, user: String) -> Self {
         Self::Select {
             when: Local::now(),
             user,
@@ -112,7 +112,7 @@ impl ChatMessage {
                 Text::new(format!("{when} {user} started playback")).style(style)
             }
             ChatMessage::Select { user, file, .. } => {
-                Text::new(format!("{when} {user} selected file: {file}")).style(style)
+                Text::new(format!("{when} {user} selected file: {file:?}")).style(style)
             }
             ChatMessage::Chat { user, msg, .. } => Text::new(format!("{when} {user}: {msg}")),
             ChatMessage::Disconnected { .. } => {

@@ -2,16 +2,14 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use iced::keyboard::{KeyCode, Modifiers};
-use iced::theme::{Button as ButtonTheme, Rule as RuleTheme};
-use iced::widget::button::{Appearance as ButtonAp, StyleSheet as ButtonSS};
-use iced::widget::rule::{Appearance as RuleAp, FillMode, StyleSheet as RuleSS};
 use iced::widget::{Button, Column, Rule, Scrollable};
-use iced::{Element, Length, Renderer, Size, Theme, Vector};
+use iced::{Element, Length, Renderer, Size};
 use iced_native::widget::Tree;
 use iced_native::Widget;
 use log::*;
 
 use crate::mpv::Mpv;
+use crate::styling::{FileButton, FileRuleTheme};
 use crate::video::Video;
 use crate::window::MainMessage;
 
@@ -49,7 +47,7 @@ impl<'a> PlaylistWidget<'a> {
                 Button::new(f.as_str())
                     .padding(0)
                     .width(Length::Fill)
-                    .style(ButtonTheme::Custom(Box::new(FileTheme { pressed })))
+                    .style(FileButton::new(pressed))
                     .into(),
             );
         }
@@ -345,6 +343,7 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
                 if modifiers.is_empty() && *key_code == KeyCode::Delete {
                     self.deleted(shell)
                 }
+                // TODO use File input instead
                 if modifiers.contains(Modifiers::CTRL) && *key_code == KeyCode::V {
                     if let Some(clipboard) = clipboard.read() {
                         shell.publish(
@@ -537,62 +536,6 @@ impl<'a> From<PlaylistWidget<'a>> for Element<'a, MainMessage> {
     }
 }
 
-pub struct FileTheme {
-    pressed: bool,
-}
-
-impl ButtonSS for FileTheme {
-    type Style = Theme;
-
-    fn active(&self, style: &Self::Style) -> ButtonAp {
-        let background = match self.pressed {
-            true => Some(iced::Background::Color(style.palette().primary)),
-            false => None,
-        };
-        ButtonAp {
-            shadow_offset: Vector::ZERO,
-            border_radius: 0.0,
-            border_width: 0.0,
-            background,
-            text_color: style.palette().text,
-            ..ButtonAp::default()
-        }
-    }
-
-    fn hovered(&self, style: &Self::Style) -> ButtonAp {
-        self.active(style)
-    }
-
-    fn pressed(&self, style: &Self::Style) -> ButtonAp {
-        self.active(style)
-    }
-
-    fn disabled(&self, style: &Self::Style) -> ButtonAp {
-        self.active(style)
-    }
-}
-
-pub struct FileRuleTheme {
-    visible: bool,
-}
-
-impl RuleSS for FileRuleTheme {
-    type Style = Theme;
-
-    fn appearance(&self, style: &Self::Style) -> RuleAp {
-        let mut color = iced::Color::TRANSPARENT;
-        if self.visible {
-            color = style.palette().text;
-        }
-        RuleAp {
-            color,
-            width: 1,
-            radius: 0.0,
-            fill_mode: FillMode::Full,
-        }
-    }
-}
-
 pub struct InsertHint {
     rule: Rule<Renderer>,
     pos: iced::Point,
@@ -601,8 +544,7 @@ pub struct InsertHint {
 impl Default for InsertHint {
     fn default() -> Self {
         Self {
-            rule: Rule::horizontal(1)
-                .style(RuleTheme::Custom(Box::new(FileRuleTheme { visible: true }))),
+            rule: Rule::horizontal(1).style(FileRuleTheme::new()),
             pos: iced::Point::default(),
         }
     }

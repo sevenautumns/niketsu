@@ -1,11 +1,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use iced::Subscription;
-use log::*;
 use url::Url;
-
-use crate::window::MainMessage;
 
 #[derive(Debug, Clone, Eq)]
 pub enum Video {
@@ -50,26 +46,26 @@ pub struct PlayingFile {
     pub heartbeat: bool,
 }
 
-impl PlayingFile {
-    pub fn subscribe(&self) -> Subscription<MainMessage> {
-        if self.heartbeat {
-            iced::subscription::channel(
-                std::any::TypeId::of::<Self>(),
-                1,
-                |mut output| async move {
-                    loop {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        if let Err(e) = output.try_send(MainMessage::Heartbeat) {
-                            error!("{e:?}");
-                        }
-                    }
-                },
-            )
-        } else {
-            Subscription::none()
-        }
-    }
-}
+// impl PlayingFile {
+//     pub fn subscribe(&self) -> Subscription<MainMessage> {
+//         if self.heartbeat {
+//             iced::subscription::channel(
+//                 std::any::TypeId::of::<Self>(),
+//                 1,
+//                 |mut output| async move {
+//                     loop {
+//                         tokio::time::sleep(Duration::from_secs(5)).await;
+//                         if let Err(e) = output.try_send(MainMessage::Heartbeat) {
+//                             error!("{e:?}");
+//                         }
+//                     }
+//                 },
+//             )
+//         } else {
+//             Subscription::none()
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct SeekEvent {

@@ -2,10 +2,8 @@ use std::borrow::BorrowMut;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
-use iced::theme::{Button as ButtonTheme, Container as ContainerTheme};
-use iced::widget::button::{Appearance as ButtonAp, StyleSheet as ButtonSS};
-use iced::widget::container::{Appearance as ContainerAp, StyleSheet as ContainerSS};
 use iced::widget::scrollable::Id;
 use iced::widget::{column, row, Button, Column, Container, Scrollable, Text, TextInput};
 use iced::{
@@ -19,6 +17,7 @@ use crate::fs::{DatabaseMessage, FileDatabase};
 use crate::messages::ChatMessage;
 use crate::mpv::event::MpvEvent;
 use crate::mpv::{Mpv, MpvResultingAction};
+use crate::styling::{ContainerBorder, ResultButton};
 use crate::user::ThisUser;
 use crate::video::Video;
 use crate::ws::{ServerMessage, ServerWebsocket, UserStatus, WebSocketMessage};
@@ -58,6 +57,8 @@ pub enum UserMessage {
     StartButton,
     ReadyButton,
     SendMessage,
+    StopDbUpdate,
+    StartDbUpdate,
     MessageInput(String),
 }
 
@@ -128,7 +129,7 @@ impl Application for MainWindow {
                             let ws_cmd = ServerWebsocket::send_command(
                                 ws,
                                 ServerMessage::Select {
-                                    filename: video.as_str().to_string(),
+                                    filename: video.as_str().to_string().into(),
                                     username: user.name(),
                                 },
                             );
@@ -177,17 +178,26 @@ impl Application for MainWindow {
                                 let ws_cmd = ServerWebsocket::send_command(
                                     ws,
                                     ServerMessage::Select {
-                                        filename: next.as_str().to_string(),
+                                        filename: next.as_str().to_string().into(),
                                         username: user.name(),
                                     },
                                 );
                                 mpv.load(next, None, true, db).log();
                                 return ws_cmd;
+                            } else {
+                                return ServerWebsocket::send_command(
+                                    ws,
+                                    ServerMessage::Select {
+                                        filename: None,
+                                        username: user.name(),
+                                    },
+                                );
                             }
                         }
                         Ok(Some(MpvResultingAction::Seek(position))) => {
                             debug!("Mpv process: seek {position:?}");
                             if let Some(playing) = mpv.playing() {
+                                // TODO remove this env
                                 if let Ok(bool) = std::env::var("DEBUG_NO_SEEK") {
                                     if bool.to_lowercase().eq("true") {
                                         return Command::none();
@@ -258,7 +268,7 @@ impl Application for MainWindow {
                                     position,
                                     paused,
                                 } => {
-                                    trace!("{filename}, {position:?}, {paused:?}")
+                                    trace!("{filename:?}, {position:?}, {paused:?}")
                                 }
                                 ServerMessage::StatusList { users: usrs } => {
                                     debug!("{users:?}");
@@ -298,8 +308,13 @@ impl Application for MainWindow {
                                 }
                                 ServerMessage::Select { filename, username } => {
                                     messages.push(ChatMessage::select(filename.clone(), username));
-                                    debug!("Socket: received select: {filename}");
-                                    mpv.load(Video::from_string(filename), None, true, db).log();
+                                    debug!("Socket: received select: {filename:?}");
+                                    match filename {
+                                        Some(filename) => mpv
+                                            .load(Video::from_string(filename), None, true, db)
+                                            .log(),
+                                        None => mpv.unload(),
+                                    }
                                 }
                                 ServerMessage::Message { message, username } => {
                                     messages
@@ -315,9 +330,7 @@ impl Application for MainWindow {
                                 }
                             }
                         }
-                        WebSocketMessage::TungError { err } => error!("{err:?}"),
-                        WebSocketMessage::TungStringError { msg, err } => error!("{msg}, {err:?}"),
-                        WebSocketMessage::SerdeError { msg, err } => error!("{msg}, {err:?}"),
+                        WebSocketMessage::Error { msg, err } => error!("{msg:?}, {err:?}"),
                         WebSocketMessage::WsStreamEnded => {
                             messages.push(ChatMessage::disconnected());
                             error!("Websocket ended")
@@ -349,6 +362,14 @@ impl Application for MainWindow {
                             }
                         }
                         UserMessage::MessageInput(msg) => *message = msg,
+                        UserMessage::StartDbUpdate => {
+                            trace!("Start database update request received");
+                            return FileDatabase::update_command(db);
+                        }
+                        UserMessage::StopDbUpdate => {
+                            trace!("Stop database update request received");
+                            db.stop_update()
+                        }
                         _ => {}
                     },
                     MainMessage::Database(event) => match event {
@@ -360,18 +381,17 @@ impl Application for MainWindow {
                     },
                     MainMessage::Heartbeat => {
                         debug!("Heartbeat");
-                        if let Some(playing) = mpv.playing() {
-                            if let Ok(position) = mpv.get_playback_position() {
-                                return ServerWebsocket::send_command(
-                                    ws,
-                                    ServerMessage::VideoStatus {
-                                        filename: playing.video.as_str().to_string(),
-                                        position,
-                                        paused: mpv.paused(),
-                                    },
-                                );
-                            }
-                        }
+                        let playing = mpv.playing();
+                        return ServerWebsocket::send_command(
+                            ws,
+                            ServerMessage::VideoStatus {
+                                filename: playing.as_ref().map(|p| p.video.as_str().to_string()),
+                                position: playing
+                                    .map(|_| mpv.get_playback_position().ok())
+                                    .flatten(),
+                                paused: mpv.paused(),
+                            },
+                        );
                     }
                 }
             }
@@ -418,6 +438,7 @@ impl Application for MainWindow {
                 users,
                 user,
                 mpv,
+                db,
                 ..
             } => {
                 let mut btn;
@@ -428,7 +449,7 @@ impl Application for MainWindow {
                                 .width(Length::Fill)
                                 .horizontal_alignment(iced::alignment::Horizontal::Center),
                         )
-                        .style(ReadyTheme::ready())
+                        .style(ResultButton::ready())
                     }
                     false => {
                         btn = Button::new(
@@ -436,7 +457,7 @@ impl Application for MainWindow {
                                 .width(Length::Fill)
                                 .horizontal_alignment(iced::alignment::Horizontal::Center),
                         )
-                        .style(ReadyTheme::not_ready())
+                        .style(ResultButton::not_ready())
                     }
                 }
                 btn = btn.on_press(MainMessage::User(UserMessage::ReadyButton));
@@ -477,6 +498,7 @@ impl Application for MainWindow {
                     .width(Length::Fill)
                     .height(Length::Fill),
                     column!(
+                        row!(db.progress_bar(), db.button()).spacing(5.0),
                         Container::new(
                             Scrollable::new(Column::with_children(users))
                                 .width(Length::Fill)
@@ -505,10 +527,18 @@ impl Application for MainWindow {
     fn subscription(&self) -> Subscription<Self::Message> {
         if let MainWindow::Running { mpv, ws, db, .. } = self {
             // TODO use .map() here instead
-            let heartbeat = mpv
-                .playing()
-                .map(|p| p.subscribe())
-                .unwrap_or(Subscription::none());
+            let heartbeat = iced::subscription::channel(
+                std::any::TypeId::of::<Self>(),
+                1,
+                |mut output| async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        if let Err(e) = output.try_send(MainMessage::Heartbeat) {
+                            error!("{e:?}");
+                        }
+                    }
+                },
+            );
             let mpv = mpv.subscribe();
             let ws = ws.subscribe();
             let db = db.subscribe();
@@ -516,80 +546,6 @@ impl Application for MainWindow {
             return Subscription::batch([mpv, ws, db, heartbeat]);
         }
         Subscription::none()
-    }
-}
-
-pub struct ReadyTheme {
-    ready: bool,
-}
-
-impl ReadyTheme {
-    pub fn not_ready() -> iced::theme::Button {
-        ButtonTheme::Custom(Box::new(Self { ready: false }))
-    }
-
-    pub fn ready() -> iced::theme::Button {
-        ButtonTheme::Custom(Box::new(Self { ready: true }))
-    }
-
-    pub fn background(&self, style: &Theme) -> Option<iced::Background> {
-        match self.ready {
-            true => Some(iced::Background::Color(style.palette().success)),
-            false => Some(iced::Background::Color(style.palette().danger)),
-        }
-    }
-}
-
-impl ButtonSS for ReadyTheme {
-    type Style = Theme;
-
-    fn active(&self, style: &Self::Style) -> ButtonAp {
-        ButtonAp {
-            background: self.background(style),
-            ..style.active(&iced::theme::Button::Text)
-        }
-    }
-
-    fn hovered(&self, style: &Self::Style) -> ButtonAp {
-        ButtonAp {
-            background: self.background(style),
-            ..style.hovered(&iced::theme::Button::Text)
-        }
-    }
-
-    fn pressed(&self, style: &Self::Style) -> ButtonAp {
-        ButtonAp {
-            background: self.background(style),
-            ..style.pressed(&iced::theme::Button::Text)
-        }
-    }
-
-    fn disabled(&self, style: &Self::Style) -> ButtonAp {
-        ButtonAp {
-            background: self.background(style),
-            ..style.disabled(&iced::theme::Button::Text)
-        }
-    }
-}
-
-pub struct ContainerBorder;
-
-impl ContainerBorder {
-    pub fn basic() -> iced::theme::Container {
-        ContainerTheme::Custom(Box::new(Self))
-    }
-}
-
-impl ContainerSS for ContainerBorder {
-    type Style = Theme;
-
-    fn appearance(&self, style: &Self::Style) -> ContainerAp {
-        ContainerAp {
-            border_color: style.palette().text,
-            border_radius: 5.0,
-            border_width: 2.0,
-            ..Default::default()
-        }
     }
 }
 

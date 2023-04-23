@@ -5,15 +5,18 @@ use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use async_recursion::async_recursion;
+use atomic_counter::{AtomicCounter, RelaxedCounter};
 use dashmap::DashMap;
 use futures::future::join_all;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use iced::{Command, Subscription};
+use iced::widget::{Button, ProgressBar, Tooltip};
+use iced::{Command, Element, Renderer, Subscription};
 use log::trace;
 use tokio::sync::watch::{Receiver as WatchRec, Sender as WatchSend};
 use tokio::sync::{Notify, RwLock, Semaphore};
 
+use crate::styling::{FileProgressBar, ResultButton};
 use crate::window::MainMessage;
 
 #[derive(Debug, Clone)]
@@ -35,6 +38,8 @@ pub struct FileDatabase {
     database_counter: (WatchSend<usize>, WatchRec<usize>),
     search_paths: RwLock<Vec<PathBuf>>,
     semaphore: Semaphore,
+    queued_dirs: RelaxedCounter,
+    finished_dirs: RelaxedCounter,
 }
 
 impl Default for FileDatabase {
@@ -45,6 +50,8 @@ impl Default for FileDatabase {
             database_counter: tokio::sync::watch::channel(0),
             search_paths: Default::default(),
             semaphore: Semaphore::new(100),
+            queued_dirs: RelaxedCounter::new(0),
+            finished_dirs: RelaxedCounter::new(0),
         }
     }
 }
@@ -99,8 +106,43 @@ impl FileDatabase {
         self.stop.try_read().map(|s| s.notify_one()).ok();
     }
 
+    pub fn get_status(&self) -> (usize, usize) {
+        let finished = self.finished_dirs.get();
+        let queued = self.queued_dirs.get();
+        (finished, queued)
+    }
+
+    pub fn is_updating(&self) -> bool {
+        self.stop.try_write().is_ok()
+    }
+
     pub fn database_counter(&self) -> usize {
         *self.database_counter.1.borrow()
+    }
+
+    pub fn progress_bar(&self) -> ProgressBar<Renderer> {
+        let (fin, que) = self.get_status();
+        ProgressBar::new(0.0..=(que as f32), fin as f32).style(FileProgressBar::new(fin == que))
+    }
+
+    pub fn button<'a>(&self) -> Element<'a, MainMessage, Renderer> {
+        let (fin, que) = self.get_status();
+        let finished = fin == que;
+        let msg = match finished {
+            true => MainMessage::User(crate::window::UserMessage::StartDbUpdate),
+            false => MainMessage::User(crate::window::UserMessage::StopDbUpdate),
+        };
+        let btn = match finished {
+            true => Button::new("Update"),
+            false => Button::new("Stop"),
+        }
+        .on_press(msg)
+        .style(ResultButton::new(finished));
+        let text = match finished {
+            true => "Update file database",
+            false => "Stop update of file database",
+        };
+        Tooltip::new(btn, text, iced::widget::tooltip::Position::Bottom).into()
     }
 
     pub async fn update(&self) -> Result<()> {
@@ -112,6 +154,8 @@ impl FileDatabase {
         *stop = Notify::new();
         self.database.clear();
         self.database_counter.0.send_modify(|i| *i += 1);
+        self.queued_dirs.reset();
+        self.finished_dirs.reset();
         let paths = self.search_paths.read().await.clone();
         let stop = stop.downgrade();
 
@@ -125,12 +169,15 @@ impl FileDatabase {
             _ = stop.notified() => trace!("update stop requested")
         }
 
+        self.queued_dirs.reset();
+        self.finished_dirs.reset();
         drop(stop);
         Ok(())
     }
 
     #[async_recursion]
     async fn update_inner(&self, path: PathBuf) -> Result<()> {
+        self.queued_dirs.inc();
         let sem = self.semaphore.acquire().await;
         let mut files = vec![];
         let mut join_rec = FuturesUnordered::new();
@@ -193,6 +240,7 @@ impl FileDatabase {
         }
         self.database_counter.0.send_modify(|i| *i += 1);
 
+        self.finished_dirs.inc();
         Ok(())
     }
 }
