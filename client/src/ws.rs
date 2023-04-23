@@ -83,7 +83,7 @@ impl UserStatus {
     pub fn to_text<'a>(&self, user: &ThisUser, theme: &Theme) -> Row<'a, MainMessage, Renderer> {
         let mut row = Row::new();
         if self.username.eq(&user.name()) {
-            row = row.push(Text::new("(me)"));
+            row = row.push(Text::new("(me) "));
         }
         let ready = match self.ready {
             true => Text::new("Ready").style(theme.palette().success),

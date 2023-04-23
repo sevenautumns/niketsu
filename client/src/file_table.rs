@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::keyboard::{KeyCode, Modifiers};
-use iced::widget::{Button, Column, Rule, Scrollable, Text};
+use iced::widget::{Button, Column, Container, Rule, Scrollable, Text};
 use iced::{Element, Length, Renderer, Size};
 use iced_native::widget::Tree;
 use iced_native::Widget;
@@ -57,7 +57,7 @@ impl<'a> PlaylistWidget<'a> {
                 }
             };
             file_btns.push(
-                Button::new(Text::new(name))
+                Button::new(Container::new(Text::new(name)).padding(2))
                     .padding(0)
                     .width(Length::Fill)
                     .style(FileButton::new(pressed, available))
