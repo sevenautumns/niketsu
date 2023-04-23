@@ -6,8 +6,6 @@ authors = ["Sven Friedrich <sven@autumnal.de>"]
 license = "Apache-2.0"
 
 [dependencies]
-pest = "2"
-pest_derive = "2"
 anyhow = "1"
 strum = { version = "0.24", features = ["derive"] }
 clap = { version = "4", features = [ "derive" ] }
