@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Error, Result};
 use arc_swap::ArcSwapOption;
 use async_tungstenite::tokio::TokioAdapter;
-use async_tungstenite::tungstenite::{Error as TsError, Message as TsMessage};
+use async_tungstenite::tungstenite::Message as TsMessage;
 use async_tungstenite::WebSocketStream;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt, SinkExt, StreamExt};
@@ -25,9 +25,9 @@ pub enum ServerMessage {
         uuid: String,
     },
     VideoStatus {
-        filename: String,
+        filename: Option<String>,
         #[serde(with = "serde_millis")]
-        position: Duration,
+        position: Option<Duration>,
         paused: bool,
     },
     StatusList {
@@ -52,7 +52,7 @@ pub enum ServerMessage {
         paused: bool,
     },
     Select {
-        filename: String,
+        filename: Option<String>,
         #[serde(skip_serializing)]
         username: String,
     },
@@ -104,16 +104,9 @@ impl From<ServerMessage> for MainMessage {
 pub enum WebSocketMessage {
     Received(ServerMessage),
     // TODO collapse errors into one variant
-    TungError {
-        err: Arc<TsError>,
-    },
-    TungStringError {
-        msg: TsMessage,
-        err: Arc<TsError>,
-    },
-    SerdeError {
-        msg: String,
-        err: Arc<serde_json::Error>,
+    Error {
+        msg: Option<String>,
+        err: Arc<Error>,
     },
     WsStreamEnded,
     Connected,
@@ -201,7 +194,11 @@ impl ServerWebsocket {
                             Err(err) => {
                                 tokio::time::sleep(Duration::from_secs(1)).await;
                                 (
-                                    WebSocketMessage::TungError { err: Arc::new(err) }.into(),
+                                    WebSocketMessage::Error {
+                                        msg: None,
+                                        err: Arc::new(err.into()),
+                                    }
+                                    .into(),
                                     WsState::Disconnected { sink, addr },
                                 )
                             }
@@ -220,25 +217,29 @@ impl ServerWebsocket {
                                         WsState::Connected { sink, addr, stream },
                                     ),
                                     Err(err) => (
-                                        WebSocketMessage::SerdeError {
-                                            msg,
-                                            err: Arc::new(err),
+                                        WebSocketMessage::Error {
+                                            msg: msg.into(),
+                                            err: Arc::new(err.into()),
                                         }
                                         .into(),
                                         WsState::Connected { sink, addr, stream },
                                     ),
                                 },
                                 Err(err) => (
-                                    WebSocketMessage::TungStringError {
-                                        msg,
-                                        err: Arc::new(err),
+                                    WebSocketMessage::Error {
+                                        msg: format!("{msg:?}").into(),
+                                        err: Arc::new(err.into()),
                                     }
                                     .into(),
                                     WsState::Connected { sink, addr, stream },
                                 ),
                             },
                             Err(err) => (
-                                WebSocketMessage::TungError { err: Arc::new(err) }.into(),
+                                WebSocketMessage::Error {
+                                    msg: None,
+                                    err: Arc::new(err.into()),
+                                }
+                                .into(),
                                 WsState::Disconnected { sink, addr },
                             ),
                         },

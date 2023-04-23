@@ -9,6 +9,7 @@ pub mod file_table;
 pub mod fs;
 pub mod messages;
 pub mod mpv;
+pub mod styling;
 pub mod user;
 pub mod video;
 pub mod window;
@@ -26,6 +27,7 @@ fn main() -> Result<()> {
         }
     };
     let settings = Settings::with_flags(config);
+    // settings
     MainWindow::run(settings)?;
     Ok(())
 }

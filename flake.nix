@@ -48,6 +48,9 @@
             freetype
             fontconfig
             vulkan-loader
+            wayland
+            wayland-protocols
+            libxkbcommon
           ];
           LIBRARY_PATH = lib.makeLibraryPath libraries;
           PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig"

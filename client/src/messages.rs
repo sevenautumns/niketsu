@@ -1,8 +1,123 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
-use iced::widget::Text;
-use iced::{Color, Length, Renderer, Theme};
+use iced::widget::scrollable::{Id, RelativeOffset};
+use iced::widget::{Column, Container, Scrollable, Text};
+use iced::{Command, Element, Length, Renderer, Theme};
+
+use crate::styling::{ContainerBackground, ContainerBorder};
+use crate::window::MainMessage;
+
+#[derive(Debug, Clone)]
+pub struct Messages {
+    scroll: RelativeOffset,
+    msgs: Vec<ChatMessage>,
+}
+
+impl Default for Messages {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Messages {
+    pub fn new() -> Self {
+        Self {
+            msgs: vec![],
+            scroll: RelativeOffset::END,
+        }
+    }
+
+    pub fn set_offset(&mut self, offset: RelativeOffset) {
+        self.scroll = offset;
+    }
+
+    pub fn push_playlist_changed(&mut self, user: String) -> Command<MainMessage> {
+        self.msgs.push(ChatMessage::PlaylistChanged {
+            when: Local::now(),
+            user,
+        });
+        self.snap_scroll()
+    }
+
+    pub fn push_paused(&mut self, user: String) -> Command<MainMessage> {
+        self.msgs.push(ChatMessage::Paused {
+            when: Local::now(),
+            user,
+        });
+        self.snap_scroll()
+    }
+
+    pub fn push_started(&mut self, user: String) -> Command<MainMessage> {
+        self.msgs.push(ChatMessage::Started {
+            when: Local::now(),
+            user,
+        });
+        self.snap_scroll()
+    }
+
+    pub fn push_select(&mut self, file: Option<String>, user: String) -> Command<MainMessage> {
+        self.msgs.push(ChatMessage::Select {
+            when: Local::now(),
+            user,
+            file,
+        });
+        self.snap_scroll()
+    }
+
+    pub fn push_seek(&mut self, pos: Duration, file: String, user: String) -> Command<MainMessage> {
+        self.msgs.push(ChatMessage::Seek {
+            when: Local::now(),
+            user,
+            file,
+            pos,
+        });
+        self.snap_scroll()
+    }
+
+    pub fn push_chat(&mut self, msg: String, user: String) -> Command<MainMessage> {
+        self.msgs.push(ChatMessage::Chat {
+            when: Local::now(),
+            user,
+            msg,
+        });
+        self.snap_scroll()
+    }
+
+    pub fn push_connected(&mut self) -> Command<MainMessage> {
+        self.msgs
+            .push(ChatMessage::Connected { when: Local::now() });
+        self.snap_scroll()
+    }
+
+    pub fn push_disconnected(&mut self) -> Command<MainMessage> {
+        self.msgs
+            .push(ChatMessage::Disconnected { when: Local::now() });
+        self.snap_scroll()
+    }
+
+    fn snap_scroll(&self) -> Command<MainMessage> {
+        if self.scroll.y.eq(&1.0) {
+            return iced::widget::scrollable::snap_to(Id::new("messages"), RelativeOffset::END);
+        }
+        Command::none()
+    }
+
+    pub fn view<'a>(&self, theme: Theme) -> Element<'a, MainMessage, Renderer> {
+        let msgs = self.msgs.iter().map(|m| m.to_text(theme.clone())).collect();
+        Container::new(
+            Scrollable::new(Column::with_children(msgs))
+                .width(Length::Fill)
+                .on_scroll(|o| MainMessage::User(crate::window::UserMessage::ScrollMessages(o)))
+                .id(Id::new("messages")),
+        )
+        .style(ContainerBorder::basic())
+        .padding(5.0)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum ChatMessage {
@@ -21,7 +136,7 @@ pub enum ChatMessage {
     Select {
         when: DateTime<Local>,
         user: String,
-        file: String,
+        file: Option<String>,
     },
     Seek {
         when: DateTime<Local>,
@@ -43,101 +158,54 @@ pub enum ChatMessage {
 }
 
 impl ChatMessage {
-    pub fn playlist_changed(user: String) -> Self {
-        Self::PlaylistChanged {
-            when: Local::now(),
-            user,
-        }
-    }
-
-    pub fn paused(user: String) -> Self {
-        Self::Paused {
-            when: Local::now(),
-            user,
-        }
-    }
-
-    pub fn started(user: String) -> Self {
-        Self::Started {
-            when: Local::now(),
-            user,
-        }
-    }
-
-    pub fn select(file: String, user: String) -> Self {
-        Self::Select {
-            when: Local::now(),
-            user,
-            file,
-        }
-    }
-
-    pub fn seek(pos: Duration, file: String, user: String) -> Self {
-        Self::Seek {
-            when: Local::now(),
-            user,
-            file,
-            pos,
-        }
-    }
-
-    pub fn chat(msg: String, user: String) -> Self {
-        Self::Chat {
-            when: Local::now(),
-            user,
-            msg,
-        }
-    }
-
-    pub fn connected() -> Self {
-        Self::Connected { when: Local::now() }
-    }
-
-    pub fn disconnected() -> Self {
-        Self::Disconnected { when: Local::now() }
-    }
-
-    pub fn to_text<'a>(&self, theme: Theme) -> Text<'a, Renderer> {
+    pub fn to_text<'a>(&self, theme: Theme) -> Element<'a, MainMessage, Renderer> {
         let when = self.when().format("[%H:%M:%S]").to_string();
         let style = self.style(theme);
 
         match self {
             ChatMessage::PlaylistChanged { user, .. } => {
-                Text::new(format!("{when} {user} changed playlist")).style(style)
+                Container::new(Text::new(format!("{when} {user} changed playlist"))).style(style)
             }
             ChatMessage::Paused { user, .. } => {
-                Text::new(format!("{when} {user} paused playback")).style(style)
+                Container::new(Text::new(format!("{when} {user} paused playback"))).style(style)
             }
             ChatMessage::Started { user, .. } => {
-                Text::new(format!("{when} {user} started playback")).style(style)
+                Container::new(Text::new(format!("{when} {user} started playback"))).style(style)
             }
             ChatMessage::Select { user, file, .. } => {
-                Text::new(format!("{when} {user} selected file: {file}")).style(style)
+                Container::new(Text::new(format!("{when} {user} selected file: {file:?}")))
+                    .style(style)
             }
-            ChatMessage::Chat { user, msg, .. } => Text::new(format!("{when} {user}: {msg}")),
+            ChatMessage::Chat { user, msg, .. } => {
+                Container::new(Text::new(format!("{when} {user}: {msg}"))).style(style)
+            }
             ChatMessage::Disconnected { .. } => {
-                Text::new(format!("{when} lost connection to server")).style(style)
+                Container::new(Text::new(format!("{when} lost connection to server"))).style(style)
             }
-            ChatMessage::Connected { .. } => {
-                Text::new(format!("{when} connection to server established")).style(style)
-            }
+            ChatMessage::Connected { .. } => Container::new(Text::new(format!(
+                "{when} connection to server established"
+            )))
+            .style(style),
             ChatMessage::Seek { user, pos, .. } => {
-                Text::new(format!("{when} {user} seeked to {pos:?}")).style(style)
+                Container::new(Text::new(format!("{when} {user} seeked to {pos:?}"))).style(style)
             }
         }
         .width(Length::Fill)
+        .into()
     }
 
-    pub fn style(&self, theme: Theme) -> Color {
+    pub fn style(&self, theme: Theme) -> iced::theme::Container {
         match self {
-            ChatMessage::PlaylistChanged { .. } => theme.palette().primary,
-            ChatMessage::Paused { .. } => theme.palette().primary,
-            ChatMessage::Started { .. } => theme.palette().primary,
-            ChatMessage::Select { .. } => theme.palette().primary,
-            ChatMessage::Chat { .. } => theme.palette().text,
-            ChatMessage::Connected { .. } => theme.palette().success,
-            ChatMessage::Disconnected { .. } => theme.palette().danger,
-            ChatMessage::Seek { .. } => theme.palette().primary,
+            ChatMessage::PlaylistChanged { .. } => {
+                ContainerBackground::new(theme.palette().primary)
+            }
+            ChatMessage::Paused { .. } => ContainerBackground::new(theme.palette().primary),
+            ChatMessage::Started { .. } => ContainerBackground::new(theme.palette().primary),
+            ChatMessage::Select { .. } => ContainerBackground::new(theme.palette().primary),
+            ChatMessage::Chat { .. } => ContainerBackground::new(theme.palette().background),
+            ChatMessage::Connected { .. } => ContainerBackground::new(theme.palette().primary),
+            ChatMessage::Disconnected { .. } => ContainerBackground::new(theme.palette().danger),
+            ChatMessage::Seek { .. } => ContainerBackground::new(theme.palette().primary),
         }
     }
 

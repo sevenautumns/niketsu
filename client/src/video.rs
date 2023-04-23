@@ -1,11 +1,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use iced::Subscription;
-use log::*;
 use url::Url;
-
-use crate::window::MainMessage;
 
 #[derive(Debug, Clone, Eq)]
 pub enum Video {
@@ -24,6 +20,10 @@ impl PartialEq for Video {
 }
 
 impl Video {
+    pub fn is_url(&self) -> bool {
+        matches!(self, Self::Url(_))
+    }
+
     pub fn from_string(video: String) -> Self {
         if let Ok(url) = Url::parse(&video) {
             Self::Url(url)
@@ -50,26 +50,26 @@ pub struct PlayingFile {
     pub heartbeat: bool,
 }
 
-impl PlayingFile {
-    pub fn subscribe(&self) -> Subscription<MainMessage> {
-        if self.heartbeat {
-            iced::subscription::channel(
-                std::any::TypeId::of::<Self>(),
-                1,
-                |mut output| async move {
-                    loop {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        if let Err(e) = output.try_send(MainMessage::Heartbeat) {
-                            error!("{e:?}");
-                        }
-                    }
-                },
-            )
-        } else {
-            Subscription::none()
-        }
-    }
-}
+// impl PlayingFile {
+//     pub fn subscribe(&self) -> Subscription<MainMessage> {
+//         if self.heartbeat {
+//             iced::subscription::channel(
+//                 std::any::TypeId::of::<Self>(),
+//                 1,
+//                 |mut output| async move {
+//                     loop {
+//                         tokio::time::sleep(Duration::from_secs(5)).await;
+//                         if let Err(e) = output.try_send(MainMessage::Heartbeat) {
+//                             error!("{e:?}");
+//                         }
+//                     }
+//                 },
+//             )
+//         } else {
+//             Subscription::none()
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct SeekEvent {
