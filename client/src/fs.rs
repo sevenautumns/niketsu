@@ -18,6 +18,7 @@ use tokio::sync::{Notify, RwLock, Semaphore};
 
 use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
 use crate::window::MainMessage;
+use crate::TEXT_SIZE;
 
 #[derive(Debug, Clone)]
 pub struct File {
@@ -138,6 +139,8 @@ impl FileDatabase {
             }
             false => ProgressBar::new(0.0..=(que as f32), fin as f32)
                 .style(FileProgressBar::new(fin == que))
+                // Text size + 2 times default button padding
+                .height(Length::Fixed(TEXT_SIZE + 10.0))
                 .into(),
         };
 
@@ -151,6 +154,7 @@ impl FileDatabase {
         }
         .on_press(update_msg)
         .style(ResultButton::new(finished));
+
         let update_text = match finished {
             true => "Update file database",
             false => "Stop update of file database",

@@ -15,6 +15,8 @@ pub mod video;
 pub mod window;
 pub mod ws;
 
+pub const TEXT_SIZE: f32 = 14f32;
+
 fn main() -> Result<()> {
     pretty_env_logger::init();
 
@@ -26,7 +28,8 @@ fn main() -> Result<()> {
             Default::default()
         }
     };
-    let settings = Settings::with_flags(config);
+    let mut settings = Settings::with_flags(config);
+    settings.default_text_size = TEXT_SIZE;
     // settings
     MainWindow::run(settings)?;
     Ok(())

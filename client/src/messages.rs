@@ -162,50 +162,43 @@ impl ChatMessage {
         let when = self.when().format("[%H:%M:%S]").to_string();
         let style = self.style(theme);
 
-        match self {
+        let text = match self {
             ChatMessage::PlaylistChanged { user, .. } => {
-                Container::new(Text::new(format!("{when} {user} changed playlist"))).style(style)
+                format!("{when} {user} changed playlist")
             }
             ChatMessage::Paused { user, .. } => {
-                Container::new(Text::new(format!("{when} {user} paused playback"))).style(style)
+                format!("{when} {user} paused playback")
             }
             ChatMessage::Started { user, .. } => {
-                Container::new(Text::new(format!("{when} {user} started playback"))).style(style)
+                format!("{when} {user} started playback")
             }
             ChatMessage::Select { user, file, .. } => {
-                Container::new(Text::new(format!("{when} {user} selected file: {file:?}")))
-                    .style(style)
+                format!("{when} {user} selected file: {file:?}")
             }
             ChatMessage::Chat { user, msg, .. } => {
-                Container::new(Text::new(format!("{when} {user}: {msg}"))).style(style)
+                format!("{when} {user}: {msg}")
             }
             ChatMessage::Disconnected { .. } => {
-                Container::new(Text::new(format!("{when} lost connection to server"))).style(style)
+                format!("{when} lost connection to server")
             }
-            ChatMessage::Connected { .. } => Container::new(Text::new(format!(
-                "{when} connection to server established"
-            )))
-            .style(style),
+            ChatMessage::Connected { .. } => {
+                format!("{when} connection to server established")
+            }
             ChatMessage::Seek { user, pos, .. } => {
-                Container::new(Text::new(format!("{when} {user} seeked to {pos:?}"))).style(style)
+                format!("{when} {user} seeked to {pos:?}")
             }
-        }
-        .width(Length::Fill)
-        .into()
+        };
+
+        Container::new(Text::new(text))
+            .style(style)
+            .width(Length::Fill)
+            .into()
     }
 
     pub fn style(&self, theme: Theme) -> iced::theme::Container {
         match self {
-            ChatMessage::PlaylistChanged { .. } => {
-                ContainerBackground::new(theme.palette().primary)
-            }
-            ChatMessage::Paused { .. } => ContainerBackground::new(theme.palette().primary),
-            ChatMessage::Started { .. } => ContainerBackground::new(theme.palette().primary),
-            ChatMessage::Select { .. } => ContainerBackground::new(theme.palette().primary),
-            ChatMessage::Chat { .. } => ContainerBackground::new(theme.palette().background),
-            ChatMessage::Connected { .. } => ContainerBackground::new(theme.palette().primary),
             ChatMessage::Disconnected { .. } => ContainerBackground::new(theme.palette().danger),
-            ChatMessage::Seek { .. } => ContainerBackground::new(theme.palette().primary),
+            _ => ContainerBackground::new(theme.palette().background),
         }
     }
 
