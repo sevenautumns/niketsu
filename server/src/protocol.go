@@ -45,10 +45,10 @@ func (p *Ping) Type() MessageType               { return PingType }
 func (p *Ping) MarshalMessage() ([]byte, error) { return MarshalJSON(p) }
 
 type VideoStatus struct {
-	Filename string `json:"filename"`
-	Position uint64 `json:"position"`
-	Paused   bool   `json:"paused"`
-	Username string `json:"username"`
+	Filename *string `json:"filename"`
+	Position *uint64 `json:"position"`
+	Paused   bool    `json:"paused"`
+	Username string  `json:"username"`
 }
 
 func (vs *VideoStatus) Type() MessageType               { return VideoStatusType }
@@ -81,8 +81,8 @@ func (s *Seek) Type() MessageType               { return SeekType }
 func (s *Seek) MarshalMessage() ([]byte, error) { return MarshalJSON(s) }
 
 type Select struct {
-	Filename string `json:"filename"`
-	Username string `json:"username"`
+	Filename *string `json:"filename"`
+	Username string  `json:"username"`
 }
 
 func (s *Select) Type() MessageType               { return SelectType }

@@ -2,7 +2,6 @@ package niketsu_server
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"net"
 	"net/http"
@@ -14,17 +13,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// TODO handle clients with unstable latency
 const (
 	WEIGHTING_FACTOR            float64       = 0.85
 	TICK_INTERVALS              time.Duration = time.Second
 	MAX_DIFFERENCE_MILLISECONDS uint64        = 1e3 // one second
-	UNSTABLE_LATENCY_THRESHOLD  float64       = 2e3
+	//UNSTABLE_LATENCY_THRESHOLD  float64       = 2e3
 )
-
-//TODO check userstatus mutexes
-//TODO consider rtt in seek broadcast
-//TODO consider throwing away lost pings, ..
-// TODO add broadcastall option to all broadcasts
 
 type Latency struct {
 	rtt        float64
@@ -32,9 +27,10 @@ type Latency struct {
 }
 
 type Video struct {
-	filename  string
-	position  uint64
+	filename  *string
+	position  *uint64
 	timestamp time.Time
+	paused    bool
 }
 
 type FactoryWorker struct {
@@ -51,7 +47,7 @@ type FactoryWorker struct {
 	latencyMutex     *sync.RWMutex
 }
 
-func NewFactoryWorker(capitalist *Capitalist, conn net.Conn, userName string, filename string, position uint64) FactoryWorker {
+func NewFactoryWorker(capitalist *Capitalist, conn net.Conn, userName string, filename *string, position *uint64) FactoryWorker {
 	var worker FactoryWorker
 	worker.capitalist = capitalist
 	worker.uuid = uuid.New() // can panic
@@ -68,7 +64,8 @@ func NewFactoryWorker(capitalist *Capitalist, conn net.Conn, userName string, fi
 
 func (worker *FactoryWorker) close() {
 	worker.closeOnce.Do(func() {
-		logger.Debug("Closing connection")
+		logger.Infow("Closing connection", "client", worker.uuid)
+
 		close(worker.serviceChannel)
 		worker.capitalist.Delete(worker)
 		worker.capitalist.broadcastStatusList(worker)
@@ -89,6 +86,7 @@ func (worker *FactoryWorker) updateVideoStatus(videoStatus *VideoStatus, arrival
 	worker.videoStatus.filename = videoStatus.Filename
 	worker.videoStatus.position = videoStatus.Position
 	worker.videoStatus.timestamp = arrivalTime.Add(time.Duration(-worker.latency.rtt/2) * time.Nanosecond)
+	worker.videoStatus.paused = videoStatus.Paused
 }
 
 func (worker *FactoryWorker) updateRtt(uuid uuid.UUID, arrivalTime time.Time) {
@@ -110,7 +108,7 @@ func (worker *FactoryWorker) sendPing() {
 	ping := Ping{Uuid: uuid.String()}
 	message, err := ping.MarshalMessage()
 	if err != nil {
-		logger.Warn("Unable to parse ping message")
+		logger.Errorw("Unable to parse ping message", "error", err)
 		return
 	}
 
@@ -120,7 +118,7 @@ func (worker *FactoryWorker) sendPing() {
 
 	err = wsutil.WriteServerMessage(worker.conn, ws.OpText, message)
 	if err != nil {
-		logger.Error("Unable to send ping message")
+		logger.Errorw("Unable to send ping message", "error", err)
 		worker.close()
 	}
 }
@@ -133,22 +131,7 @@ func (worker *FactoryWorker) sendMessage(message []byte) {
 	}
 }
 
-func (worker *FactoryWorker) sendUnsupportedMessage() {
-	worker.userStatusMutex.RLock()
-	defer worker.userStatusMutex.RUnlock()
-
-	unsupported := Unsupported{Username: worker.userStatus.Username}
-	message, err := unsupported.MarshalMessage()
-	if err != nil {
-		logger.Warn("Unable to marhsal unsupported message")
-		return
-	}
-
-	worker.sendMessage(message)
-}
-
 func (worker *FactoryWorker) sendPlaylist() {
-	defer logger.Debugw("Successfully leaving sendPlaylist")
 	worker.capitalist.playlistMutex.RLock()
 	worker.userStatusMutex.RLock()
 	defer worker.capitalist.playlistMutex.RUnlock()
@@ -157,107 +140,114 @@ func (worker *FactoryWorker) sendPlaylist() {
 	playlist := Playlist{Playlist: worker.capitalist.playlist.playlist, Username: worker.userStatus.Username}
 	message, err := playlist.MarshalMessage()
 	if err != nil {
-		logger.Warn("Unable to marshal playlist")
+		logger.Errorw("Unable to marshal playlist", "error", err)
 		return
 	}
 
 	worker.sendMessage(message)
 }
 
-func (worker *FactoryWorker) handleVideoStatus(videoStatus *VideoStatus, arrivalTime time.Time) {
-	legit := worker.capitalist.checkValidVideoStatus(videoStatus, worker)
+func (worker *FactoryWorker) handlePing(ping *Ping, arrivalTime time.Time) {
+	uuid, err := uuid.Parse(ping.Uuid)
+	if err != nil {
+		logger.Errorw("Unable to parse uuid", "error", err)
+		return
+	}
 
+	worker.updateRtt(uuid, arrivalTime)
+}
+
+func (worker *FactoryWorker) handleStatus(status *Status) {
+	worker.updateUserStatus(status)
+	worker.capitalist.broadcastStatusList(worker)
+	worker.capitalist.broadcastStartOnReady(worker)
+}
+
+func (worker *FactoryWorker) handleVideoStatus(videoStatus *VideoStatus, arrivalTime time.Time) {
+	if videoStatus.Filename == nil || videoStatus.Position == nil {
+		worker.capitalist.handleNilStatus(videoStatus, worker)
+		return
+	}
+
+	legit := worker.capitalist.checkValidVideoStatus(videoStatus, worker)
 	logger.Debugw("Checked status", "status", legit)
 	if legit {
 		worker.updateVideoStatus(videoStatus, arrivalTime)
 		worker.capitalist.evaluateVideoStatus()
 	} else {
-		worker.capitalist.sendSeek(worker)
+		worker.capitalist.sendSeek(worker, true)
 	}
 }
 
-func (worker *FactoryWorker) handleMessage(data []byte, op ws.OpCode, err error, arrivalTime time.Time) {
-	if err != nil {
-		logger.Error("Unable to read from client")
-		worker.close()
-		return
-	}
-	//TODO handle different op code
+func (worker *FactoryWorker) handleStart(start *Start) {
+	worker.updateUserStatus(&Status{Ready: true, Username: worker.userStatus.Username}) // user is ready for playing
+	worker.capitalist.broadcastStart(start.Filename, worker)
+	worker.capitalist.setPaused(false)
+}
 
+func (worker *FactoryWorker) handleSeek(seek *Seek, arrivalTime time.Time) {
+	worker.capitalist.changePosition(seek.Position)
+	worker.capitalist.updateLastSeek(seek.Position)
+	worker.updateVideoStatus(&VideoStatus{Filename: &seek.Filename, Position: &seek.Position, Paused: seek.Paused}, arrivalTime)
+	worker.capitalist.broadcastSeek(seek.Filename, seek.Position, worker, true)
+}
+
+func (worker *FactoryWorker) handleSelect(sel *Select) {
+	worker.capitalist.changeVideo(sel.Filename)
+	worker.capitalist.changePosition(0)
+	worker.capitalist.updateLastSeek(0)
+	worker.capitalist.broadcastSelect(sel.Filename, worker, false)
+	worker.capitalist.broadcastStartOnReady(worker)
+}
+
+func (worker *FactoryWorker) handlePlaylist(playlist *Playlist) {
+	worker.capitalist.broadcastPlaylist(playlist, worker, true)
+	worker.capitalist.changePlaylist(playlist.Playlist, worker)
+}
+
+func (worker *FactoryWorker) handlePause(pause *Pause) {
+	worker.capitalist.broadcastPause(pause.Filename, worker)
+	worker.capitalist.setPaused(true)
+}
+
+func (worker *FactoryWorker) handleMessage(data []byte, arrivalTime time.Time) {
 	msg, err := UnmarshalMessage(data)
 	if err != nil {
-		logger.Error("Unable to unmarshal client message")
+		logger.Errorw("Unable to unmarshal client message", "error", err)
 		return
 	}
 
-	// TODO update worker and capitalist video status
+	logger.Debugw("Received message from client", "type", msg.Type(), "message", msg)
 	switch msg.Type() {
 	case PingType:
-		//logger.Debugw("Received ping from client", "message", msg)
-
-		uuid, err := uuid.Parse(msg.(*Ping).Uuid)
-		if err != nil {
-			logger.Warn("Unable to parse uuid")
-			return
-		}
-		worker.updateRtt(uuid, arrivalTime)
+		msg := msg.(*Ping)
+		worker.handlePing(msg, arrivalTime)
 	case StatusType:
-		logger.Debugw("Received status from client", "message", msg)
-
 		msg := msg.(*Status)
-		worker.updateUserStatus(msg)
-		worker.capitalist.broadcastStatusList(worker)
-		worker.capitalist.broadcastStartOnReady(worker)
+		worker.handleStatus(msg)
 	case VideoStatusType:
-		logger.Debugw("Received video status from client", "message", msg)
-
 		msg := msg.(*VideoStatus)
 		worker.handleVideoStatus(msg, arrivalTime)
 	case StartType:
-		logger.Debugw("Received start from client", "message", msg)
-
 		msg := msg.(*Start)
-		worker.updateUserStatus(&Status{Ready: true, Username: worker.userStatus.Username}) // user is ready for playing
-		worker.capitalist.broadcastStart(msg.Filename, worker)
-		worker.capitalist.setPaused(false)
+		worker.handleStart(msg)
 	case SeekType:
-		logger.Debugw("Received seek from client", "message", msg)
-
 		msg := msg.(*Seek)
-		worker.capitalist.changePosition(msg.Position)
-		worker.capitalist.updateLastSeek(msg.Position)
-
-		worker.updateVideoStatus(&VideoStatus{Filename: msg.Filename, Position: msg.Position, Paused: msg.Paused}, arrivalTime)
-		worker.capitalist.broadcastSeek(msg.Filename, msg.Position, worker, true)
+		worker.handleSeek(msg, arrivalTime)
 	case SelectType:
-		logger.Debugw("Received select from client", "message", msg)
-
 		msg := msg.(*Select)
-		// TODO only send if video is not current
-		worker.capitalist.changeVideo(msg.Filename)
-		worker.capitalist.changePosition(0)
-		worker.capitalist.updateLastSeek(0)
-		worker.capitalist.broadcastSelect(msg.Filename, worker, false)
-		worker.capitalist.broadcastStartOnReady(worker)
+		worker.handleSelect(msg)
 	case UserMessageType:
-		logger.Debugw("Received user message from client", "message", msg)
-
 		msg := msg.(*UserMessage)
 		worker.capitalist.broadcastUserMessage(msg.Message, worker)
 	case PlaylistType:
-		logger.Debugw("Received playlist from client", "message", msg)
-
 		msg := msg.(*Playlist)
-		worker.capitalist.broadcastPlaylist(msg, worker, true)
-		worker.capitalist.changePlaylist(msg.Playlist, worker)
+		worker.handlePlaylist(msg)
 	case PauseType:
-		logger.Debugw("Received pause from client", "message", msg)
-
 		msg := msg.(*Pause)
-		worker.capitalist.broadcastPause(msg.Filename, worker)
-		worker.capitalist.setPaused(true)
+		worker.handlePause(msg)
 	default:
-		logger.Infow("Received unknown message from client", "message", msg)
+		logger.Warn("Unknown message handling is not supported.")
 	}
 }
 
@@ -267,7 +257,7 @@ func (worker *FactoryWorker) Start() {
 	// send client current state
 	go worker.HandlerService()
 	go worker.sendPlaylist()
-	go worker.capitalist.sendSeek(worker)
+	go worker.capitalist.sendSeek(worker, true)
 
 	go worker.PingService()
 	<-worker.serviceChannel
@@ -279,9 +269,16 @@ func (worker *FactoryWorker) HandlerService() {
 		case <-worker.serviceChannel:
 			return
 		default:
-			data, op, err := wsutil.ReadClientData(worker.conn)
+			data, _, err := wsutil.ReadClientData(worker.conn)
 			arrivalTime := time.Now()
-			go worker.handleMessage(data, op, err, arrivalTime)
+			if err != nil {
+				logger.Errorw("Unable to read from client", "error", err, "worker", worker.uuid)
+				worker.close()
+				return
+			}
+			//TODO handle different op code
+
+			go worker.handleMessage(data, arrivalTime)
 		}
 	}
 }
@@ -302,8 +299,8 @@ func (worker *FactoryWorker) PingService() {
 
 type CapitalistPlaylist struct {
 	playlist []string
-	video    string
-	position uint64
+	video    *string
+	position *uint64
 	lastSeek uint64
 	paused   bool
 	saveFile string
@@ -322,7 +319,7 @@ type Capitalist struct {
 	playlistMutex *sync.RWMutex
 }
 
-func NewCapitalist(host string, port uint16, playlist []string, currentVideo string, position uint64, saveFile string) Capitalist {
+func NewCapitalist(host string, port uint16, playlist []string, currentVideo *string, position *uint64, saveFile string) Capitalist {
 	var capitalist Capitalist
 	capitalist.config = &CapitalistConfig{host: host, port: port}
 	capitalist.playlist = &CapitalistPlaylist{playlist: playlist, video: currentVideo, position: position, paused: true, saveFile: saveFile}
@@ -339,9 +336,10 @@ func (capitalist *Capitalist) Start() {
 	http.ListenAndServe(hostPort, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, _, _, err := ws.UpgradeHTTP(r, w)
 		if err != nil {
-			// handle error
-			fmt.Println("Connection error", err)
+			logger.Errorw("Failed to establish connection to client socket", "error", err)
 		}
+
+		logger.Info("New connection established. Creating new worker ...")
 		capitalist.createNewWorker(conn)
 	}))
 }
@@ -370,12 +368,13 @@ func (capitalist *Capitalist) Delete(worker *FactoryWorker) {
 }
 
 func (capitalist *Capitalist) createNewWorker(conn net.Conn) {
-	defer logger.Debugw("Successfully leaving createNewWorker")
 	capitalist.playlistMutex.RLock()
 	defer capitalist.playlistMutex.RUnlock()
 
 	worker := NewFactoryWorker(capitalist, conn, "server", capitalist.playlist.video, capitalist.playlist.position)
 	capitalist.Append(&worker)
+
+	logger.Infow("Starting new worker for client", "client", worker.uuid)
 	go worker.Start()
 }
 
@@ -385,7 +384,6 @@ func (capitalist *Capitalist) statusList() []Status {
 
 	users := []Status{}
 	for _, w := range capitalist.workers {
-		// put lock outside of loop?
 		w.userStatusMutex.RLock()
 		user := Status{Ready: w.userStatus.Ready, Username: w.userStatus.Username}
 		users = append(users, user)
@@ -425,7 +423,8 @@ func (capitalist *Capitalist) broadcastStatusList(worker *FactoryWorker) {
 	statusList := StatusList{Users: users, Username: worker.userStatus.Username}
 	message, err := statusList.MarshalMessage()
 	if err != nil {
-		logger.Warn("Unable to parse status list")
+		logger.Errorw("Unable to parse status list", "error", err)
+		return
 	}
 
 	capitalist.broadcastAll(message)
@@ -438,14 +437,14 @@ func (capitalist *Capitalist) broadcastStart(filename string, worker *FactoryWor
 	s := Start{Filename: filename, Username: worker.userStatus.Username}
 	message, err := s.MarshalMessage()
 	if err != nil {
-		logger.Warn("Unable to parse start message")
+		logger.Errorw("Unable to marshal start message", "error", err)
+		return
 	}
 
 	capitalist.broadcastExcept(message, worker)
 }
 
 func (capitalist *Capitalist) broadcastSeek(filename string, position uint64, worker *FactoryWorker, lock bool) {
-	defer logger.Debugw("Successfully leaving broadcastSeek")
 	if lock {
 		capitalist.playlistMutex.RLock()
 		defer capitalist.playlistMutex.RUnlock()
@@ -455,23 +454,25 @@ func (capitalist *Capitalist) broadcastSeek(filename string, position uint64, wo
 	defer worker.userStatusMutex.RUnlock()
 
 	s := Seek{Filename: filename, Position: position, Paused: capitalist.playlist.paused, Username: worker.userStatus.Username}
-	logger.Debugw("Sven sagt, dass ich die Variable s an dieser Stelle loggen soll", "s", s)
+	logger.Debugw("Broadcasting seek to clients", "message", s)
 	message, err := s.MarshalMessage()
 	if err != nil {
-		log.Fatal("unable to broadcast seek ", err)
+		logger.Errorw("Unable to marshal broadcast seek", "error", err)
+		return
 	}
 
 	capitalist.broadcastExcept(message, worker)
 }
 
-func (capitalist *Capitalist) broadcastSelect(filename string, worker *FactoryWorker, all bool) {
+func (capitalist *Capitalist) broadcastSelect(filename *string, worker *FactoryWorker, all bool) {
 	worker.userStatusMutex.RLock()
 	defer worker.userStatusMutex.RUnlock()
 
 	s := Select{Filename: filename, Username: worker.userStatus.Username}
 	message, err := s.MarshalMessage()
 	if err != nil {
-		log.Fatal("unable to broadcast select ", err)
+		logger.Errorw("Unable to marshal broadcast select", "error", err)
+		return
 	}
 
 	if all {
@@ -488,21 +489,22 @@ func (capitalist *Capitalist) broadcastUserMessage(userMessage string, worker *F
 	um := UserMessage{Message: userMessage, Username: worker.userStatus.Username}
 	message, err := um.MarshalMessage()
 	if err != nil {
-		log.Fatal("unable to broadcast user message ", err)
+		logger.Errorw("Unable to marshal broadcast user message", "error", err)
+		return
 	}
 
 	capitalist.broadcastExcept(message, worker)
 }
 
 func (capitalist *Capitalist) broadcastPlaylist(playlist *Playlist, worker *FactoryWorker, all bool) {
-	defer logger.Debugw("Successfully leaving broadcastPlaylist")
 	worker.userStatusMutex.RLock()
 	defer worker.userStatusMutex.RUnlock()
 
 	pl := Playlist{Playlist: playlist.Playlist, Username: worker.userStatus.Username}
 	message, err := pl.MarshalMessage()
 	if err != nil {
-		log.Fatal("unable to broadcast playlist ", err)
+		logger.Errorw("Unable to marshal broadcast playlist", "error", err)
+		return
 	}
 
 	if all {
@@ -519,16 +521,22 @@ func (capitalist *Capitalist) broadcastPause(filename string, worker *FactoryWor
 	p := Pause{Filename: filename, Username: worker.userStatus.Username}
 	message, err := p.MarshalMessage()
 	if err != nil {
-		log.Fatal("unable to broadcast pause ", err)
+		logger.Errorw("Unable to marshal broadcast pause", "error", err)
+		return
 	}
 
 	capitalist.broadcastExcept(message, worker)
 }
 
+// set paused to false since video will start
 func (capitalist *Capitalist) broadcastStartOnReady(worker *FactoryWorker) {
-	defer logger.Debugw("Successfully leaving broadcastonready stuff")
 	capitalist.workersMutex.RLock()
 	defer capitalist.workersMutex.RUnlock()
+
+	// cannot start nil video
+	if capitalist.playlist.video == nil {
+		return
+	}
 
 	ready := true
 	for _, w := range capitalist.workers {
@@ -543,32 +551,40 @@ func (capitalist *Capitalist) broadcastStartOnReady(worker *FactoryWorker) {
 		defer capitalist.playlistMutex.Unlock()
 		defer worker.userStatusMutex.RUnlock()
 
-		start := Start{Filename: capitalist.playlist.video, Username: worker.userStatus.Username}
+		start := Start{Filename: *capitalist.playlist.video, Username: worker.userStatus.Username}
 		message, err := start.MarshalMessage()
 		if err != nil {
-			logger.Warnf("Failed to marshal start message", "error", err)
+			logger.Errorw("Unable to marshal start message", "error", err)
+			return
 		}
 
 		for _, w := range capitalist.workers {
 			w.sendMessage(message)
 		}
 
-		// set paused to false since video will start
 		capitalist.playlist.paused = false
-		logger.Debugw("Ready")
 	}
 }
 
-func (capitalist *Capitalist) sendSeek(worker *FactoryWorker) {
-	defer logger.Debugw("Successfully leaving sendseek")
-	capitalist.playlistMutex.RLock()
-	defer capitalist.playlistMutex.RUnlock()
+func (capitalist *Capitalist) sendSeek(worker *FactoryWorker, lock bool) {
+	if lock {
+		capitalist.playlistMutex.RLock()
+		worker.userStatusMutex.RLock()
+		defer capitalist.playlistMutex.RUnlock()
+		defer worker.userStatusMutex.RUnlock()
+	}
 
-	logger.Debugw("Status of server when player joining", "file", capitalist.playlist.video, "position", capitalist.playlist.position, "paused", capitalist.playlist.paused)
-	seek := Seek{Filename: capitalist.playlist.video, Position: capitalist.playlist.position, Paused: capitalist.playlist.paused, Username: worker.userStatus.Username}
+	// seeking nil videos is prohibited
+	if capitalist.playlist.video == nil {
+		return
+	}
+
+	logger.Debugw("Status of server before sending seek", "file", capitalist.playlist.video, "position", capitalist.playlist.position, "paused", capitalist.playlist.paused)
+	seek := Seek{Filename: *capitalist.playlist.video, Position: *capitalist.playlist.position, Paused: capitalist.playlist.paused, Username: worker.userStatus.Username}
 	message, err := seek.MarshalMessage()
 	if err != nil {
-		logger.Warnw("Capitalist failed to marshal seek", "error", err)
+		logger.Errorw("Capitalist failed to marshal seek", "error", err)
+		return
 	}
 
 	worker.sendMessage(message)
@@ -577,7 +593,6 @@ func (capitalist *Capitalist) sendSeek(worker *FactoryWorker) {
 // Evaluates the video states of all clients and broadcasts seek if difference between
 // fastest and slowest clients is too large.
 func (capitalist *Capitalist) evaluateVideoStatus() {
-	defer logger.Debugw("Successfully leaving evaluatevideostatus")
 	capitalist.workersMutex.RLock()
 	capitalist.playlistMutex.Lock()
 	defer capitalist.workersMutex.RUnlock()
@@ -591,7 +606,7 @@ func (capitalist *Capitalist) evaluateVideoStatus() {
 		w.videoStatusMutex.RLock()
 
 		timeElapsed := uint64(time.Since(w.videoStatus.timestamp).Milliseconds())
-		estimatedPosition := timeElapsed + w.videoStatus.position
+		estimatedPosition := timeElapsed + *w.videoStatus.position
 
 		if estimatedPosition < minPosition {
 			minPosition = estimatedPosition
@@ -608,14 +623,14 @@ func (capitalist *Capitalist) evaluateVideoStatus() {
 	logger.Debugw("Worker times", "slowest", minPosition, "fastest", maxPosition)
 
 	if minPosition > capitalist.playlist.lastSeek {
-		capitalist.playlist.position = minPosition
+		capitalist.playlist.position = &minPosition
 	} else {
-		capitalist.playlist.position = capitalist.playlist.lastSeek
+		capitalist.playlist.position = &capitalist.playlist.lastSeek
 	}
 
 	if maxPosition-minPosition > MAX_DIFFERENCE_MILLISECONDS {
 		logger.Debugw("Broadcasting seek since time difference too large", "difference", maxPosition-minPosition)
-		capitalist.broadcastSeek(capitalist.playlist.video, capitalist.playlist.position, slowest, false)
+		capitalist.broadcastSeek(*capitalist.playlist.video, *capitalist.playlist.position, slowest, false)
 	}
 
 	go WritePlaylist(capitalist.playlist.playlist, capitalist.playlist.video, capitalist.playlist.position, capitalist.playlist.saveFile)
@@ -625,7 +640,7 @@ func (capitalist *Capitalist) findNext(newPlaylist []string) string {
 	j := 0
 
 	for _, video := range capitalist.playlist.playlist {
-		if video == capitalist.playlist.video {
+		if &video == capitalist.playlist.video {
 			break
 		}
 
@@ -643,25 +658,23 @@ func (capitalist *Capitalist) findNext(newPlaylist []string) string {
 }
 
 func (capitalist *Capitalist) changePlaylist(playlist []string, worker *FactoryWorker) {
-	defer logger.Debugw("Successfully leaving changePlaylist")
 	capitalist.playlistMutex.Lock()
 	defer capitalist.playlistMutex.Unlock()
 
-	if len(playlist) >= len(capitalist.playlist.playlist) || len(playlist) == 0 {
-		capitalist.playlist.playlist = playlist
-	} else if len(playlist) < len(capitalist.playlist.playlist) {
+	if len(playlist) != 0 && len(playlist) < len(capitalist.playlist.playlist) {
 		nextVideo := capitalist.findNext(playlist)
-		if nextVideo != capitalist.playlist.video {
-			capitalist.playlist.video = nextVideo
+		if &nextVideo != capitalist.playlist.video {
+			capitalist.playlist.video = &nextVideo
 			capitalist.broadcastSelect(capitalist.playlist.video, worker, true)
 		}
 	}
 
+	capitalist.playlist.playlist = playlist
+
 	go WritePlaylist(capitalist.playlist.playlist, capitalist.playlist.video, capitalist.playlist.position, capitalist.playlist.saveFile)
 }
 
-func (capitalist *Capitalist) changeVideo(fileName string) {
-	defer logger.Debugw("Successfully leaving changeVideo")
+func (capitalist *Capitalist) changeVideo(fileName *string) {
 	capitalist.playlistMutex.Lock()
 	defer capitalist.playlistMutex.Unlock()
 
@@ -670,11 +683,10 @@ func (capitalist *Capitalist) changeVideo(fileName string) {
 }
 
 func (capitalist *Capitalist) changePosition(position uint64) {
-	defer logger.Debugw("Successfully leaving changePosition")
 	capitalist.playlistMutex.Lock()
 	defer capitalist.playlistMutex.Unlock()
 
-	capitalist.playlist.position = position
+	capitalist.playlist.position = &position
 	go WritePlaylist(capitalist.playlist.playlist, capitalist.playlist.video, capitalist.playlist.position, capitalist.playlist.saveFile)
 }
 
@@ -686,13 +698,12 @@ func (capitalist *Capitalist) updateLastSeek(position uint64) {
 }
 
 func (capitalist *Capitalist) checkValidVideoStatus(videoStatus *VideoStatus, worker *FactoryWorker) bool {
-	defer logger.Debugw("Successfully leaving checkValidVideoStatus")
 	capitalist.playlistMutex.RLock()
 	defer capitalist.playlistMutex.RUnlock()
 
 	// video status is not compatible with server if position is not in accordance with the last seek or video is paused when it is not supposed to be
-	logger.Debugw("Videostatus", "client", videoStatus, "server_paused", capitalist.playlist.paused, "server_position", capitalist.playlist.position, "lastseek", capitalist.playlist.lastSeek)
-	if videoStatus.Position < capitalist.playlist.lastSeek || videoStatus.Paused != capitalist.playlist.paused {
+	logger.Debugw("Videostatus", "client", videoStatus, "server_paused", capitalist.playlist.paused, "server_position", *capitalist.playlist.position, "lastseek", capitalist.playlist.lastSeek)
+	if *videoStatus.Position < capitalist.playlist.lastSeek || videoStatus.Paused != capitalist.playlist.paused {
 		return false
 	}
 
@@ -700,9 +711,19 @@ func (capitalist *Capitalist) checkValidVideoStatus(videoStatus *VideoStatus, wo
 }
 
 func (capitalist *Capitalist) setPaused(paused bool) {
-	defer logger.Debugw("Successfully leaving setPaused")
 	capitalist.playlistMutex.RLock()
 	defer capitalist.playlistMutex.RUnlock()
 
 	capitalist.playlist.paused = paused
+}
+
+func (capitalist *Capitalist) handleNilStatus(videoStatus *VideoStatus, worker *FactoryWorker) {
+	capitalist.playlistMutex.RLock()
+	worker.userStatusMutex.RLock()
+	defer capitalist.playlistMutex.RUnlock()
+	defer worker.userStatusMutex.RUnlock()
+
+	if videoStatus.Filename != capitalist.playlist.video || videoStatus.Position != capitalist.playlist.position {
+		capitalist.sendSeek(worker, false)
+	}
 }
