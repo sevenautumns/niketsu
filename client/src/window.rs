@@ -237,13 +237,16 @@ impl Application for MainWindow {
                         Ok(Some(MpvResultingAction::Start)) => {
                             debug!("Mpv process: start");
                             if let Some(playing) = mpv.playing() {
-                                return ServerWebsocket::send_command(
-                                    ws,
-                                    ServerMessage::Start {
-                                        filename: playing.video.as_str().to_string(),
-                                        username: user.name(),
-                                    },
-                                );
+                                return Command::batch([
+                                    user.set_ready(true, ws),
+                                    ServerWebsocket::send_command(
+                                        ws,
+                                        ServerMessage::Start {
+                                            filename: playing.video.as_str().to_string(),
+                                            username: user.name(),
+                                        },
+                                    ),
+                                ]);
                             }
                         }
                         Ok(Some(MpvResultingAction::Exit)) => {
