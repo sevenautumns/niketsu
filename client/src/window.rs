@@ -47,6 +47,7 @@ pub enum MainMessage {
     Database(DatabaseMessage),
     FileTable(PlaylistWidgetMessage),
     Heartbeat,
+    PlayerUpdate,
 }
 
 #[derive(Debug, Clone)]

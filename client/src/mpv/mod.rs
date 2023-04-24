@@ -16,6 +16,7 @@ use crate::fs::FileDatabase;
 use crate::mpv::bindings::*;
 use crate::video::{PlayingFile, SeekEvent, SeekEventExt, Video};
 use crate::window::MainMessage;
+use crate::ws::ServerMessage;
 
 pub mod bindings;
 pub mod error;

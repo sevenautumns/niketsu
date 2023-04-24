@@ -9,6 +9,7 @@ pub mod file_table;
 pub mod fs;
 pub mod messages;
 pub mod mpv;
+pub mod player;
 pub mod styling;
 pub mod user;
 pub mod video;

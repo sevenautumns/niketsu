@@ -12,6 +12,7 @@ use iced::widget::{Row, Text};
 use iced::{Command, Renderer, Subscription, Theme};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Mutex;
 
 use crate::user::ThisUser;
@@ -126,6 +127,8 @@ type WsStream = SplitStream<WebSocketStream<TokioAdapter<TcpStream>>>;
 pub struct ServerWebsocket {
     sink: Arc<ArcSwapOption<Mutex<WsSink>>>,
     addr: String,
+    rec: Mutex<MpscReceiver<ServerMessage>>,
+    send: Arc<MpscSender<ServerMessage>>,
 }
 
 enum WsState {
@@ -142,9 +145,12 @@ enum WsState {
 
 impl ServerWebsocket {
     pub fn new(addr: String) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             sink: Default::default(),
             addr,
+            rec: Mutex::new(rx),
+            send: Arc::new(tx),
         }
     }
 
