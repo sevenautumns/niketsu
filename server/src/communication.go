@@ -180,7 +180,6 @@ func (worker *FactoryWorker) handleVideoStatus(videoStatus *VideoStatus, arrival
 }
 
 func (worker *FactoryWorker) handleStart(start *Start) {
-	worker.updateUserStatus(&Status{Ready: true, Username: worker.userStatus.Username}) // user is ready for playing
 	worker.capitalist.broadcastStart(start.Filename, worker)
 	worker.capitalist.setPaused(false)
 }
