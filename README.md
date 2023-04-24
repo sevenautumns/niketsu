@@ -6,6 +6,7 @@
 
 <div align="center">
 
+![[Check and Build Workflow](https://github.com/sevenautumns/niketsu/actions/workflows/nix.yml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/nix.yml/badge.svg)
 [![Rust Report Card](https://rust-reportcard.xuri.me/badge/github.com/sevenautumns/niketsu)](https://rust-reportcard.xuri.me/report/github.com/sevenautumns/niketsu)
 [![Go Report Card](https://goreportcard.com/badge/github.com/sevenautumns/niketsu)](https://goreportcard.com/report/github.com/sevenautumns/niketsu)
 
@@ -36,15 +37,10 @@ machste-nix
 #### client
 
 To build the niketsu client from source, you need:
-* your first unborn child
-* nix
-
 
 #### server
 
-To build the niketsu server from source, you need:
-* your first unborn child
-* nix
+To build the niketsu server from source, clone the repo:
 
 ```bash
 git clone https://github.com/sevenautumns/niketsu.git
@@ -79,8 +75,6 @@ I do not know, honestly.
 
 * It is blazingly lightweight. Due to its lack of consistency, everything is somewhat lightweight even if it is not.
 * It is written in Rust and Go. Therefore, unprecedented levels of synergy can be reached. More diversity, more pantyhose, more fun.
-
-<img src="https://ih1.redbubble.net/image.3073859308.3022/bg,f8f8f8-flat,750x,075,f-pad,750x1000,f8f8f8.jpg" alt="Drawing of Gorris" width="200"/>
 
 * Compared to rival products, it actually works with network mounts and is completely async. No more freezing of the main window during winter.
 * There is more Readwritelocks than necessary.
