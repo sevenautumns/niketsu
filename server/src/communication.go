@@ -14,6 +14,7 @@ import (
 )
 
 // TODO handle clients with unstable latency
+// TODO fix start on new video, update status of client when select
 const (
 	WEIGHTING_FACTOR            float64       = 0.85
 	TICK_INTERVALS              time.Duration = time.Second
@@ -170,7 +171,6 @@ func (worker *FactoryWorker) handleVideoStatus(videoStatus *VideoStatus, arrival
 	}
 
 	legit := worker.capitalist.checkValidVideoStatus(videoStatus, worker)
-	logger.Debugw("Checked status", "status", legit)
 	if legit {
 		worker.updateVideoStatus(videoStatus, arrivalTime)
 		worker.capitalist.evaluateVideoStatus()
@@ -196,6 +196,7 @@ func (worker *FactoryWorker) handleSelect(sel *Select) {
 	worker.capitalist.changeVideo(sel.Filename)
 	worker.capitalist.changePosition(0)
 	worker.capitalist.updateLastSeek(0)
+	worker.capitalist.setPaused(true)
 	worker.capitalist.broadcastSelect(sel.Filename, worker, false)
 	worker.capitalist.broadcastStartOnReady(worker)
 }
@@ -454,7 +455,6 @@ func (capitalist *Capitalist) broadcastSeek(filename string, position uint64, wo
 	defer worker.userStatusMutex.RUnlock()
 
 	s := Seek{Filename: filename, Position: position, Paused: capitalist.playlist.paused, Username: worker.userStatus.Username}
-	logger.Debugw("Broadcasting seek to clients", "message", s)
 	message, err := s.MarshalMessage()
 	if err != nil {
 		logger.Errorw("Unable to marshal broadcast seek", "error", err)
@@ -579,7 +579,6 @@ func (capitalist *Capitalist) sendSeek(worker *FactoryWorker, lock bool) {
 		return
 	}
 
-	logger.Debugw("Status of server before sending seek", "file", capitalist.playlist.video, "position", capitalist.playlist.position, "paused", capitalist.playlist.paused)
 	seek := Seek{Filename: *capitalist.playlist.video, Position: *capitalist.playlist.position, Paused: capitalist.playlist.paused, Username: worker.userStatus.Username}
 	message, err := seek.MarshalMessage()
 	if err != nil {
@@ -620,8 +619,6 @@ func (capitalist *Capitalist) evaluateVideoStatus() {
 		w.videoStatusMutex.RUnlock()
 	}
 
-	logger.Debugw("Worker times", "slowest", minPosition, "fastest", maxPosition)
-
 	if minPosition > capitalist.playlist.lastSeek {
 		capitalist.playlist.position = &minPosition
 	} else {
@@ -629,7 +626,6 @@ func (capitalist *Capitalist) evaluateVideoStatus() {
 	}
 
 	if maxPosition-minPosition > MAX_DIFFERENCE_MILLISECONDS {
-		logger.Debugw("Broadcasting seek since time difference too large", "difference", maxPosition-minPosition)
 		capitalist.broadcastSeek(*capitalist.playlist.video, *capitalist.playlist.position, slowest, false)
 	}
 
@@ -640,7 +636,7 @@ func (capitalist *Capitalist) findNext(newPlaylist []string) string {
 	j := 0
 
 	for _, video := range capitalist.playlist.playlist {
-		if &video == capitalist.playlist.video {
+		if video == *capitalist.playlist.video {
 			break
 		}
 
@@ -663,7 +659,7 @@ func (capitalist *Capitalist) changePlaylist(playlist []string, worker *FactoryW
 
 	if len(playlist) != 0 && len(playlist) < len(capitalist.playlist.playlist) {
 		nextVideo := capitalist.findNext(playlist)
-		if &nextVideo != capitalist.playlist.video {
+		if nextVideo != *capitalist.playlist.video {
 			capitalist.playlist.video = &nextVideo
 			capitalist.broadcastSelect(capitalist.playlist.video, worker, true)
 		}
@@ -702,7 +698,6 @@ func (capitalist *Capitalist) checkValidVideoStatus(videoStatus *VideoStatus, wo
 	defer capitalist.playlistMutex.RUnlock()
 
 	// video status is not compatible with server if position is not in accordance with the last seek or video is paused when it is not supposed to be
-	logger.Debugw("Videostatus", "client", videoStatus, "server_paused", capitalist.playlist.paused, "server_position", *capitalist.playlist.position, "lastseek", capitalist.playlist.lastSeek)
 	if *videoStatus.Position < capitalist.playlist.lastSeek || videoStatus.Paused != capitalist.playlist.paused {
 		return false
 	}
