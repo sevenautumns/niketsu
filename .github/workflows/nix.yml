@@ -90,3 +90,5 @@ jobs:
           prerelease: true
           tag_name: nightly
           files: ${{ matrix.target }}-${{ matrix.package }}
+permissions:
+  contents: write
