@@ -48,10 +48,10 @@ jobs:
         package:
           - niketsu-client
           - niketsu-server
-        exclude:
-          # Currently the client does not build for aarch64
-          - target: aarch64-linux
-            package: niketsu-client
+        include:
+          # Windows build from x86_64-linux
+          - target: x86_64-linux
+            package: niketsu-client-windows
     steps:
       - uses: actions/checkout@v3
       - uses: cachix/install-nix-action@v20
