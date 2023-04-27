@@ -81,10 +81,12 @@ jobs:
         if: ${{ github.event_name == 'push' && matrix.package == 'niketsu-client-windows' }}
         with:
           prerelease: true
+          tag_name: nightly
           files: x86_64-windows-niketsu-client.zip
       - name: Pre-Release
         uses: softprops/action-gh-release@v1
         if: ${{ github.event_name == 'push' && matrix.package != 'niketsu-client-windows' }}
         with:
           prerelease: true
+          tag_name: nightly
           files: ${{ matrix.target }}-${{ matrix.package }}
