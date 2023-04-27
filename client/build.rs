@@ -10,13 +10,8 @@ fn main() -> Result<(), Error> {
         None => return Ok(()),
         Some(outdir) => outdir,
     };
-    // let mpv = match env::var_os("MPV_DIR") {
-    //     None => String::from("mpv"),
-    //     Some(outdir) => outdir.into_string().unwrap(),
-    // };
 
     let bindings = bindgen::Builder::default()
-        // .header(format!("{mpv}/libmpv/client.h"))
         .header_contents("mpv.h", "#include <mpv/client.h>")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .parse_callbacks(Box::new(CustomCallback))
@@ -30,14 +25,32 @@ fn main() -> Result<(), Error> {
         .write_to_file(PathBuf::from(&outdir).join("libmpv.rs"))
         .expect("Error writing bindgen");
 
+    if env::var("CARGO_CFG_TARGET_FAMILY").unwrap().eq("unix") {
+        link_arg_linux();
+    } else {
+        link_arg_windows();
+    }
+
+    Ok(())
+}
+
+fn link_arg_windows() {
+    let source = env::var("MPV_SOURCE").expect("env var `MPV_SOURCE` not set");
+    println!("cargo:rustc-link-search={source}");
+    println!("cargo:rustc-link-lib=mpv");
+}
+
+fn link_arg_linux() {
     println!("cargo:rustc-link-lib=mpv");
     println!("cargo:rustc-link-lib=X11");
     println!("cargo:rustc-link-lib=Xcursor");
     println!("cargo:rustc-link-lib=Xrandr");
     println!("cargo:rustc-link-lib=Xi");
     println!("cargo:rustc-link-lib=vulkan");
+    println!("cargo:rustc-link-lib=wayland-egl");
+    println!("cargo:rustc-link-lib=wayland-client");
+    println!("cargo:rustc-link-lib=wayland-server");
     println!("cargo:rustc-link-arg=-lm");
-    Ok(())
 }
 
 #[derive(Debug)]
