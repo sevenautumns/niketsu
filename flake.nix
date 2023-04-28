@@ -164,6 +164,7 @@
             libclang
             gcc
             musl.dev
+            mdbook
             pkgconfig
             yt-dlp
             go
