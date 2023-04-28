@@ -109,7 +109,6 @@
             name = "niketsu";
             version = VERSION;
             root = ./.;
-            singleStep = true;
             cargoBuildOptions = x: x ++ [ "--target" "x86_64-pc-windows-gnu" ];
             cargoTestOptions = x: x ++ [ "--target" "x86_64-pc-windows-gnu" ];
             buildInputs = with pkgs.pkgsCross.mingwW64.windows; [
