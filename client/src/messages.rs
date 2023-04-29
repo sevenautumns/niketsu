@@ -75,10 +75,19 @@ impl Messages {
         self.snap_scroll()
     }
 
-    pub fn push_chat(&mut self, msg: String, user: String) -> Command<MainMessage> {
-        self.msgs.push(ChatMessage::Chat {
+    pub fn push_user_chat(&mut self, msg: String, user: String) -> Command<MainMessage> {
+        self.msgs.push(ChatMessage::UserChat {
             when: Local::now(),
             user,
+            msg,
+        });
+        self.snap_scroll()
+    }
+
+    pub fn push_server_chat(&mut self, msg: String, error: bool) -> Command<MainMessage> {
+        self.msgs.push(ChatMessage::ServerChat {
+            when: Local::now(),
+            error,
             msg,
         });
         self.snap_scroll()
@@ -144,9 +153,14 @@ pub enum ChatMessage {
         file: String,
         pos: Duration,
     },
-    Chat {
+    UserChat {
         when: DateTime<Local>,
         user: String,
+        msg: String,
+    },
+    ServerChat {
+        when: DateTime<Local>,
+        error: bool,
         msg: String,
     },
     Connected {
@@ -175,7 +189,7 @@ impl ChatMessage {
             ChatMessage::Select { user, file, .. } => {
                 format!("{when} {user} selected file: {file:?}")
             }
-            ChatMessage::Chat { user, msg, .. } => {
+            ChatMessage::UserChat { user, msg, .. } => {
                 format!("{when} {user}: {msg}")
             }
             ChatMessage::Disconnected { .. } => {
@@ -187,6 +201,9 @@ impl ChatMessage {
             ChatMessage::Seek { user, pos, .. } => {
                 format!("{when} {user} seeked to {pos:?}")
             }
+            ChatMessage::ServerChat { msg, .. } => {
+                format!("{when} {msg}")
+            }
         };
 
         Container::new(Text::new(text))
@@ -197,8 +214,11 @@ impl ChatMessage {
 
     pub fn style(&self, theme: Theme) -> iced::theme::Container {
         match self {
-            ChatMessage::Disconnected { .. } => ContainerBackground::new(theme.palette().danger),
-            _ => ContainerBackground::new(theme.palette().background),
+            ChatMessage::Disconnected { .. } => ContainerBackground::theme(theme.palette().danger),
+            ChatMessage::ServerChat { error: true, .. } => {
+                ContainerBackground::theme(theme.palette().danger)
+            }
+            _ => ContainerBackground::theme(theme.palette().background),
         }
     }
 
@@ -208,10 +228,11 @@ impl ChatMessage {
             ChatMessage::Paused { when, .. } => when,
             ChatMessage::Started { when, .. } => when,
             ChatMessage::Select { when, .. } => when,
-            ChatMessage::Chat { when, .. } => when,
+            ChatMessage::UserChat { when, .. } => when,
             ChatMessage::Disconnected { when } => when,
             ChatMessage::Connected { when } => when,
             ChatMessage::Seek { when, .. } => when,
+            ChatMessage::ServerChat { when, .. } => when,
         }
     }
 }

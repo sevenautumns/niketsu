@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::keyboard::{KeyCode, Modifiers};
+use iced::widget::scrollable::Id;
 use iced::widget::{Button, Column, Container, Rule, Scrollable, Text};
 use iced::{Element, Length, Renderer, Size};
 use iced_native::widget::Tree;
@@ -60,7 +61,7 @@ impl<'a> PlaylistWidget<'a> {
                 Button::new(Container::new(Text::new(name)).padding(2))
                     .padding(0)
                     .width(Length::Fill)
-                    .style(FileButton::new(pressed, available))
+                    .style(FileButton::theme(pressed, available))
                     .into(),
             );
         }
@@ -68,6 +69,7 @@ impl<'a> PlaylistWidget<'a> {
         Self {
             state,
             base: Scrollable::new(Column::with_children(file_btns).width(Length::Fill))
+                .id(Id::new("playlist"))
                 .height(Length::Fill)
                 .width(Length::Fill)
                 .into(),
@@ -557,7 +559,7 @@ pub struct InsertHint {
 impl Default for InsertHint {
     fn default() -> Self {
         Self {
-            rule: Rule::horizontal(1).style(FileRuleTheme::new()),
+            rule: Rule::horizontal(1).style(FileRuleTheme::theme()),
             pos: iced::Point::default(),
         }
     }

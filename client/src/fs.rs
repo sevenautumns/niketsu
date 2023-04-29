@@ -129,7 +129,7 @@ impl FileDatabase {
                 let len = self.database.len();
                 Container::new(
                     Button::new(Text::new(format!("{len} files in database")))
-                        .style(FileButton::new(false, true)),
+                        .style(FileButton::theme(false, true)),
                 )
                 .align_x(iced::alignment::Horizontal::Center)
                 .align_y(iced::alignment::Vertical::Center)
@@ -138,9 +138,9 @@ impl FileDatabase {
                 .into()
             }
             false => ProgressBar::new(0.0..=(que as f32), fin as f32)
-                .style(FileProgressBar::new(fin == que))
+                .style(FileProgressBar::theme(fin == que))
                 // Text size + 2 times default button padding
-                .height(Length::Fixed(TEXT_SIZE + 10.0))
+                .height(Length::Fixed(*TEXT_SIZE.load_full().unwrap() + 10.0))
                 .into(),
         };
 
@@ -153,7 +153,7 @@ impl FileDatabase {
             false => Button::new("Stop"),
         }
         .on_press(update_msg)
-        .style(ResultButton::new(finished));
+        .style(ResultButton::theme(finished));
 
         let update_text = match finished {
             true => "Update file database",

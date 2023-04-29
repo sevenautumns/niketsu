@@ -1,14 +1,88 @@
+use std::fmt::Display;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use anyhow::{bail, Result};
 use directories::ProjectDirs;
+use iced::{Color, Theme};
+use palette::rgb::Rgb;
+use palette::Srgb;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr};
 
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[serde_as]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Config {
+    #[serde(default)]
     pub username: String,
+    #[serde(default)]
     pub media_dir: String,
+    #[serde(default)]
     pub url: String,
+    #[serde(default)]
+    pub room: String,
+    #[serde(default)]
+    pub password: String,
+
+    #[serde(default = "default_text_size")]
+    pub text_size: f32,
+    #[serde(default = "default_background")]
+    #[serde_as(as = "DisplayFromStr")]
+    pub background_color: RgbWrap,
+    #[serde(default = "default_text")]
+    #[serde_as(as = "DisplayFromStr")]
+    pub text_color: RgbWrap,
+    #[serde(default = "default_primary")]
+    #[serde_as(as = "DisplayFromStr")]
+    pub primary_color: RgbWrap,
+    #[serde(default = "default_success")]
+    #[serde_as(as = "DisplayFromStr")]
+    pub success_color: RgbWrap,
+    #[serde(default = "default_danger")]
+    #[serde_as(as = "DisplayFromStr")]
+    pub danger_color: RgbWrap,
+}
+
+const fn default_text_size() -> f32 {
+    14.0
+}
+
+const fn default_background() -> RgbWrap {
+    RgbWrap::new(32, 34, 37)
+}
+
+const fn default_text() -> RgbWrap {
+    RgbWrap::new(230, 230, 230)
+}
+
+const fn default_primary() -> RgbWrap {
+    RgbWrap::new(94, 124, 226)
+}
+
+const fn default_success() -> RgbWrap {
+    RgbWrap::new(18, 102, 79)
+}
+
+const fn default_danger() -> RgbWrap {
+    RgbWrap::new(195, 66, 63)
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            username: Default::default(),
+            media_dir: Default::default(),
+            url: Default::default(),
+            room: Default::default(),
+            password: Default::default(),
+            text_size: default_text_size(),
+            background_color: default_background(),
+            text_color: default_text(),
+            primary_color: default_primary(),
+            success_color: default_success(),
+            danger_color: default_danger(),
+        }
+    }
 }
 
 impl Config {
@@ -24,6 +98,16 @@ impl Config {
         }
     }
 
+    pub fn theme(&self) -> Theme {
+        Theme::custom(iced::theme::Palette {
+            background: self.background_color.into(),
+            text: self.text_color.into(),
+            primary: self.primary_color.into(),
+            success: self.success_color.into(),
+            danger: self.danger_color.into(),
+        })
+    }
+
     pub fn load() -> Result<Self> {
         let path = Self::file_path()?;
         let content = std::fs::read_to_string(path)?;
@@ -36,5 +120,39 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
         Ok(std::fs::write(path, toml::to_string(self)?)?)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RgbWrap(Rgb<Srgb, u8>);
+
+impl Display for RgbWrap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!("#{:X}", self.0))
+    }
+}
+
+impl FromStr for RgbWrap {
+    type Err = palette::rgb::FromHexError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Rgb::from_str(s).map(Self)
+    }
+}
+
+impl RgbWrap {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self(Rgb::new(r, g, b))
+    }
+}
+
+impl From<RgbWrap> for Color {
+    fn from(c: RgbWrap) -> Self {
+        Self {
+            r: c.0.red as f32 / 255.0,
+            g: c.0.green as f32 / 255.0,
+            b: c.0.blue as f32 / 255.0,
+            a: 1.0,
+        }
     }
 }
