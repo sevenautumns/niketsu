@@ -96,6 +96,7 @@ pub struct Mpv {
     handle: MpvHandle,
     playing: Option<PlayingFile>,
     paused: bool,
+    pausing: bool,
     seeking: bool,
     event_pipe: Arc<Mutex<MpvEventPipe>>,
 }
@@ -112,6 +113,7 @@ impl Mpv {
             playing: None,
             paused: true,
             seeking: false,
+            pausing: false,
         }
     }
 
@@ -147,12 +149,27 @@ impl Mpv {
             MpvEvent::PropertyChanged(prop, value) => {
                 trace!("Property Changed: {prop:?} {value:?}");
                 if let MpvProperty::Pause = prop {
-                    if let PropertyValue::Flag(p) = value {
-                        if p.ne(&self.paused) {
-                            self.paused = p;
-                            if p {
+                    if let PropertyValue::Flag(paused) = value {
+                        // If external pause is being processes
+                        if self.pausing {
+                            // Check if internal and flag pause match
+                            if self.paused == paused {
+                                // Exit pausing state
+                                self.pausing = false;
+                                return Ok(None);
+                            }
+                        }
+                        // If flag doesnt match internal state,
+                        if paused.ne(&self.paused) {
+                            // set internal state
+                            self.paused = paused;
+                            // Should we be paused
+                            if paused {
+                                // and file ended
                                 if self.get_eof_reached()? {
+                                    // and we are playing
                                     if let Some(playing) = self.playing.take() {
+                                        // play next
                                         return Ok(Some(MpvResultingAction::PlayNext(
                                             playing.video,
                                         )));
@@ -434,6 +451,7 @@ impl Mpv {
     }
 
     pub fn pause(&mut self, pause: bool) -> Result<()> {
+        self.pausing = true;
         self.paused = pause;
         self.set_property(MpvProperty::Pause, PropertyValue::Flag(pause))
     }

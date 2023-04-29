@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,6 +25,11 @@ pub enum ServerMessage {
     Ping {
         uuid: String,
     },
+    Join {
+        password: String,
+        room: String,
+        username: String,
+    },
     VideoStatus {
         filename: Option<String>,
         #[serde(with = "serde_millis")]
@@ -31,7 +37,7 @@ pub enum ServerMessage {
         paused: bool,
     },
     StatusList {
-        users: Vec<UserStatus>,
+        rooms: BTreeMap<String, BTreeSet<UserStatus>>,
     },
     Pause {
         filename: String,
@@ -56,10 +62,14 @@ pub enum ServerMessage {
         #[serde(skip_serializing)]
         username: String,
     },
-    Message {
+    UserMessage {
         message: String,
         #[serde(skip_serializing)]
         username: String,
+    },
+    ServerMessage {
+        message: String,
+        error: bool,
     },
     Playlist {
         playlist: Vec<String>,
@@ -72,11 +82,28 @@ pub enum ServerMessage {
     },
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UserStatus {
     pub username: String,
     pub ready: bool,
+}
+
+impl PartialEq for UserStatus {
+    fn eq(&self, other: &Self) -> bool {
+        self.username.eq(&other.username)
+    }
+}
+
+impl Ord for UserStatus {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.username.cmp(&other.username)
+    }
+}
+impl PartialOrd for UserStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.username.partial_cmp(&other.username)
+    }
 }
 
 impl UserStatus {
@@ -150,6 +177,7 @@ impl ServerWebsocket {
 
     pub fn send_command(ws: &Arc<Self>, msg: ServerMessage) -> Command<MainMessage> {
         async fn send(ws: Arc<ServerWebsocket>, msg: ServerMessage) -> MainMessage {
+            log::debug!("Sending {msg:?}");
             MainMessage::WebSocket(WebSocketMessage::SendFinished(Arc::new(ws.send(msg).await)))
         }
         Command::single(iced_native::command::Action::Future(
