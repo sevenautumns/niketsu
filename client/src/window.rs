@@ -4,8 +4,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::widget::scrollable::{Id, RelativeOffset};
-use iced::widget::{column, row, Button, Column, Container, Scrollable, Text, TextInput};
+use iced::widget::scrollable::RelativeOffset;
+use iced::widget::{column, row, Button, Container, Text, TextInput};
 use iced::{
     Alignment, Application, Command, Element, Length, Padding, Renderer, Subscription, Theme,
 };
@@ -17,10 +17,11 @@ use crate::fs::{DatabaseMessage, FileDatabase};
 use crate::messages::Messages;
 use crate::mpv::event::MpvEvent;
 use crate::mpv::{Mpv, MpvResultingAction};
+use crate::rooms::{RoomsWidget, RoomsWidgetMessage, RoomsWidgetState};
 use crate::styling::{ContainerBorder, ResultButton};
 use crate::user::ThisUser;
 use crate::video::Video;
-use crate::ws::{ServerMessage, ServerWebsocket, UserStatus, WebSocketMessage};
+use crate::ws::{ServerMessage, ServerWebsocket, WebSocketMessage};
 
 #[derive(Debug)]
 pub enum MainWindow {
@@ -31,11 +32,12 @@ pub enum MainWindow {
         db: Arc<FileDatabase>,
         ws: Arc<ServerWebsocket>,
         playlist_widget: PlaylistWidgetState,
+        rooms_widget: RoomsWidgetState,
         mpv: Mpv,
         user: ThisUser,
+        config: Config,
         messages: Messages,
         message: String,
-        users: Vec<UserStatus>,
     },
 }
 
@@ -46,6 +48,7 @@ pub enum MainMessage {
     User(UserMessage),
     Database(DatabaseMessage),
     FileTable(PlaylistWidgetMessage),
+    Rooms(RoomsWidgetMessage),
     Heartbeat,
 }
 
@@ -54,6 +57,8 @@ pub enum UserMessage {
     UsernameInput(String),
     UrlInput(String),
     PathInput(String),
+    RoomInput(String),
+    PasswordInput(String),
     StartButton,
     ReadyButton,
     SendMessage,
@@ -81,7 +86,10 @@ impl Application for MainWindow {
     }
 
     fn theme(&self) -> Self::Theme {
-        Self::Theme::Dark
+        match self {
+            MainWindow::Startup { config } => config.theme(),
+            MainWindow::Running { config, .. } => config.theme(),
+        }
     }
 
     fn update(&mut self, msg: Self::Message) -> Command<Self::Message> {
@@ -91,26 +99,40 @@ impl Application for MainWindow {
                 MainMessage::User(UserMessage::UrlInput(u)) => config.url = u,
                 MainMessage::User(UserMessage::PathInput(p)) => config.media_dir = p,
                 MainMessage::User(UserMessage::StartButton) => {
+                    let config = config.clone();
                     config.save().log();
                     let mpv = Mpv::new();
                     mpv.init().unwrap();
                     let db = Arc::new(FileDatabase::new(&[
                         PathBuf::from_str(&config.media_dir).unwrap()
                     ]));
-                    let cmd = FileDatabase::update_command(&db);
+                    let ws = Arc::new(ServerWebsocket::new(config.url.clone()));
                     *self = MainWindow::Running {
                         playlist_widget: Default::default(),
                         mpv,
-                        ws: Arc::new(ServerWebsocket::new(config.url.clone())),
-                        db,
+                        ws: ws.clone(),
+                        db: db.clone(),
                         user: ThisUser::new(config.username.clone()),
                         messages: Default::default(),
                         message: Default::default(),
-                        users: vec![],
+                        rooms_widget: RoomsWidgetState::new(),
+                        config: config.clone(),
                     };
                     info!("Changed Mode to Running");
-                    return cmd;
+                    return Command::batch([
+                        FileDatabase::update_command(&db),
+                        ServerWebsocket::send_command(
+                            &ws,
+                            ServerMessage::Join {
+                                password: config.password,
+                                room: config.room,
+                                username: config.username,
+                            },
+                        ),
+                    ]);
                 }
+                MainMessage::User(UserMessage::RoomInput(r)) => config.room = r,
+                MainMessage::User(UserMessage::PasswordInput(p)) => config.password = p,
                 _ => todo!(),
             },
             MainWindow::Running {
@@ -121,7 +143,8 @@ impl Application for MainWindow {
                 user,
                 messages,
                 message,
-                users,
+                rooms_widget,
+                config,
             } => {
                 match msg {
                     MainMessage::FileTable(event) => match event {
@@ -274,9 +297,9 @@ impl Application for MainWindow {
                                 } => {
                                     trace!("{filename:?}, {position:?}, {paused:?}")
                                 }
-                                ServerMessage::StatusList { users: usrs } => {
-                                    debug!("{users:?}");
-                                    *users = usrs;
+                                ServerMessage::StatusList { rooms } => {
+                                    debug!("{rooms:?}");
+                                    rooms_widget.replace_rooms(rooms);
                                 }
                                 ServerMessage::Pause { username, .. } => {
                                     debug!("Socket: received pause");
@@ -316,9 +339,10 @@ impl Application for MainWindow {
                                     }
                                     return messages.push_select(filename, username);
                                 }
-                                ServerMessage::Message { message, username } => {
+                                ServerMessage::UserMessage { message, username } => {
                                     trace!("{username}: {message}");
-                                    return messages.push_chat(message.clone(), username.clone());
+                                    return messages
+                                        .push_user_chat(message.clone(), username.clone());
                                 }
                                 ServerMessage::Playlist { playlist, username } => {
                                     playlist_widget.replace_videos(playlist);
@@ -326,6 +350,13 @@ impl Application for MainWindow {
                                 }
                                 ServerMessage::Status { ready, username } => {
                                     warn!("{username}: {ready:?}")
+                                }
+                                ServerMessage::Join { room, username, .. } => {
+                                    warn!("{room}: {username}")
+                                }
+                                ServerMessage::ServerMessage { message, error } => {
+                                    trace!("error: {error}: {message}");
+                                    return messages.push_server_chat(message.clone(), error);
                                 }
                             }
                         }
@@ -352,12 +383,12 @@ impl Application for MainWindow {
                                 return Command::batch([
                                     ServerWebsocket::send_command(
                                         ws,
-                                        ServerMessage::Message {
+                                        ServerMessage::UserMessage {
                                             message: msg.clone(),
                                             username: user.name(),
                                         },
                                     ),
-                                    messages.push_chat(msg, user.name()),
+                                    messages.push_user_chat(msg, user.name()),
                                 ]);
                             }
                         }
@@ -394,6 +425,18 @@ impl Application for MainWindow {
                             },
                         );
                     }
+                    MainMessage::Rooms(RoomsWidgetMessage::ClickRoom(room)) => {
+                        if rooms_widget.click_room(room.clone()) {
+                            return ServerWebsocket::send_command(
+                                &ws,
+                                ServerMessage::Join {
+                                    password: config.password.clone(),
+                                    room,
+                                    username: config.username.clone(),
+                                },
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -407,8 +450,14 @@ impl Application for MainWindow {
                     column!(
                         TextInput::new("Server Address", &config.url)
                             .on_input(|u| MainMessage::User(UserMessage::UrlInput(u))),
+                        TextInput::new("Password", &config.password)
+                            .on_input(|u| MainMessage::User(UserMessage::PasswordInput(u)))
+                            .password(),
                         TextInput::new("Username", &config.username)
                             .on_input(|u| MainMessage::User(UserMessage::UsernameInput(u))),
+                        TextInput::new("Room", &config.room)
+                            .on_input(|u| MainMessage::User(UserMessage::RoomInput(u))),
+                        // TODO more filepaths
                         TextInput::new("Filepath", &config.media_dir)
                             .on_input(|p| MainMessage::User(UserMessage::PathInput(p))),
                         Button::new(
@@ -434,9 +483,9 @@ impl Application for MainWindow {
             .into(),
             MainWindow::Running {
                 playlist_widget,
+                rooms_widget,
                 messages,
                 message,
-                users,
                 user,
                 mpv,
                 db,
@@ -463,12 +512,6 @@ impl Application for MainWindow {
                 }
                 btn = btn.on_press(MainMessage::User(UserMessage::ReadyButton));
 
-                let users = users
-                    .iter()
-                    .cloned()
-                    .map(|u| u.to_text(user, &self.theme()).into())
-                    .collect::<Vec<_>>();
-
                 row!(
                     column!(
                         messages.view(self.theme()),
@@ -487,15 +530,11 @@ impl Application for MainWindow {
                     .height(Length::Fill),
                     column!(
                         db.view(),
-                        Container::new(
-                            Scrollable::new(Column::with_children(users))
-                                .width(Length::Fill)
-                                .id(Id::new("users"))
-                        )
-                        .style(ContainerBorder::basic())
-                        .padding(5.0)
-                        .width(Length::Fill)
-                        .height(Length::Fill),
+                        Container::new(RoomsWidget::new(rooms_widget, user, &self.theme()))
+                            .style(ContainerBorder::basic())
+                            .padding(5.0)
+                            .width(Length::Fill)
+                            .height(Length::Fill),
                         Container::new(PlaylistWidget::new(playlist_widget, mpv, db))
                             .style(ContainerBorder::basic())
                             .padding(5.0)

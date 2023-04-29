@@ -140,7 +140,7 @@ impl FileDatabase {
             false => ProgressBar::new(0.0..=(que as f32), fin as f32)
                 .style(FileProgressBar::new(fin == que))
                 // Text size + 2 times default button padding
-                .height(Length::Fixed(TEXT_SIZE + 10.0))
+                .height(Length::Fixed(*TEXT_SIZE.load_full().unwrap() + 10.0))
                 .into(),
         };
 

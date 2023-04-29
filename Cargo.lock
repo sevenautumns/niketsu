@@ -1753,6 +1753,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "pretty_env_logger",
+ "rgb",
  "serde",
  "serde_json",
  "serde_millis",
@@ -2292,6 +2293,16 @@ name = "renderdoc-sys"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1382d1f0a252c4bf97dc20d979a2fdd05b024acd7c2ed0f7595d7817666a157"
+
+[[package]]
+name = "rgb"
+version = "0.8.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20ec2d3e3fc7a92ced357df9cebd5a10b6fb2aa1ee797bf7e9ce2f17dffc8f59"
+dependencies = [
+ "bytemuck",
+ "serde",
+]
 
 [[package]]
 name = "rustc-demangle"
