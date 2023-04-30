@@ -43,27 +43,27 @@ pub struct Config {
     pub danger_color: RgbWrap,
 }
 
-const fn default_text_size() -> f32 {
+pub const fn default_text_size() -> f32 {
     14.0
 }
 
-const fn default_background() -> RgbWrap {
+pub const fn default_background() -> RgbWrap {
     RgbWrap::new(32, 34, 37)
 }
 
-const fn default_text() -> RgbWrap {
+pub const fn default_text() -> RgbWrap {
     RgbWrap::new(230, 230, 230)
 }
 
-const fn default_primary() -> RgbWrap {
+pub const fn default_primary() -> RgbWrap {
     RgbWrap::new(94, 124, 226)
 }
 
-const fn default_success() -> RgbWrap {
+pub const fn default_success() -> RgbWrap {
     RgbWrap::new(18, 102, 79)
 }
 
-const fn default_danger() -> RgbWrap {
+pub const fn default_danger() -> RgbWrap {
     RgbWrap::new(195, 66, 63)
 }
 

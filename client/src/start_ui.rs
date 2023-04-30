@@ -4,7 +4,10 @@ use iced::alignment::Horizontal;
 use iced::widget::{column, row, Button, Container, Scrollable, Space, Text, TextInput};
 use iced::{Alignment, Element, Length};
 
-use crate::config::{Config, RgbWrap};
+use crate::config::{
+    default_background, default_danger, default_primary, default_success, default_text, Config,
+    RgbWrap,
+};
 use crate::styling::{ColorButton, FileButton};
 use crate::window::MainMessage;
 use crate::TEXT_SIZE;
@@ -166,18 +169,33 @@ impl StartUI {
                     // .style(FileButton::new(false, true)),
                     Button::new(" ")
                         .style(ColorButton::theme(self.text_color.into()))
+                        .on_press(MainMessage::StartUi(StartUIMessage::TextColorInput(
+                            default_text().to_string()
+                        )))
                         .width(text_size * 2.0),
                     Button::new(" ")
                         .style(ColorButton::theme(self.background_color.into()))
+                        .on_press(MainMessage::StartUi(StartUIMessage::BackgroundColorInput(
+                            default_background().to_string()
+                        )))
                         .width(text_size * 2.0),
                     Button::new(" ")
                         .style(ColorButton::theme(self.primary_color.into()))
+                        .on_press(MainMessage::StartUi(StartUIMessage::PrimaryColorInput(
+                            default_primary().to_string()
+                        )))
                         .width(text_size * 2.0),
                     Button::new(" ")
                         .style(ColorButton::theme(self.success_color.into()))
+                        .on_press(MainMessage::StartUi(StartUIMessage::SuccessColorInput(
+                            default_success().to_string()
+                        )))
                         .width(text_size * 2.0),
                     Button::new(" ")
                         .style(ColorButton::theme(self.danger_color.into()))
+                        .on_press(MainMessage::StartUi(StartUIMessage::DangerColorInput(
+                            default_danger().to_string()
+                        )))
                         .width(text_size * 2.0),
                 )
                 .spacing(10)
@@ -198,13 +216,16 @@ impl StartUI {
         .spacing(10)
         .padding(10);
 
-        Container::new(Scrollable::new(Container::new(column).padding(5)))
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .padding(10)
-            .center_x()
-            .center_y()
-            .into()
+        Container::new(Scrollable::new(
+            Container::new(column)
+                .padding(5)
+                .center_x()
+                .width(Length::Fill),
+        ))
+        .height(Length::Fill)
+        .padding(10)
+        .center_y()
+        .into()
     }
 }
 

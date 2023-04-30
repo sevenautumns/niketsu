@@ -34,6 +34,7 @@ pub enum MpvProperty {
     PlaybackTime,
     Osc,
     Pause,
+    Speed,
     Filename,
     KeepOpen,
     KeepOpenPause,
@@ -72,6 +73,7 @@ impl MpvProperty {
             MpvProperty::InputVoKeyboard => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::InputMediaKeys => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::CachePause => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::Speed => mpv_format::MPV_FORMAT_DOUBLE,
         }
     }
 }
@@ -98,6 +100,8 @@ pub struct Mpv {
     paused: bool,
     pausing: bool,
     seeking: bool,
+    speed: f64,
+    speeding: bool,
     event_pipe: Arc<Mutex<MpvEventPipe>>,
 }
 
@@ -114,6 +118,8 @@ impl Mpv {
             paused: true,
             seeking: false,
             pausing: false,
+            speed: 1.0,
+            speeding: false,
         }
     }
 
@@ -123,6 +129,10 @@ impl Mpv {
 
     pub fn seeking(&self) -> bool {
         self.seeking
+    }
+
+    pub fn speed(&self) -> f64 {
+        self.speed
     }
 
     pub fn react_to(&mut self, event: MpvEvent) -> Result<Option<MpvResultingAction>> {
@@ -148,8 +158,8 @@ impl Mpv {
             }
             MpvEvent::PropertyChanged(prop, value) => {
                 trace!("Property Changed: {prop:?} {value:?}");
-                if let MpvProperty::Pause = prop {
-                    if let PropertyValue::Flag(paused) = value {
+                match (prop, value) {
+                    (MpvProperty::Pause, PropertyValue::Flag(paused)) => {
                         // If external pause is being processes
                         if self.pausing {
                             // Check if internal and flag pause match
@@ -180,6 +190,17 @@ impl Mpv {
                             return Ok(Some(MpvResultingAction::Start));
                         }
                     }
+                    (MpvProperty::Speed, PropertyValue::Double(speed)) => {
+                        if self.speeding && self.speed == speed {
+                            self.speeding = false;
+                            return Ok(None);
+                        }
+                        if speed != self.speed {
+                            self.speed = speed;
+                            return Ok(Some(MpvResultingAction::PlaybackSpeed(speed)));
+                        }
+                    }
+                    _ => {}
                 }
             }
             MpvEvent::PlaybackRestart => {
@@ -235,6 +256,7 @@ impl Mpv {
 
         self.observe_property(MpvProperty::Pause)?;
         self.observe_property(MpvProperty::Filename)?;
+        self.observe_property(MpvProperty::Speed)?;
 
         ret
     }
@@ -341,9 +363,11 @@ impl Mpv {
         video: Video,
         seek: Duration,
         paused: bool,
+        speed: f64,
         db: &FileDatabase,
     ) -> Result<()> {
-        trace!("Received seek: video: {video:?}, {seek:?}, paused: {paused}");
+        trace!("Received seek: video: {video:?}, {seek:?}, paused: {paused}, speed: {speed}");
+        self.set_playback_speed(speed)?;
         if Some(video.clone()).ne(&self.playing.as_ref().map(|p| p.video.clone())) {
             trace!("Received seek includes new video");
             return self.load(video, Some(seek), paused, db);
@@ -461,6 +485,11 @@ impl Mpv {
         Ok(Duration::from_secs_f64(duration))
     }
 
+    pub fn get_playback_speed(&mut self) -> Result<f64> {
+        self.speeding = true;
+        self.get_property_f64(MpvProperty::Speed)
+    }
+
     pub fn get_eof_reached(&self) -> Result<bool> {
         self.get_property_flag(MpvProperty::EofReached)
     }
@@ -473,6 +502,12 @@ impl Mpv {
         if let Some(PlayingFile { last_seek, .. }) = &mut self.playing {
             *last_seek = Some(SeekEvent::new(pos));
         }
+        Ok(())
+    }
+
+    pub fn set_playback_speed(&mut self, speed: f64) -> Result<()> {
+        self.set_property(MpvProperty::Speed, PropertyValue::Double(speed))?;
+        self.speed = speed;
         Ok(())
     }
 }
@@ -488,6 +523,7 @@ pub enum MpvResultingAction {
     PlayNext(Video),
     Seek(Duration),
     ReOpenFile,
+    PlaybackSpeed(f64),
     Pause,
     Start,
     Exit,
