@@ -1,6 +1,17 @@
 title = "Server Configuration"
 
+[General]
 Host = "localhost"
 Port = 7766
-SaveFile = "playlist.toml"
+Password = "1234"
 Debug = true
+
+[Rooms]
+
+[Rooms.General]
+Name = "General"
+SaveFile = "General_playlist.toml"
+
+[Rooms.Test]
+Name = "Test"
+SaveFile = "Test_playlist.toml"

@@ -9,6 +9,6 @@ func main() {
 	server.InitLogger(serverConfig.Debug)
 	defer server.LoggerSync()
 
-	capitalist := server.NewCapitalist(serverConfig.Host, serverConfig.Port, playlistConfig.Playlist, playlistConfig.Video, playlistConfig.Position, serverConfig.SaveFile)
+	capitalist := server.NewCapitalist(serverConfig.Host, serverConfig.Port, serverConfig.Password, playlistConfig)
 	capitalist.Start()
 }
