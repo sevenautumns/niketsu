@@ -48,6 +48,15 @@ impl Messages {
         self.snap_scroll()
     }
 
+    pub fn push_playback_speed(&mut self, speed: f64, user: String) -> Command<MainMessage> {
+        self.msgs.push(ChatMessage::PlaybackSpeed {
+            when: Local::now(),
+            user,
+            speed,
+        });
+        self.snap_scroll()
+    }
+
     pub fn push_started(&mut self, user: String) -> Command<MainMessage> {
         self.msgs.push(ChatMessage::Started {
             when: Local::now(),
@@ -65,12 +74,19 @@ impl Messages {
         self.snap_scroll()
     }
 
-    pub fn push_seek(&mut self, pos: Duration, file: String, user: String) -> Command<MainMessage> {
+    pub fn push_seek(
+        &mut self,
+        pos: Duration,
+        file: String,
+        desync: bool,
+        user: String,
+    ) -> Command<MainMessage> {
         self.msgs.push(ChatMessage::Seek {
             when: Local::now(),
             user,
             file,
             pos,
+            desync,
         });
         self.snap_scroll()
     }
@@ -142,6 +158,11 @@ pub enum ChatMessage {
         when: DateTime<Local>,
         user: String,
     },
+    PlaybackSpeed {
+        when: DateTime<Local>,
+        user: String,
+        speed: f64,
+    },
     Select {
         when: DateTime<Local>,
         user: String,
@@ -152,6 +173,7 @@ pub enum ChatMessage {
         user: String,
         file: String,
         pos: Duration,
+        desync: bool,
     },
     UserChat {
         when: DateTime<Local>,
@@ -186,6 +208,9 @@ impl ChatMessage {
             ChatMessage::Started { user, .. } => {
                 format!("{when} {user} started playback")
             }
+            ChatMessage::PlaybackSpeed { when, user, speed } => {
+                format!("{when} {user} changed playback speed to {speed}")
+            }
             ChatMessage::Select { user, file, .. } => {
                 format!("{when} {user} selected file: {file:?}")
             }
@@ -198,8 +223,11 @@ impl ChatMessage {
             ChatMessage::Connected { .. } => {
                 format!("{when} connection to server established")
             }
-            ChatMessage::Seek { user, pos, .. } => {
-                format!("{when} {user} seeked to {pos:?}")
+            ChatMessage::Seek {
+                user, pos, desync, ..
+            } => {
+                let desync = desync.then(|| " due to desync").unwrap_or_default();
+                format!("{when} {user} seeked to {pos:?}{desync}")
             }
             ChatMessage::ServerChat { msg, .. } => {
                 format!("{when} {msg}")
@@ -233,6 +261,7 @@ impl ChatMessage {
             ChatMessage::Connected { when } => when,
             ChatMessage::Seek { when, .. } => when,
             ChatMessage::ServerChat { when, .. } => when,
+            ChatMessage::PlaybackSpeed { when, .. } => when,
         }
     }
 }

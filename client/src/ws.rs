@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Error, Result};
 use arc_swap::ArcSwapOption;
+use async_tungstenite::stream::Stream;
 use async_tungstenite::tokio::TokioAdapter;
 use async_tungstenite::tungstenite::Message as TsMessage;
 use async_tungstenite::WebSocketStream;
@@ -14,6 +15,7 @@ use iced::{Command, Renderer, Subscription, Theme};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use tokio_native_tls::TlsStream;
 
 use crate::user::ThisUser;
 use crate::window::MainMessage;
@@ -34,18 +36,22 @@ pub enum ServerMessage {
         filename: Option<String>,
         #[serde(with = "serde_millis")]
         position: Option<Duration>,
+        speed: f64,
         paused: bool,
     },
     StatusList {
         rooms: BTreeMap<String, BTreeSet<UserStatus>>,
     },
     Pause {
-        filename: String,
         #[serde(skip_serializing)]
         username: String,
     },
     Start {
-        filename: String,
+        #[serde(skip_serializing)]
+        username: String,
+    },
+    PlaybackSpeed {
+        speed: f64,
         #[serde(skip_serializing)]
         username: String,
     },
@@ -56,6 +62,9 @@ pub enum ServerMessage {
         #[serde(skip_serializing)]
         username: String,
         paused: bool,
+        speed: f64,
+        #[serde(skip_serializing)]
+        desync: bool,
     },
     Select {
         filename: Option<String>,
@@ -146,8 +155,17 @@ impl From<WebSocketMessage> for MainMessage {
     }
 }
 
-type WsSink = SplitSink<WebSocketStream<TokioAdapter<TcpStream>>, TsMessage>;
-type WsStream = SplitStream<WebSocketStream<TokioAdapter<TcpStream>>>;
+type WsSink = SplitSink<
+    WebSocketStream<
+        Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<tokio::net::TcpStream>>>,
+    >,
+    TsMessage,
+>;
+type WsStream = SplitStream<
+    WebSocketStream<
+        Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<tokio::net::TcpStream>>>,
+    >,
+>;
 
 #[derive(Debug)]
 pub struct ServerWebsocket {

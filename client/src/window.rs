@@ -223,6 +223,8 @@ impl Application for MainWindow {
                                         position,
                                         username: user.name(),
                                         paused: mpv.paused(),
+                                        desync: false,
+                                        speed: mpv.speed(),
                                     },
                                 );
                             }
@@ -233,33 +235,37 @@ impl Application for MainWindow {
                         }
                         Ok(Some(MpvResultingAction::Pause)) => {
                             debug!("Mpv process: pause");
-                            if let Some(playing) = mpv.playing() {
-                                return Command::batch([
-                                    user.set_ready(false, ws),
-                                    ServerWebsocket::send_command(
-                                        ws,
-                                        ServerMessage::Pause {
-                                            filename: playing.video.as_str().to_string(),
-                                            username: user.name(),
-                                        },
-                                    ),
-                                ]);
-                            }
+                            return Command::batch([
+                                user.set_ready(false, ws),
+                                ServerWebsocket::send_command(
+                                    ws,
+                                    ServerMessage::Pause {
+                                        username: user.name(),
+                                    },
+                                ),
+                            ]);
                         }
                         Ok(Some(MpvResultingAction::Start)) => {
                             debug!("Mpv process: start");
-                            if let Some(playing) = mpv.playing() {
-                                return Command::batch([
-                                    user.set_ready(true, ws),
-                                    ServerWebsocket::send_command(
-                                        ws,
-                                        ServerMessage::Start {
-                                            filename: playing.video.as_str().to_string(),
-                                            username: user.name(),
-                                        },
-                                    ),
-                                ]);
-                            }
+                            return Command::batch([
+                                user.set_ready(true, ws),
+                                ServerWebsocket::send_command(
+                                    ws,
+                                    ServerMessage::Start {
+                                        username: user.name(),
+                                    },
+                                ),
+                            ]);
+                        }
+                        Ok(Some(MpvResultingAction::PlaybackSpeed(speed))) => {
+                            debug!("Mpv process: playback speed");
+                            return ServerWebsocket::send_command(
+                                ws,
+                                ServerMessage::PlaybackSpeed {
+                                    username: user.name(),
+                                    speed,
+                                },
+                            );
                         }
                         Ok(Some(MpvResultingAction::Exit)) => {
                             debug!("Mpv process: exit");
@@ -283,8 +289,9 @@ impl Application for MainWindow {
                                     filename,
                                     position,
                                     paused,
+                                    speed,
                                 } => {
-                                    trace!("{filename:?}, {position:?}, {paused:?}")
+                                    trace!("{filename:?}, {position:?}, {paused:?}, {speed:?}")
                                 }
                                 ServerMessage::StatusList { rooms } => {
                                     debug!("Socket: received rooms: {rooms:?}");
@@ -305,6 +312,8 @@ impl Application for MainWindow {
                                     position,
                                     username,
                                     paused,
+                                    desync,
+                                    speed,
                                 } => {
                                     debug!("Socket: received seek {position:?}");
                                     if !mpv.seeking() {
@@ -312,10 +321,12 @@ impl Application for MainWindow {
                                             Video::from_string(filename.clone()),
                                             position,
                                             paused,
+                                            speed,
                                             db,
                                         )
                                         .log();
-                                        return messages.push_seek(position, filename, username);
+                                        return messages
+                                            .push_seek(position, filename, desync, username);
                                     }
                                 }
                                 ServerMessage::Select { filename, username } => {
@@ -329,22 +340,28 @@ impl Application for MainWindow {
                                     return messages.push_select(filename, username);
                                 }
                                 ServerMessage::UserMessage { message, username } => {
-                                    trace!("{username}: {message}");
+                                    trace!("Socket: received: {username}: {message}");
                                     return messages.push_user_chat(message, username);
                                 }
                                 ServerMessage::Playlist { playlist, username } => {
+                                    trace!("Socket: received playlist: {username}: {message}");
                                     playlist_widget.replace_videos(playlist);
                                     return messages.push_playlist_changed(username);
                                 }
                                 ServerMessage::Status { ready, username } => {
-                                    warn!("{username}: {ready:?}")
+                                    warn!("Received: {username}: {ready:?}")
                                 }
                                 ServerMessage::Join { room, username, .. } => {
-                                    warn!("{room}: {username}")
+                                    warn!("Received: {room}: {username}")
                                 }
                                 ServerMessage::ServerMessage { message, error } => {
-                                    trace!("error: {error}: {message}");
+                                    trace!("Socket: received server message: {error}: {message}");
                                     return messages.push_server_chat(message, error);
+                                }
+                                ServerMessage::PlaybackSpeed { speed, username } => {
+                                    trace!("Socket: received playback speed: {username}, {speed}");
+                                    mpv.set_playback_speed(speed).log();
+                                    return messages.push_playback_speed(speed, username);
                                 }
                             }
                         }
@@ -418,6 +435,7 @@ impl Application for MainWindow {
                                 filename: playing.as_ref().map(|p| p.video.as_str().to_string()),
                                 position: playing.and_then(|_| mpv.get_playback_position().ok()),
                                 paused: mpv.paused(),
+                                speed: mpv.speed(),
                             },
                         );
                     }
