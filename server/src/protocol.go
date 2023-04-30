@@ -19,6 +19,7 @@ const (
 	PlaylistType      MessageType = "playlist"
 	StatusType        MessageType = "status"
 	JoinType          MessageType = "join"
+	PlaybackSpeedType MessageType = "playbackSpeed"
 	UnknownType       MessageType = "unknown"
 	UnsupportedType   MessageType = "unsupported"
 )
@@ -50,6 +51,7 @@ type VideoStatus struct {
 	Filename *string `json:"filename"`
 	Position *uint64 `json:"position"`
 	Paused   bool    `json:"paused"`
+	Speed    float64 `json:"speed"`
 	Username string  `json:"username"`
 }
 
@@ -57,7 +59,6 @@ func (vs *VideoStatus) Type() MessageType               { return VideoStatusType
 func (vs *VideoStatus) MarshalMessage() ([]byte, error) { return MarshalJSON(vs) }
 
 type Pause struct {
-	Filename string `json:"filename"`
 	Username string `json:"username"`
 }
 
@@ -65,7 +66,6 @@ func (p *Pause) Type() MessageType               { return PauseType }
 func (p *Pause) MarshalMessage() ([]byte, error) { return MarshalJSON(p) }
 
 type Start struct {
-	Filename string `json:"filename"`
 	Username string `json:"username"`
 }
 
@@ -73,10 +73,12 @@ func (s *Start) Type() MessageType               { return StartType }
 func (s *Start) MarshalMessage() ([]byte, error) { return MarshalJSON(s) }
 
 type Seek struct {
-	Filename string `json:"filename"`
-	Position uint64 `json:"position"`
-	Paused   bool   `json:"paused"`
-	Username string `json:"username"`
+	Filename string  `json:"filename"`
+	Position uint64  `json:"position"`
+	Speed    float64 `json:"speed"`
+	Paused   bool    `json:"paused"`
+	Desync   bool    `json:"desync"`
+	Username string  `json:"username"`
 }
 
 func (s *Seek) Type() MessageType               { return SeekType }
@@ -139,6 +141,14 @@ type ServerMessage struct {
 func (sm *ServerMessage) Type() MessageType               { return ServerMessageType }
 func (sm *ServerMessage) MarshalMessage() ([]byte, error) { return MarshalJSON(sm) }
 
+type PlaybackSpeed struct {
+	Speed    float64 `json:"speed"`
+	Username string  `json:"username"`
+}
+
+func (pl *PlaybackSpeed) Type() MessageType               { return PlaybackSpeedType }
+func (pl *PlaybackSpeed) MarshalMessage() ([]byte, error) { return MarshalJSON(pl) }
+
 type Unknown struct {
 	Username string `json:"username"`
 	json.RawMessage
@@ -192,6 +202,8 @@ func UnmarshalMessage(data []byte) (Message, error) {
 		m = &Pause{}
 	case JoinType:
 		m = &Join{}
+	case PlaybackSpeedType:
+		m = &PlaybackSpeed{}
 	case UnsupportedType:
 		m = &Unsupported{}
 	default:

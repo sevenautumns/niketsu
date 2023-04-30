@@ -32,6 +32,7 @@ type Video struct {
 	position  *uint64
 	timestamp time.Time
 	paused    bool
+	speed     float64
 }
 
 // TODO add lock for settings, e.g. loggedIn?
@@ -63,7 +64,7 @@ func NewFactoryWorker(capitalist *Capitalist, conn net.Conn, userName string, fi
 	worker.settingsMutex = &sync.RWMutex{}
 	worker.userStatus = &Status{Ready: false, Username: userName}
 	worker.userStatusMutex = &sync.RWMutex{}
-	worker.videoStatus = &Video{filename: filename, position: position}
+	worker.videoStatus = &Video{filename: filename, position: position, paused: true, speed: 1.0}
 	worker.videoStatusMutex = &sync.RWMutex{}
 	worker.latency = &Latency{rtt: 0, timestamps: make(map[uuid.UUID]time.Time)}
 	worker.latencyMutex = &sync.RWMutex{}
@@ -76,7 +77,6 @@ func (worker *FactoryWorker) close() {
 		close(worker.settings.serviceChannel)
 
 		if worker.settings.room != nil {
-			logger.Info("LEL")
 			worker.settings.room.deleteWorker(worker)
 			worker.settings.room.checkRoomState(worker)
 			worker.capitalist.broadcastStatusList(worker)
@@ -106,6 +106,13 @@ func (worker *FactoryWorker) updateVideoStatus(videoStatus *VideoStatus, arrival
 	worker.videoStatus.position = videoStatus.Position
 	worker.videoStatus.timestamp = arrivalTime.Add(time.Duration(-worker.latency.rtt/2) * time.Nanosecond)
 	worker.videoStatus.paused = videoStatus.Paused
+}
+
+func (worker *FactoryWorker) updateSpeed(speed float64) {
+	worker.videoStatusMutex.Lock()
+	defer worker.videoStatusMutex.Unlock()
+
+	worker.videoStatus.speed = speed
 }
 
 func (worker *FactoryWorker) updateRtt(uuid uuid.UUID, arrivalTime time.Time) {
@@ -213,12 +220,12 @@ func (worker *FactoryWorker) handleVideoStatus(videoStatus *VideoStatus, arrival
 		worker.updateVideoStatus(videoStatus, arrivalTime)
 		worker.settings.room.evaluateVideoStatus()
 	} else {
-		worker.settings.room.sendSeek(worker, true)
+		worker.settings.room.sendSeek(worker, true, true)
 	}
 }
 
 func (worker *FactoryWorker) handleStart(start *Start) {
-	worker.settings.room.broadcastStart(start.Filename, worker)
+	worker.settings.room.broadcastStart(worker)
 	worker.settings.room.setPaused(false)
 }
 
@@ -226,7 +233,7 @@ func (worker *FactoryWorker) handleSeek(seek *Seek, arrivalTime time.Time) {
 	worker.settings.room.changePosition(seek.Position)
 	worker.settings.room.updateLastSeek(seek.Position)
 	worker.updateVideoStatus(&VideoStatus{Filename: &seek.Filename, Position: &seek.Position, Paused: seek.Paused}, arrivalTime)
-	worker.settings.room.broadcastSeek(seek.Filename, seek.Position, worker, true)
+	worker.settings.room.broadcastSeek(seek.Filename, seek.Position, worker, false, true)
 }
 
 func (worker *FactoryWorker) handleSelect(sel *Select) {
@@ -242,7 +249,13 @@ func (worker *FactoryWorker) handlePlaylist(playlist *Playlist) {
 
 func (worker *FactoryWorker) handlePause(pause *Pause) {
 	worker.settings.room.setPaused(true)
-	worker.settings.room.broadcastPause(pause.Filename, worker)
+	worker.settings.room.broadcastPause(worker)
+}
+
+func (worker *FactoryWorker) handlePlaybackSpeed(speed *PlaybackSpeed) {
+	worker.updateSpeed(speed.Speed)
+	worker.settings.room.updateSpeed(speed.Speed)
+	worker.settings.room.broadcastPlaybackSpeed(speed.Speed, worker)
 }
 
 func (worker *FactoryWorker) handleMessage(data []byte, arrivalTime time.Time) {
@@ -291,6 +304,9 @@ func (worker *FactoryWorker) handleMessage(data []byte, arrivalTime time.Time) {
 	case JoinType:
 		msg := msg.(*Join)
 		worker.capitalist.handleJoin(msg, worker)
+	case PlaybackSpeedType:
+		msg := msg.(*PlaybackSpeed)
+		worker.handlePlaybackSpeed(msg)
 	default:
 		logger.Warn("Unknown message handling is not supported.")
 	}
@@ -346,6 +362,7 @@ type RoomPlaylist struct {
 	position *uint64
 	lastSeek uint64
 	paused   bool
+	speed    float64
 	saveFile string
 }
 
@@ -362,7 +379,7 @@ func NewRoom(name string, playlist []string, video *string, position *uint64, sa
 	room.name = name
 	room.workers = make([]*FactoryWorker, 0)
 	room.workersMutex = &sync.RWMutex{}
-	room.playlist = &RoomPlaylist{playlist: playlist, video: video, position: position, lastSeek: 0, paused: true, saveFile: saveFile}
+	room.playlist = &RoomPlaylist{playlist: playlist, video: video, position: position, lastSeek: 0, paused: true, speed: 1.0, saveFile: saveFile}
 	room.playlistMutex = &sync.RWMutex{}
 	return room
 }
@@ -389,16 +406,12 @@ func (room *Room) deleteWorker(worker *FactoryWorker) {
 func (room *Room) checkRoomState(worker *FactoryWorker) {
 	room.playlistMutex.Lock()
 	defer room.playlistMutex.Unlock()
-	logger.Info("DHAJUHSDUIASHDUIAHSDUHDSUHSDD")
-
 	// pause video if no clients are connected
 	if len(room.workers) == 0 {
-		logger.Info("DHAJUHSDUIASHDUIAHSDUHDSUHSDD")
 		room.playlist.paused = true
 
 		// delete room if no clients are connected and playlist is empty
 		if len(room.playlist.playlist) == 0 {
-			logger.Info("DHAJUHSDUIASHDUIAHSDUHDSUHSDD")
 			worker.capitalist.deleteRoom(room)
 		}
 	}
@@ -468,7 +481,6 @@ func (capitalist *Capitalist) handleFirstLogin(join *Join, worker *FactoryWorker
 	room := capitalist.createOrFindRoom(join.Room)
 	room.appendWorker(worker)
 
-	logger.Infow("room details", "room", room.playlist)
 	worker.userStatusMutex.RLock()
 	status := &Status{Ready: false, Username: worker.userStatus.Username}
 	worker.userStatusMutex.RUnlock()
@@ -477,8 +489,7 @@ func (capitalist *Capitalist) handleFirstLogin(join *Join, worker *FactoryWorker
 	worker.updateRoom(room)
 	worker.capitalist.broadcastStatusList(worker)
 	worker.sendPlaylist()
-	room.sendSeek(worker, true)
-	logger.Info("END")
+	room.sendSeek(worker, true, true)
 }
 
 func (capitalist *Capitalist) handleRoomChange(join *Join, worker *FactoryWorker) {
@@ -486,7 +497,6 @@ func (capitalist *Capitalist) handleRoomChange(join *Join, worker *FactoryWorker
 	room := capitalist.createOrFindRoom(join.Room)
 	room.appendWorker(worker)
 
-	logger.Infow("room details", "room", room.playlist)
 	worker.userStatusMutex.RLock()
 	username := worker.userStatus.Username
 	worker.userStatusMutex.RUnlock()
@@ -494,8 +504,7 @@ func (capitalist *Capitalist) handleRoomChange(join *Join, worker *FactoryWorker
 	worker.updateRoom(room)
 	worker.capitalist.broadcastStatusList(worker)
 	worker.sendPlaylist()
-	room.sendSeek(worker, true)
-	logger.Info("END")
+	room.sendSeek(worker, true, true)
 }
 
 func (capitalist *Capitalist) handleJoin(join *Join, worker *FactoryWorker) {
@@ -596,11 +605,11 @@ func (room *Room) broadcastAll(message []byte) {
 	}
 }
 
-func (room *Room) broadcastStart(filename string, worker *FactoryWorker) {
+func (room *Room) broadcastStart(worker *FactoryWorker) {
 	worker.userStatusMutex.RLock()
 	defer worker.userStatusMutex.RUnlock()
 
-	s := Start{Filename: filename, Username: worker.userStatus.Username}
+	s := Start{Username: worker.userStatus.Username}
 	message, err := s.MarshalMessage()
 	if err != nil {
 		logger.Errorw("Unable to marshal start message", "error", err)
@@ -610,7 +619,7 @@ func (room *Room) broadcastStart(filename string, worker *FactoryWorker) {
 	room.broadcastExcept(message, worker)
 }
 
-func (room *Room) broadcastSeek(filename string, position uint64, worker *FactoryWorker, lock bool) {
+func (room *Room) broadcastSeek(filename string, position uint64, worker *FactoryWorker, desync bool, lock bool) {
 	if lock {
 		room.playlistMutex.RLock()
 		defer room.playlistMutex.RUnlock()
@@ -619,7 +628,7 @@ func (room *Room) broadcastSeek(filename string, position uint64, worker *Factor
 	worker.userStatusMutex.RLock()
 	defer worker.userStatusMutex.RUnlock()
 
-	s := Seek{Filename: filename, Position: position, Paused: room.playlist.paused, Username: worker.userStatus.Username}
+	s := Seek{Filename: filename, Position: position, Speed: room.playlist.speed, Paused: room.playlist.paused, Desync: desync, Username: worker.userStatus.Username}
 	message, err := s.MarshalMessage()
 	if err != nil {
 		logger.Errorw("Unable to marshal broadcast seek", "error", err)
@@ -679,11 +688,11 @@ func (room *Room) broadcastPlaylist(playlist *Playlist, worker *FactoryWorker, a
 	}
 }
 
-func (room *Room) broadcastPause(filename string, worker *FactoryWorker) {
+func (room *Room) broadcastPause(worker *FactoryWorker) {
 	worker.userStatusMutex.RLock()
 	defer worker.userStatusMutex.RUnlock()
 
-	p := Pause{Filename: filename, Username: worker.userStatus.Username}
+	p := Pause{Username: worker.userStatus.Username}
 	message, err := p.MarshalMessage()
 	if err != nil {
 		logger.Errorw("Unable to marshal broadcast pause", "error", err)
@@ -716,7 +725,7 @@ func (room *Room) broadcastStartOnReady(worker *FactoryWorker) {
 		defer room.playlistMutex.Unlock()
 		defer worker.userStatusMutex.RUnlock()
 
-		start := Start{Filename: *room.playlist.video, Username: worker.userStatus.Username}
+		start := Start{Username: worker.userStatus.Username}
 		message, err := start.MarshalMessage()
 		if err != nil {
 			logger.Errorw("Unable to marshal start message", "error", err)
@@ -731,7 +740,21 @@ func (room *Room) broadcastStartOnReady(worker *FactoryWorker) {
 	}
 }
 
-func (room *Room) sendSeek(worker *FactoryWorker, lock bool) {
+func (room *Room) broadcastPlaybackSpeed(speed float64, worker *FactoryWorker) {
+	worker.userStatusMutex.RLock()
+	defer worker.userStatusMutex.RUnlock()
+
+	pl := PlaybackSpeed{Speed: speed, Username: worker.userStatus.Username}
+	message, err := pl.MarshalMessage()
+	if err != nil {
+		logger.Errorw("Unable to marshal broadcast playbackspeed", "error", err)
+		return
+	}
+
+	room.broadcastExcept(message, worker)
+}
+
+func (room *Room) sendSeek(worker *FactoryWorker, desync bool, lock bool) {
 	if lock {
 		room.playlistMutex.RLock()
 		worker.userStatusMutex.RLock()
@@ -744,14 +767,13 @@ func (room *Room) sendSeek(worker *FactoryWorker, lock bool) {
 		return
 	}
 
-	seek := Seek{Filename: *room.playlist.video, Position: *room.playlist.position, Paused: room.playlist.paused, Username: worker.userStatus.Username}
+	seek := Seek{Filename: *room.playlist.video, Position: *room.playlist.position, Speed: room.playlist.speed, Paused: room.playlist.paused, Desync: desync, Username: worker.userStatus.Username}
 	message, err := seek.MarshalMessage()
 	if err != nil {
 		logger.Errorw("Capitalist failed to marshal seek", "error", err)
 		return
 	}
 
-	logger.Info("send seek", seek)
 	worker.sendMessage(message)
 }
 
@@ -770,8 +792,9 @@ func (room *Room) evaluateVideoStatus() {
 	for _, w := range room.workers {
 		w.videoStatusMutex.RLock()
 
-		timeElapsed := uint64(time.Since(w.videoStatus.timestamp).Milliseconds())
-		estimatedPosition := timeElapsed + *w.videoStatus.position
+		// estimate position of client based on previous position, time difference and playback speed
+		timeElapsed := uint64(float64(time.Since(w.videoStatus.timestamp).Milliseconds()) * room.playlist.speed)
+		estimatedPosition := *w.videoStatus.position + timeElapsed
 
 		if estimatedPosition < minPosition {
 			minPosition = estimatedPosition
@@ -785,14 +808,16 @@ func (room *Room) evaluateVideoStatus() {
 		w.videoStatusMutex.RUnlock()
 	}
 
+	// position can not be before lastSeek
 	if minPosition > room.playlist.lastSeek {
 		room.playlist.position = &minPosition
 	} else {
 		room.playlist.position = &room.playlist.lastSeek
 	}
 
-	if maxPosition-minPosition > MAX_DIFFERENCE_MILLISECONDS {
-		room.broadcastSeek(*room.playlist.video, *room.playlist.position, slowest, false)
+	// if difference is too large, all clients are reset based on the slowest client
+	if maxPosition-minPosition > uint64(float64(MAX_DIFFERENCE_MILLISECONDS)*room.playlist.speed) {
+		room.broadcastSeek(*room.playlist.video, *room.playlist.position, slowest, true, false)
 	}
 
 	go WritePlaylist(room.playlist.playlist, room.playlist.video, room.playlist.position, room.playlist.saveFile)
@@ -871,6 +896,13 @@ func (room *Room) updateLastSeek(position uint64) {
 	room.playlist.lastSeek = position
 }
 
+func (room *Room) updateSpeed(speed float64) {
+	room.playlistMutex.Lock()
+	defer room.playlistMutex.Unlock()
+
+	room.playlist.speed = speed
+}
+
 func (room *Room) checkValidVideoStatus(videoStatus *VideoStatus, worker *FactoryWorker) bool {
 	room.playlistMutex.RLock()
 	defer room.playlistMutex.RUnlock()
@@ -897,6 +929,6 @@ func (room *Room) handleNilStatus(videoStatus *VideoStatus, worker *FactoryWorke
 	defer worker.userStatusMutex.RUnlock()
 
 	if videoStatus.Filename != room.playlist.video || videoStatus.Position != room.playlist.position {
-		room.sendSeek(worker, false)
+		room.sendSeek(worker, false, true)
 	}
 }
