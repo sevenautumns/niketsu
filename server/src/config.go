@@ -9,24 +9,32 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-type (
-	ServerConfig struct {
-		Host     string
-		Port     uint16
-		SaveFile string
-		Debug    bool
-	}
+type PlaylistConfig struct {
+	Playlist []string
+	Video    *string
+	Position *uint64
+}
 
-	PlaylistConfig struct {
-		Playlist []string
-		Video    *string
-		Position *uint64
-	}
-)
+type RoomConfig struct {
+	Name     string
+	SaveFile string
+}
+
+type General struct {
+	Host     string
+	Port     uint16
+	Password string
+	Debug    bool
+}
+
+type ServerConfig struct {
+	General General
+	Rooms   map[string]RoomConfig
+}
 
 var writeMutex sync.Mutex
 
-func GetConfig() (ServerConfig, PlaylistConfig) {
+func GetConfig() (General, map[string]*Room) {
 	var configFile string
 	flag.StringVar(&configFile, "config", "server/config.toml", "path to config file (toml)")
 	flag.Parse()
@@ -37,16 +45,22 @@ func GetConfig() (ServerConfig, PlaylistConfig) {
 		log.Panicf("Failed to load config file at %s. Make sure the correct file format (toml) is used and the file exists", configFile)
 	}
 
-	var playlistConfig PlaylistConfig
-	_, err = toml.DecodeFile(serverConfig.SaveFile, &playlistConfig)
-	if err != nil {
-		log.Printf("Playlist save file does not exist at %s. Using default values instead", serverConfig.SaveFile)
-		playlistConfig = PlaylistConfig{Playlist: make([]string, 0), Video: nil, Position: nil}
+	rooms := make(map[string]*Room, 0)
+	for _, roomConfig := range serverConfig.Rooms {
+		var playlistConfig PlaylistConfig
+		_, err = toml.DecodeFile(roomConfig.SaveFile, &playlistConfig)
+		if err != nil {
+			log.Printf("Playlist save file does not exist for room %s in %s. Using default values instead", roomConfig.Name, roomConfig.SaveFile)
+			newRoom := NewRoom(roomConfig.Name, make([]string, 0), nil, nil, roomConfig.SaveFile)
+			rooms[roomConfig.Name] = &newRoom
+		} else {
+			newRoom := NewRoom(roomConfig.Name, playlistConfig.Playlist, playlistConfig.Video, playlistConfig.Position, roomConfig.SaveFile)
+			rooms[roomConfig.Name] = &newRoom
+		}
 	}
+	log.Printf("Configurations successfully set.\nServer configuration: %+v\nPlaylist Save File: %+v", serverConfig, rooms)
 
-	log.Printf("Configurations successfully set.\nServer configuration: %+v\nPlaylist Save File: %+v", serverConfig, playlistConfig)
-
-	return serverConfig, playlistConfig
+	return serverConfig.General, rooms
 }
 
 func WritePlaylist(playlist []string, video *string, position *uint64, saveFile string) {
@@ -66,5 +80,12 @@ func WritePlaylist(playlist []string, video *string, position *uint64, saveFile 
 
 	if err := f.Close(); err != nil {
 		logger.Warn("Failed to close toml save file for playlist")
+	}
+}
+
+func DeleteConfig(saveFile string) {
+	err := os.Remove(saveFile)
+	if err != nil {
+		logger.Warnw("Failed to delete playlist", saveFile)
 	}
 }

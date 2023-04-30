@@ -7,18 +7,20 @@ import (
 type MessageType string
 
 const (
-	PingType        MessageType = "ping"
-	VideoStatusType MessageType = "videoStatus"
-	StatusListType  MessageType = "statusList"
-	PauseType       MessageType = "pause"
-	StartType       MessageType = "start"
-	SeekType        MessageType = "seek"
-	SelectType      MessageType = "select"
-	UserMessageType MessageType = "message"
-	PlaylistType    MessageType = "playlist"
-	StatusType      MessageType = "status"
-	UnknownType     MessageType = "unknown"
-	UnsupportedType MessageType = "unsupported"
+	PingType          MessageType = "ping"
+	VideoStatusType   MessageType = "videoStatus"
+	StatusListType    MessageType = "statusList"
+	PauseType         MessageType = "pause"
+	StartType         MessageType = "start"
+	SeekType          MessageType = "seek"
+	SelectType        MessageType = "select"
+	UserMessageType   MessageType = "userMessage"
+	ServerMessageType MessageType = "serverMessage"
+	PlaylistType      MessageType = "playlist"
+	StatusType        MessageType = "status"
+	JoinType          MessageType = "join"
+	UnknownType       MessageType = "unknown"
+	UnsupportedType   MessageType = "unsupported"
 )
 
 type Message interface {
@@ -113,12 +115,29 @@ func (s *Status) Type() MessageType               { return StatusType }
 func (s *Status) MarshalMessage() ([]byte, error) { return MarshalJSON(s) }
 
 type StatusList struct {
-	Users    []Status `json:"users"`
-	Username string   `json:"username"`
+	Rooms    map[string][]Status `json:"rooms"`
+	Username string              `json:"username"`
 }
 
 func (sl *StatusList) Type() MessageType               { return StatusListType }
 func (sl *StatusList) MarshalMessage() ([]byte, error) { return MarshalJSON(sl) }
+
+type Join struct {
+	Password string `json:"password"`
+	Room     string `json:"room"`
+	Username string `json:"username"`
+}
+
+func (j *Join) Type() MessageType               { return JoinType }
+func (j *Join) MarshalMessage() ([]byte, error) { return MarshalJSON(j) }
+
+type ServerMessage struct {
+	Message string `json:"message"`
+	IsError bool   `json:"error"`
+}
+
+func (sm *ServerMessage) Type() MessageType               { return ServerMessageType }
+func (sm *ServerMessage) MarshalMessage() ([]byte, error) { return MarshalJSON(sm) }
 
 type Unknown struct {
 	Username string `json:"username"`
@@ -171,6 +190,8 @@ func UnmarshalMessage(data []byte) (Message, error) {
 		m = &StatusList{}
 	case PauseType:
 		m = &Pause{}
+	case JoinType:
+		m = &Join{}
 	case UnsupportedType:
 		m = &Unsupported{}
 	default:
