@@ -22,14 +22,14 @@ impl ThisUser {
     pub fn set_ready(&mut self, ready: bool, ws: &Arc<ServerWebsocket>) -> Command<MainMessage> {
         if ready != self.ready {
             self.ready = ready;
-            return self.status(ws);
+            return self.send_status_command(ws);
         }
         Command::none()
     }
 
     pub fn toggle_ready(&mut self, ws: &Arc<ServerWebsocket>) -> Command<MainMessage> {
         self.ready ^= true;
-        self.status(ws)
+        self.send_status_command(ws)
     }
 
     pub fn ready(&self) -> bool {
@@ -40,7 +40,7 @@ impl ThisUser {
         self.name.clone()
     }
 
-    pub fn status(&self, ws: &Arc<ServerWebsocket>) -> Command<MainMessage> {
+    pub fn send_status_command(&self, ws: &Arc<ServerWebsocket>) -> Command<MainMessage> {
         ServerWebsocket::send_command(
             ws,
             crate::ws::ServerMessage::Status {
@@ -53,7 +53,7 @@ impl ThisUser {
     pub fn set_name(&mut self, user: String, ws: &Arc<ServerWebsocket>) -> Command<MainMessage> {
         if user.eq(&self.name) {
             self.name = user;
-            return self.status(ws);
+            return self.send_status_command(ws);
         }
         Command::none()
     }

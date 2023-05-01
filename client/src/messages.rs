@@ -121,6 +121,14 @@ impl Messages {
         self.snap_scroll()
     }
 
+    pub fn push_connection_error(&mut self, error: String) -> Command<MainMessage> {
+        self.msgs.push(ChatMessage::ConnectionError {
+            when: Local::now(),
+            error,
+        });
+        self.snap_scroll()
+    }
+
     fn snap_scroll(&self) -> Command<MainMessage> {
         if self.scroll.y.eq(&1.0) {
             return iced::widget::scrollable::snap_to(Id::new("messages"), RelativeOffset::END);
@@ -191,6 +199,10 @@ pub enum ChatMessage {
     Disconnected {
         when: DateTime<Local>,
     },
+    ConnectionError {
+        when: DateTime<Local>,
+        error: String,
+    },
 }
 
 impl ChatMessage {
@@ -209,7 +221,7 @@ impl ChatMessage {
                 format!("{when} {user} started playback")
             }
             ChatMessage::PlaybackSpeed { when, user, speed } => {
-                format!("{when} {user} changed playback speed to {speed}")
+                format!("{when} {user} changed playback speed to {speed:.5}")
             }
             ChatMessage::Select { user, file, .. } => {
                 format!("{when} {user} selected file: {file:?}")
@@ -231,6 +243,9 @@ impl ChatMessage {
             }
             ChatMessage::ServerChat { msg, .. } => {
                 format!("{when} {msg}")
+            }
+            ChatMessage::ConnectionError { when, error } => {
+                format!("{when} Connection Error: {error}")
             }
         };
 
@@ -262,6 +277,7 @@ impl ChatMessage {
             ChatMessage::Seek { when, .. } => when,
             ChatMessage::ServerChat { when, .. } => when,
             ChatMessage::PlaybackSpeed { when, .. } => when,
+            ChatMessage::ConnectionError { when, .. } => when,
         }
     }
 }
