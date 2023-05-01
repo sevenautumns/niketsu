@@ -99,6 +99,7 @@ pub struct Mpv {
     playing: Option<PlayingFile>,
     paused: bool,
     speed: f64,
+    seeking: bool,
     event_pipe: Arc<Mutex<MpvEventPipe>>,
 }
 
@@ -114,6 +115,7 @@ impl Mpv {
             playing: None,
             paused: true,
             speed: 1.0,
+            seeking: false,
         }
     }
 
@@ -121,11 +123,16 @@ impl Mpv {
         self.speed
     }
 
+    pub fn seeking(&self) -> bool {
+        self.seeking
+    }
+
     pub fn react_to(&mut self, event: MpvEvent) -> Result<Option<MpvResultingAction>> {
         match event {
             MpvEvent::Shutdown => return Ok(Some(MpvResultingAction::Exit)),
             MpvEvent::Seek => {
                 trace!("Seek started");
+                self.seeking = true;
             }
             MpvEvent::FileLoaded => {
                 trace!("File loaded");
@@ -178,6 +185,7 @@ impl Mpv {
             }
             MpvEvent::PlaybackRestart => {
                 trace!("Playback restarted");
+                self.seeking = false;
                 if self.playing.is_some() {
                     let new_pos = self.get_playback_position()?;
                     if let Some(playing) = &mut self.playing {
