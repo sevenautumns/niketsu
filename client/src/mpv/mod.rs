@@ -98,7 +98,6 @@ pub struct Mpv {
     handle: MpvHandle,
     playing: Option<PlayingFile>,
     paused: bool,
-    paused_init: bool,
     speed: f64,
     event_pipe: Arc<Mutex<MpvEventPipe>>,
 }
@@ -115,7 +114,6 @@ impl Mpv {
             playing: None,
             paused: true,
             speed: 1.0,
-            paused_init: false,
         }
     }
 
@@ -147,24 +145,25 @@ impl Mpv {
                 trace!("Property Changed: {prop:?} {value:?}");
                 match prop {
                     MpvProperty::Pause => {
-                        if !self.paused_init {
-                            self.paused_init = true;
-                            return Ok(None);
-                        }
-                        self.paused = self.get_pause_state();
-                        // Should we be paused
-                        if self.paused {
-                            // and file ended
-                            if self.get_eof_reached()? {
-                                // and we are playing
-                                if let Some(playing) = self.playing.take() {
-                                    // play next
-                                    return Ok(Some(MpvResultingAction::PlayNext(playing.video)));
+                        let paused = self.get_pause_state();
+                        if paused != self.paused {
+                            self.paused = paused;
+                            // Should we be paused
+                            if self.paused {
+                                // and file ended
+                                if self.get_eof_reached()? {
+                                    // and we are playing
+                                    if let Some(playing) = self.playing.take() {
+                                        // play next
+                                        return Ok(Some(MpvResultingAction::PlayNext(
+                                            playing.video,
+                                        )));
+                                    }
                                 }
+                                return Ok(Some(MpvResultingAction::Pause));
                             }
-                            return Ok(Some(MpvResultingAction::Pause));
+                            return Ok(Some(MpvResultingAction::Start));
                         }
-                        return Ok(Some(MpvResultingAction::Start));
                     }
                     MpvProperty::Speed => {
                         if let Ok(speed) = self.get_playback_speed() {
@@ -216,7 +215,7 @@ impl Mpv {
         self.set_ocs(true)?;
         self.set_keep_open(true)?;
         self.set_keep_open_pause(true)?;
-        // self.set_cache_pause(false)?;
+        self.set_cache_pause(false)?;
         self.set_idle_mode(true)?;
         self.set_force_window(true)?;
         self.set_config(true)?;
