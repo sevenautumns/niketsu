@@ -44,5 +44,3 @@ The hottest (daily nightly) releases are available on [Github](https://github.co
 - Great and well prepared [Code of Conduct](https://www.reddit.com/r/ProgrammerAnimemes/comments/lfcgxy/been_there_ngl/).
 - The devs [know what they are doing](https://www.reddit.com/r/ProgrammerAnimemes/comments/ijbykf/maybe_i_should_just_quit/).
 - There is a dev that ignores the protected [main branch](https://www.reddit.com/r/ProgrammerHumor/comments/m12sif/topy2k38_animes_with_cute_girls_doing_cute_things/) and force pushes.
-
-

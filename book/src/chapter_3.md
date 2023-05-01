@@ -6,13 +6,9 @@ Who uses docker anyway?
 
 ## Building from source
 
-### nix
-
-machste-nix
-
 ### client
 
-To build the niketsu client from source, you need:
+In progress
 
 ### server
 
@@ -39,10 +35,12 @@ go build -o niketsu-server server/main.go
 
 ## Development
 
+### nix
+
 Install the almighty [Nix](https://nixos.wiki/wiki/Nix_Installation_Guide), clone the repository and run:
 
 ```bash
 nix develop
 ```
 
-Honestly, it is that simple.
+Honestly, it is that simple (as of yet, some Go dependencies might not work in the development shell).

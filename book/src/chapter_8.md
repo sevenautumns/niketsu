@@ -21,5 +21,4 @@ You can find us on every useful social media platform that does not suck ([Githu
 <img src="./images/birthday.svg" alt="Birthday Gopher" height=50 style="float: right; margin-left: 3rem;"/>
 
 Please support [egonelbre](https://github.com/egonelbre/gophers) for his great, free Gopher vector graphics and gifs.
-
 </div>
