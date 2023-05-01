@@ -15,8 +15,8 @@ type PlaylistConfig struct {
 	Position *uint64
 }
 
+// TODO delete Name from config
 type RoomConfig struct {
-	Name     string
 	SaveFile string
 }
 
@@ -46,16 +46,16 @@ func GetConfig() (General, map[string]*Room) {
 	}
 
 	rooms := make(map[string]*Room, 0)
-	for _, roomConfig := range serverConfig.Rooms {
+	for name, roomConfig := range serverConfig.Rooms {
 		var playlistConfig PlaylistConfig
 		_, err = toml.DecodeFile(roomConfig.SaveFile, &playlistConfig)
 		if err != nil {
-			log.Printf("Playlist save file does not exist for room %s in %s. Using default values instead", roomConfig.Name, roomConfig.SaveFile)
-			newRoom := NewRoom(roomConfig.Name, make([]string, 0), nil, nil, roomConfig.SaveFile)
-			rooms[roomConfig.Name] = &newRoom
+			log.Printf("Playlist save file does not exist for room %s in %s. Using default values instead", name, roomConfig.SaveFile)
+			newRoom := NewRoom(name, make([]string, 0), nil, nil, roomConfig.SaveFile)
+			rooms[name] = &newRoom
 		} else {
-			newRoom := NewRoom(roomConfig.Name, playlistConfig.Playlist, playlistConfig.Video, playlistConfig.Position, roomConfig.SaveFile)
-			rooms[roomConfig.Name] = &newRoom
+			newRoom := NewRoom(name, playlistConfig.Playlist, playlistConfig.Video, playlistConfig.Position, roomConfig.SaveFile)
+			rooms[name] = &newRoom
 		}
 	}
 	log.Printf("Configurations successfully set.\nServer configuration: %+v\nPlaylist Save File: %+v", serverConfig, rooms)

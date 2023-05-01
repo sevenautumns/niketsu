@@ -248,8 +248,8 @@ func (worker *FactoryWorker) handlePlaylist(playlist *Playlist) {
 }
 
 func (worker *FactoryWorker) handlePause(pause *Pause) {
-	worker.settings.room.setPaused(true)
 	worker.settings.room.broadcastPause(worker)
+	worker.settings.room.setPaused(true)
 }
 
 func (worker *FactoryWorker) handlePlaybackSpeed(speed *PlaybackSpeed) {
@@ -272,7 +272,7 @@ func (worker *FactoryWorker) handleMessage(data []byte, arrivalTime time.Time) {
 	}
 	worker.settingsMutex.RUnlock()
 
-	logger.Debugw("Received message from client", "type", msg.Type(), "message", msg)
+	logger.Debugw("Received message from client", "name", worker.userStatus.Username, "type", msg.Type(), "message", msg)
 	switch msg.Type() {
 	case PingType:
 		msg := msg.(*Ping)
@@ -476,20 +476,20 @@ func (capitalist *Capitalist) createOrFindRoom(roomName string) *Room {
 }
 
 func (capitalist *Capitalist) handleFirstLogin(join *Join, worker *FactoryWorker) {
-	worker.login()
-
 	room := capitalist.createOrFindRoom(join.Room)
 	room.appendWorker(worker)
 
 	worker.userStatusMutex.RLock()
 	status := &Status{Ready: false, Username: worker.userStatus.Username}
 	worker.userStatusMutex.RUnlock()
-	worker.updateVideoStatus(&VideoStatus{Filename: room.playlist.video, Position: room.playlist.position, Paused: room.playlist.paused, Username: status.Username}, time.Now())
+	worker.updateVideoStatus(&VideoStatus{Filename: room.playlist.video, Position: room.playlist.position, Paused: room.playlist.paused}, time.Now())
 	worker.updateUserStatus(status)
 	worker.updateRoom(room)
 	worker.capitalist.broadcastStatusList(worker)
 	worker.sendPlaylist()
 	room.sendSeek(worker, true, true)
+
+	worker.login()
 }
 
 func (capitalist *Capitalist) handleRoomChange(join *Join, worker *FactoryWorker) {
@@ -497,10 +497,7 @@ func (capitalist *Capitalist) handleRoomChange(join *Join, worker *FactoryWorker
 	room := capitalist.createOrFindRoom(join.Room)
 	room.appendWorker(worker)
 
-	worker.userStatusMutex.RLock()
-	username := worker.userStatus.Username
-	worker.userStatusMutex.RUnlock()
-	worker.updateVideoStatus(&VideoStatus{Filename: room.playlist.video, Position: room.playlist.position, Paused: room.playlist.paused, Username: username}, time.Now())
+	worker.updateVideoStatus(&VideoStatus{Filename: room.playlist.video, Position: room.playlist.position, Paused: room.playlist.paused}, time.Now())
 	worker.updateRoom(room)
 	worker.capitalist.broadcastStatusList(worker)
 	worker.sendPlaylist()
@@ -792,6 +789,11 @@ func (room *Room) evaluateVideoStatus() {
 	for _, w := range room.workers {
 		w.videoStatusMutex.RLock()
 
+		if w.videoStatus.position == nil {
+			w.videoStatusMutex.RUnlock()
+			continue
+		}
+
 		// estimate position of client based on previous position, time difference and playback speed
 		timeElapsed := uint64(float64(time.Since(w.videoStatus.timestamp).Milliseconds()) * room.playlist.speed)
 		estimatedPosition := *w.videoStatus.position + timeElapsed
@@ -817,7 +819,12 @@ func (room *Room) evaluateVideoStatus() {
 
 	// if difference is too large, all clients are reset based on the slowest client
 	if maxPosition-minPosition > uint64(float64(MAX_DIFFERENCE_MILLISECONDS)*room.playlist.speed) {
-		room.broadcastSeek(*room.playlist.video, *room.playlist.position, slowest, true, false)
+		// server file is not chosen in case it is not set (playing video that is not in playlist)
+		if room.playlist.playlist != nil {
+			room.broadcastSeek(*room.playlist.video, *room.playlist.position, slowest, true, false)
+		} else {
+			room.broadcastSeek(*slowest.videoStatus.filename, *room.playlist.position, slowest, true, false)
+		}
 	}
 
 	go WritePlaylist(room.playlist.playlist, room.playlist.video, room.playlist.position, room.playlist.saveFile)
@@ -929,6 +936,6 @@ func (room *Room) handleNilStatus(videoStatus *VideoStatus, worker *FactoryWorke
 	defer worker.userStatusMutex.RUnlock()
 
 	if videoStatus.Filename != room.playlist.video || videoStatus.Position != room.playlist.position {
-		room.sendSeek(worker, false, true)
+		room.sendSeek(worker, false, false)
 	}
 }

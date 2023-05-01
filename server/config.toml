@@ -1,7 +1,7 @@
 title = "Server Configuration"
 
 [General]
-Host = "localhost"
+Host = "0.0.0.0"
 Port = 7766
 Password = "1234"
 Debug = true
@@ -9,9 +9,7 @@ Debug = true
 [Rooms]
 
 [Rooms.General]
-Name = "General"
 SaveFile = "General_playlist.toml"
 
 [Rooms.Test]
-Name = "Test"
 SaveFile = "Test_playlist.toml"
