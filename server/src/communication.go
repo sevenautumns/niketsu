@@ -420,46 +420,48 @@ func (room *Room) checkRoomState(worker *FactoryWorker) {
 type CapitalistConfig struct {
 	host     string
 	port     uint16
-	password string
+	cert     *string
+	key      *string
+	password *string
 }
 
-// TODO integrate rooms
-// each user should have a room attribute
-// the capitalists owns the libs and has a map rooms -> users
-// requirement: when player joins/leaves: additionally delete from map
-// each message is filtered for the rooms
-// TODO password for each room
-// if password not given, messages are ignored
 type Capitalist struct {
 	config     *CapitalistConfig
 	rooms      map[string]*Room
 	roomsMutex *sync.RWMutex
 }
 
-func NewCapitalist(host string, port uint16, password string, rooms map[string]*Room) Capitalist {
+func NewCapitalist(host string, port uint16, cert *string, key *string, password *string, rooms map[string]*Room) Capitalist {
 	var capitalist Capitalist
-	capitalist.config = &CapitalistConfig{host: host, port: port, password: password}
+	capitalist.config = &CapitalistConfig{host: host, port: port, cert: cert, key: key, password: password}
 	capitalist.rooms = rooms
 	capitalist.roomsMutex = &sync.RWMutex{}
 	return capitalist
 }
 
+func (capitalist *Capitalist) handler(w http.ResponseWriter, r *http.Request) {
+	logger.Info("Handle CONNECTION")
+	conn, _, _, err := ws.UpgradeHTTP(r, w)
+	if err != nil {
+		logger.Errorw("Failed to establish connection to client socket", "error", err)
+	}
+
+	logger.Info("New connection established. Creating new worker ...")
+	worker := NewFactoryWorker(capitalist, conn, "unknown", nil, nil)
+
+	logger.Infow("Starting new worker for client", "client", worker.settings.uuid)
+	go worker.Start()
+}
+
 func (capitalist *Capitalist) Start() {
-	logger.Info("Finished initializing manager. Starting http listener ...")
-
 	hostPort := fmt.Sprintf("%s:%d", capitalist.config.host, capitalist.config.port)
-	http.ListenAndServe(hostPort, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, _, _, err := ws.UpgradeHTTP(r, w)
-		if err != nil {
-			logger.Errorw("Failed to establish connection to client socket", "error", err)
-		}
-
-		logger.Info("New connection established. Creating new worker ...")
-		worker := NewFactoryWorker(capitalist, conn, "unknown", nil, nil)
-
-		logger.Infow("Starting new worker for client", "client", worker.settings.uuid)
-		go worker.Start()
-	}))
+	if capitalist.config.cert == nil || capitalist.config.key == nil {
+		logger.Info("Finished initializing manager. Starting http listener ...")
+		http.ListenAndServe(hostPort, http.HandlerFunc(capitalist.handler))
+	} else {
+		logger.Info("Finished initializing manager. Starting tls listener ...")
+		http.ListenAndServeTLS("localhost:7755", *capitalist.config.cert, *capitalist.config.key, http.HandlerFunc(capitalist.handler))
+	}
 }
 
 func (capitalist *Capitalist) createOrFindRoom(roomName string) *Room {
@@ -485,11 +487,11 @@ func (capitalist *Capitalist) handleFirstLogin(join *Join, worker *FactoryWorker
 	worker.updateVideoStatus(&VideoStatus{Filename: room.playlist.video, Position: room.playlist.position, Paused: room.playlist.paused}, time.Now())
 	worker.updateUserStatus(status)
 	worker.updateRoom(room)
+	worker.login()
+
 	worker.capitalist.broadcastStatusList(worker)
 	worker.sendPlaylist()
 	room.sendSeek(worker, true, true)
-
-	worker.login()
 }
 
 func (capitalist *Capitalist) handleRoomChange(join *Join, worker *FactoryWorker) {
@@ -506,7 +508,7 @@ func (capitalist *Capitalist) handleRoomChange(join *Join, worker *FactoryWorker
 
 func (capitalist *Capitalist) handleJoin(join *Join, worker *FactoryWorker) {
 	logger.Info("Received login attempt", "message", join)
-	if join.Password != capitalist.config.password {
+	if capitalist.config.password != nil && join.Password != *capitalist.config.password {
 		worker.sendServerMessage("Password is incorrect. Please try again", true)
 		return
 	}

@@ -3,11 +3,12 @@ title = "Server Configuration"
 [General]
 Host = "0.0.0.0"
 Port = 7766
-Password = "1234"
-Debug = true
+# Cert = "cert.pem"
+# Key = "key.pem"
+# Password = "1234"
+Debug = false
 
 [Rooms]
-
 [Rooms.General]
 SaveFile = "General_playlist.toml"
 

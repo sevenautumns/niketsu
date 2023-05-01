@@ -23,7 +23,9 @@ type RoomConfig struct {
 type General struct {
 	Host     string
 	Port     uint16
-	Password string
+	Cert     *string
+	Key      *string
+	Password *string
 	Debug    bool
 }
 
