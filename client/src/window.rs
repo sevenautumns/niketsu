@@ -316,16 +316,18 @@ impl Application for MainWindow {
                                     speed,
                                 } => {
                                     debug!("Socket: received seek {position:?}");
-                                    mpv.seek(
-                                        Video::from_string(filename.clone()),
-                                        position,
-                                        paused,
-                                        speed,
-                                        db,
-                                    )
-                                    .log();
-                                    return messages
-                                        .push_seek(position, filename, desync, username);
+                                    if !mpv.seeking() {
+                                        mpv.seek(
+                                            Video::from_string(filename.clone()),
+                                            position,
+                                            paused,
+                                            speed,
+                                            db,
+                                        )
+                                        .log();
+                                        return messages
+                                            .push_seek(position, filename, desync, username);
+                                    }
                                 }
                                 ServerMessage::Select { filename, username } => {
                                     debug!("Socket: received select: {filename:?}");
