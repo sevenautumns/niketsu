@@ -40,5 +40,5 @@ For more information, check out: https://sevenautumns.github.io/niketsu
 
 ## License
 
-Apache License 2.0, see [LICENSE](https://github.com/sevenautumns/niketsu/blob/main/LICENSE-APACHE).
+Apache License 2.0, see [LICENSE](https://github.com/sevenautumns/niketsu/blob/main/LICENSE).
 
