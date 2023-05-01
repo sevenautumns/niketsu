@@ -3,10 +3,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::keyboard::{KeyCode, Modifiers};
-use iced::widget::{Button, Column, Container, Rule, Scrollable, Text};
+use iced::widget::{Button, Column, Container, Rule, Text};
 use iced::{Element, Length, Renderer, Size};
 use iced_native::widget::Tree;
-use iced_native::Widget;
+use iced_native::{Layout, Widget};
 use log::*;
 
 use crate::fs::FileDatabase;
@@ -60,17 +60,14 @@ impl<'a> PlaylistWidget<'a> {
                 Button::new(Container::new(Text::new(name)).padding(2))
                     .padding(0)
                     .width(Length::Fill)
-                    .style(FileButton::new(pressed, available))
+                    .style(FileButton::theme(pressed, available))
                     .into(),
             );
         }
 
         Self {
             state,
-            base: Scrollable::new(Column::with_children(file_btns).width(Length::Fill))
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .into(),
+            base: Column::with_children(file_btns).width(Length::Fill).into(),
         }
     }
 }
@@ -81,7 +78,7 @@ impl<'a> PlaylistWidget<'a> {
         layout: iced_native::Layout<'_>,
         cursor_position: iced_native::Point,
     ) -> Option<(usize, iced::Point)> {
-        let files = layout.children().next()?.children();
+        let files = layout.children();
         let mut closest = (f32::INFINITY, 0, iced::Point::default());
         // Find closest index from overlay
         for (i, layout) in files.enumerate() {
@@ -93,7 +90,7 @@ impl<'a> PlaylistWidget<'a> {
         // In-case we are at the end of the file list,
         // check if we are above or below
         if closest.1 == self.state.videos.len() - 1 {
-            if let Some(l) = layout.children().next()?.children().last() {
+            if let Some(l) = layout.children().last() {
                 let top = l.position();
                 let mut bottom = top;
                 bottom.y += l.bounds().height;
@@ -131,11 +128,7 @@ impl<'a> PlaylistWidget<'a> {
         layout: iced_native::Layout<'_>,
         cursor_position: iced_native::Point,
     ) -> Option<Video> {
-        let files = self
-            .state
-            .videos
-            .iter()
-            .zip(layout.children().next()?.children());
+        let files = self.state.videos.iter().zip(layout.children());
         for (file, lay) in files {
             if lay.bounds().contains(cursor_position) {
                 return Some(file.clone());
@@ -178,8 +171,6 @@ impl<'a> PlaylistWidget<'a> {
     ) {
         match &self.state.interaction {
             Interaction::PressingExternal => {
-                // let pos = state.cursor_position;
-                // if let Some((i, _)) = self.closest_index(layout, pos) {
                 if let Some(name) = file.and_then(|f| {
                     f.file_name()
                         .and_then(|f| f.to_str().map(|f| f.to_string()))
@@ -258,6 +249,7 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
         cursor_position: iced_native::Point,
         viewport: &iced_native::Rectangle,
     ) {
+        // Add insert hint here
         self.base.as_widget().draw(
             &state.children[0],
             renderer,
@@ -266,7 +258,14 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
             layout,
             cursor_position,
             viewport,
-        )
+        );
+        // Draw insert_hint
+        if self.state.interaction.is_press() {
+            let inner_state = state.state.downcast_ref::<InnerState>();
+            if let Some((_, pos)) = self.closest_index(layout, inner_state.cursor_position) {
+                InsertHint::new(pos).draw(renderer, theme, style, layout, cursor_position)
+            }
+        }
     }
 
     fn children(&self) -> Vec<iced_native::widget::Tree> {
@@ -308,25 +307,6 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
         )
     }
 
-    fn overlay<'b>(
-        &'b mut self,
-        state: &'b mut Tree,
-        layout: iced_native::Layout<'_>,
-        _renderer: &Renderer,
-    ) -> Option<iced_native::overlay::Element<'b, MainMessage, Renderer>> {
-        if !self.state.interaction.is_press() {
-            return None;
-        }
-        let inner_state = state.state.downcast_ref::<InnerState>();
-        if let Some((_, pos)) = self.closest_index(layout, inner_state.cursor_position) {
-            return Some(iced::overlay::Element::new(
-                layout.position(),
-                Box::new(InsertHint::new(pos)),
-            ));
-        }
-        None
-    }
-
     fn on_event(
         &mut self,
         state: &mut Tree,
@@ -337,7 +317,7 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
         clipboard: &mut dyn iced_native::Clipboard,
         shell: &mut iced_native::Shell<'_, MainMessage>,
     ) -> iced_native::event::Status {
-        let mut status = iced_native::event::Status::Ignored;
+        let mut _status = iced_native::event::Status::Ignored;
         let mut inner_state = state.state.downcast_mut::<InnerState>();
 
         // Workaround for if we touch the overlay
@@ -351,7 +331,7 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
                 key_code,
                 modifiers,
             }) => {
-                status = iced_native::event::Status::Captured;
+                _status = iced_native::event::Status::Captured;
                 // TODO arrow keys
                 if modifiers.is_empty() && *key_code == KeyCode::Delete {
                     self.deleted(shell)
@@ -365,20 +345,17 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
                     }
                 }
             }
-            iced::Event::Mouse(event) => {
-                status = iced_native::event::Status::Captured;
-                match event {
-                    iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left) => {
-                        self.pressed(layout, cursor_position, shell)
-                    }
-                    iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left) => {
-                        self.released(None, inner_state, layout, shell)
-                    }
-                    _ => {}
+            iced::Event::Mouse(event) => match event {
+                iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left) => {
+                    self.pressed(layout, cursor_position, shell)
                 }
-            }
+                iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left) => {
+                    self.released(None, inner_state, layout, shell)
+                }
+                _ => {}
+            },
             iced::Event::Touch(t) => {
-                status = iced_native::event::Status::Captured;
+                _status = iced_native::event::Status::Captured;
                 match t {
                     iced::touch::Event::FingerPressed { id: _, position } => {
                         self.pressed(layout, *position, shell)
@@ -427,10 +404,12 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
             shell,
         );
 
-        match status {
-            iced::event::Status::Ignored => inner_status,
-            iced::event::Status::Captured => status,
-        }
+        // match status {
+        //     iced::event::Status::Ignored => inner_status,
+        //     iced::event::Status::Captured => status,
+        // }
+        // TODO properly figure out if we captured something or not
+        inner_status
     }
 }
 
@@ -473,10 +452,6 @@ impl Interaction {
 }
 
 impl PlaylistWidgetState {
-    // pub fn activate(&mut self, activate: bool) {
-    //     self.active = activate;
-    // }
-
     pub fn move_video(&mut self, video: Video, index: usize) -> Vec<Video> {
         let mut index = index;
         if let Some(i) = self.video_index(&video) {
@@ -511,14 +486,6 @@ impl PlaylistWidgetState {
         }
         self.videos.clone()
     }
-
-    // pub fn insert_file(&mut self, file: String) -> Vec<File> {
-    //     self.files.push(File {
-    //         name: file,
-    //         uuid: Uuid::new_v4(),
-    //     });
-    //     self.files.clone()
-    // }
 
     pub fn replace_videos(&mut self, videos: Vec<String>) {
         let mut videos = videos;
@@ -557,7 +524,7 @@ pub struct InsertHint {
 impl Default for InsertHint {
     fn default() -> Self {
         Self {
-            rule: Rule::horizontal(1).style(FileRuleTheme::new()),
+            rule: Rule::horizontal(1).style(FileRuleTheme::theme()),
             pos: iced::Point::default(),
         }
     }
@@ -570,35 +537,23 @@ impl InsertHint {
             ..Default::default()
         }
     }
-}
 
-impl iced_native::overlay::Overlay<MainMessage, Renderer> for InsertHint {
-    fn layout(
-        &self,
-        renderer: &Renderer,
-        bounds: iced::Size,
-        _position: iced::Point,
-    ) -> iced_native::layout::Node {
-        let limits = iced_native::layout::Limits::new(Size::ZERO, bounds)
-            .width(Length::Fill)
-            .height(1);
-
-        let mut node = <iced::widget::Rule<Renderer> as Widget<MainMessage, Renderer>>::layout(
-            &self.rule, renderer, &limits,
-        );
-        node.move_to(self.pos);
-
-        node
-    }
-
-    fn draw(
+    pub fn draw(
         &self,
         renderer: &mut Renderer,
         theme: &<Renderer as iced_native::Renderer>::Theme,
         style: &iced_native::renderer::Style,
         layout: iced_native::Layout<'_>,
-        cursor_position: iced::Point,
+        cursor_position: iced_native::Point,
     ) {
+        let limits = iced_native::layout::Limits::new(Size::ZERO, layout.bounds().size())
+            .width(Length::Fill)
+            .height(1);
+        let mut node = <iced::widget::Rule<Renderer> as Widget<MainMessage, Renderer>>::layout(
+            &self.rule, renderer, &limits,
+        );
+        node.move_to(self.pos);
+        let layout = Layout::new(&node);
         <iced::widget::Rule<Renderer> as iced_native::Widget<MainMessage, Renderer>>::draw(
             &self.rule,
             &Tree::empty(),

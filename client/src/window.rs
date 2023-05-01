@@ -5,10 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::widget::scrollable::{Id, RelativeOffset};
-use iced::widget::{column, row, Button, Column, Container, Scrollable, Text, TextInput};
-use iced::{
-    Alignment, Application, Command, Element, Length, Padding, Renderer, Subscription, Theme,
-};
+use iced::widget::{column, row, Button, Container, Scrollable, Text, TextInput};
+use iced::{Application, Command, Element, Length, Padding, Renderer, Subscription, Theme};
 use log::*;
 
 use crate::config::Config;
@@ -17,25 +15,30 @@ use crate::fs::{DatabaseMessage, FileDatabase};
 use crate::messages::Messages;
 use crate::mpv::event::MpvEvent;
 use crate::mpv::{Mpv, MpvResultingAction};
+use crate::rooms::{RoomsWidget, RoomsWidgetMessage, RoomsWidgetState};
+use crate::start_ui::{StartUI, StartUIMessage};
 use crate::styling::{ContainerBorder, ResultButton};
 use crate::user::ThisUser;
 use crate::video::Video;
-use crate::ws::{ServerMessage, ServerWebsocket, UserStatus, WebSocketMessage};
+use crate::ws::{ServerMessage, ServerWebsocket, WebSocketMessage};
+use crate::TEXT_SIZE;
 
 #[derive(Debug)]
 pub enum MainWindow {
     Startup {
         config: Config,
+        ui: StartUI,
     },
     Running {
         db: Arc<FileDatabase>,
         ws: Arc<ServerWebsocket>,
         playlist_widget: PlaylistWidgetState,
+        rooms_widget: RoomsWidgetState,
         mpv: Mpv,
         user: ThisUser,
+        config: Config,
         messages: Messages,
         message: String,
-        users: Vec<UserStatus>,
     },
 }
 
@@ -43,18 +46,16 @@ pub enum MainWindow {
 pub enum MainMessage {
     WebSocket(WebSocketMessage),
     Mpv(MpvEvent),
+    StartUi(StartUIMessage),
     User(UserMessage),
     Database(DatabaseMessage),
     FileTable(PlaylistWidgetMessage),
+    Rooms(RoomsWidgetMessage),
     Heartbeat,
 }
 
 #[derive(Debug, Clone)]
 pub enum UserMessage {
-    UsernameInput(String),
-    UrlInput(String),
-    PathInput(String),
-    StartButton,
     ReadyButton,
     SendMessage,
     StopDbUpdate,
@@ -73,7 +74,13 @@ impl Application for MainWindow {
     type Flags = Config;
 
     fn new(config: Self::Flags) -> (Self, Command<Self::Message>) {
-        (Self::Startup { config }, Command::none())
+        (
+            Self::Startup {
+                config: config.clone(),
+                ui: StartUI::from(config),
+            },
+            Command::none(),
+        )
     }
 
     fn title(&self) -> String {
@@ -81,36 +88,40 @@ impl Application for MainWindow {
     }
 
     fn theme(&self) -> Self::Theme {
-        Self::Theme::Dark
+        match self {
+            MainWindow::Startup { config, .. } => config.theme(),
+            MainWindow::Running { config, .. } => config.theme(),
+        }
     }
 
     fn update(&mut self, msg: Self::Message) -> Command<Self::Message> {
         match self.borrow_mut() {
-            MainWindow::Startup { config } => match msg {
-                MainMessage::User(UserMessage::UsernameInput(u)) => config.username = u,
-                MainMessage::User(UserMessage::UrlInput(u)) => config.url = u,
-                MainMessage::User(UserMessage::PathInput(p)) => config.media_dir = p,
-                MainMessage::User(UserMessage::StartButton) => {
+            MainWindow::Startup { ui, .. } => match msg {
+                MainMessage::StartUi(StartUIMessage::StartButton) => {
+                    let config: Config = ui.clone().into();
+                    TEXT_SIZE.store(Some(Arc::new(config.text_size)));
                     config.save().log();
-                    let mpv = Mpv::new();
+                    let mut mpv = Mpv::new();
                     mpv.init().unwrap();
                     let db = Arc::new(FileDatabase::new(&[
                         PathBuf::from_str(&config.media_dir).unwrap()
                     ]));
-                    let cmd = FileDatabase::update_command(&db);
+                    let ws = Arc::new(ServerWebsocket::new(config.url.clone()));
                     *self = MainWindow::Running {
                         playlist_widget: Default::default(),
                         mpv,
-                        ws: Arc::new(ServerWebsocket::new(config.url.clone())),
-                        db,
+                        ws,
+                        db: db.clone(),
                         user: ThisUser::new(config.username.clone()),
                         messages: Default::default(),
                         message: Default::default(),
-                        users: vec![],
+                        rooms_widget: RoomsWidgetState::new(),
+                        config,
                     };
                     info!("Changed Mode to Running");
-                    return cmd;
+                    return FileDatabase::update_command(&db);
                 }
+                MainMessage::StartUi(msg) => ui.msg(msg),
                 _ => todo!(),
             },
             MainWindow::Running {
@@ -121,7 +132,8 @@ impl Application for MainWindow {
                 user,
                 messages,
                 message,
-                users,
+                rooms_widget,
+                config,
             } => {
                 match msg {
                     MainMessage::FileTable(event) => match event {
@@ -210,7 +222,9 @@ impl Application for MainWindow {
                                         filename: playing.video.as_str().to_string(),
                                         position,
                                         username: user.name(),
-                                        paused: mpv.paused(),
+                                        paused: mpv.get_pause_state(),
+                                        desync: false,
+                                        speed: mpv.speed(),
                                     },
                                 );
                             }
@@ -221,33 +235,37 @@ impl Application for MainWindow {
                         }
                         Ok(Some(MpvResultingAction::Pause)) => {
                             debug!("Mpv process: pause");
-                            if let Some(playing) = mpv.playing() {
-                                return Command::batch([
-                                    user.set_ready(false, ws),
-                                    ServerWebsocket::send_command(
-                                        ws,
-                                        ServerMessage::Pause {
-                                            filename: playing.video.as_str().to_string(),
-                                            username: user.name(),
-                                        },
-                                    ),
-                                ]);
-                            }
+                            return Command::batch([
+                                user.set_ready(false, ws),
+                                ServerWebsocket::send_command(
+                                    ws,
+                                    ServerMessage::Pause {
+                                        username: user.name(),
+                                    },
+                                ),
+                            ]);
                         }
                         Ok(Some(MpvResultingAction::Start)) => {
                             debug!("Mpv process: start");
-                            if let Some(playing) = mpv.playing() {
-                                return Command::batch([
-                                    user.set_ready(true, ws),
-                                    ServerWebsocket::send_command(
-                                        ws,
-                                        ServerMessage::Start {
-                                            filename: playing.video.as_str().to_string(),
-                                            username: user.name(),
-                                        },
-                                    ),
-                                ]);
-                            }
+                            return Command::batch([
+                                user.set_ready(true, ws),
+                                ServerWebsocket::send_command(
+                                    ws,
+                                    ServerMessage::Start {
+                                        username: user.name(),
+                                    },
+                                ),
+                            ]);
+                        }
+                        Ok(Some(MpvResultingAction::PlaybackSpeed(speed))) => {
+                            debug!("Mpv process: playback speed");
+                            return ServerWebsocket::send_command(
+                                ws,
+                                ServerMessage::PlaybackSpeed {
+                                    username: user.name(),
+                                    speed,
+                                },
+                            );
                         }
                         Ok(Some(MpvResultingAction::Exit)) => {
                             debug!("Mpv process: exit");
@@ -271,21 +289,22 @@ impl Application for MainWindow {
                                     filename,
                                     position,
                                     paused,
+                                    speed,
                                 } => {
-                                    trace!("{filename:?}, {position:?}, {paused:?}")
+                                    trace!("{filename:?}, {position:?}, {paused:?}, {speed:?}")
                                 }
-                                ServerMessage::StatusList { users: usrs } => {
-                                    debug!("{users:?}");
-                                    *users = usrs;
+                                ServerMessage::StatusList { rooms } => {
+                                    debug!("Socket: received rooms: {rooms:?}");
+                                    rooms_widget.replace_rooms(rooms);
                                 }
                                 ServerMessage::Pause { username, .. } => {
                                     debug!("Socket: received pause");
-                                    mpv.pause(true).log();
+                                    mpv.pause(true).unwrap();
                                     return messages.push_paused(username);
                                 }
                                 ServerMessage::Start { username, .. } => {
                                     debug!("Socket: received start");
-                                    mpv.pause(false).log();
+                                    mpv.pause(false).unwrap();
                                     return messages.push_started(username);
                                 }
                                 ServerMessage::Seek {
@@ -293,18 +312,20 @@ impl Application for MainWindow {
                                     position,
                                     username,
                                     paused,
+                                    desync,
+                                    speed,
                                 } => {
                                     debug!("Socket: received seek {position:?}");
-                                    if !mpv.seeking() {
-                                        mpv.seek(
-                                            Video::from_string(filename.clone()),
-                                            position,
-                                            paused,
-                                            db,
-                                        )
-                                        .log();
-                                        return messages.push_seek(position, filename, username);
-                                    }
+                                    mpv.seek(
+                                        Video::from_string(filename.clone()),
+                                        position,
+                                        paused,
+                                        speed,
+                                        db,
+                                    )
+                                    .log();
+                                    return messages
+                                        .push_seek(position, filename, desync, username);
                                 }
                                 ServerMessage::Select { filename, username } => {
                                     debug!("Socket: received select: {filename:?}");
@@ -316,27 +337,54 @@ impl Application for MainWindow {
                                     }
                                     return messages.push_select(filename, username);
                                 }
-                                ServerMessage::Message { message, username } => {
-                                    trace!("{username}: {message}");
-                                    return messages.push_chat(message.clone(), username.clone());
+                                ServerMessage::UserMessage { message, username } => {
+                                    trace!("Socket: received: {username}: {message}");
+                                    return messages.push_user_chat(message, username);
                                 }
                                 ServerMessage::Playlist { playlist, username } => {
+                                    trace!("Socket: received playlist: {username}: {message}");
                                     playlist_widget.replace_videos(playlist);
                                     return messages.push_playlist_changed(username);
                                 }
                                 ServerMessage::Status { ready, username } => {
-                                    warn!("{username}: {ready:?}")
+                                    warn!("Received: {username}: {ready:?}")
+                                }
+                                ServerMessage::Join { room, username, .. } => {
+                                    warn!("Received: {room}: {username}")
+                                }
+                                ServerMessage::ServerMessage { message, error } => {
+                                    trace!("Socket: received server message: {error}: {message}");
+                                    return messages.push_server_chat(message, error);
+                                }
+                                ServerMessage::PlaybackSpeed { speed, username } => {
+                                    trace!("Socket: received playback speed: {username}, {speed}");
+                                    mpv.set_playback_speed(speed).log();
+                                    return messages.push_playback_speed(speed, username);
                                 }
                             }
                         }
-                        WebSocketMessage::Error { msg, err } => error!("{msg:?}, {err:?}"),
+                        WebSocketMessage::Error { msg, err } => {
+                            warn!("Connection Error: {msg:?}, {err}");
+                            return messages.push_connection_error(err.to_string());
+                        }
                         WebSocketMessage::WsStreamEnded => {
                             error!("Websocket ended");
                             return messages.push_disconnected();
                         }
                         WebSocketMessage::Connected => {
                             trace!("Socket: connected");
-                            return Command::batch([user.status(ws), messages.push_connected()]);
+                            return Command::batch([
+                                ServerWebsocket::send_command(
+                                    ws,
+                                    ServerMessage::Join {
+                                        password: config.password.clone(),
+                                        room: config.room.clone(),
+                                        username: config.username.clone(),
+                                    },
+                                ),
+                                user.send_status_command(ws),
+                                messages.push_connected(),
+                            ]);
                         }
                         WebSocketMessage::SendFinished(r) => trace!("{r:?}"),
                     },
@@ -352,12 +400,12 @@ impl Application for MainWindow {
                                 return Command::batch([
                                     ServerWebsocket::send_command(
                                         ws,
-                                        ServerMessage::Message {
+                                        ServerMessage::UserMessage {
                                             message: msg.clone(),
                                             username: user.name(),
                                         },
                                     ),
-                                    messages.push_chat(msg, user.name()),
+                                    messages.push_user_chat(msg, user.name()),
                                 ]);
                             }
                         }
@@ -371,7 +419,6 @@ impl Application for MainWindow {
                             db.stop_update()
                         }
                         UserMessage::ScrollMessages(off) => messages.set_offset(off),
-                        _ => {}
                     },
                     MainMessage::Database(event) => match event {
                         DatabaseMessage::Changed => {
@@ -387,13 +434,25 @@ impl Application for MainWindow {
                             ws,
                             ServerMessage::VideoStatus {
                                 filename: playing.as_ref().map(|p| p.video.as_str().to_string()),
-                                position: playing
-                                    .map(|_| mpv.get_playback_position().ok())
-                                    .flatten(),
-                                paused: mpv.paused(),
+                                position: playing.and_then(|_| mpv.get_playback_position().ok()),
+                                paused: mpv.get_pause_state(),
+                                speed: mpv.speed(),
                             },
                         );
                     }
+                    MainMessage::Rooms(RoomsWidgetMessage::ClickRoom(room)) => {
+                        if rooms_widget.click_room(room.clone()) {
+                            return ServerWebsocket::send_command(
+                                ws,
+                                ServerMessage::Join {
+                                    password: config.password.clone(),
+                                    room,
+                                    username: config.username.clone(),
+                                },
+                            );
+                        }
+                    }
+                    MainMessage::StartUi(msg) => warn!("{msg:?}"),
                 }
             }
         }
@@ -402,41 +461,12 @@ impl Application for MainWindow {
 
     fn view(&self) -> Element<'_, Self::Message, Renderer<Self::Theme>> {
         match self {
-            MainWindow::Startup { config } => Container::new(
-                Container::new(
-                    column!(
-                        TextInput::new("Server Address", &config.url)
-                            .on_input(|u| MainMessage::User(UserMessage::UrlInput(u))),
-                        TextInput::new("Username", &config.username)
-                            .on_input(|u| MainMessage::User(UserMessage::UsernameInput(u))),
-                        TextInput::new("Filepath", &config.media_dir)
-                            .on_input(|p| MainMessage::User(UserMessage::PathInput(p))),
-                        Button::new(
-                            Text::new("Start")
-                                .width(Length::Fill)
-                                .horizontal_alignment(iced::alignment::Horizontal::Center),
-                        )
-                        .width(Length::Fill)
-                        .on_press(MainMessage::User(UserMessage::StartButton))
-                    )
-                    .align_items(Alignment::Center)
-                    .width(Length::Fill)
-                    .spacing(10)
-                    .padding(Padding::new(10.0)),
-                )
-                .height(Length::Shrink)
-                .style(ContainerBorder::basic()),
-            )
-            .padding(Padding::new(5.0))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_y()
-            .into(),
+            MainWindow::Startup { ui, .. } => ui.view(),
             MainWindow::Running {
                 playlist_widget,
+                rooms_widget,
                 messages,
                 message,
-                users,
                 user,
                 mpv,
                 db,
@@ -463,12 +493,6 @@ impl Application for MainWindow {
                 }
                 btn = btn.on_press(MainMessage::User(UserMessage::ReadyButton));
 
-                let users = users
-                    .iter()
-                    .cloned()
-                    .map(|u| u.to_text(user, &self.theme()).into())
-                    .collect::<Vec<_>>();
-
                 row!(
                     column!(
                         messages.view(self.theme()),
@@ -487,19 +511,19 @@ impl Application for MainWindow {
                     .height(Length::Fill),
                     column!(
                         db.view(),
+                        Container::new(RoomsWidget::new(rooms_widget, user, &self.theme()))
+                            .style(ContainerBorder::basic())
+                            .padding(5.0)
+                            .width(Length::Fill)
+                            .height(Length::Fill),
                         Container::new(
-                            Scrollable::new(Column::with_children(users))
+                            Scrollable::new(PlaylistWidget::new(playlist_widget, mpv, db))
                                 .width(Length::Fill)
-                                .id(Id::new("users"))
+                                .id(Id::new("playlist"))
                         )
                         .style(ContainerBorder::basic())
                         .padding(5.0)
-                        .width(Length::Fill)
                         .height(Length::Fill),
-                        Container::new(PlaylistWidget::new(playlist_widget, mpv, db))
-                            .style(ContainerBorder::basic())
-                            .padding(5.0)
-                            .height(Length::Fill),
                         btn.width(Length::Fill)
                     )
                     .width(Length::Fill)

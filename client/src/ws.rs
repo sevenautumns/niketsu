@@ -1,8 +1,10 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Error, Result};
 use arc_swap::ArcSwapOption;
+use async_tungstenite::stream::Stream;
 use async_tungstenite::tokio::TokioAdapter;
 use async_tungstenite::tungstenite::Message as TsMessage;
 use async_tungstenite::WebSocketStream;
@@ -13,6 +15,7 @@ use iced::{Command, Renderer, Subscription, Theme};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use tokio_native_tls::TlsStream;
 
 use crate::user::ThisUser;
 use crate::window::MainMessage;
@@ -24,22 +27,31 @@ pub enum ServerMessage {
     Ping {
         uuid: String,
     },
+    Join {
+        password: String,
+        room: String,
+        username: String,
+    },
     VideoStatus {
         filename: Option<String>,
         #[serde(with = "serde_millis")]
         position: Option<Duration>,
+        speed: f64,
         paused: bool,
     },
     StatusList {
-        users: Vec<UserStatus>,
+        rooms: BTreeMap<String, BTreeSet<UserStatus>>,
     },
     Pause {
-        filename: String,
         #[serde(skip_serializing)]
         username: String,
     },
     Start {
-        filename: String,
+        #[serde(skip_serializing)]
+        username: String,
+    },
+    PlaybackSpeed {
+        speed: f64,
         #[serde(skip_serializing)]
         username: String,
     },
@@ -50,16 +62,23 @@ pub enum ServerMessage {
         #[serde(skip_serializing)]
         username: String,
         paused: bool,
+        speed: f64,
+        #[serde(skip_serializing)]
+        desync: bool,
     },
     Select {
         filename: Option<String>,
         #[serde(skip_serializing)]
         username: String,
     },
-    Message {
+    UserMessage {
         message: String,
         #[serde(skip_serializing)]
         username: String,
+    },
+    ServerMessage {
+        message: String,
+        error: bool,
     },
     Playlist {
         playlist: Vec<String>,
@@ -72,11 +91,28 @@ pub enum ServerMessage {
     },
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UserStatus {
     pub username: String,
     pub ready: bool,
+}
+
+impl PartialEq for UserStatus {
+    fn eq(&self, other: &Self) -> bool {
+        self.username.eq(&other.username)
+    }
+}
+
+impl Ord for UserStatus {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.username.cmp(&other.username)
+    }
+}
+impl PartialOrd for UserStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.username.partial_cmp(&other.username)
+    }
 }
 
 impl UserStatus {
@@ -119,8 +155,17 @@ impl From<WebSocketMessage> for MainMessage {
     }
 }
 
-type WsSink = SplitSink<WebSocketStream<TokioAdapter<TcpStream>>, TsMessage>;
-type WsStream = SplitStream<WebSocketStream<TokioAdapter<TcpStream>>>;
+type WsSink = SplitSink<
+    WebSocketStream<
+        Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<tokio::net::TcpStream>>>,
+    >,
+    TsMessage,
+>;
+type WsStream = SplitStream<
+    WebSocketStream<
+        Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<tokio::net::TcpStream>>>,
+    >,
+>;
 
 #[derive(Debug)]
 pub struct ServerWebsocket {
@@ -150,6 +195,7 @@ impl ServerWebsocket {
 
     pub fn send_command(ws: &Arc<Self>, msg: ServerMessage) -> Command<MainMessage> {
         async fn send(ws: Arc<ServerWebsocket>, msg: ServerMessage) -> MainMessage {
+            log::debug!("Sending {msg:?}");
             MainMessage::WebSocket(WebSocketMessage::SendFinished(Arc::new(ws.send(msg).await)))
         }
         Command::single(iced_native::command::Action::Future(

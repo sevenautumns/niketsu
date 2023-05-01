@@ -1,6 +1,16 @@
 title = "Server Configuration"
 
-Host = "localhost"
+[General]
+Host = "0.0.0.0"
 Port = 7766
-SaveFile = "playlist.toml"
-Debug = true
+# Cert = "cert.pem"
+# Key = "key.pem"
+# Password = "1234"
+Debug = false
+
+[Rooms]
+[Rooms.General]
+SaveFile = "General_playlist.toml"
+
+[Rooms.Test]
+SaveFile = "Test_playlist.toml"

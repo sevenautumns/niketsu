@@ -41,6 +41,7 @@
           xorg.libXi
           xorg.libXrandr
           expat
+          openssl
           freetype
           fontconfig
           vulkan-loader
@@ -52,7 +53,7 @@
           (fromTOML (readFile ./client/Cargo.toml))).package.version;
         LIBRARY_PATH = lib.makeLibraryPath libraries;
         PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig"
-          (with pkgs; [ expat fontconfig freetype ]);
+          (with pkgs; [ expat fontconfig freetype openssl ]);
         BINDGEN_EXTRA_LANG_ARGS = p:
           "${builtins.readFile "${p.stdenv.cc}/nix-support/libc-crt1-cflags"} ${
             builtins.readFile "${p.stdenv.cc}/nix-support/libc-cflags"
@@ -109,7 +110,6 @@
             name = "niketsu";
             version = VERSION;
             root = ./.;
-            singleStep = true;
             cargoBuildOptions = x: x ++ [ "--target" "x86_64-pc-windows-gnu" ];
             cargoTestOptions = x: x ++ [ "--target" "x86_64-pc-windows-gnu" ];
             buildInputs = with pkgs.pkgsCross.mingwW64.windows; [

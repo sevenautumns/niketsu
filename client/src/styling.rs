@@ -14,7 +14,7 @@ impl ResultButton {
         iced::theme::Button::Custom(Box::new(Self { success: true }))
     }
 
-    pub fn new(success: bool) -> iced::theme::Button {
+    pub fn theme(success: bool) -> iced::theme::Button {
         iced::theme::Button::Custom(Box::new(Self { success }))
     }
 
@@ -84,7 +84,7 @@ pub struct FileButton {
 }
 
 impl FileButton {
-    pub fn new(pressed: bool, available: bool) -> iced::theme::Button {
+    pub fn theme(pressed: bool, available: bool) -> iced::theme::Button {
         iced::theme::Button::Custom(Box::new(Self { pressed, available }))
     }
 }
@@ -124,7 +124,7 @@ impl iced::widget::button::StyleSheet for FileButton {
 pub struct FileRuleTheme;
 
 impl FileRuleTheme {
-    pub fn new() -> iced::theme::Rule {
+    pub fn theme() -> iced::theme::Rule {
         iced::theme::Rule::Custom(Box::new(Self))
     }
 }
@@ -147,7 +147,7 @@ pub struct FileProgressBar {
 }
 
 impl FileProgressBar {
-    pub fn new(finished: bool) -> iced::theme::ProgressBar {
+    pub fn theme(finished: bool) -> iced::theme::ProgressBar {
         iced::theme::ProgressBar::Custom(Box::new(Self { finished }))
     }
 }
@@ -173,7 +173,7 @@ pub struct ContainerBackground {
 }
 
 impl ContainerBackground {
-    pub fn new(color: Color) -> iced::theme::Container {
+    pub fn theme(color: Color) -> iced::theme::Container {
         iced::theme::Container::Custom(Box::new(Self { color }))
     }
 }
@@ -186,6 +186,27 @@ impl iced::widget::container::StyleSheet for ContainerBackground {
             text_color: style.palette().text.into(),
             background: iced::Background::Color(self.color).into(),
             ..Default::default()
+        }
+    }
+}
+
+pub struct ColorButton {
+    color: Color,
+}
+
+impl ColorButton {
+    pub fn theme(color: Color) -> iced::theme::Button {
+        iced::theme::Button::Custom(Box::new(Self { color }))
+    }
+}
+
+impl iced::widget::button::StyleSheet for ColorButton {
+    type Style = Theme;
+
+    fn active(&self, style: &Self::Style) -> iced::widget::button::Appearance {
+        iced::widget::button::Appearance {
+            background: iced::Background::Color(self.color).into(),
+            ..style.active(&iced::theme::Button::Text)
         }
     }
 }

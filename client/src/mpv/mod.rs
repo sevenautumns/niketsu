@@ -34,6 +34,7 @@ pub enum MpvProperty {
     PlaybackTime,
     Osc,
     Pause,
+    Speed,
     Filename,
     KeepOpen,
     KeepOpenPause,
@@ -72,6 +73,7 @@ impl MpvProperty {
             MpvProperty::InputVoKeyboard => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::InputMediaKeys => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::CachePause => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::Speed => mpv_format::MPV_FORMAT_DOUBLE,
         }
     }
 }
@@ -96,7 +98,8 @@ pub struct Mpv {
     handle: MpvHandle,
     playing: Option<PlayingFile>,
     paused: bool,
-    seeking: bool,
+    paused_init: bool,
+    speed: f64,
     event_pipe: Arc<Mutex<MpvEventPipe>>,
 }
 
@@ -111,16 +114,13 @@ impl Mpv {
             event_pipe,
             playing: None,
             paused: true,
-            seeking: false,
+            speed: 1.0,
+            paused_init: false,
         }
     }
 
-    pub fn paused(&self) -> bool {
-        self.paused
-    }
-
-    pub fn seeking(&self) -> bool {
-        self.seeking
+    pub fn speed(&self) -> f64 {
+        self.speed
     }
 
     pub fn react_to(&mut self, event: MpvEvent) -> Result<Option<MpvResultingAction>> {
@@ -128,7 +128,6 @@ impl Mpv {
             MpvEvent::Shutdown => return Ok(Some(MpvResultingAction::Exit)),
             MpvEvent::Seek => {
                 trace!("Seek started");
-                self.seeking = true;
             }
             MpvEvent::FileLoaded => {
                 trace!("File loaded");
@@ -146,28 +145,40 @@ impl Mpv {
             }
             MpvEvent::PropertyChanged(prop, value) => {
                 trace!("Property Changed: {prop:?} {value:?}");
-                if let MpvProperty::Pause = prop {
-                    if let PropertyValue::Flag(p) = value {
-                        if p.ne(&self.paused) {
-                            self.paused = p;
-                            if p {
-                                if self.get_eof_reached()? {
-                                    if let Some(playing) = self.playing.take() {
-                                        return Ok(Some(MpvResultingAction::PlayNext(
-                                            playing.video,
-                                        )));
-                                    }
+                match prop {
+                    MpvProperty::Pause => {
+                        if !self.paused_init {
+                            self.paused_init = true;
+                            return Ok(None);
+                        }
+                        self.paused = self.get_pause_state();
+                        // Should we be paused
+                        if self.paused {
+                            // and file ended
+                            if self.get_eof_reached()? {
+                                // and we are playing
+                                if let Some(playing) = self.playing.take() {
+                                    // play next
+                                    return Ok(Some(MpvResultingAction::PlayNext(playing.video)));
                                 }
-                                return Ok(Some(MpvResultingAction::Pause));
                             }
-                            return Ok(Some(MpvResultingAction::Start));
+                            return Ok(Some(MpvResultingAction::Pause));
+                        }
+                        return Ok(Some(MpvResultingAction::Start));
+                    }
+                    MpvProperty::Speed => {
+                        if let Ok(speed) = self.get_playback_speed() {
+                            if speed != self.speed {
+                                self.speed = speed;
+                                return Ok(Some(MpvResultingAction::PlaybackSpeed(speed)));
+                            }
                         }
                     }
+                    _ => {}
                 }
             }
             MpvEvent::PlaybackRestart => {
                 trace!("Playback restarted");
-                self.seeking = false;
                 if self.playing.is_some() {
                     let new_pos = self.get_playback_position()?;
                     if let Some(playing) = &mut self.playing {
@@ -201,7 +212,7 @@ impl Mpv {
         Ok(None)
     }
 
-    pub fn init(&self) -> Result<()> {
+    pub fn init(&mut self) -> Result<()> {
         self.set_ocs(true)?;
         self.set_keep_open(true)?;
         self.set_keep_open_pause(true)?;
@@ -216,8 +227,10 @@ impl Mpv {
         let ret = unsafe { mpv_initialize(self.handle.0) };
         let ret = Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?);
 
+        self.pause(true)?;
         self.observe_property(MpvProperty::Pause)?;
         self.observe_property(MpvProperty::Filename)?;
+        self.observe_property(MpvProperty::Speed)?;
 
         ret
     }
@@ -324,9 +337,11 @@ impl Mpv {
         video: Video,
         seek: Duration,
         paused: bool,
+        speed: f64,
         db: &FileDatabase,
     ) -> Result<()> {
-        trace!("Received seek: video: {video:?}, {seek:?}, paused: {paused}");
+        trace!("Received seek: video: {video:?}, {seek:?}, paused: {paused}, speed: {speed}");
+        self.set_playback_speed(speed)?;
         if Some(video.clone()).ne(&self.playing.as_ref().map(|p| p.video.clone())) {
             trace!("Received seek includes new video");
             return self.load(video, Some(seek), paused, db);
@@ -443,6 +458,14 @@ impl Mpv {
         Ok(Duration::from_secs_f64(duration))
     }
 
+    pub fn get_playback_speed(&mut self) -> Result<f64> {
+        self.get_property_f64(MpvProperty::Speed)
+    }
+
+    pub fn get_pause_state(&mut self) -> bool {
+        self.get_property_flag(MpvProperty::Pause).unwrap_or(true)
+    }
+
     pub fn get_eof_reached(&self) -> Result<bool> {
         self.get_property_flag(MpvProperty::EofReached)
     }
@@ -455,6 +478,12 @@ impl Mpv {
         if let Some(PlayingFile { last_seek, .. }) = &mut self.playing {
             *last_seek = Some(SeekEvent::new(pos));
         }
+        Ok(())
+    }
+
+    pub fn set_playback_speed(&mut self, speed: f64) -> Result<()> {
+        self.set_property(MpvProperty::Speed, PropertyValue::Double(speed))?;
+        self.speed = speed;
         Ok(())
     }
 }
@@ -470,6 +499,7 @@ pub enum MpvResultingAction {
     PlayNext(Video),
     Seek(Duration),
     ReOpenFile,
+    PlaybackSpeed(f64),
     Pause,
     Start,
     Exit,
