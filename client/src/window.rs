@@ -4,8 +4,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::widget::scrollable::RelativeOffset;
-use iced::widget::{column, row, Button, Container, Text, TextInput};
+use iced::widget::scrollable::{Id, RelativeOffset};
+use iced::widget::{column, row, Button, Container, Scrollable, Text, TextInput};
 use iced::{Application, Command, Element, Length, Padding, Renderer, Subscription, Theme};
 use log::*;
 
@@ -101,7 +101,7 @@ impl Application for MainWindow {
                     let config: Config = ui.clone().into();
                     TEXT_SIZE.store(Some(Arc::new(config.text_size)));
                     config.save().log();
-                    let mpv = Mpv::new();
+                    let mut mpv = Mpv::new();
                     mpv.init().unwrap();
                     let db = Arc::new(FileDatabase::new(&[
                         PathBuf::from_str(&config.media_dir).unwrap()
@@ -222,7 +222,7 @@ impl Application for MainWindow {
                                         filename: playing.video.as_str().to_string(),
                                         position,
                                         username: user.name(),
-                                        paused: mpv.paused(),
+                                        paused: mpv.get_pause_state(),
                                         desync: false,
                                         speed: mpv.speed(),
                                     },
@@ -299,12 +299,12 @@ impl Application for MainWindow {
                                 }
                                 ServerMessage::Pause { username, .. } => {
                                     debug!("Socket: received pause");
-                                    mpv.pause(true).log();
+                                    mpv.pause(true).unwrap();
                                     return messages.push_paused(username);
                                 }
                                 ServerMessage::Start { username, .. } => {
                                     debug!("Socket: received start");
-                                    mpv.pause(false).log();
+                                    mpv.pause(false).unwrap();
                                     return messages.push_started(username);
                                 }
                                 ServerMessage::Seek {
@@ -316,18 +316,16 @@ impl Application for MainWindow {
                                     speed,
                                 } => {
                                     debug!("Socket: received seek {position:?}");
-                                    if !mpv.seeking() {
-                                        mpv.seek(
-                                            Video::from_string(filename.clone()),
-                                            position,
-                                            paused,
-                                            speed,
-                                            db,
-                                        )
-                                        .log();
-                                        return messages
-                                            .push_seek(position, filename, desync, username);
-                                    }
+                                    mpv.seek(
+                                        Video::from_string(filename.clone()),
+                                        position,
+                                        paused,
+                                        speed,
+                                        db,
+                                    )
+                                    .log();
+                                    return messages
+                                        .push_seek(position, filename, desync, username);
                                 }
                                 ServerMessage::Select { filename, username } => {
                                     debug!("Socket: received select: {filename:?}");
@@ -365,7 +363,10 @@ impl Application for MainWindow {
                                 }
                             }
                         }
-                        WebSocketMessage::Error { msg, err } => error!("{msg:?}, {err:?}"),
+                        WebSocketMessage::Error { msg, err } => {
+                            warn!("Connection Error: {msg:?}, {err}");
+                            return messages.push_connection_error(err.to_string());
+                        }
                         WebSocketMessage::WsStreamEnded => {
                             error!("Websocket ended");
                             return messages.push_disconnected();
@@ -381,7 +382,7 @@ impl Application for MainWindow {
                                         username: config.username.clone(),
                                     },
                                 ),
-                                user.status(ws),
+                                user.send_status_command(ws),
                                 messages.push_connected(),
                             ]);
                         }
@@ -434,7 +435,7 @@ impl Application for MainWindow {
                             ServerMessage::VideoStatus {
                                 filename: playing.as_ref().map(|p| p.video.as_str().to_string()),
                                 position: playing.and_then(|_| mpv.get_playback_position().ok()),
-                                paused: mpv.paused(),
+                                paused: mpv.get_pause_state(),
                                 speed: mpv.speed(),
                             },
                         );
@@ -515,10 +516,14 @@ impl Application for MainWindow {
                             .padding(5.0)
                             .width(Length::Fill)
                             .height(Length::Fill),
-                        Container::new(PlaylistWidget::new(playlist_widget, mpv, db))
-                            .style(ContainerBorder::basic())
-                            .padding(5.0)
-                            .height(Length::Fill),
+                        Container::new(
+                            Scrollable::new(PlaylistWidget::new(playlist_widget, mpv, db))
+                                .width(Length::Fill)
+                                .id(Id::new("playlist"))
+                        )
+                        .style(ContainerBorder::basic())
+                        .padding(5.0)
+                        .height(Length::Fill),
                         btn.width(Length::Fill)
                     )
                     .width(Length::Fill)

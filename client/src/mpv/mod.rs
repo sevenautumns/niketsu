@@ -98,10 +98,8 @@ pub struct Mpv {
     handle: MpvHandle,
     playing: Option<PlayingFile>,
     paused: bool,
-    pausing: bool,
-    seeking: bool,
+    paused_init: bool,
     speed: f64,
-    speeding: bool,
     event_pipe: Arc<Mutex<MpvEventPipe>>,
 }
 
@@ -116,19 +114,9 @@ impl Mpv {
             event_pipe,
             playing: None,
             paused: true,
-            seeking: false,
-            pausing: false,
             speed: 1.0,
-            speeding: false,
+            paused_init: false,
         }
-    }
-
-    pub fn paused(&self) -> bool {
-        self.paused
-    }
-
-    pub fn seeking(&self) -> bool {
-        self.seeking
     }
 
     pub fn speed(&self) -> f64 {
@@ -140,7 +128,6 @@ impl Mpv {
             MpvEvent::Shutdown => return Ok(Some(MpvResultingAction::Exit)),
             MpvEvent::Seek => {
                 trace!("Seek started");
-                self.seeking = true;
             }
             MpvEvent::FileLoaded => {
                 trace!("File loaded");
@@ -158,46 +145,33 @@ impl Mpv {
             }
             MpvEvent::PropertyChanged(prop, value) => {
                 trace!("Property Changed: {prop:?} {value:?}");
-                match (prop, value) {
-                    (MpvProperty::Pause, PropertyValue::Flag(paused)) => {
-                        // If external pause is being processes
-                        if self.pausing {
-                            // Check if internal and flag pause match
-                            if self.paused == paused {
-                                // Exit pausing state
-                                self.pausing = false;
-                                return Ok(None);
-                            }
-                        }
-                        // If flag doesnt match internal state,
-                        if paused.ne(&self.paused) {
-                            // set internal state
-                            self.paused = paused;
-                            // Should we be paused
-                            if paused {
-                                // and file ended
-                                if self.get_eof_reached()? {
-                                    // and we are playing
-                                    if let Some(playing) = self.playing.take() {
-                                        // play next
-                                        return Ok(Some(MpvResultingAction::PlayNext(
-                                            playing.video,
-                                        )));
-                                    }
-                                }
-                                return Ok(Some(MpvResultingAction::Pause));
-                            }
-                            return Ok(Some(MpvResultingAction::Start));
-                        }
-                    }
-                    (MpvProperty::Speed, PropertyValue::Double(speed)) => {
-                        if self.speeding && self.speed == speed {
-                            self.speeding = false;
+                match prop {
+                    MpvProperty::Pause => {
+                        if !self.paused_init {
+                            self.paused_init = true;
                             return Ok(None);
                         }
-                        if speed != self.speed {
-                            self.speed = speed;
-                            return Ok(Some(MpvResultingAction::PlaybackSpeed(speed)));
+                        self.paused = self.get_pause_state();
+                        // Should we be paused
+                        if self.paused {
+                            // and file ended
+                            if self.get_eof_reached()? {
+                                // and we are playing
+                                if let Some(playing) = self.playing.take() {
+                                    // play next
+                                    return Ok(Some(MpvResultingAction::PlayNext(playing.video)));
+                                }
+                            }
+                            return Ok(Some(MpvResultingAction::Pause));
+                        }
+                        return Ok(Some(MpvResultingAction::Start));
+                    }
+                    MpvProperty::Speed => {
+                        if let Ok(speed) = self.get_playback_speed() {
+                            if speed != self.speed {
+                                self.speed = speed;
+                                return Ok(Some(MpvResultingAction::PlaybackSpeed(speed)));
+                            }
                         }
                     }
                     _ => {}
@@ -205,7 +179,6 @@ impl Mpv {
             }
             MpvEvent::PlaybackRestart => {
                 trace!("Playback restarted");
-                self.seeking = false;
                 if self.playing.is_some() {
                     let new_pos = self.get_playback_position()?;
                     if let Some(playing) = &mut self.playing {
@@ -239,7 +212,7 @@ impl Mpv {
         Ok(None)
     }
 
-    pub fn init(&self) -> Result<()> {
+    pub fn init(&mut self) -> Result<()> {
         self.set_ocs(true)?;
         self.set_keep_open(true)?;
         self.set_keep_open_pause(true)?;
@@ -254,6 +227,7 @@ impl Mpv {
         let ret = unsafe { mpv_initialize(self.handle.0) };
         let ret = Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?);
 
+        self.pause(true)?;
         self.observe_property(MpvProperty::Pause)?;
         self.observe_property(MpvProperty::Filename)?;
         self.observe_property(MpvProperty::Speed)?;
@@ -475,7 +449,6 @@ impl Mpv {
     }
 
     pub fn pause(&mut self, pause: bool) -> Result<()> {
-        self.pausing = true;
         self.paused = pause;
         self.set_property(MpvProperty::Pause, PropertyValue::Flag(pause))
     }
@@ -486,8 +459,11 @@ impl Mpv {
     }
 
     pub fn get_playback_speed(&mut self) -> Result<f64> {
-        self.speeding = true;
         self.get_property_f64(MpvProperty::Speed)
+    }
+
+    pub fn get_pause_state(&mut self) -> bool {
+        self.get_property_flag(MpvProperty::Pause).unwrap_or(true)
     }
 
     pub fn get_eof_reached(&self) -> Result<bool> {

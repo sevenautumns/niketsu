@@ -202,6 +202,7 @@ impl StartUI {
                 .width(Length::Shrink)
             )
             .spacing(10),
+            Space::with_height(text_size),
             Button::new(
                 Text::new("Start")
                     .width(Length::Fill)
