@@ -74,8 +74,4 @@ If it is deteced by some Malware program to be malicious, feel free to blame Fer
 
 Please check the code if you feel uncertain: [Github](https://github.com/sevenautumns/niketsu)
 </div>
-
 </div>
-
-
-
