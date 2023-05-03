@@ -98,6 +98,7 @@
             cargoBuildOptions = x: x ++ [ "--target" musl-target ];
             cargoTestOptions = x: x ++ [ "--target" musl-target ];
             nativeBuildInputs = with pkgs; [ cmake pkgconfig mpv ] ++ libraries;
+            buildInputs = with pkgs; [ yt-dlp ];
             LIBCLANG_PATH =
               lib.makeLibraryPath [ pkgs.llvmPackages.libclang.lib ];
             preConfigure = ''

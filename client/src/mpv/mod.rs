@@ -2,7 +2,7 @@ use std::convert::TryInto;
 use std::ffi::{c_void, CString};
 use std::mem::MaybeUninit;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use futures::StreamExt;
@@ -98,6 +98,7 @@ pub struct Mpv {
     handle: MpvHandle,
     playing: Option<PlayingFile>,
     paused: bool,
+    pausing: Option<Instant>,
     speed: f64,
     seeking: bool,
     event_pipe: Arc<Mutex<MpvEventPipe>>,
@@ -116,6 +117,7 @@ impl Mpv {
             paused: true,
             speed: 1.0,
             seeking: false,
+            pausing: None,
         }
     }
 
@@ -148,10 +150,18 @@ impl Mpv {
                     }
                 }
             }
-            MpvEvent::PropertyChanged(prop, value) => {
+            MpvEvent::PropertyChanged(when, prop, value) => {
                 trace!("Property Changed: {prop:?} {value:?}");
                 match prop {
                     MpvProperty::Pause => {
+                        if let Some(pause_time) = self.pausing {
+                            // If the property changed before the time we last received a pause/start instruction,
+                            // ignore it, because it can not be correct
+                            if when <= pause_time {
+                                return Ok(None);
+                            }
+                            self.pausing = None;
+                        }
                         let paused = self.get_pause_state();
                         if paused != self.paused {
                             self.paused = paused;
@@ -456,8 +466,13 @@ impl Mpv {
     }
 
     pub fn pause(&mut self, pause: bool) -> Result<()> {
-        self.paused = pause;
-        self.set_property(MpvProperty::Pause, PropertyValue::Flag(pause))
+        let cur_pause = self.get_pause_state();
+        if cur_pause != pause {
+            self.pausing = Some(Instant::now());
+            self.paused = pause;
+            return self.set_property(MpvProperty::Pause, PropertyValue::Flag(pause));
+        }
+        Ok(())
     }
 
     pub fn get_playback_position(&self) -> Result<Duration> {

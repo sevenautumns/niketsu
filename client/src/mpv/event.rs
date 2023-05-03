@@ -4,6 +4,7 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Poll, Waker};
+use std::time::Instant;
 
 use arc_swap::ArcSwapOption;
 use log::trace;
@@ -26,7 +27,7 @@ pub enum MpvEvent {
     Shutdown,
     StartFile,
     EndFile,
-    PropertyChanged(MpvProperty, PropertyValue),
+    PropertyChanged(Instant, MpvProperty, PropertyValue),
     FileLoaded,
     Idle,
     Seek,
@@ -58,7 +59,7 @@ impl From<mpv_event> for MpvEvent {
                         Err(_) => return Self::Unparsed,
                     }
                     match PropertyValue::from_ptr(prop.data, prop.format) {
-                        Some(v) => Self::PropertyChanged(name, v),
+                        Some(v) => Self::PropertyChanged(Instant::now(), name, v),
                         None => Self::Unparsed,
                     }
                 }
