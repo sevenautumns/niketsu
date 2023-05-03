@@ -220,7 +220,7 @@ impl ChatMessage {
             ChatMessage::Started { user, .. } => {
                 format!("{when} {user} started playback")
             }
-            ChatMessage::PlaybackSpeed { when, user, speed } => {
+            ChatMessage::PlaybackSpeed { user, speed, .. } => {
                 format!("{when} {user} changed playback speed to {speed:.5}")
             }
             ChatMessage::Select { user, file, .. } => {
@@ -244,7 +244,7 @@ impl ChatMessage {
             ChatMessage::ServerChat { msg, .. } => {
                 format!("{when} {msg}")
             }
-            ChatMessage::ConnectionError { when, error } => {
+            ChatMessage::ConnectionError { error, .. } => {
                 format!("{when} Connection Error: {error}")
             }
         };
