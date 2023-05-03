@@ -259,6 +259,8 @@ func (worker *FactoryWorker) handlePlaybackSpeed(speed *PlaybackSpeed) {
 }
 
 func (worker *FactoryWorker) handleMessage(data []byte, arrivalTime time.Time) {
+	defer logger.Debugw("Time passed to handle message", "time", time.Now().Sub(arrivalTime))
+
 	msg, err := UnmarshalMessage(data)
 	if err != nil {
 		logger.Errorw("Unable to unmarshal client message", "error", err)
@@ -459,7 +461,7 @@ func (capitalist *Capitalist) Start() {
 		http.ListenAndServe(hostPort, http.HandlerFunc(capitalist.handler))
 	} else {
 		logger.Info("Finished initializing manager. Starting tls listener ...")
-		http.ListenAndServeTLS("localhost:7755", *capitalist.config.cert, *capitalist.config.key, http.HandlerFunc(capitalist.handler))
+		http.ListenAndServeTLS(hostPort, *capitalist.config.cert, *capitalist.config.key, http.HandlerFunc(capitalist.handler))
 	}
 }
 
@@ -761,11 +763,18 @@ func (room *Room) sendSeek(worker *FactoryWorker, desync bool, lock bool) {
 	}
 
 	// seeking nil videos is prohibited
+	// may need to be changed to allow synchronization even if playlist is empty
 	if room.state.video == nil {
 		return
 	}
 
-	seek := Seek{Filename: *room.state.video, Position: *room.state.position, Speed: room.state.speed, Paused: room.state.paused, Desync: desync, Username: worker.userStatus.Username}
+	// add half rtt if video is playing
+	position := *room.state.position
+	if !worker.videoStatus.paused {
+		position += uint64(worker.latency.rtt / float64(time.Millisecond) / 2)
+	}
+
+	seek := Seek{Filename: *room.state.video, Position: position, Speed: room.state.speed, Paused: room.state.paused, Desync: desync, Username: worker.userStatus.Username}
 	message, err := seek.MarshalMessage()
 	if err != nil {
 		logger.Errorw("Capitalist failed to marshal seek", "error", err)
@@ -775,7 +784,6 @@ func (room *Room) sendSeek(worker *FactoryWorker, desync bool, lock bool) {
 	worker.sendMessage(message)
 }
 
-// TODO only send to current client
 // Evaluates the video states of all clients and broadcasts seek if difference between
 // fastest and slowest clients is too large.
 func (room *Room) evaluateVideoStatus(worker *FactoryWorker) {
@@ -796,8 +804,14 @@ func (room *Room) evaluateVideoStatus(worker *FactoryWorker) {
 		}
 
 		// estimate position of client based on previous position, time difference and playback speed
-		timeElapsed := uint64(float64(time.Since(w.videoStatus.timestamp).Milliseconds()) * room.state.speed)
-		estimatedPosition := *w.videoStatus.position + timeElapsed
+		// if video is paused, position should remain the same
+		var estimatedPosition uint64
+		if w.videoStatus.paused {
+			estimatedPosition = *w.videoStatus.position
+		} else {
+			timeElapsed := uint64(float64(time.Since(w.videoStatus.timestamp).Milliseconds()) * room.state.speed)
+			estimatedPosition = *w.videoStatus.position + timeElapsed
+		}
 
 		if estimatedPosition < minPosition {
 			minPosition = estimatedPosition
