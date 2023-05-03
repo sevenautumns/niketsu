@@ -177,13 +177,13 @@ func (worker *FactoryWorker) sendServerMessage(message string, isError bool) {
 
 func (worker *FactoryWorker) sendPlaylist() {
 	worker.settingsMutex.RLock()
-	worker.settings.room.playlistMutex.RLock()
+	worker.settings.room.stateMutex.RLock()
 	worker.userStatusMutex.RLock()
 	defer worker.settingsMutex.RUnlock()
-	defer worker.settings.room.playlistMutex.RUnlock()
+	defer worker.settings.room.stateMutex.RUnlock()
 	defer worker.userStatusMutex.RUnlock()
 
-	playlist := Playlist{Playlist: worker.settings.room.playlist.playlist, Username: worker.userStatus.Username}
+	playlist := Playlist{Playlist: worker.settings.room.state.playlist, Username: worker.userStatus.Username}
 	message, err := playlist.MarshalMessage()
 	if err != nil {
 		logger.Errorw("Unable to marshal playlist", "error", err)
@@ -218,15 +218,15 @@ func (worker *FactoryWorker) handleVideoStatus(videoStatus *VideoStatus, arrival
 	legit := worker.settings.room.checkValidVideoStatus(videoStatus, worker)
 	if legit {
 		worker.updateVideoStatus(videoStatus, arrivalTime)
-		worker.settings.room.evaluateVideoStatus()
+		worker.settings.room.evaluateVideoStatus(worker)
 	} else {
 		worker.settings.room.sendSeek(worker, true, true)
 	}
 }
 
 func (worker *FactoryWorker) handleStart(start *Start) {
-	worker.settings.room.broadcastStart(worker)
 	worker.settings.room.setPaused(false)
+	worker.settings.room.broadcastStart(worker)
 }
 
 func (worker *FactoryWorker) handleSeek(seek *Seek, arrivalTime time.Time) {
@@ -243,13 +243,13 @@ func (worker *FactoryWorker) handleSelect(sel *Select) {
 }
 
 func (worker *FactoryWorker) handlePlaylist(playlist *Playlist) {
-	worker.settings.room.broadcastPlaylist(playlist, worker, true)
 	worker.settings.room.changePlaylist(playlist.Playlist, worker)
+	worker.settings.room.broadcastPlaylist(playlist, worker, true)
 }
 
 func (worker *FactoryWorker) handlePause(pause *Pause) {
-	worker.settings.room.broadcastPause(worker)
 	worker.settings.room.setPaused(true)
+	worker.settings.room.broadcastPause(worker)
 }
 
 func (worker *FactoryWorker) handlePlaybackSpeed(speed *PlaybackSpeed) {
@@ -356,7 +356,7 @@ func (worker *FactoryWorker) PingService() {
 	}
 }
 
-type RoomPlaylist struct {
+type RoomState struct {
 	playlist []string
 	video    *string
 	position *uint64
@@ -367,11 +367,11 @@ type RoomPlaylist struct {
 }
 
 type Room struct {
-	name          string
-	workers       []*FactoryWorker
-	workersMutex  *sync.RWMutex
-	playlist      *RoomPlaylist
-	playlistMutex *sync.RWMutex
+	name         string
+	workers      []*FactoryWorker
+	workersMutex *sync.RWMutex
+	state        *RoomState
+	stateMutex   *sync.RWMutex
 }
 
 func NewRoom(name string, playlist []string, video *string, position *uint64, saveFile string) Room {
@@ -379,8 +379,8 @@ func NewRoom(name string, playlist []string, video *string, position *uint64, sa
 	room.name = name
 	room.workers = make([]*FactoryWorker, 0)
 	room.workersMutex = &sync.RWMutex{}
-	room.playlist = &RoomPlaylist{playlist: playlist, video: video, position: position, lastSeek: 0, paused: true, speed: 1.0, saveFile: saveFile}
-	room.playlistMutex = &sync.RWMutex{}
+	room.state = &RoomState{playlist: playlist, video: video, position: position, lastSeek: 0, paused: true, speed: 1.0, saveFile: saveFile}
+	room.stateMutex = &sync.RWMutex{}
 	return room
 }
 
@@ -404,14 +404,14 @@ func (room *Room) deleteWorker(worker *FactoryWorker) {
 }
 
 func (room *Room) checkRoomState(worker *FactoryWorker) {
-	room.playlistMutex.Lock()
-	defer room.playlistMutex.Unlock()
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
 	// pause video if no clients are connected
 	if len(room.workers) == 0 {
-		room.playlist.paused = true
+		room.state.paused = true
 
 		// delete room if no clients are connected and playlist is empty
-		if len(room.playlist.playlist) == 0 {
+		if len(room.state.playlist) == 0 {
 			worker.capitalist.deleteRoom(room)
 		}
 	}
@@ -440,7 +440,6 @@ func NewCapitalist(host string, port uint16, cert *string, key *string, password
 }
 
 func (capitalist *Capitalist) handler(w http.ResponseWriter, r *http.Request) {
-	logger.Info("Handle CONNECTION")
 	conn, _, _, err := ws.UpgradeHTTP(r, w)
 	if err != nil {
 		logger.Errorw("Failed to establish connection to client socket", "error", err)
@@ -484,7 +483,7 @@ func (capitalist *Capitalist) handleFirstLogin(join *Join, worker *FactoryWorker
 	worker.userStatusMutex.RLock()
 	status := &Status{Ready: false, Username: worker.userStatus.Username}
 	worker.userStatusMutex.RUnlock()
-	worker.updateVideoStatus(&VideoStatus{Filename: room.playlist.video, Position: room.playlist.position, Paused: room.playlist.paused}, time.Now())
+	worker.updateVideoStatus(&VideoStatus{Filename: room.state.video, Position: room.state.position, Paused: room.state.paused}, time.Now())
 	worker.updateUserStatus(status)
 	worker.updateRoom(room)
 	worker.login()
@@ -499,7 +498,7 @@ func (capitalist *Capitalist) handleRoomChange(join *Join, worker *FactoryWorker
 	room := capitalist.createOrFindRoom(join.Room)
 	room.appendWorker(worker)
 
-	worker.updateVideoStatus(&VideoStatus{Filename: room.playlist.video, Position: room.playlist.position, Paused: room.playlist.paused}, time.Now())
+	worker.updateVideoStatus(&VideoStatus{Filename: room.state.video, Position: room.state.position, Paused: room.state.paused}, time.Now())
 	worker.updateRoom(room)
 	worker.capitalist.broadcastStatusList(worker)
 	worker.sendPlaylist()
@@ -536,7 +535,7 @@ func (capitalist *Capitalist) deleteRoom(room *Room) {
 	defer capitalist.roomsMutex.Unlock()
 
 	delete(capitalist.rooms, room.name)
-	DeleteConfig(room.playlist.saveFile)
+	DeleteConfig(room.state.saveFile)
 }
 
 func (capitalist *Capitalist) statusList() map[string][]Status {
@@ -620,14 +619,14 @@ func (room *Room) broadcastStart(worker *FactoryWorker) {
 
 func (room *Room) broadcastSeek(filename string, position uint64, worker *FactoryWorker, desync bool, lock bool) {
 	if lock {
-		room.playlistMutex.RLock()
-		defer room.playlistMutex.RUnlock()
+		room.stateMutex.RLock()
+		defer room.stateMutex.RUnlock()
 	}
 
 	worker.userStatusMutex.RLock()
 	defer worker.userStatusMutex.RUnlock()
 
-	s := Seek{Filename: filename, Position: position, Speed: room.playlist.speed, Paused: room.playlist.paused, Desync: desync, Username: worker.userStatus.Username}
+	s := Seek{Filename: filename, Position: position, Speed: room.state.speed, Paused: room.state.paused, Desync: desync, Username: worker.userStatus.Username}
 	message, err := s.MarshalMessage()
 	if err != nil {
 		logger.Errorw("Unable to marshal broadcast seek", "error", err)
@@ -707,7 +706,7 @@ func (room *Room) broadcastStartOnReady(worker *FactoryWorker) {
 	defer room.workersMutex.RUnlock()
 
 	// cannot start nil video
-	if room.playlist.video == nil {
+	if room.state.video == nil {
 		return
 	}
 
@@ -719,9 +718,9 @@ func (room *Room) broadcastStartOnReady(worker *FactoryWorker) {
 	}
 
 	if ready {
-		room.playlistMutex.Lock()
+		room.stateMutex.Lock()
 		worker.userStatusMutex.RLock()
-		defer room.playlistMutex.Unlock()
+		defer room.stateMutex.Unlock()
 		defer worker.userStatusMutex.RUnlock()
 
 		start := Start{Username: worker.userStatus.Username}
@@ -735,7 +734,7 @@ func (room *Room) broadcastStartOnReady(worker *FactoryWorker) {
 			w.sendMessage(message)
 		}
 
-		room.playlist.paused = false
+		room.state.paused = false
 	}
 }
 
@@ -755,18 +754,18 @@ func (room *Room) broadcastPlaybackSpeed(speed float64, worker *FactoryWorker) {
 
 func (room *Room) sendSeek(worker *FactoryWorker, desync bool, lock bool) {
 	if lock {
-		room.playlistMutex.RLock()
+		room.stateMutex.RLock()
 		worker.userStatusMutex.RLock()
-		defer room.playlistMutex.RUnlock()
+		defer room.stateMutex.RUnlock()
 		defer worker.userStatusMutex.RUnlock()
 	}
 
 	// seeking nil videos is prohibited
-	if room.playlist.video == nil {
+	if room.state.video == nil {
 		return
 	}
 
-	seek := Seek{Filename: *room.playlist.video, Position: *room.playlist.position, Speed: room.playlist.speed, Paused: room.playlist.paused, Desync: desync, Username: worker.userStatus.Username}
+	seek := Seek{Filename: *room.state.video, Position: *room.state.position, Speed: room.state.speed, Paused: room.state.paused, Desync: desync, Username: worker.userStatus.Username}
 	message, err := seek.MarshalMessage()
 	if err != nil {
 		logger.Errorw("Capitalist failed to marshal seek", "error", err)
@@ -776,15 +775,15 @@ func (room *Room) sendSeek(worker *FactoryWorker, desync bool, lock bool) {
 	worker.sendMessage(message)
 }
 
+// TODO only send to current client
 // Evaluates the video states of all clients and broadcasts seek if difference between
 // fastest and slowest clients is too large.
-func (room *Room) evaluateVideoStatus() {
+func (room *Room) evaluateVideoStatus(worker *FactoryWorker) {
 	room.workersMutex.RLock()
-	room.playlistMutex.Lock()
+	room.stateMutex.Lock()
 	defer room.workersMutex.RUnlock()
-	defer room.playlistMutex.Unlock()
+	defer room.stateMutex.Unlock()
 
-	var slowest *FactoryWorker
 	minPosition := uint64(math.MaxUint64)
 	maxPosition := uint64(0)
 
@@ -797,12 +796,11 @@ func (room *Room) evaluateVideoStatus() {
 		}
 
 		// estimate position of client based on previous position, time difference and playback speed
-		timeElapsed := uint64(float64(time.Since(w.videoStatus.timestamp).Milliseconds()) * room.playlist.speed)
+		timeElapsed := uint64(float64(time.Since(w.videoStatus.timestamp).Milliseconds()) * room.state.speed)
 		estimatedPosition := *w.videoStatus.position + timeElapsed
 
 		if estimatedPosition < minPosition {
 			minPosition = estimatedPosition
-			slowest = w
 		}
 
 		if estimatedPosition > maxPosition {
@@ -813,30 +811,25 @@ func (room *Room) evaluateVideoStatus() {
 	}
 
 	// position can not be before lastSeek
-	if minPosition > room.playlist.lastSeek {
-		room.playlist.position = &minPosition
+	if minPosition > room.state.lastSeek {
+		room.state.position = &minPosition
 	} else {
-		room.playlist.position = &room.playlist.lastSeek
+		room.state.position = &room.state.lastSeek
 	}
 
 	// if difference is too large, all clients are reset based on the slowest client
-	if maxPosition-minPosition > uint64(float64(MAX_DIFFERENCE_MILLISECONDS)*room.playlist.speed) {
-		// server file is not chosen in case it is not set (playing video that is not in playlist)
-		if room.playlist.playlist != nil {
-			room.broadcastSeek(*room.playlist.video, *room.playlist.position, slowest, true, false)
-		} else {
-			room.broadcastSeek(*slowest.videoStatus.filename, *room.playlist.position, slowest, true, false)
-		}
+	if maxPosition-minPosition > uint64(float64(MAX_DIFFERENCE_MILLISECONDS)*room.state.speed) {
+		room.sendSeek(worker, true, false)
 	}
 
-	go WritePlaylist(room.playlist.playlist, room.playlist.video, room.playlist.position, room.playlist.saveFile)
+	go WritePlaylist(room.state.playlist, room.state.video, room.state.position, room.state.saveFile)
 }
 
 func (room *Room) findNext(newPlaylist []string) string {
 	j := 0
 
-	for _, video := range room.playlist.playlist {
-		if video == *room.playlist.video {
+	for _, video := range room.state.playlist {
+		if video == *room.state.video {
 			break
 		}
 
@@ -855,69 +848,69 @@ func (room *Room) findNext(newPlaylist []string) string {
 
 func (room *Room) changePlaylistState(video *string, position uint64, paused bool, lastSeek uint64, lock bool) {
 	if lock {
-		room.playlistMutex.Lock()
-		defer room.playlistMutex.Unlock()
+		room.stateMutex.Lock()
+		defer room.stateMutex.Unlock()
 	}
 
-	room.playlist.video = video
-	room.playlist.position = &position
-	room.playlist.paused = paused
-	room.playlist.lastSeek = lastSeek
+	room.state.video = video
+	room.state.position = &position
+	room.state.paused = paused
+	room.state.lastSeek = lastSeek
 }
 
 func (room *Room) changePlaylist(playlist []string, worker *FactoryWorker) {
-	room.playlistMutex.Lock()
-	defer room.playlistMutex.Unlock()
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
 
-	if len(playlist) != 0 && len(playlist) < len(room.playlist.playlist) {
+	if len(playlist) != 0 && len(playlist) < len(room.state.playlist) {
 		nextVideo := room.findNext(playlist)
-		if nextVideo != *room.playlist.video {
+		if nextVideo != *room.state.video {
 			room.changePlaylistState(&nextVideo, 0, true, 0, false)
-			room.broadcastSelect(room.playlist.video, worker, true)
+			room.broadcastSelect(room.state.video, worker, true)
 		}
 	}
 
-	room.playlist.playlist = playlist
+	room.state.playlist = playlist
 
-	go WritePlaylist(room.playlist.playlist, room.playlist.video, room.playlist.position, room.playlist.saveFile)
+	go WritePlaylist(room.state.playlist, room.state.video, room.state.position, room.state.saveFile)
 }
 
 func (room *Room) changeVideo(fileName *string) {
-	room.playlistMutex.Lock()
-	defer room.playlistMutex.Unlock()
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
 
-	room.playlist.video = fileName
-	go WritePlaylist(room.playlist.playlist, room.playlist.video, room.playlist.position, room.playlist.saveFile)
+	room.state.video = fileName
+	go WritePlaylist(room.state.playlist, room.state.video, room.state.position, room.state.saveFile)
 }
 
 func (room *Room) changePosition(position uint64) {
-	room.playlistMutex.Lock()
-	defer room.playlistMutex.Unlock()
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
 
-	room.playlist.position = &position
-	go WritePlaylist(room.playlist.playlist, room.playlist.video, room.playlist.position, room.playlist.saveFile)
+	room.state.position = &position
+	go WritePlaylist(room.state.playlist, room.state.video, room.state.position, room.state.saveFile)
 }
 
 func (room *Room) updateLastSeek(position uint64) {
-	room.playlistMutex.Lock()
-	defer room.playlistMutex.Unlock()
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
 
-	room.playlist.lastSeek = position
+	room.state.lastSeek = position
 }
 
 func (room *Room) updateSpeed(speed float64) {
-	room.playlistMutex.Lock()
-	defer room.playlistMutex.Unlock()
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
 
-	room.playlist.speed = speed
+	room.state.speed = speed
 }
 
 func (room *Room) checkValidVideoStatus(videoStatus *VideoStatus, worker *FactoryWorker) bool {
-	room.playlistMutex.RLock()
-	defer room.playlistMutex.RUnlock()
+	room.stateMutex.RLock()
+	defer room.stateMutex.RUnlock()
 
 	// video status is not compatible with server if position is not in accordance with the last seek or video is paused when it is not supposed to be
-	if *videoStatus.Position < room.playlist.lastSeek || videoStatus.Paused != room.playlist.paused {
+	if *videoStatus.Position < room.state.lastSeek || videoStatus.Paused != room.state.paused {
 		return false
 	}
 
@@ -925,19 +918,19 @@ func (room *Room) checkValidVideoStatus(videoStatus *VideoStatus, worker *Factor
 }
 
 func (room *Room) setPaused(paused bool) {
-	room.playlistMutex.RLock()
-	defer room.playlistMutex.RUnlock()
+	room.stateMutex.RLock()
+	defer room.stateMutex.RUnlock()
 
-	room.playlist.paused = paused
+	room.state.paused = paused
 }
 
 func (room *Room) handleNilStatus(videoStatus *VideoStatus, worker *FactoryWorker) {
-	room.playlistMutex.RLock()
+	room.stateMutex.RLock()
 	worker.userStatusMutex.RLock()
-	defer room.playlistMutex.RUnlock()
+	defer room.stateMutex.RUnlock()
 	defer worker.userStatusMutex.RUnlock()
 
-	if videoStatus.Filename != room.playlist.video || videoStatus.Position != room.playlist.position {
+	if videoStatus.Filename != room.state.video || videoStatus.Position != room.state.position {
 		room.sendSeek(worker, false, false)
 	}
 }
