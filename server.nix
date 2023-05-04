@@ -43,6 +43,7 @@
     extraGroups = [ "wheel" "sudo" ];
     openssh.authorizedKeys.keys = [
       "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAID6cRpwV5pivNp8GWF3uAw4yOEJIYGkfMchIUeL+3f3hAAAACXNzaDp5azUuMQ== ssh:yk5.1"
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDp9uGfZbpd/Xyk2ulzEsdCYJ6XsDHHSQbMSIb00LP/X niketsu@github.com"
     ];
   };
 
@@ -58,7 +59,6 @@
     description = "Sven Friedrich";
     openssh.authorizedKeys.keys = [
       "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAID6cRpwV5pivNp8GWF3uAw4yOEJIYGkfMchIUeL+3f3hAAAACXNzaDp5azUuMQ== ssh:yk5.1"
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDp9uGfZbpd/Xyk2ulzEsdCYJ6XsDHHSQbMSIb00LP/X niketsu@github.com"
     ];
   };
 

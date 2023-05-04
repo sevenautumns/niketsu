@@ -1,0 +1,22 @@
+name: Deploy Server
+
+on:
+  push:
+    branches: [deploy]
+
+jobs:
+  deploy:
+    name: Deploy Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: cachix/install-nix-action@v20
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: webfactory/ssh-agent@v0.7.0
+        with:
+            ssh-private-key: ${{ secrets.DEPLOY }}
+      - name: Run deploy
+        run: |
+          echo "autumnal.de ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOB5kFkv5hNVA0nbeIo1LtGZDOORTH+lXrxq8h2EmI3e" >> ~/.ssh/known_hosts
+          nix develop --command deploy
