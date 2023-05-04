@@ -4,7 +4,7 @@
 
 Precompiled binaries (executable files) and [Source code](https://www.reddit.com/r/ProgrammerAnimemes/comments/k6k38v/chief_programmer_left_on_read/) are available here (or on [Github](https://github.com/sevenautumns/niketsu/releases)).
 
-If you are interested to host a niketsu server yourself, feel free to use our binaries (below) or build it [yourself](./chapter_3.md).
+If you are interested to host a niketsu server yourself, feel free to use our binaries (below) or build it [yourself](./building.md).
 
 ### Client
 
