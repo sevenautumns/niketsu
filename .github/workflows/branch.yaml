@@ -32,8 +32,8 @@ jobs:
       - uses: actions/checkout@v3
         with:
           ref: deploy
-          persist-credentials: false
-          fetch-depth: 0
+          ssh-key: ${{ secrets.DEPLOY }}
+          persist-credentials: true
       - uses: cachix/install-nix-action@v20
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
@@ -45,5 +45,5 @@ jobs:
       - name: Push changes
         uses: ad-m/github-push-action@master
         with:
-          github_token: ${{ secrets.PUSH_TOKEN }}
+          ssh: true
           branch: deploy
