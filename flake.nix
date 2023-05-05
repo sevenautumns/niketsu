@@ -22,6 +22,10 @@
   outputs =
     { self, deploy-rs, nixpkgs, agenix, devshell, ... }@inputs:
     let lib = nixpkgs.lib;
+          pkgs = import nixpkgs {
+            system = "x86_64-linux";
+            overlays = [ devshell.overlays.default deploy-rs.overlay ];
+          };
     in {
       nixosConfigurations.niketsu = lib.nixosSystem {
         system = "x86_64-linux";
@@ -36,9 +40,14 @@
         specialArgs = { inherit inputs; };
       };
 
-      deploy.nodes.niketsu = {
+      deploy.nodes.niketsu = let 
+        known-hosts = pkgs.writeText "known_hosts" ''
+          autumnal.de ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOB5kFkv5hNVA0nbeIo1LtGZDOORTH+lXrxq8h2EmI3e
+        '';
+      in {
         hostname = "autumnal.de";
         fastConnection = false;
+        sshOpts = [ "-o" "UserKnownHostsFile=${known-hosts}" ];
         profiles.system = {
           sshUser = "admin";
           path = deploy-rs.lib.x86_64-linux.activate.nixos
@@ -48,12 +57,6 @@
       };
 
       devShells.x86_64-linux.default =
-        let
-          pkgs = import nixpkgs {
-            system = "x86_64-linux";
-            overlays = [ devshell.overlays.default deploy-rs.overlay ];
-          };
-        in
         (pkgs.devshell.mkShell {
           name = "niketsu-deploy-shell";
           packages = [

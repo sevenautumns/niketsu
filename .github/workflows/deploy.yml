@@ -17,6 +17,4 @@ jobs:
         with:
             ssh-private-key: ${{ secrets.DEPLOY }}
       - name: Run deploy
-        run: |
-          echo "autumnal.de ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOB5kFkv5hNVA0nbeIo1LtGZDOORTH+lXrxq8h2EmI3e" >> ~/.ssh/known_hosts
-          nix develop --command deploy
+        run: nix develop --command deploy
