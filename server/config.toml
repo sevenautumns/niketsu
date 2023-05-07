@@ -3,14 +3,19 @@ title = "Server Configuration"
 [General]
 Host = "0.0.0.0"
 Port = 7766
+DBPath = ".db/"
+Debug = true
 # Cert = "cert.pem"
 # Key = "key.pem"
 # Password = "1234"
-Debug = false
+# DbUpdateInterval = 2
+# DbWaitTimeout = 4
+# DbStatInterval = 120
+
 
 [Rooms]
 [Rooms.General]
-SaveFile = "General_playlist.toml"
+persistent = false
 
 [Rooms.Test]
-SaveFile = "Test_playlist.toml"
+persistent = false

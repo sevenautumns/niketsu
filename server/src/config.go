@@ -3,30 +3,25 @@ package niketsu_server
 import (
 	"flag"
 	"log"
-	"os"
-	"sync"
 
 	"github.com/BurntSushi/toml"
 )
 
-type PlaylistConfig struct {
-	Playlist []string
-	Video    *string
-	Position *uint64
-}
-
-// TODO delete Name from config
 type RoomConfig struct {
-	SaveFile string
+	persistent bool
 }
 
 type General struct {
-	Host     string
-	Port     uint16
-	Cert     *string
-	Key      *string
-	Password *string
-	Debug    bool
+	Host             string
+	Port             uint16
+	Cert             string
+	Key              string
+	Password         string
+	DBPath           string
+	DbUpdateInterval uint64
+	DbWaitTimeout    uint64
+	DbStatInterval   uint64
+	Debug            bool
 }
 
 type ServerConfig struct {
@@ -34,60 +29,38 @@ type ServerConfig struct {
 	Rooms   map[string]RoomConfig
 }
 
-var writeMutex sync.Mutex
+func fromConfigFile(configFile string, serverConfig *ServerConfig) ServerConfig {
+	_, err := toml.DecodeFile(configFile, &serverConfig)
+	if err != nil {
+		log.Panicf("Failed to load config file at %s. Make sure the correct file format (toml) is used and the file exists.\nError:%s", configFile, err)
+	}
+	log.Printf("Configurations successfully set.\nServer configuration: %v", serverConfig)
 
-func GetConfig() (General, map[string]*Room) {
-	var configFile string
-	flag.StringVar(&configFile, "config", "server/config.toml", "path to config file (toml)")
+	return *serverConfig
+}
+
+func GetConfig() ServerConfig {
+	configFile := flag.String("config", "", "path to config file (toml)")
+	host := flag.String("host", "", "host name (e.g. 0.0.0.0). If left empty (= ''), listens on all IPs of the machine")
+	port := flag.Uint("port", 7766, "port (16bit unsigned integer) to listen on")
+	cert := flag.String("cert", "", "TLS certificate. If none is given, plain TCP is used")
+	key := flag.String("key", "", "TLS key corresponding to the TLS certificate. If none is given, plain TCP is used")
+	password := flag.String("password", "", "general server password for client connections")
+	dbPath := flag.String("dbpath", ".db/", "path to where database files are stored")
+	dbUpdateInterval := flag.Uint64("dbupdateinterval", 2, "update intervals of writes to the database")
+	dbWaitTimeout := flag.Uint64("dbwaittimeout", 4, "wait time until write to database is aborted")
+	dbStatInterval := flag.Uint64("dbstatinterval", 120, "update intervals of database statistics")
+	debug := flag.Bool("debug", false, "whether to log debugging entries")
+
 	flag.Parse()
 
 	var serverConfig ServerConfig
-	_, err := toml.DecodeFile(configFile, &serverConfig)
-	if err != nil {
-		log.Panicf("Failed to load config file at %s. Make sure the correct file format (toml) is used and the file exists", configFile)
+	serverConfig.General = General{Host: *host, Port: uint16(*port), Cert: *cert, Key: *key, Password: *password, DBPath: *dbPath, DbUpdateInterval: *dbUpdateInterval, DbWaitTimeout: *dbWaitTimeout, DbStatInterval: *dbStatInterval, Debug: *debug}
+
+	log.Printf(*configFile)
+	if *configFile != "" {
+		return fromConfigFile(*configFile, &serverConfig)
 	}
 
-	rooms := make(map[string]*Room, 0)
-	for name, roomConfig := range serverConfig.Rooms {
-		var playlistConfig PlaylistConfig
-		_, err = toml.DecodeFile(roomConfig.SaveFile, &playlistConfig)
-		if err != nil {
-			log.Printf("Playlist save file does not exist for room %s in %s. Using default values instead", name, roomConfig.SaveFile)
-			newRoom := NewRoom(name, make([]string, 0), nil, nil, roomConfig.SaveFile)
-			rooms[name] = &newRoom
-		} else {
-			newRoom := NewRoom(name, playlistConfig.Playlist, playlistConfig.Video, playlistConfig.Position, roomConfig.SaveFile)
-			rooms[name] = &newRoom
-		}
-	}
-	log.Printf("Configurations successfully set.\nServer configuration: %+v\nPlaylist Save File: %+v", serverConfig, rooms)
-
-	return serverConfig.General, rooms
-}
-
-func WritePlaylist(playlist []string, video *string, position *uint64, saveFile string) {
-	writeMutex.Lock()
-	defer writeMutex.Unlock()
-
-	playlistConfig := PlaylistConfig{Playlist: playlist, Video: video, Position: position}
-
-	f, err := os.Create(saveFile)
-	if err != nil {
-		log.Fatal("Failed to open or create toml save file for playlist")
-	}
-
-	if err := toml.NewEncoder(f).Encode(playlistConfig); err != nil {
-		logger.Warn("Failed to write toml save file for playlist")
-	}
-
-	if err := f.Close(); err != nil {
-		logger.Warn("Failed to close toml save file for playlist")
-	}
-}
-
-func DeleteConfig(saveFile string) {
-	err := os.Remove(saveFile)
-	if err != nil {
-		logger.Warnw("Failed to delete playlist", saveFile)
-	}
+	return serverConfig
 }
