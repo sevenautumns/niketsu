@@ -1,10 +1,15 @@
 package niketsu_server
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -73,7 +78,7 @@ func NewFactoryWorker(capitalist *Capitalist, conn net.Conn, userName string, fi
 
 func (worker *FactoryWorker) close() {
 	worker.settings.closeOnce.Do(func() {
-		logger.Infow("Closing connection", "client", worker.settings.uuid)
+		logger.Debugw("Closing connection", "client", worker.settings.uuid)
 		close(worker.settings.serviceChannel)
 
 		if worker.settings.room != nil {
@@ -365,25 +370,53 @@ type RoomState struct {
 	lastSeek uint64
 	paused   bool
 	speed    float64
-	saveFile string
 }
 
 type Room struct {
-	name         string
-	workers      []*FactoryWorker
-	workersMutex *sync.RWMutex
-	state        *RoomState
-	stateMutex   *sync.RWMutex
+	name             string
+	workers          []*FactoryWorker
+	workersMutex     *sync.RWMutex
+	state            *RoomState
+	stateMutex       *sync.RWMutex
+	karen            *Karen
+	dbUpdateInterval time.Duration
+	dbChannel        chan (int)
 }
 
-func NewRoom(name string, playlist []string, video *string, position *uint64, saveFile string) Room {
+// Creates a new Room which handles requests from workers in a shared channel. The database is created in a file at path/name.db
+func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout uint64, dbStatInterval uint64) Room {
 	var room Room
 	room.name = name
 	room.workers = make([]*FactoryWorker, 0)
 	room.workersMutex = &sync.RWMutex{}
-	room.state = &RoomState{playlist: playlist, video: video, position: position, lastSeek: 0, paused: true, speed: 1.0, saveFile: saveFile}
+	dbpath := filepath.Join(path, name+".db")
+	karen, err := NewKaren(dbpath, dbUpdateInterval, dbStatInterval)
+	if err != nil {
+		logger.Fatalw("Failed to create database. Exiting ...", "error", err)
+	}
+	room.karen = karen
+	go room.karen.Monitor()
+
 	room.stateMutex = &sync.RWMutex{}
+	room.state = &RoomState{lastSeek: 0, paused: true, speed: 1.0}
+	room.getState(true)
+	room.dbUpdateInterval = time.Duration(5 * uint64(time.Second))
+
 	return room
+}
+
+func (room *Room) startDBIntervalBackup() {
+	ticker := time.NewTicker(room.dbUpdateInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-room.dbChannel:
+			return
+		case <-ticker.C:
+			room.writePlaylist()
+		}
+	}
 }
 
 func (room *Room) appendWorker(worker *FactoryWorker) {
@@ -420,11 +453,15 @@ func (room *Room) checkRoomState(worker *FactoryWorker) {
 }
 
 type CapitalistConfig struct {
-	host     string
-	port     uint16
-	cert     *string
-	key      *string
-	password *string
+	host             string
+	port             uint16
+	cert             string
+	key              string
+	password         string
+	dbpath           string
+	dbUpdateInterval uint64
+	dbWaitTimeout    uint64
+	dbStatInterval   uint64
 }
 
 type Capitalist struct {
@@ -433,11 +470,27 @@ type Capitalist struct {
 	roomsMutex *sync.RWMutex
 }
 
-func NewCapitalist(host string, port uint16, cert *string, key *string, password *string, rooms map[string]*Room) Capitalist {
+func NewCapitalist(config ServerConfig) Capitalist {
 	var capitalist Capitalist
-	capitalist.config = &CapitalistConfig{host: host, port: port, cert: cert, key: key, password: password}
+	capitalist.config = &CapitalistConfig{host: config.General.Host, port: config.General.Port, cert: config.General.Cert, key: config.General.Key, password: config.General.Password, dbpath: config.General.DBPath, dbUpdateInterval: config.General.DbUpdateInterval, dbWaitTimeout: config.General.DbWaitTimeout, dbStatInterval: config.General.DbStatInterval}
+	rooms := make(map[string]*Room, 0)
+
+	_, err := os.Stat(config.General.DBPath)
+	if os.IsNotExist(err) {
+		err := os.Mkdir(filepath.Dir(config.General.DBPath), 0700)
+		if err != nil {
+			logger.Fatalw("Failed to create directory of db path", "error", err)
+		}
+	}
+
+	for name := range config.Rooms {
+		newRoom := NewRoom(name, config.General.DBPath, config.General.DbUpdateInterval, config.General.DbWaitTimeout, config.General.DbStatInterval)
+		rooms[name] = &newRoom
+	}
+
 	capitalist.rooms = rooms
 	capitalist.roomsMutex = &sync.RWMutex{}
+
 	return capitalist
 }
 
@@ -456,21 +509,23 @@ func (capitalist *Capitalist) handler(w http.ResponseWriter, r *http.Request) {
 
 func (capitalist *Capitalist) Start() {
 	hostPort := fmt.Sprintf("%s:%d", capitalist.config.host, capitalist.config.port)
-	if capitalist.config.cert == nil || capitalist.config.key == nil {
+	if capitalist.config.cert == "" || capitalist.config.key == "" {
 		logger.Info("Finished initializing manager. Starting http listener ...")
 		http.ListenAndServe(hostPort, http.HandlerFunc(capitalist.handler))
 	} else {
 		logger.Info("Finished initializing manager. Starting tls listener ...")
-		http.ListenAndServeTLS(hostPort, *capitalist.config.cert, *capitalist.config.key, http.HandlerFunc(capitalist.handler))
+		http.ListenAndServeTLS(hostPort, capitalist.config.cert, capitalist.config.key, http.HandlerFunc(capitalist.handler))
 	}
 }
 
 func (capitalist *Capitalist) createOrFindRoom(roomName string) *Room {
 	var newRoom *Room
 	if capitalist.rooms[roomName] == nil {
-		tmpRoom := NewRoom(roomName, make([]string, 0), nil, nil, fmt.Sprintf("%s_playlist.toml", roomName))
+		tmpRoom := NewRoom(roomName, capitalist.config.dbpath, capitalist.config.dbUpdateInterval, capitalist.config.dbWaitTimeout, capitalist.config.dbUpdateInterval)
 		newRoom = &tmpRoom
 		capitalist.appendRoom(newRoom)
+		newRoom.writePlaylist()
+		go newRoom.startDBIntervalBackup()
 	} else {
 		newRoom = capitalist.rooms[roomName]
 	}
@@ -508,8 +563,8 @@ func (capitalist *Capitalist) handleRoomChange(join *Join, worker *FactoryWorker
 }
 
 func (capitalist *Capitalist) handleJoin(join *Join, worker *FactoryWorker) {
-	logger.Info("Received login attempt", "message", join)
-	if capitalist.config.password != nil && join.Password != *capitalist.config.password {
+	logger.Debugw("Received login attempt", "message", join)
+	if capitalist.config.password != "" && join.Password != capitalist.config.password {
 		worker.sendServerMessage("Password is incorrect. Please try again", true)
 		return
 	}
@@ -535,9 +590,10 @@ func (capitalist *Capitalist) appendRoom(room *Room) {
 func (capitalist *Capitalist) deleteRoom(room *Room) {
 	capitalist.roomsMutex.Lock()
 	defer capitalist.roomsMutex.Unlock()
+	defer room.karen.Close()
 
 	delete(capitalist.rooms, room.name)
-	DeleteConfig(room.state.saveFile)
+	room.karen.DeleteBucket(room.name)
 }
 
 func (capitalist *Capitalist) statusList() map[string][]Status {
@@ -836,7 +892,7 @@ func (room *Room) evaluateVideoStatus(worker *FactoryWorker) {
 		room.sendSeek(worker, true, false)
 	}
 
-	go WritePlaylist(room.state.playlist, room.state.video, room.state.position, room.state.saveFile)
+	go room.writePlaylist()
 }
 
 func (room *Room) findNext(newPlaylist []string) string {
@@ -886,7 +942,7 @@ func (room *Room) changePlaylist(playlist []string, worker *FactoryWorker) {
 
 	room.state.playlist = playlist
 
-	go WritePlaylist(room.state.playlist, room.state.video, room.state.position, room.state.saveFile)
+	go room.writePlaylist()
 }
 
 func (room *Room) changeVideo(fileName *string) {
@@ -894,7 +950,7 @@ func (room *Room) changeVideo(fileName *string) {
 	defer room.stateMutex.Unlock()
 
 	room.state.video = fileName
-	go WritePlaylist(room.state.playlist, room.state.video, room.state.position, room.state.saveFile)
+	go room.writePlaylist()
 }
 
 func (room *Room) changePosition(position uint64) {
@@ -902,7 +958,7 @@ func (room *Room) changePosition(position uint64) {
 	defer room.stateMutex.Unlock()
 
 	room.state.position = &position
-	go WritePlaylist(room.state.playlist, room.state.video, room.state.position, room.state.saveFile)
+	go room.writePlaylist()
 }
 
 func (room *Room) updateLastSeek(position uint64) {
@@ -947,4 +1003,99 @@ func (room *Room) handleNilStatus(videoStatus *VideoStatus, worker *FactoryWorke
 	if videoStatus.Filename != room.state.video || videoStatus.Position != room.state.position {
 		room.sendSeek(worker, false, false)
 	}
+}
+
+// Writes playlist to database. Currently does not lock playlist to ensure that the lock does not block during writing.
+func (room *Room) writePlaylist() {
+	bytePlaylist, err := json.Marshal(room.state.playlist)
+	if err != nil {
+		logger.Warnw("Failed to marshal playlist", "error", err)
+		return
+	}
+
+	video := ""
+	if room.state.video != nil {
+		video = *room.state.video
+	}
+
+	position := uint64(0)
+	if room.state.position != nil {
+		position = *room.state.position
+	}
+
+	room.karen.Update(room.name, bytePlaylist, video, position)
+}
+
+// please do not touch my spaghetti
+// Retrieves playlist from database and updates the state of the room
+func (room *Room) getPlaylist(useDefault bool) {
+	values, err := room.karen.Get(room.name, "playlist")
+	if err != nil {
+		logger.Debugw("Failed to retrieve playlist", "error", err)
+		if useDefault {
+			logger.Debug("Setting playlist to default state (empty)")
+			room.state.playlist = make([]string, 0)
+		}
+	} else {
+		var playlist []string
+		err = json.Unmarshal(values, &playlist)
+		if err != nil {
+			logger.Debugw("Failed to unmarshal playlist", "error", err)
+			if useDefault {
+				logger.Debug("Setting playlist to default state (empty)")
+				room.state.playlist = make([]string, 0)
+			}
+		} else {
+			room.state.playlist = playlist
+		}
+	}
+}
+
+// Retrieves video from database and updates the state of the room
+func (room *Room) getVideo(useDefault bool) {
+	values, err := room.karen.Get(room.name, "video")
+	if err != nil {
+		logger.Debugw("Failed to retrieve video", "error", err)
+		if useDefault {
+			logger.Debug("Setting video to default state (nil)")
+			room.state.video = nil
+		}
+	} else {
+		video := string(values)
+		room.state.video = &video
+	}
+}
+
+// Retrieves position from database and updates the state of the room
+func (room *Room) getPosition(useDefault bool) {
+	values, err := room.karen.Get(room.name, "position")
+	if err != nil {
+		logger.Debugw("Failed to retrieve position", "error", err)
+		if useDefault {
+			logger.Debug("Setting position to default state (nil)")
+			room.state.position = nil
+		}
+	} else {
+		var position uint64
+		err := binary.Read(bytes.NewBuffer(values[:]), binary.LittleEndian, &position)
+		if err != nil {
+			logger.Debugw("Failed to convert position", "error", err)
+			if useDefault {
+				logger.Debug("Setting position to default state (nil)")
+				room.state.position = nil
+			}
+		} else {
+			room.state.position = &position
+		}
+	}
+}
+
+// Accesses database and gets state. If failed, falls back to default values if useDefault is set.
+func (room *Room) getState(useDefault bool) {
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
+
+	room.getPlaylist(useDefault)
+	room.getVideo(useDefault)
+	room.getPosition(useDefault)
 }

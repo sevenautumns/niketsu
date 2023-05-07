@@ -4,11 +4,16 @@ import (
 	server "github.com/sevenautumns/niketsu/server/src"
 )
 
+var config server.ServerConfig
+
+func init() {
+	config = server.GetConfig()
+	server.InitLogger(config.General.Debug)
+}
+
 func main() {
-	serverConfig, playlistConfig := server.GetConfig()
-	server.InitLogger(serverConfig.Debug)
 	defer server.LoggerSync()
 
-	capitalist := server.NewCapitalist(serverConfig.Host, serverConfig.Port, serverConfig.Cert, serverConfig.Key, serverConfig.Password, playlistConfig)
+	capitalist := server.NewCapitalist(config)
 	capitalist.Start()
 }
