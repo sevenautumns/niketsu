@@ -18,14 +18,14 @@ pub struct RoomsWidget<'a> {
 }
 
 impl<'a> RoomsWidget<'a> {
-    pub fn new(state: &'a RoomsWidgetState, this_user: &ThisUser, theme: &Theme) -> Self {
+    pub fn new(state: &RoomsWidgetState, this_user: &ThisUser, theme: &Theme) -> Self {
         let mut elements = vec![];
         let mut rooms: Vec<_> = state.rooms.iter().collect();
         rooms.sort_by_key(|(k, _)| k.to_string());
         for room in &state.rooms {
             let selected = state.selected.eq(room.0);
             elements.push(
-                Button::new(Container::new(Text::new(room.0)).padding(2))
+                Button::new(Container::new(Text::new(room.0.clone())).padding(2))
                     .on_press(MainMessage::Rooms(RoomsWidgetMessage::ClickRoom(
                         room.0.to_string(),
                     )))
@@ -162,7 +162,7 @@ pub enum RoomsWidgetMessage {
     ClickRoom(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoomsWidgetState {
     rooms: BTreeMap<String, BTreeSet<UserStatus>>,
     last_press: Instant,

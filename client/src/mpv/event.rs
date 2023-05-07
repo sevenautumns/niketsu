@@ -11,7 +11,6 @@ use log::trace;
 
 use super::{MpvHandle, MpvProperty};
 use crate::mpv::bindings::*;
-use crate::window::MainMessage;
 
 unsafe extern "C" fn on_mpv_event(_: *mut c_void) {
     if let Some(waker) = EVENT_WAKER.load().as_ref() {
@@ -66,12 +65,6 @@ impl From<mpv_event> for MpvEvent {
             }
             _ => Self::Unparsed,
         }
-    }
-}
-
-impl From<MpvEvent> for MainMessage {
-    fn from(event: MpvEvent) -> Self {
-        Self::Mpv(event)
     }
 }
 
