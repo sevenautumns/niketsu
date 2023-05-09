@@ -8,7 +8,7 @@ import (
 )
 
 type RoomConfig struct {
-	persistent bool
+	Persistent bool
 }
 
 type General struct {
@@ -34,7 +34,7 @@ func fromConfigFile(configFile string, serverConfig *ServerConfig) ServerConfig 
 	if err != nil {
 		log.Panicf("Failed to load config file at %s. Make sure the correct file format (toml) is used and the file exists.\nError:%s", configFile, err)
 	}
-	log.Printf("Configurations successfully set.\nServer configuration: %v", serverConfig)
+	log.Printf("Configurations successfully set.")
 
 	return *serverConfig
 }
@@ -56,6 +56,7 @@ func GetConfig() ServerConfig {
 
 	var serverConfig ServerConfig
 	serverConfig.General = General{Host: *host, Port: uint16(*port), Cert: *cert, Key: *key, Password: *password, DBPath: *dbPath, DbUpdateInterval: *dbUpdateInterval, DbWaitTimeout: *dbWaitTimeout, DbStatInterval: *dbStatInterval, Debug: *debug}
+	serverConfig.Rooms = make(map[string]RoomConfig, 0)
 
 	log.Printf(*configFile)
 	if *configFile != "" {

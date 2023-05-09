@@ -381,10 +381,11 @@ type Room struct {
 	karen            *Karen
 	dbUpdateInterval time.Duration
 	dbChannel        chan (int)
+	persistent       bool
 }
 
 // Creates a new Room which handles requests from workers in a shared channel. The database is created in a file at path/name.db
-func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout uint64, dbStatInterval uint64) Room {
+func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout uint64, dbStatInterval uint64, persistent bool) Room {
 	var room Room
 	room.name = name
 	room.workers = make([]*FactoryWorker, 0)
@@ -394,13 +395,16 @@ func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout ui
 	if err != nil {
 		logger.Fatalw("Failed to create database. Exiting ...", "error", err)
 	}
-	room.karen = karen
-	go room.karen.Monitor()
+	room.karen = &karen
 
 	room.stateMutex = &sync.RWMutex{}
 	room.state = &RoomState{lastSeek: 0, paused: true, speed: 1.0}
 	room.getState(true)
-	room.dbUpdateInterval = time.Duration(5 * uint64(time.Second))
+	room.dbUpdateInterval = time.Duration(dbUpdateInterval * uint64(time.Second))
+	room.dbChannel = make(chan int)
+	room.persistent = persistent
+	go room.karen.Monitor()
+	go room.startDBIntervalBackup()
 
 	return room
 }
@@ -441,12 +445,13 @@ func (room *Room) deleteWorker(worker *FactoryWorker) {
 func (room *Room) checkRoomState(worker *FactoryWorker) {
 	room.stateMutex.Lock()
 	defer room.stateMutex.Unlock()
+
 	// pause video if no clients are connected
 	if len(room.workers) == 0 {
 		room.state.paused = true
 
-		// delete room if no clients are connected and playlist is empty
-		if len(room.state.playlist) == 0 {
+		// delete room if no clients are connected, playlist is empty, and room is not persistent
+		if len(room.state.playlist) == 0 && !room.persistent {
 			worker.capitalist.deleteRoom(room)
 		}
 	}
@@ -465,16 +470,17 @@ type CapitalistConfig struct {
 }
 
 type Capitalist struct {
-	config     *CapitalistConfig
-	rooms      map[string]*Room
-	roomsMutex *sync.RWMutex
+	config       *CapitalistConfig
+	rooms        map[string]*Room
+	roomsMutex   *sync.RWMutex
+	GeneralKaren *Karen
 }
 
 func NewCapitalist(config ServerConfig) Capitalist {
 	var capitalist Capitalist
 	capitalist.config = &CapitalistConfig{host: config.General.Host, port: config.General.Port, cert: config.General.Cert, key: config.General.Key, password: config.General.Password, dbpath: config.General.DBPath, dbUpdateInterval: config.General.DbUpdateInterval, dbWaitTimeout: config.General.DbWaitTimeout, dbStatInterval: config.General.DbStatInterval}
-	rooms := make(map[string]*Room, 0)
 
+	// create database directory
 	_, err := os.Stat(config.General.DBPath)
 	if os.IsNotExist(err) {
 		err := os.Mkdir(filepath.Dir(config.General.DBPath), 0700)
@@ -483,13 +489,42 @@ func NewCapitalist(config ServerConfig) Capitalist {
 		}
 	}
 
-	for name := range config.Rooms {
-		newRoom := NewRoom(name, config.General.DBPath, config.General.DbUpdateInterval, config.General.DbWaitTimeout, config.General.DbStatInterval)
+	// generate general database that contains the available rooms
+	general_db := filepath.Join(config.General.DBPath, ".main/general.db")
+	_, err = os.Stat(general_db)
+	if os.IsNotExist(err) {
+		err := os.Mkdir(filepath.Dir(general_db), 0700)
+		if err != nil {
+			logger.Fatalw("Failed to create directory of general db path", "error", err)
+		}
+	}
+
+	generalKaren, err := NewKaren(general_db, capitalist.config.dbWaitTimeout, capitalist.config.dbStatInterval)
+	if err != nil {
+		logger.Panicw("Failed to create general database handler", "error", err)
+	}
+	capitalist.GeneralKaren = &generalKaren
+
+	capitalist.roomsMutex = &sync.RWMutex{}
+	rooms := make(map[string]*Room, 0)
+	// create rooms given in general db
+	roomConfigs := capitalist.GeneralKaren.GetRoomConfigs("general")
+	for name, roomConfig := range roomConfigs {
+		newRoom := NewRoom(name, config.General.DBPath, config.General.DbUpdateInterval, config.General.DbWaitTimeout, config.General.DbStatInterval, roomConfig.Persistent)
 		rooms[name] = &newRoom
 	}
 
+	// create rooms given in config
+	for name, roomConfig := range config.Rooms {
+		if _, ok := rooms[name]; ok {
+			continue
+		}
+
+		newRoom := NewRoom(name, config.General.DBPath, config.General.DbUpdateInterval, config.General.DbWaitTimeout, config.General.DbStatInterval, roomConfig.Persistent)
+		capitalist.writeRoom(&newRoom)
+		rooms[name] = &newRoom
+	}
 	capitalist.rooms = rooms
-	capitalist.roomsMutex = &sync.RWMutex{}
 
 	return capitalist
 }
@@ -521,11 +556,11 @@ func (capitalist *Capitalist) Start() {
 func (capitalist *Capitalist) createOrFindRoom(roomName string) *Room {
 	var newRoom *Room
 	if capitalist.rooms[roomName] == nil {
-		tmpRoom := NewRoom(roomName, capitalist.config.dbpath, capitalist.config.dbUpdateInterval, capitalist.config.dbWaitTimeout, capitalist.config.dbUpdateInterval)
+		tmpRoom := NewRoom(roomName, capitalist.config.dbpath, capitalist.config.dbUpdateInterval, capitalist.config.dbWaitTimeout, capitalist.config.dbStatInterval, false) //new rooms are never persistent
 		newRoom = &tmpRoom
 		capitalist.appendRoom(newRoom)
+		capitalist.writeRoom(newRoom)
 		newRoom.writePlaylist()
-		go newRoom.startDBIntervalBackup()
 	} else {
 		newRoom = capitalist.rooms[roomName]
 	}
@@ -587,6 +622,21 @@ func (capitalist *Capitalist) appendRoom(room *Room) {
 	capitalist.rooms[room.name] = room
 }
 
+func (capitalist *Capitalist) writeRoom(room *Room) {
+	capitalist.roomsMutex.RLock()
+	defer capitalist.roomsMutex.RUnlock()
+
+	//needs to be extended in case more options are added to room
+	config := RoomConfig{Persistent: room.persistent}
+	byteConfig, err := json.Marshal(config)
+	if err != nil {
+		logger.Warnw("Failed to marshal room config", "error", err)
+		return
+	}
+
+	capitalist.GeneralKaren.Update("general", room.name, byteConfig)
+}
+
 func (capitalist *Capitalist) deleteRoom(room *Room) {
 	capitalist.roomsMutex.Lock()
 	defer capitalist.roomsMutex.Unlock()
@@ -594,6 +644,12 @@ func (capitalist *Capitalist) deleteRoom(room *Room) {
 
 	delete(capitalist.rooms, room.name)
 	room.karen.DeleteBucket(room.name)
+	capitalist.deleteRoomFromBucket(room)
+	close(room.dbChannel)
+}
+
+func (capitalist *Capitalist) deleteRoomFromBucket(room *Room) {
+	capitalist.GeneralKaren.DeleteKey("general", room.name)
 }
 
 func (capitalist *Capitalist) statusList() map[string][]Status {
@@ -820,7 +876,7 @@ func (room *Room) sendSeek(worker *FactoryWorker, desync bool, lock bool) {
 
 	// seeking nil videos is prohibited
 	// may need to be changed to allow synchronization even if playlist is empty
-	if room.state.video == nil {
+	if room.state.video == nil || room.state.position == nil {
 		return
 	}
 
@@ -1023,7 +1079,7 @@ func (room *Room) writePlaylist() {
 		position = *room.state.position
 	}
 
-	room.karen.Update(room.name, bytePlaylist, video, position)
+	room.karen.UpdatePlaylist(room.name, bytePlaylist, video, position)
 }
 
 // please do not touch my spaghetti

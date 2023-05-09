@@ -12,10 +12,9 @@ Debug = true
 # DbWaitTimeout = 4
 # DbStatInterval = 120
 
-
 [Rooms]
 [Rooms.General]
-persistent = false
+Persistent = true
 
 [Rooms.Test]
-persistent = false
+Persistent = true
