@@ -8,7 +8,7 @@ var config server.ServerConfig
 
 func init() {
 	config = server.GetConfig()
-	server.InitLogger(config.General.Debug)
+	server.InitLogger(*config.General.Debug)
 }
 
 func main() {
