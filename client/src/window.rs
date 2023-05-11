@@ -134,13 +134,14 @@ impl Application for MainWindow {
                     }
                     PlaylistWidgetMessage::Move(f, i) => {
                         debug!("FileTable move file: {f:?}, {i}");
+                        client.playlist().rcu(|p| {
+                            let mut playlist = PlaylistWidgetState::clone(p);
+                            playlist.move_video(f.clone(), i);
+                            playlist
+                        });
                         let playlist = client
                             .playlist()
-                            .rcu(|p| {
-                                let mut playlist = PlaylistWidgetState::clone(p);
-                                playlist.move_video(f.clone(), i);
-                                playlist
-                            })
+                            .load()
                             .videos()
                             .drain(..)
                             .map(|v| v.as_str().to_string())
@@ -260,7 +261,7 @@ impl Application for MainWindow {
 
     fn view(&self) -> Element<'_, Self::Message, Renderer<Self::Theme>> {
         match self {
-            MainWindow::Startup { ui, .. } => ui.view(),
+            MainWindow::Startup { ui, .. } => ui.view(self.theme()),
             MainWindow::Running {
                 message, client, ..
             } => {

@@ -1,8 +1,10 @@
 use std::str::FromStr;
 
 use iced::alignment::Horizontal;
-use iced::widget::{column, row, Button, Container, Scrollable, Space, Text, TextInput};
-use iced::{Alignment, Element, Length};
+use iced::widget::{
+    column, row, Button, Checkbox, Column, Container, Scrollable, Space, Text, TextInput,
+};
+use iced::{Alignment, Element, Length, Theme};
 
 use crate::config::{
     default_background, default_danger, default_primary, default_success, default_text, Config,
@@ -16,7 +18,9 @@ use crate::TEXT_SIZE;
 pub enum StartUIMessage {
     UsernameInput(String),
     UrlInput(String),
-    PathInput(String),
+    PathInput(usize, String),
+    DeletePath(usize),
+    AddPath,
     RoomInput(String),
     PasswordInput(String),
     TextSizeInput(f32),
@@ -25,14 +29,16 @@ pub enum StartUIMessage {
     PrimaryColorInput(String),
     SuccessColorInput(String),
     DangerColorInput(String),
+    SecureCheckbox(bool),
     StartButton,
 }
 
 #[derive(Debug, Clone)]
 pub struct StartUI {
     pub username: String,
-    pub media_dir: String,
+    pub media_dirs: Vec<String>,
     pub url: String,
+    pub secure: bool,
     pub room: String,
     pub password: String,
 
@@ -54,7 +60,11 @@ impl StartUI {
         match msg {
             StartUIMessage::UsernameInput(u) => self.username = u,
             StartUIMessage::UrlInput(u) => self.url = u,
-            StartUIMessage::PathInput(p) => self.media_dir = p,
+            StartUIMessage::PathInput(i, p) => {
+                if let Some(d) = self.media_dirs.get_mut(i) {
+                    *d = p
+                }
+            }
             StartUIMessage::RoomInput(r) => self.room = r,
             StartUIMessage::PasswordInput(p) => self.password = p,
             StartUIMessage::StartButton => {}
@@ -89,11 +99,41 @@ impl StartUI {
                 }
             }
             StartUIMessage::TextSizeInput(t) => self.text_size = t,
+            StartUIMessage::SecureCheckbox(b) => self.secure = b,
+            StartUIMessage::DeletePath(i) => {
+                if i < self.media_dirs.len() {
+                    self.media_dirs.remove(i);
+                }
+            }
+            StartUIMessage::AddPath => self.media_dirs.push(Default::default()),
         }
     }
 
-    pub fn view<'a>(&self) -> Element<'a, MainMessage> {
+    pub fn view<'a>(&self, theme: Theme) -> Element<'a, MainMessage> {
         let text_size = *TEXT_SIZE.load_full();
+
+        let file_paths: Vec<_> = self
+            .media_dirs
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                row!(
+                    TextInput::new("Filepath", d)
+                        .on_input(move |p| MainMessage::StartUi(StartUIMessage::PathInput(i, p))),
+                    Button::new(
+                        Container::new(Text::new("-"))
+                            .center_x()
+                            .width(Length::Fill)
+                    )
+                    .style(ColorButton::theme(theme.palette().danger))
+                    .on_press(MainMessage::StartUi(StartUIMessage::DeletePath(i)))
+                    .width(text_size * 2.0),
+                )
+                .spacing(10)
+                .into()
+            })
+            .collect();
+
         let column = column!(
             Text::new("Niketsu")
                 .size(text_size + 75.0)
@@ -106,13 +146,24 @@ impl StartUI {
                     Button::new("Password").style(FileButton::theme(false, true)),
                     Button::new("Username").style(FileButton::theme(false, true)),
                     Button::new("Room").style(FileButton::theme(false, true)),
-                    Button::new("Filepath").style(FileButton::theme(false, true)),
+                    // Button::new("Filepath").style(FileButton::theme(false, true)),
                 )
                 .spacing(10)
                 .width(Length::Shrink),
                 column!(
-                    TextInput::new("Server Address", &self.url)
-                        .on_input(|u| MainMessage::StartUi(StartUIMessage::UrlInput(u))),
+                    row!(
+                        TextInput::new("Server Address", &self.url)
+                            .on_input(|u| MainMessage::StartUi(StartUIMessage::UrlInput(u))),
+                        Container::new(
+                            Checkbox::new("Secure", self.secure, |b| MainMessage::StartUi(
+                                StartUIMessage::SecureCheckbox(b)
+                            ))
+                            .spacing(10),
+                        )
+                        .center_y()
+                        .height(text_size + 10.0),
+                    )
+                    .spacing(10),
                     TextInput::new("Password", &self.password)
                         .on_input(|u| MainMessage::StartUi(StartUIMessage::PasswordInput(u)))
                         .password(),
@@ -120,11 +171,21 @@ impl StartUI {
                         .on_input(|u| MainMessage::StartUi(StartUIMessage::UsernameInput(u))),
                     TextInput::new("Room", &self.room)
                         .on_input(|u| MainMessage::StartUi(StartUIMessage::RoomInput(u))),
-                    // TODO more filepaths
-                    TextInput::new("Filepath", &self.media_dir)
-                        .on_input(|p| MainMessage::StartUi(StartUIMessage::PathInput(p))),
                 )
                 .spacing(10)
+                .width(Length::Fill),
+            )
+            .spacing(10),
+            Space::with_height(text_size),
+            Text::new("Directories").size(text_size + 15.0),
+            column!(
+                Column::with_children(file_paths).spacing(10),
+                Button::new(
+                    Container::new(Text::new("+"))
+                        .center_x()
+                        .width(Length::Fill)
+                )
+                .on_press(MainMessage::StartUi(StartUIMessage::AddPath))
                 .width(Length::Fill),
             )
             .spacing(10),
@@ -234,7 +295,7 @@ impl From<Config> for StartUI {
     fn from(config: Config) -> Self {
         Self {
             username: config.username,
-            media_dir: config.media_dir,
+            media_dirs: config.media_dirs,
             url: config.url,
             room: config.room,
             password: config.password,
@@ -249,6 +310,7 @@ impl From<Config> for StartUI {
             success_color_input: config.success_color.to_string(),
             danger_color: config.danger_color,
             danger_color_input: config.danger_color.to_string(),
+            secure: config.secure,
         }
     }
 }
@@ -257,7 +319,7 @@ impl From<StartUI> for Config {
     fn from(ui: StartUI) -> Self {
         Self {
             username: ui.username,
-            media_dir: ui.media_dir,
+            media_dirs: ui.media_dirs,
             url: ui.url,
             room: ui.room,
             password: ui.password,
@@ -267,6 +329,7 @@ impl From<StartUI> for Config {
             primary_color: ui.primary_color,
             success_color: ui.success_color,
             danger_color: ui.danger_color,
+            secure: ui.secure,
         }
     }
 }
