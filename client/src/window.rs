@@ -156,13 +156,14 @@ impl Application for MainWindow {
                     }
                     PlaylistWidgetMessage::Delete(f) => {
                         debug!("FileTable delete file: {f:?}");
+                        client.playlist().rcu(|p| {
+                            let mut playlist = PlaylistWidgetState::clone(p);
+                            playlist.delete_video(&f);
+                            playlist
+                        });
                         let playlist = client
                             .playlist()
-                            .rcu(|p| {
-                                let mut playlist = PlaylistWidgetState::clone(p);
-                                playlist.delete_video(&f);
-                                playlist
-                            })
+                            .load()
                             .videos()
                             .drain(..)
                             .map(|v| v.as_str().to_string())
