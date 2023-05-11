@@ -55,13 +55,17 @@ impl Client {
         let mut mpv = Mpv::new(tx.clone());
         mpv.init()?;
         let db = Arc::new(FileDatabase::new(
-            &[PathBuf::from_str(&config.media_dir)?],
+            &config
+                .media_dirs
+                .iter()
+                .map(|d| PathBuf::from_str(d).map_err(Error::msg))
+                .collect::<Result<Vec<_>>>()?,
             tx.clone(),
         ));
         let db2 = db.clone();
         tokio::spawn(async move { db2.update().await });
         let ws = Arc::new(ArcSwap::new(Arc::new(ServerWebsocket::new(
-            config.url.clone(),
+            config.addr()?,
             tx.clone(),
         ))));
         let user = Arc::new(ArcSwap::new(Arc::new(ThisUser::new(

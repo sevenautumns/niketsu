@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender as MpscSender;
 use tokio_native_tls::TlsStream;
+use url::Url;
 
 use crate::client::{ClientInner, LogResult, PlayerMessage};
 use crate::file_table::PlaylistWidgetState;
@@ -152,7 +153,7 @@ type WsStream = SplitStream<
 
 #[derive(Debug, Clone)]
 pub struct ServerWebsocket {
-    addr: String,
+    addr: Url,
     client_sender: MpscSender<PlayerMessage>,
     msg_sender: MpscSender<ServerMessage>,
 }
@@ -163,7 +164,7 @@ impl ServerWebsocket {
         Self::new(self.addr.clone(), self.client_sender.clone())
     }
 
-    pub fn new(addr: String, client_sender: MpscSender<PlayerMessage>) -> Self {
+    pub fn new(addr: Url, client_sender: MpscSender<PlayerMessage>) -> Self {
         let (msg_sender, mut rx): (MpscSender<ServerMessage>, _) =
             tokio::sync::mpsc::unbounded_channel();
         let addr2 = addr.clone();
