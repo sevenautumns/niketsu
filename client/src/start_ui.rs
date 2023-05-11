@@ -93,7 +93,7 @@ impl StartUI {
     }
 
     pub fn view<'a>(&self) -> Element<'a, MainMessage> {
-        let text_size = *TEXT_SIZE.load_full().unwrap();
+        let text_size = *TEXT_SIZE.load_full();
         let column = column!(
             Text::new("Niketsu")
                 .size(text_size + 75.0)

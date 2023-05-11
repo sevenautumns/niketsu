@@ -3,19 +3,20 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use async_recursion::async_recursion;
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use dashmap::DashMap;
 use futures::future::join_all;
 use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use iced::widget::{row, Button, Container, ProgressBar, Text, Tooltip};
-use iced::{Command, Element, Length, Renderer, Subscription};
-use log::trace;
-use tokio::sync::watch::{Receiver as WatchRec, Sender as WatchSend};
+use iced::{Element, Length, Renderer};
+use log::{debug, trace};
+use tokio::sync::mpsc::UnboundedSender as MpscSender;
 use tokio::sync::{Notify, RwLock, Semaphore};
 
+use crate::client::{ClientInner, PlayerMessage};
 use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
 use crate::window::MainMessage;
 use crate::TEXT_SIZE;
@@ -29,66 +30,37 @@ pub struct File {
 #[derive(Debug, Clone)]
 pub enum DatabaseMessage {
     Changed,
-    UpdateFinished(Arc<Result<()>>),
+    UpdateFinished,
 }
 
 #[derive(Debug)]
 pub struct FileDatabase {
     stop: RwLock<Notify>,
     database: Arc<DashMap<OsString, File>>,
-    database_counter: (WatchSend<usize>, WatchRec<usize>),
+    sender: MpscSender<PlayerMessage>,
     search_paths: RwLock<Vec<PathBuf>>,
     semaphore: Semaphore,
     queued_dirs: RelaxedCounter,
     finished_dirs: RelaxedCounter,
 }
 
-impl Default for FileDatabase {
-    fn default() -> Self {
+impl FileDatabase {
+    pub fn new(path: &[PathBuf], sender: MpscSender<PlayerMessage>) -> Self {
         Self {
+            search_paths: RwLock::new(path.to_vec()),
             stop: Default::default(),
             database: Default::default(),
-            database_counter: tokio::sync::watch::channel(0),
-            search_paths: Default::default(),
+            sender,
             semaphore: Semaphore::new(100),
             queued_dirs: RelaxedCounter::new(0),
             finished_dirs: RelaxedCounter::new(0),
         }
     }
-}
 
-impl FileDatabase {
-    pub fn new(path: &[PathBuf]) -> Self {
-        Self {
-            search_paths: RwLock::new(path.to_vec()),
-            ..Default::default()
-        }
+    pub fn start_update(db: &Arc<Self>) {
+        let db = db.clone();
+        tokio::spawn(async move { db.update().await });
     }
-
-    pub fn subscribe(&self) -> Subscription<MainMessage> {
-        iced::subscription::unfold(
-            std::any::TypeId::of::<Self>(),
-            self.database_counter.1.clone(),
-            |mut dc| async move {
-                // TODO do something in error case?
-                dc.changed().await.ok();
-                (MainMessage::Database(DatabaseMessage::Changed), dc)
-            },
-        )
-    }
-
-    pub fn update_command(db: &Arc<Self>) -> Command<MainMessage> {
-        async fn update(db: Arc<FileDatabase>) -> MainMessage {
-            MainMessage::Database(DatabaseMessage::UpdateFinished(Arc::new(db.update().await)))
-        }
-        Command::single(iced_native::command::Action::Future(
-            update(db.clone()).boxed(),
-        ))
-    }
-
-    // pub fn database(&self) -> Arc<DashMap<OsString, File>> {
-    //     self.database.clone()
-    // }
 
     pub async fn add_search_path(&self, path: PathBuf) {
         self.search_paths.write().await.push(path);
@@ -117,10 +89,6 @@ impl FileDatabase {
         self.stop.try_write().is_ok()
     }
 
-    pub fn database_counter(&self) -> usize {
-        *self.database_counter.1.borrow()
-    }
-
     pub fn view<'a>(&self) -> Element<'a, MainMessage, Renderer> {
         let (fin, que) = self.get_status();
         let finished = fin == que;
@@ -140,7 +108,7 @@ impl FileDatabase {
             false => ProgressBar::new(0.0..=(que as f32), fin as f32)
                 .style(FileProgressBar::theme(fin == que))
                 // Text size + 2 times default button padding
-                .height(Length::Fixed(*TEXT_SIZE.load_full().unwrap() + 10.0))
+                .height(Length::Fixed(*TEXT_SIZE.load_full() + 10.0))
                 .into(),
         };
 
@@ -168,15 +136,17 @@ impl FileDatabase {
         row!(main, update_tooltip).spacing(5.0).into()
     }
 
-    pub async fn update(&self) -> Result<()> {
+    pub async fn update(&self) {
         let mut stop = match self.stop.try_write() {
             Ok(lock) => lock,
-            Err(_) => bail!("Update or stop already in progress"),
+            Err(_) => return,
         };
 
         *stop = Notify::new();
         self.database.clear();
-        self.database_counter.0.send_modify(|i| *i += 1);
+        self.sender
+            .send(PlayerMessage::Database(DatabaseMessage::Changed))
+            .ok();
         self.queued_dirs.reset();
         self.finished_dirs.reset();
         let paths = self.search_paths.read().await.clone();
@@ -195,7 +165,6 @@ impl FileDatabase {
         self.queued_dirs.reset();
         self.finished_dirs.reset();
         drop(stop);
-        Ok(())
     }
 
     #[async_recursion]
@@ -205,7 +174,7 @@ impl FileDatabase {
         let mut files = vec![];
         let mut join_rec = FuturesUnordered::new();
         let mut join_type = FuturesUnordered::new();
-        let mut dir = tokio::fs::read_dir(path).await.unwrap();
+        let mut dir = tokio::fs::read_dir(path).await?;
 
         loop {
             tokio::select! {
@@ -261,9 +230,27 @@ impl FileDatabase {
         for f in files {
             self.database.insert(f.name.clone(), f);
         }
-        self.database_counter.0.send_modify(|i| *i += 1);
+        self.sender
+            .send(PlayerMessage::Database(DatabaseMessage::Changed))
+            .ok();
+        self.sender
+            .send(PlayerMessage::Database(DatabaseMessage::UpdateFinished))
+            .ok();
 
         self.finished_dirs.inc();
+        Ok(())
+    }
+}
+
+impl ClientInner {
+    pub fn react_to_database(&mut self, event: DatabaseMessage) -> Result<()> {
+        match event {
+            DatabaseMessage::Changed => {
+                trace!("Database: changed");
+                self.mpv.may_reload(&self.db)?;
+            }
+            DatabaseMessage::UpdateFinished => debug!("Database: update finished"),
+        }
         Ok(())
     }
 }

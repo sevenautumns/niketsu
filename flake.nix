@@ -16,15 +16,12 @@
           overlays = [ devshell.overlays.default ];
         };
         host-target = pkgs.rust.toRustTargetSpec pkgs.stdenv.hostPlatform;
-        musl-target =
-          pkgs.rust.toRustTargetSpec pkgs.pkgsMusl.stdenv.hostPlatform;
         rust-toolchain = with fenix.packages.${system};
           combine [
             stable.rustc
             stable.cargo
             stable.clippy
             latest.rustfmt
-            targets.${musl-target}.stable.rust-std
             targets.x86_64-pc-windows-gnu.stable.rust-std
           ];
         naersk-lib = (naersk.lib.${system}.override {
@@ -32,10 +29,10 @@
           rustc = rust-toolchain;
         });
         C_INCLUDE_PATH = lib.makeSearchPathOutput "dev" "include"
-          (with pkgs; [ xorg.libX11 mpv fontconfig freetype expat musl ]);
+          (with pkgs; [ xorg.libX11 mpv-unwrapped fontconfig freetype expat musl ]);
         LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.libclang.lib ];
         libraries = with pkgs; [
-          mpv
+          mpv-unwrapped
           xorg.libX11
           xorg.libXcursor
           xorg.libXi
@@ -95,15 +92,12 @@
             name = "niketsu";
             version = VERSION;
             root = ./.;
-            cargoBuildOptions = x: x ++ [ "--target" musl-target ];
-            cargoTestOptions = x: x ++ [ "--target" musl-target ];
-            nativeBuildInputs = with pkgs; [ cmake pkgconfig mpv ] ++ libraries;
+            nativeBuildInputs = with pkgs; [ cmake pkgconfig ] ++ libraries;
             buildInputs = with pkgs; [ yt-dlp ];
             LIBCLANG_PATH =
               lib.makeLibraryPath [ pkgs.llvmPackages.libclang.lib ];
             preConfigure = ''
               export BINDGEN_EXTRA_CLANG_ARGS='${BINDGEN_EXTRA_LANG_ARGS pkgs}'
-              # export C_INCLUDE_PATH=${C_INCLUDE_PATH}
               export C_INCLUDE_PATH=$C_INCLUDE_PATH:${pkgs.mpv}/include
             '';
           };
@@ -164,7 +158,6 @@
             nixpkgs-fmt
             libclang
             gcc
-            musl.dev
             mdbook
             pkgconfig
             yt-dlp
