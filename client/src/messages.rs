@@ -1,143 +1,60 @@
+use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Error;
 use chrono::{DateTime, Local};
-use iced::widget::scrollable::{Id, RelativeOffset};
+use crossbeam_channel::{Receiver as MsgsReceiver, Sender as MsgsSender};
+use elsa::vec::FrozenVec;
+use iced::widget::scrollable::Id;
 use iced::widget::{Column, Container, Scrollable, Text};
-use iced::{Command, Element, Length, Renderer, Theme};
+use iced::{Element, Length, Renderer, Theme};
 
+use crate::client::LogResult;
 use crate::styling::{ContainerBackground, ContainerBorder};
 use crate::window::MainMessage;
 
-#[derive(Debug, Clone)]
-pub struct Messages {
-    scroll: RelativeOffset,
-    msgs: Vec<ChatMessage>,
+pub struct MessagesReceiver {
+    messages: FrozenVec<Box<ChatMessage>>,
+    recv: MsgsReceiver<ChatMessage>,
 }
 
-impl Default for Messages {
-    fn default() -> Self {
-        Self::new()
+impl std::fmt::Debug for MessagesReceiver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // TODO debug messages
+        f.debug_struct("MessageReceiver")
+            .field("recv", &self.recv)
+            .finish()
     }
 }
 
-impl Messages {
-    pub fn new() -> Self {
+#[derive(Clone, Debug)]
+pub struct MessagesSender {
+    send: Arc<MsgsSender<ChatMessage>>,
+}
+
+pub fn messages_pair() -> (MessagesSender, MessagesReceiver) {
+    let (send, recv) = crossbeam_channel::unbounded::<ChatMessage>();
+    (MessagesSender::new(send), MessagesReceiver::new(recv))
+}
+
+impl MessagesReceiver {
+    pub fn new(recv: MsgsReceiver<ChatMessage>) -> Self {
         Self {
-            msgs: vec![],
-            scroll: RelativeOffset::END,
+            messages: FrozenVec::new(),
+            recv,
         }
-    }
-
-    pub fn set_offset(&mut self, offset: RelativeOffset) {
-        self.scroll = offset;
-    }
-
-    pub fn push_playlist_changed(&mut self, user: String) -> Command<MainMessage> {
-        self.msgs.push(ChatMessage::PlaylistChanged {
-            when: Local::now(),
-            user,
-        });
-        self.snap_scroll()
-    }
-
-    pub fn push_paused(&mut self, user: String) -> Command<MainMessage> {
-        self.msgs.push(ChatMessage::Paused {
-            when: Local::now(),
-            user,
-        });
-        self.snap_scroll()
-    }
-
-    pub fn push_playback_speed(&mut self, speed: f64, user: String) -> Command<MainMessage> {
-        self.msgs.push(ChatMessage::PlaybackSpeed {
-            when: Local::now(),
-            user,
-            speed,
-        });
-        self.snap_scroll()
-    }
-
-    pub fn push_started(&mut self, user: String) -> Command<MainMessage> {
-        self.msgs.push(ChatMessage::Started {
-            when: Local::now(),
-            user,
-        });
-        self.snap_scroll()
-    }
-
-    pub fn push_select(&mut self, file: Option<String>, user: String) -> Command<MainMessage> {
-        self.msgs.push(ChatMessage::Select {
-            when: Local::now(),
-            user,
-            file,
-        });
-        self.snap_scroll()
-    }
-
-    pub fn push_seek(
-        &mut self,
-        pos: Duration,
-        file: String,
-        desync: bool,
-        user: String,
-    ) -> Command<MainMessage> {
-        self.msgs.push(ChatMessage::Seek {
-            when: Local::now(),
-            user,
-            file,
-            pos,
-            desync,
-        });
-        self.snap_scroll()
-    }
-
-    pub fn push_user_chat(&mut self, msg: String, user: String) -> Command<MainMessage> {
-        self.msgs.push(ChatMessage::UserChat {
-            when: Local::now(),
-            user,
-            msg,
-        });
-        self.snap_scroll()
-    }
-
-    pub fn push_server_chat(&mut self, msg: String, error: bool) -> Command<MainMessage> {
-        self.msgs.push(ChatMessage::ServerChat {
-            when: Local::now(),
-            error,
-            msg,
-        });
-        self.snap_scroll()
-    }
-
-    pub fn push_connected(&mut self) -> Command<MainMessage> {
-        self.msgs
-            .push(ChatMessage::Connected { when: Local::now() });
-        self.snap_scroll()
-    }
-
-    pub fn push_disconnected(&mut self) -> Command<MainMessage> {
-        self.msgs
-            .push(ChatMessage::Disconnected { when: Local::now() });
-        self.snap_scroll()
-    }
-
-    pub fn push_connection_error(&mut self, error: String) -> Command<MainMessage> {
-        self.msgs.push(ChatMessage::ConnectionError {
-            when: Local::now(),
-            error,
-        });
-        self.snap_scroll()
-    }
-
-    fn snap_scroll(&self) -> Command<MainMessage> {
-        if self.scroll.y.eq(&1.0) {
-            return iced::widget::scrollable::snap_to(Id::new("messages"), RelativeOffset::END);
-        }
-        Command::none()
     }
 
     pub fn view<'a>(&self, theme: Theme) -> Element<'a, MainMessage, Renderer> {
-        let msgs = self.msgs.iter().map(|m| m.to_text(theme.clone())).collect();
+        while let Ok(msg) = self.recv.try_recv() {
+            self.messages.push(Box::new(msg));
+        }
+
+        let msgs = self
+            .messages
+            .iter()
+            .map(|m| m.to_text(theme.clone()))
+            .collect();
         Container::new(
             Scrollable::new(Column::with_children(msgs))
                 .width(Length::Fill)
@@ -149,6 +66,133 @@ impl Messages {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+    }
+
+    pub fn push_user_chat(&self, msg: String, user: String) {
+        self.messages.push(Box::new(ChatMessage::UserChat {
+            when: Local::now(),
+            user,
+            msg,
+        }));
+    }
+}
+
+impl MessagesSender {
+    pub fn new(send: MsgsSender<ChatMessage>) -> Self {
+        Self {
+            send: Arc::new(send),
+        }
+    }
+
+    pub fn push_playlist_changed(&self, user: String) {
+        self.send
+            .send(ChatMessage::PlaylistChanged {
+                when: Local::now(),
+                user,
+            })
+            .map_err(Error::msg)
+            .log();
+    }
+
+    pub fn push_paused(&self, user: String) {
+        self.send
+            .send(ChatMessage::Paused {
+                when: Local::now(),
+                user,
+            })
+            .map_err(Error::msg)
+            .log();
+    }
+
+    pub fn push_playback_speed(&self, speed: f64, user: String) {
+        self.send
+            .send(ChatMessage::PlaybackSpeed {
+                when: Local::now(),
+                user,
+                speed,
+            })
+            .map_err(Error::msg)
+            .log();
+    }
+
+    pub fn push_started(&self, user: String) {
+        self.send
+            .send(ChatMessage::Started {
+                when: Local::now(),
+                user,
+            })
+            .map_err(Error::msg)
+            .log();
+    }
+
+    pub fn push_select(&self, file: Option<String>, user: String) {
+        self.send
+            .send(ChatMessage::Select {
+                when: Local::now(),
+                user,
+                file,
+            })
+            .map_err(Error::msg)
+            .log();
+    }
+
+    pub fn push_seek(&self, pos: Duration, file: String, desync: bool, user: String) {
+        self.send
+            .send(ChatMessage::Seek {
+                when: Local::now(),
+                user,
+                file,
+                pos,
+                desync,
+            })
+            .map_err(Error::msg)
+            .log();
+    }
+
+    pub fn push_user_chat(&self, msg: String, user: String) {
+        self.send
+            .send(ChatMessage::UserChat {
+                when: Local::now(),
+                user,
+                msg,
+            })
+            .map_err(Error::msg)
+            .log();
+    }
+
+    pub fn push_server_chat(&self, msg: String, error: bool) {
+        self.send
+            .send(ChatMessage::ServerChat {
+                when: Local::now(),
+                error,
+                msg,
+            })
+            .map_err(Error::msg)
+            .log();
+    }
+
+    pub fn push_connected(&self) {
+        self.send
+            .send(ChatMessage::Connected { when: Local::now() })
+            .map_err(Error::msg)
+            .log();
+    }
+
+    pub fn push_disconnected(&self) {
+        self.send
+            .send(ChatMessage::Disconnected { when: Local::now() })
+            .map_err(Error::msg)
+            .log();
+    }
+
+    pub fn push_connection_error(&self, error: String) {
+        self.send
+            .send(ChatMessage::ConnectionError {
+                when: Local::now(),
+                error,
+            })
+            .map_err(Error::msg)
+            .log();
     }
 }
 

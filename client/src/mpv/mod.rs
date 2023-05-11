@@ -1,21 +1,22 @@
 use std::convert::TryInto;
 use std::ffi::{c_void, CString};
 use std::mem::MaybeUninit;
-use std::sync::Arc;
+use std::process::exit;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use futures::StreamExt;
-use iced::Subscription;
 use log::*;
 use strum::{AsRefStr, EnumString};
-use tokio::sync::Mutex;
+use tokio::sync::mpsc::UnboundedSender as MpscSender;
 
 use self::event::{MpvEvent, MpvEventPipe, PropertyValue};
+use crate::client::{ClientInner, LogResult, PlayerMessage};
 use crate::fs::FileDatabase;
 use crate::mpv::bindings::*;
+use crate::user::ThisUser;
 use crate::video::{PlayingFile, SeekEvent, SeekEventExt, Video};
-use crate::window::MainMessage;
+use crate::ws::ServerMessage;
 
 pub mod bindings;
 pub mod error;
@@ -27,6 +28,8 @@ pub const MINIMUM_DIFF_SEEK: Duration = Duration::from_secs(1);
 pub struct MpvHandle(*mut mpv_handle);
 
 unsafe impl Send for MpvHandle {}
+
+unsafe impl Sync for MpvHandle {}
 
 #[derive(Debug, EnumString, AsRefStr, Clone, Copy)]
 #[strum(serialize_all = "kebab-case")]
@@ -101,18 +104,30 @@ pub struct Mpv {
     pausing: Option<Instant>,
     speed: f64,
     seeking: bool,
-    event_pipe: Arc<Mutex<MpvEventPipe>>,
 }
 
 impl Mpv {
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
+    pub fn new(client_sender: MpscSender<PlayerMessage>) -> Self {
         let ctx = unsafe { mpv_create() };
         let handle = MpvHandle(ctx);
-        let event_pipe = Arc::new(Mutex::new(MpvEventPipe::new(handle)));
+        let mut event_pipe = MpvEventPipe::new(handle);
+
+        tokio::spawn(async move {
+            loop {
+                if let Some(event) = event_pipe.next().await {
+                    if let Err(err) = client_sender.send(PlayerMessage::Mpv(event)) {
+                        error!("Client sender unexpectedly ended: {err:?}");
+                        exit(1)
+                    }
+                } else {
+                    error!("Mpv event pipeline unexpectedly ended");
+                    exit(1)
+                }
+            }
+        });
+
         Self {
             handle,
-            event_pipe,
             playing: None,
             paused: true,
             speed: 1.0,
@@ -127,106 +142,6 @@ impl Mpv {
 
     pub fn seeking(&self) -> bool {
         self.seeking
-    }
-
-    pub fn react_to(&mut self, event: MpvEvent) -> Result<Option<MpvResultingAction>> {
-        match event {
-            MpvEvent::Shutdown => return Ok(Some(MpvResultingAction::Exit)),
-            MpvEvent::Seek => {
-                trace!("Seek started");
-                self.seeking = true;
-            }
-            MpvEvent::FileLoaded => {
-                trace!("File loaded");
-                if let Some(playing) = self.playing.as_mut() {
-                    playing.heartbeat = true;
-                }
-                if let Some(PlayingFile { last_seek, .. }) = self.playing.clone() {
-                    trace!("Set paused to {} after file loaded", self.paused);
-                    self.pause(self.paused)?;
-                    if let Some(pos) = last_seek.pos() {
-                        self.set_playback_position(pos)?;
-                        return Ok(None);
-                    }
-                }
-            }
-            MpvEvent::PropertyChanged(when, prop, value) => {
-                trace!("Property Changed: {prop:?} {value:?}");
-                match prop {
-                    MpvProperty::Pause => {
-                        if let Some(pause_time) = self.pausing {
-                            // If the property changed before the time we last received a pause/start instruction,
-                            // ignore it, because it can not be correct
-                            if when <= pause_time {
-                                return Ok(None);
-                            }
-                            self.pausing = None;
-                        }
-                        let paused = self.get_pause_state();
-                        if paused != self.paused {
-                            self.paused = paused;
-                            // Should we be paused
-                            if self.paused {
-                                // and file ended
-                                if self.get_eof_reached()? {
-                                    // and we are playing
-                                    if let Some(playing) = self.playing.take() {
-                                        // play next
-                                        return Ok(Some(MpvResultingAction::PlayNext(
-                                            playing.video,
-                                        )));
-                                    }
-                                }
-                                return Ok(Some(MpvResultingAction::Pause));
-                            }
-                            return Ok(Some(MpvResultingAction::Start));
-                        }
-                    }
-                    MpvProperty::Speed => {
-                        if let Ok(speed) = self.get_playback_speed() {
-                            if speed != self.speed {
-                                self.speed = speed;
-                                return Ok(Some(MpvResultingAction::PlaybackSpeed(speed)));
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            MpvEvent::PlaybackRestart => {
-                trace!("Playback restarted");
-                self.seeking = false;
-                if self.playing.is_some() {
-                    let new_pos = self.get_playback_position()?;
-                    if let Some(playing) = &mut self.playing {
-                        if let Some(SeekEvent { when, pos }) = playing.last_seek {
-                            let mut expected = pos;
-                            if self.paused {
-                                if expected.ne(&new_pos) {
-                                    playing.last_seek = Some(SeekEvent::new(new_pos));
-                                    return Ok(Some(MpvResultingAction::Seek(new_pos)));
-                                }
-                                return Ok(None);
-                            }
-                            expected = expected.saturating_add(when.elapsed());
-                            let diff = match expected < new_pos {
-                                true => new_pos - expected,
-                                false => expected - new_pos,
-                            };
-                            if diff > MINIMUM_DIFF_SEEK {
-                                playing.last_seek = Some(SeekEvent::new(new_pos));
-                                return Ok(Some(MpvResultingAction::Seek(new_pos)));
-                            }
-                            return Ok(None);
-                        }
-                        playing.last_seek = Some(SeekEvent::new(new_pos));
-                        return Ok(Some(MpvResultingAction::Seek(new_pos)));
-                    }
-                }
-            }
-            _ => {}
-        }
-        Ok(None)
     }
 
     pub fn init(&mut self) -> Result<()> {
@@ -257,17 +172,6 @@ impl Mpv {
         let prop: CString = prop.try_into()?;
         let ret = unsafe { mpv_observe_property(self.handle.0, 0, prop.as_ptr(), format) };
         Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
-    }
-
-    pub fn subscribe(&self) -> Subscription<MainMessage> {
-        iced::subscription::unfold(
-            std::any::TypeId::of::<Self>(),
-            self.event_pipe.clone(),
-            |event_pipe| async move {
-                let event = event_pipe.lock().await.next().await.map(|e| e.into());
-                (event.unwrap(), event_pipe)
-            },
-        )
     }
 
     fn send_command(&self, cmd: &[&CString]) -> Result<()> {
@@ -321,19 +225,26 @@ impl Mpv {
         self.pause(paused)?;
         let path = match &mut video {
             Video::File { name, path } => {
-                if path.is_none() {
-                    if let Ok(Some(file)) = db.find_file(name) {
-                        *path = Some(file.path);
-                    } else {
-                        self.playing = Some(PlayingFile {
-                            video,
-                            last_seek,
-                            heartbeat: false,
-                        });
-                        return Ok(());
+                let path = match path {
+                    Some(path) => path.clone(),
+                    None => {
+                        if let Ok(Some(file)) = db.find_file(name) {
+                            file.path
+                        } else {
+                            self.playing = Some(PlayingFile {
+                                video,
+                                last_seek,
+                                heartbeat: false,
+                            });
+                            return Ok(());
+                        }
                     }
+                };
+                if let Some(path) = path.as_os_str().to_str() {
+                    CString::new(path)?
+                } else {
+                    bail!("Can not convert \"{path:?}\" to os_string")
                 }
-                CString::new(path.as_ref().unwrap().as_os_str().to_str().unwrap())?
             }
             Video::Url(url) => CString::new(url.as_str())?,
         };
@@ -525,4 +436,195 @@ pub enum MpvResultingAction {
     Pause,
     Start,
     Exit,
+}
+
+impl MpvResultingAction {
+    pub fn handle(self, client: &mut ClientInner) -> Result<()> {
+        match self {
+            MpvResultingAction::PlayNext(video) => {
+                debug!("Mpv process: play next");
+                if let Some(next) = client.playlist_widget.load().next_video(&video) {
+                    client.ws.load().send(ServerMessage::Select {
+                        filename: next.as_str().to_string().into(),
+                        username: client.user.load().name(),
+                    })?;
+                    client.mpv.load(next, None, true, &client.db).log();
+                    Ok(())
+                } else {
+                    client.ws.load().send(ServerMessage::Select {
+                        filename: None,
+                        username: client.user.load().name(),
+                    })?;
+                    Ok(())
+                }
+            }
+            MpvResultingAction::Seek(position) => {
+                debug!("Mpv process: seek {position:?}");
+                if let Some(playing) = client.mpv.playing() {
+                    client.ws.load().send(ServerMessage::Seek {
+                        filename: playing.video.as_str().to_string(),
+                        position,
+                        username: client.user.load().name(),
+                        paused: client.mpv.get_pause_state(),
+                        desync: false,
+                        speed: client.mpv.speed(),
+                    })?;
+                    return Ok(());
+                }
+                Ok(())
+            }
+            MpvResultingAction::ReOpenFile => {
+                debug!("Mpv process: re-open file");
+                client.mpv.reload(&client.db).log();
+                Ok(())
+            }
+            MpvResultingAction::Pause => {
+                debug!("Mpv process: pause");
+                let mut state = None;
+                client.user.rcu(|u| {
+                    let mut user = ThisUser::clone(u);
+                    state = user.set_ready(false);
+                    user
+                });
+                if let Some(state) = state {
+                    client.ws.load().send(state)?;
+                }
+                client.ws.load().send(ServerMessage::Pause {
+                    username: client.user.load().name(),
+                })?;
+                Ok(())
+            }
+            MpvResultingAction::Start => {
+                debug!("Mpv process: start");
+                let mut state = None;
+                client.user.rcu(|u| {
+                    let mut user = ThisUser::clone(u);
+                    state = user.set_ready(true);
+                    user
+                });
+                if let Some(state) = state {
+                    client.ws.load().send(state)?;
+                }
+                client.ws.load().send(ServerMessage::Start {
+                    username: client.user.load().name(),
+                })?;
+                Ok(())
+            }
+            MpvResultingAction::PlaybackSpeed(speed) => {
+                debug!("Mpv process: playback speed");
+                client.ws.load().send(ServerMessage::PlaybackSpeed {
+                    username: client.user.load().name(),
+                    speed,
+                })?;
+                Ok(())
+            }
+            MpvResultingAction::Exit => {
+                debug!("Mpv process: exit");
+                exit(0)
+            }
+        }
+    }
+}
+
+impl ClientInner {
+    pub fn react_to_mpv(&mut self, event: MpvEvent) -> Result<()> {
+        match event {
+            MpvEvent::Shutdown => return MpvResultingAction::Exit.handle(self),
+            MpvEvent::Seek => {
+                trace!("Seek started");
+                self.mpv.seeking = true;
+            }
+            MpvEvent::FileLoaded => {
+                trace!("File loaded");
+                if let Some(playing) = self.mpv.playing.as_mut() {
+                    playing.heartbeat = true;
+                }
+                if let Some(PlayingFile { last_seek, .. }) = self.mpv.playing.clone() {
+                    trace!("Set paused to {} after file loaded", self.mpv.paused);
+                    let paused = self.mpv.paused;
+                    self.mpv.pause(paused)?;
+                    if let Some(pos) = last_seek.pos() {
+                        self.mpv.set_playback_position(pos)?;
+                        return Ok(());
+                    }
+                }
+            }
+            MpvEvent::PropertyChanged(when, prop, value) => {
+                trace!("Property Changed: {prop:?} {value:?}");
+                match prop {
+                    MpvProperty::Pause => {
+                        if let Some(pause_time) = self.mpv.pausing {
+                            // If the property changed before the time we last received a pause/start instruction,
+                            // ignore it, because it can not be correct
+                            if when <= pause_time {
+                                return Ok(());
+                            }
+                            self.mpv.pausing = None;
+                        }
+                        let paused = self.mpv.get_pause_state();
+                        if paused != self.mpv.paused {
+                            self.mpv.paused = paused;
+                            // Should we be paused
+                            if self.mpv.paused {
+                                // and file ended
+                                if self.mpv.get_eof_reached()? {
+                                    // and we are playing
+                                    if let Some(playing) = self.mpv.playing.take() {
+                                        // play next
+                                        return MpvResultingAction::PlayNext(playing.video)
+                                            .handle(self);
+                                    }
+                                }
+                                return MpvResultingAction::Pause.handle(self);
+                            }
+                            return MpvResultingAction::Start.handle(self);
+                        }
+                    }
+                    MpvProperty::Speed => {
+                        if let Ok(speed) = self.mpv.get_playback_speed() {
+                            if speed != self.mpv.speed {
+                                self.mpv.speed = speed;
+                                return MpvResultingAction::PlaybackSpeed(speed).handle(self);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            MpvEvent::PlaybackRestart => {
+                trace!("Playback restarted");
+                self.mpv.seeking = false;
+                if self.mpv.playing.is_some() {
+                    let new_pos = self.mpv.get_playback_position()?;
+                    let paused = self.mpv.paused;
+                    if let Some(playing) = &mut self.mpv.playing {
+                        if let Some(SeekEvent { when, pos }) = playing.last_seek {
+                            let mut expected = pos;
+                            if paused {
+                                if expected.ne(&new_pos) {
+                                    playing.last_seek = Some(SeekEvent::new(new_pos));
+                                    return MpvResultingAction::Seek(new_pos).handle(self);
+                                }
+                                return Ok(());
+                            }
+                            expected = expected.saturating_add(when.elapsed());
+                            let diff = match expected < new_pos {
+                                true => new_pos - expected,
+                                false => expected - new_pos,
+                            };
+                            if diff > MINIMUM_DIFF_SEEK {
+                                playing.last_seek = Some(SeekEvent::new(new_pos));
+                                return MpvResultingAction::Seek(new_pos).handle(self);
+                            }
+                            return Ok(());
+                        }
+                        playing.last_seek = Some(SeekEvent::new(new_pos));
+                        return MpvResultingAction::Seek(new_pos).handle(self);
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }

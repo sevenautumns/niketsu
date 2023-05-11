@@ -10,9 +10,8 @@ use iced_native::{Layout, Widget};
 use log::*;
 
 use crate::fs::FileDatabase;
-use crate::mpv::Mpv;
 use crate::styling::{FileButton, FileRuleTheme};
-use crate::video::Video;
+use crate::video::{PlayingFile, Video};
 use crate::window::MainMessage;
 
 // TODO make configurable
@@ -34,14 +33,16 @@ impl From<PlaylistWidgetMessage> for MainMessage {
 
 pub struct PlaylistWidget<'a> {
     base: Element<'a, MainMessage>,
-    state: &'a PlaylistWidgetState,
+    state: PlaylistWidgetState,
 }
 
 impl<'a> PlaylistWidget<'a> {
-    pub fn new(state: &'a PlaylistWidgetState, mpv: &Mpv, db: &Arc<FileDatabase>) -> Self {
+    pub fn new(
+        state: PlaylistWidgetState,
+        playing: Option<PlayingFile>,
+        db: &Arc<FileDatabase>,
+    ) -> Self {
         // TODO Add context menu
-
-        let playing = mpv.playing();
 
         let mut file_btns = vec![];
         for f in state.videos.iter() {
@@ -318,7 +319,7 @@ impl<'a> Widget<MainMessage, Renderer> for PlaylistWidget<'a> {
         shell: &mut iced_native::Shell<'_, MainMessage>,
     ) -> iced_native::event::Status {
         let mut _status = iced_native::event::Status::Ignored;
-        let mut inner_state = state.state.downcast_mut::<InnerState>();
+        let inner_state = state.state.downcast_mut::<InnerState>();
 
         // Workaround for if we touch the overlay
         // trace!("{cursor_position:?}")
@@ -418,7 +419,7 @@ struct InnerState {
     cursor_position: iced::Point,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PlaylistWidgetState {
     //TODO
     // active: bool,
@@ -452,7 +453,7 @@ impl Interaction {
 }
 
 impl PlaylistWidgetState {
-    pub fn move_video(&mut self, video: Video, index: usize) -> Vec<Video> {
+    pub fn move_video(&mut self, video: Video, index: usize) {
         let mut index = index;
         if let Some(i) = self.video_index(&video) {
             if index > i {
@@ -463,11 +464,13 @@ impl PlaylistWidgetState {
         } else {
             self.videos.push(video)
         }
+    }
 
+    pub fn videos(&self) -> Vec<Video> {
         self.videos.clone()
     }
 
-    pub fn next_video(&mut self, video: &Video) -> Option<Video> {
+    pub fn next_video(&self, video: &Video) -> Option<Video> {
         if let Some(i) = self.video_index(video) {
             return self.videos.get(i + 1).cloned();
         }
@@ -479,12 +482,11 @@ impl PlaylistWidgetState {
         self.interaction = interaction;
     }
 
-    pub fn delete_video(&mut self, video: &Video) -> Vec<Video> {
+    pub fn delete_video(&mut self, video: &Video) {
         // TODO on delete move selected file to file above (or below if non are above)
         if let Some(i) = self.video_index(video) {
             self.videos.remove(i);
         }
-        self.videos.clone()
     }
 
     pub fn replace_videos(&mut self, videos: Vec<String>) {

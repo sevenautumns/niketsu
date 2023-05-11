@@ -1,9 +1,4 @@
-use std::sync::Arc;
-
-use iced::Command;
-
-use crate::window::MainMessage;
-use crate::ws::ServerWebsocket;
+use crate::ws::ServerMessage;
 
 #[derive(Debug, Clone)]
 pub struct ThisUser {
@@ -19,17 +14,17 @@ impl ThisUser {
         }
     }
 
-    pub fn set_ready(&mut self, ready: bool, ws: &Arc<ServerWebsocket>) -> Command<MainMessage> {
+    #[must_use]
+    pub fn set_ready(&mut self, ready: bool) -> Option<ServerMessage> {
         if ready != self.ready {
             self.ready = ready;
-            return self.send_status_command(ws);
+            return Some(self.status());
         }
-        Command::none()
+        None
     }
 
-    pub fn toggle_ready(&mut self, ws: &Arc<ServerWebsocket>) -> Command<MainMessage> {
+    pub fn toggle_ready(&mut self) {
         self.ready ^= true;
-        self.send_status_command(ws)
     }
 
     pub fn ready(&self) -> bool {
@@ -40,21 +35,19 @@ impl ThisUser {
         self.name.clone()
     }
 
-    pub fn send_status_command(&self, ws: &Arc<ServerWebsocket>) -> Command<MainMessage> {
-        ServerWebsocket::send_command(
-            ws,
-            crate::ws::ServerMessage::Status {
-                ready: self.ready,
-                username: self.name(),
-            },
-        )
+    pub fn status(&self) -> ServerMessage {
+        ServerMessage::Status {
+            ready: self.ready,
+            username: self.name(),
+        }
     }
 
-    pub fn set_name(&mut self, user: String, ws: &Arc<ServerWebsocket>) -> Command<MainMessage> {
+    #[must_use]
+    pub fn set_name(&mut self, user: String) -> Option<ServerMessage> {
         if user.eq(&self.name) {
             self.name = user;
-            return self.send_status_command(ws);
+            return Some(self.status());
         }
-        Command::none()
+        None
     }
 }
