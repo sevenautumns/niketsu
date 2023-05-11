@@ -180,11 +180,11 @@
         "utils": "utils_2"
       },
       "locked": {
-        "lastModified": 1683826101,
-        "narHash": "sha256-laIZ0p/eLQTmIPAms/UFphqPxfMx+yQDZZJuNhfQDe0=",
+        "lastModified": 1683830306,
+        "narHash": "sha256-q+aGZViaK9BwlrNlGGRDyRzieq3+Jln1gat6D3OUDi8=",
         "owner": "sevenautumns",
         "repo": "niketsu",
-        "rev": "39ca1038c8dcc77a9fc7d8d2e81e211b2bd01122",
+        "rev": "6fcb0c0645af0b17f7e3221c81d86da0516252d8",
         "type": "github"
       },
       "original": {
