@@ -9,16 +9,19 @@ use palette::rgb::Rgb;
 use palette::Srgb;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
+use url::Url;
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Config {
-    #[serde(default)]
+    #[serde(default = "whoami::username")]
     pub username: String,
     #[serde(default)]
-    pub media_dir: String,
+    pub media_dirs: Vec<String>,
     #[serde(default)]
     pub url: String,
+    #[serde(default)]
+    pub secure: bool,
     #[serde(default)]
     pub room: String,
     #[serde(default)]
@@ -71,8 +74,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             username: Default::default(),
-            media_dir: Default::default(),
+            media_dirs: Default::default(),
             url: Default::default(),
+            secure: Default::default(),
             room: Default::default(),
             password: Default::default(),
             text_size: default_text_size(),
@@ -106,6 +110,13 @@ impl Config {
             success: self.success_color.into(),
             danger: self.danger_color.into(),
         })
+    }
+
+    pub fn addr(&self) -> Result<Url> {
+        match self.secure {
+            true => Ok(Url::parse(&format!("wss://{}", self.url))?),
+            false => Ok(Url::parse(&format!("ws://{}", self.url))?),
+        }
     }
 
     pub fn load() -> Result<Self> {
