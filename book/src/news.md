@@ -5,14 +5,12 @@ For the latest updates, check [Github](https://github.com/sevenautumns/niketsu/r
 
 ## Latest Updates
 
-- Added rooms (somewhat unstable)
+- bbolt database in backend (still thinking about this)
+- Added rooms (somewhat stable)
 - TLS and password protection on server
 
 
 ## Current Development
 
-- Support for different rooms
-- Backend database
 - Predictive and dynamic synchronisation based on client caches
-- Further integrations into MPV
 - Client-side convenience and settings

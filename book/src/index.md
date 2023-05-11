@@ -28,7 +28,42 @@ Use alongside <u>**extremely popular**</u> VoIP software, e.g. Microsoft Teams, 
 
 Check out the [Download](./downloads.md) page or [build](./building.md) it yourself.
 
-The hottest (daily nightly) releases are available on [Github](https://github.com/sevenautumns/niketsu/). 
+The hottest (daily nightly) releases are available on [Github](https://github.com/sevenautumns/niketsu/).
+
+
+## Getting started
+
+Visit the [Usage page](./usage.md).
+
+## Publicly available servers
+
+In case you want to try out niketsu but do not want to host the server yourself, try out one of our public servers.
+Just copy the domain and port into the niketsu-client:
+
+### Latest Release
+
+#### Secure (TLS)
+
+- autumnal.de:6969
+- autumnal.de:9696
+- autumnal.de:42069
+
+#### Insecure (TCP)
+
+- autumnal.de:2222
+
+### Stable Release
+
+#### Secure (TLS)
+
+The port ranges from 7766 to 7777 are available (choose one):
+
+- autumnal.de:7766-7777
+
+#### Insecure (TCP)
+
+- autumnal.de:3333
+- autumnal.de:4444
 
 
 ## [Features](https://www.reddit.com/r/ProgrammerHumor/comments/x9w0jh/simple_feature/) (Serious) <img src="./images/run.gif" alt="Running Gopher" height=20> <img src="./images/run.gif" alt="Running Gopher" height=20> <img src="./images/run.gif" alt="Running Gopher" height=20> <img src="./images/run.gif" alt="Running Gopher" height=20> <img src="./images/run.gif" alt="Running Gopher" height=20>
