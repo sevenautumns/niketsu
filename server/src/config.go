@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"flag"
 	"log"
+	"os"
+	"strconv"
 
 	"github.com/BurntSushi/toml"
 )
@@ -116,6 +118,82 @@ func fromCommandArguments(serverConfig *ServerConfig) {
 	}
 }
 
+func fromEnvs(serverConfig *ServerConfig) {
+	cert, ok := os.LookupEnv("CERT")
+	if ok {
+		serverConfig.General.Cert = &cert
+	}
+
+	dbpath, ok := os.LookupEnv("DBPATH")
+	if ok {
+		serverConfig.General.DBPath = &dbpath
+	}
+
+	value, ok := os.LookupEnv("DBSTATINTERVAL")
+	if ok {
+		int_val, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			log.Panicf("Environment variable DBSTATINTERVAL is not an int. Given %s", value)
+		}
+		uint_val := uint64(int_val)
+		serverConfig.General.DbStatInterval = &uint_val
+	}
+
+	value, ok = os.LookupEnv("DBUPDATEINTERVAL")
+	if ok {
+		int_val, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			log.Panicf("Environment variable DBUPDATEINTERVAL is not an int. Given %s", value)
+		}
+		uint_val := uint64(int_val)
+		serverConfig.General.DbUpdateInterval = &uint_val
+	}
+
+	value, ok = os.LookupEnv("DBWAITTIMEOUT")
+	if ok {
+		int_val, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			log.Panicf("Environment variable DBWAITTIMEOUT is not an int. Given %s", value)
+		}
+		uint_val := uint64(int_val)
+		serverConfig.General.DbWaitTimeout = &uint_val
+	}
+
+	value, ok = os.LookupEnv("DEBUG")
+	if ok {
+		bool_val, err := strconv.ParseBool(value)
+		if err != nil {
+			log.Panicf("Environment variable DEBUG is not a bool. Given %s", value)
+		}
+		serverConfig.General.Debug = &bool_val
+	}
+
+	host, ok := os.LookupEnv("HOST")
+	if ok {
+		serverConfig.General.Host = &host
+	}
+
+	key, ok := os.LookupEnv("KEY")
+	if ok {
+		serverConfig.General.Key = &key
+	}
+
+	password, ok := os.LookupEnv("PASSWORD")
+	if ok {
+		serverConfig.General.Password = &password
+	}
+
+	value, ok = os.LookupEnv("PORT")
+	if ok {
+		int_val, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			log.Panicf("Environment variable PORT is not an int. Given %s", value)
+		}
+		uint_val := uint16(int_val)
+		serverConfig.General.Port = &uint_val
+	}
+}
+
 func printConfig(serverConfig ServerConfig) {
 	s, _ := json.MarshalIndent(serverConfig, "", "\t")
 	log.Printf("Configuration:\n%s", string(s))
@@ -151,6 +229,7 @@ func GetConfig() ServerConfig {
 	defaultConfig := General{Host: host, Port: port16, Cert: cert, Key: key, Password: password, DBPath: dbPath, DbUpdateInterval: dbUpdateInterval, DbWaitTimeout: dbWaitTimeout, DbStatInterval: dbStatInterval, Debug: debug}
 	setDefaults(&defaultConfig, &serverConfig)
 	fromCommandArguments(&serverConfig)
+	fromEnvs(&serverConfig)
 
 	printConfig(serverConfig)
 	return serverConfig
