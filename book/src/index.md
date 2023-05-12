@@ -13,8 +13,8 @@ Use alongside <u>**extremely popular**</u> VoIP software, e.g. Microsoft Teams, 
 ## What is niketsu? <img src="./images/looking-around.gif" alt="Looking around Gopher" height=20>
 
 <div>
-<img src="./images/gopher-dance-long-3x.gif" alt="Dancing Gopher" height=275 width=175 style="float: right; margin-left: 3rem;">
-<img src="./images/gopher-dance-long-3x.gif" alt="Dancing Gopher" height=275 width=175 style="float: left; margin-right: 3rem;">
+<img src="./images/gopher-dance-long-3x.gif" alt="Dancing Gopher" height=275 width=175 style="float: right; margin-left: 3rem;"/>
+<img src="./images/gopher-dance-long-3x.gif" alt="Dancing Gopher" height=275 width=175 style="float: left; margin-right: 3rem;"/>
 
 > - niketsu is a video synchonisation program based solely on the greatest video player [mpv](https://github.com/mpv-player/mpv).
 >
@@ -28,7 +28,42 @@ Use alongside <u>**extremely popular**</u> VoIP software, e.g. Microsoft Teams, 
 
 Check out the [Download](./downloads.md) page or [build](./building.md) it yourself.
 
-The hottest (daily nightly) releases are available on [Github](https://github.com/sevenautumns/niketsu/). 
+The hottest (daily nightly) releases are available on [Github](https://github.com/sevenautumns/niketsu/).
+
+
+## Getting started
+
+Visit the [usage page](./usage.md) or take a look through the sidebar of the wiki.
+
+## Publicly available servers
+
+In case you want to try out niketsu but do not want to host the server yourself, try out one of our public servers.
+Just copy the domain and port into the niketsu-client:
+
+### Latest Release
+
+#### Secure (TLS)
+
+- autumnal.de:6969
+- autumnal.de:9696
+- autumnal.de:42069
+
+#### Insecure (TCP)
+
+- autumnal.de:2222
+
+### Stable Release
+
+#### Secure (TLS)
+
+The port ranges from 7766 to 7777 are available (choose one):
+
+- autumnal.de:7766-7777
+
+#### Insecure (TCP)
+
+- autumnal.de:3333
+- autumnal.de:4444
 
 
 ## [Features](https://www.reddit.com/r/ProgrammerHumor/comments/x9w0jh/simple_feature/) (Serious) <img src="./images/run.gif" alt="Running Gopher" height=20> <img src="./images/run.gif" alt="Running Gopher" height=20> <img src="./images/run.gif" alt="Running Gopher" height=20> <img src="./images/run.gif" alt="Running Gopher" height=20> <img src="./images/run.gif" alt="Running Gopher" height=20>
