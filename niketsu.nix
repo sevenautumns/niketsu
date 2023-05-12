@@ -1,10 +1,11 @@
 { config, lib, pkgs, inputs, ... }:
 let
   system = pkgs.system;
-  niketsu = inputs.niketsu.packages.${system}.niketsu-server;
+  niketsu-stable = inputs.niketsu-stable.packages.${system}.niketsu-server;
+  niketsu-nightly = inputs.niketsu-nightly.packages.${system}.niketsu-server;
   server = {
     stable = {
-      secure = lib.range 7766 7778;
+      secure = lib.range 7766 7777;
       insecure = [ 3333 4444 ];
     };
     nightly = {
@@ -16,48 +17,38 @@ let
   stablePorts = with server.stable; secure ++ insecure;
   ports = nightlyPorts ++ stablePorts;
   isSecure = p:
-    (builtins.elem p (with server; stable.secure ++ nightly.insecure));
+    (builtins.elem p (with server; stable.secure ++ nightly.secure));
   isNightly = p: (builtins.elem p nightlyPorts);
-in
-{
+in {
   # Template service for server
-  systemd.services = {
-    "niketsu@" = {
+  systemd.services = builtins.listToAttrs (builtins.map (p: {
+    name = "niketsu-${builtins.toString p}";
+    value = {
       enable = true;
+      wantedBy = [ "multi-user.target" ];
       serviceConfig = {
+        ExecStart = "${
+            if (isNightly p) then niketsu-nightly else niketsu-stable
+          }/bin/niketsu-server";
         User = config.users.users.niketsu.name;
-        ExecStart = "niketsu-server";
         Restart = "always";
         RestartSec = 2;
-        WorkingDirectory = "/var/lib/niketsu-%i";
+        WorkingDirectory = "/var/lib/niketsu-${builtins.toString p}";
+      };
+      environment = lib.attrsets.optionalAttrs (isSecure p) {
+        CERT = "${config.security.acme.certs."autumnal.de".directory}/cert.pem";
+        KEY = "${config.security.acme.certs."autumnal.de".directory}/key.pem";
+        PORT = builtins.toString p;
       };
     };
-  } // builtins.listToAttrs (builtins.map
-    (p: {
-      name = "niketsu@${builtins.toString p}";
-      value = {
-        wantedBy = [ "multi-user.target" ];
-        overrideStrategy = "asDropin";
-        environment = lib.attrsets.optionalAttrs (isSecure p) {
-          CERT = "${config.security.acme.certs."autumnal.de".directory}/cert.pem";
-          KEY = "${config.security.acme.certs."autumnal.de".directory}/key.pem";
-        };
-        path =
-          if (isNightly p) then
-            [ inputs.niketsu-nightly.packages.${system}.niketsu-server ]
-          else
-            [ inputs.niketsu-stable.packages.${system}.niketsu-server ];
-      };
-    })
-    ports);
+  }) ports);
 
   # open all ports we use
   networking.firewall.allowedTCPPorts = ports;
 
   # create working directories
-  systemd.tmpfiles.rules = builtins.map
-    (p:
-      "d '/var/lib/niketsu-${
+  systemd.tmpfiles.rules = builtins.map (p:
+    "d '/var/lib/niketsu-${
       builtins.toString p
     }' 0700 ${config.users.users.niketsu.name} ${config.users.users.niketsu.group} - -")
     ports;
@@ -70,5 +61,5 @@ in
     extraGroups = [ "nginx" ];
     description = "Niketsu Service User";
   };
-  users.groups.niketsu = {};
+  users.groups.niketsu.gid = 992;
 }
