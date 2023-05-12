@@ -483,9 +483,9 @@ func NewCapitalist(config ServerConfig) Capitalist {
 	// create database directory
 	_, err := os.Stat(*config.General.DBPath)
 	if os.IsNotExist(err) {
-		err := os.Mkdir(filepath.Dir(*config.General.DBPath), 0700)
+		err := os.Mkdir(*config.General.DBPath, 0700)
 		if err != nil {
-			logger.Fatalw("Failed to create directory of db path", "path", filepath.Dir(*config.General.DBPath), "error", err)
+			logger.Fatalw("Failed to create directory of db path", "path", *config.General.DBPath, "error", err)
 		}
 	}
 
