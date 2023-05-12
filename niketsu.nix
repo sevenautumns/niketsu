@@ -70,4 +70,5 @@ in
     extraGroups = [ "nginx" ];
     description = "Niketsu Service User";
   };
+  users.groups.niketsu = {};
 }
