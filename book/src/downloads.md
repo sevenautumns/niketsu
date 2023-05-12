@@ -5,18 +5,19 @@
 Precompiled binaries (executable files) and [Source code](https://www.reddit.com/r/ProgrammerAnimemes/comments/k6k38v/chief_programmer_left_on_read/) are available here (or on [Github](https://github.com/sevenautumns/niketsu/releases)).
 
 If you are interested to host a niketsu server yourself, feel free to use our binaries (below) or build it [yourself](./building.md).
+Currently, Linux clients have to be built from source since they are not statically linked.
 
 ### Client
 
-- [x] [x86-64 Linux Release](https://github.com/sevenautumns/niketsu/releases/download/nightly/x86_64-linux-niketsu-client)
-- [x] [ARM64 Linux Release (Raspberry Pi, etc.)](https://github.com/sevenautumns/niketsu/releases/download/nightly/aarch64-linux-niketsu-client)
-- [x] [Fensterreinigung (Windows)](https://github.com/sevenautumns/niketsu/releases/download/nightly/x86_64-windows-niketsu-client.zip)
+- [x] [x86-64 Linux Builds](./building.md#client)
+- [x] [ARM64 Linux Release (Raspberry Pi, etc.) Builds](./building.md#client)
+- [x] [Fensterreinigung (Windows) Binary](https://github.com/sevenautumns/niketsu/releases/download/nightly/x86_64-windows-niketsu-client.zip)
 - [ ] A certain scientific fruit companies' systems
 
 ### Server
 
-- [x] [x86-64 Linux Release](https://github.com/sevenautumns/niketsu/releases/download/nightly/x86_64-linux-niketsu-server)
-- [x] [ARM64 Linux Release (Raspberry Pi, etc.)](https://github.com/sevenautumns/niketsu/releases/download/nightly/aarch64-linux-niketsu-server)
+- [x] [x86-64 Linux Binary](https://github.com/sevenautumns/niketsu/releases/download/nightly/x86_64-linux-niketsu-server)
+- [x] [ARM64 Linux (Raspberry Pi, etc.) Binary](https://github.com/sevenautumns/niketsu/releases/download/nightly/aarch64-linux-niketsu-server)
 
 ### Source
 
