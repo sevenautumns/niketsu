@@ -3,16 +3,17 @@
     "agenix": {
       "inputs": {
         "darwin": "darwin",
+        "home-manager": "home-manager",
         "nixpkgs": [
           "nixpkgs"
         ]
       },
       "locked": {
-        "lastModified": 1682101079,
-        "narHash": "sha256-MdAhtjrLKnk2uiqun1FWABbKpLH090oeqCSiWemtuck=",
+        "lastModified": 1683866323,
+        "narHash": "sha256-M2bEuh2jr0Ec13GnP5f8unD8q0AcPt2fHSUynOZJ8No=",
         "owner": "ryantm",
         "repo": "agenix",
-        "rev": "2994d002dcff5353ca1ac48ec584c7f6589fe447",
+        "rev": "92197270a1eedd142a4aff853e4cc6d1e838c22f",
         "type": "github"
       },
       "original": {
@@ -153,6 +154,27 @@
         "type": "github"
       }
     },
+    "home-manager": {
+      "inputs": {
+        "nixpkgs": [
+          "agenix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1682203081,
+        "narHash": "sha256-kRL4ejWDhi0zph/FpebFYhzqlOBrk0Pl3dzGEKSAlEw=",
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "rev": "32d3e39c491e2f91152c84f8ad8b003420eab0a1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "type": "github"
+      }
+    },
     "naersk": {
       "inputs": {
         "nixpkgs": "nixpkgs_4"
@@ -180,11 +202,11 @@
         "utils": "utils_2"
       },
       "locked": {
-        "lastModified": 1683836955,
-        "narHash": "sha256-eO6wz9+x5VFtm2gwJ+9FtuyrcpeB6fzS1ncoGax67qM=",
+        "lastModified": 1683893296,
+        "narHash": "sha256-g20hQa52gjQKY8SqGRaG9a2B9XeA8bhkM+o/72vSRm8=",
         "owner": "sevenautumns",
         "repo": "niketsu",
-        "rev": "9a9836e2964d3c3811f8f5832b3fea161f83992a",
+        "rev": "660d295ebf8821a764192ce1a3f483d40e821786",
         "type": "github"
       },
       "original": {
