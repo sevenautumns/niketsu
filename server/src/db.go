@@ -16,7 +16,6 @@ type Karen struct {
 }
 
 // Creates a new Database connection with some additional options. Make sure to call defer karen.Close() after successfully initializing the database. timeout and statFreq are given in seconds.
-// If opendb is given, the connection to the db is directly opened. Otherwise, after each function call, the connection is opened and closed again.
 func NewKaren(path string, timeout uint64, statFreq uint64) (Karen, error) {
 	var karen Karen
 	karen.path = path

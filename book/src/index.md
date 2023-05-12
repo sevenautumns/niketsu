@@ -13,8 +13,8 @@ Use alongside <u>**extremely popular**</u> VoIP software, e.g. Microsoft Teams, 
 ## What is niketsu? <img src="./images/looking-around.gif" alt="Looking around Gopher" height=20>
 
 <div>
-<img src="./images/gopher-dance-long-3x.gif" alt="Dancing Gopher" height=275 width=175 style="float: right; margin-left: 3rem;">
-<img src="./images/gopher-dance-long-3x.gif" alt="Dancing Gopher" height=275 width=175 style="float: left; margin-right: 3rem;">
+<img src="./images/gopher-dance-long-3x.gif" alt="Dancing Gopher" height=275 width=175 style="float: right; margin-left: 3rem;"/>
+<img src="./images/gopher-dance-long-3x.gif" alt="Dancing Gopher" height=275 width=175 style="float: left; margin-right: 3rem;"/>
 
 > - niketsu is a video synchonisation program based solely on the greatest video player [mpv](https://github.com/mpv-player/mpv).
 >
@@ -33,7 +33,7 @@ The hottest (daily nightly) releases are available on [Github](https://github.co
 
 ## Getting started
 
-Visit the [Usage page](./usage.md).
+Visit the [usage page](./usage.md) or take a look through the sidebar of the wiki.
 
 ## Publicly available servers
 

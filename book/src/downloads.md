@@ -9,8 +9,8 @@ Currently, Linux clients have to be built from source since they are not statica
 
 ### Client
 
-- [x] [x86-64 Linux Builds](./building.md)
-- [x] [ARM64 Linux Release (Raspberry Pi, etc.) Builds](./building.md)
+- [x] [x86-64 Linux Builds](./building.md#client)
+- [x] [ARM64 Linux Release (Raspberry Pi, etc.) Builds](./building.md#client)
 - [x] [Fensterreinigung (Windows) Binary](https://github.com/sevenautumns/niketsu/releases/download/nightly/x86_64-windows-niketsu-client.zip)
 - [ ] A certain scientific fruit companies' systems
 
