@@ -14,18 +14,19 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    niketsu.url = "github:sevenautumns/niketsu";
+    niketsu-stable.url = "github:sevenautumns/niketsu";
+    niketsu-nightly.url = "github:sevenautumns/niketsu";
 
     devshell.url = "github:numtide/devshell";
   };
 
-  outputs =
-    { self, deploy-rs, nixpkgs, agenix, devshell, ... }@inputs:
-    let lib = nixpkgs.lib;
-          pkgs = import nixpkgs {
-            system = "x86_64-linux";
-            overlays = [ devshell.overlays.default deploy-rs.overlay ];
-          };
+  outputs = { self, deploy-rs, nixpkgs, agenix, devshell, ... }@inputs:
+    let
+      lib = nixpkgs.lib;
+      pkgs = import nixpkgs {
+        system = "x86_64-linux";
+        overlays = [ devshell.overlays.default deploy-rs.overlay ];
+      };
     in {
       nixosConfigurations.niketsu = lib.nixosSystem {
         system = "x86_64-linux";
@@ -40,7 +41,7 @@
         specialArgs = { inherit inputs; };
       };
 
-      deploy.nodes.niketsu = let 
+      deploy.nodes.niketsu = let
         known-hosts = pkgs.writeText "known_hosts" ''
           autumnal.de ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOB5kFkv5hNVA0nbeIo1LtGZDOORTH+lXrxq8h2EmI3e
         '';
@@ -56,17 +57,12 @@
         };
       };
 
-      devShells.x86_64-linux.default =
-        (pkgs.devshell.mkShell {
-          name = "niketsu-deploy-shell";
-          packages = [
-            pkgs.deploy-rs.deploy-rs
-            pkgs.openssh
-          ];
-        });
+      devShells.x86_64-linux.default = (pkgs.devshell.mkShell {
+        name = "niketsu-deploy-shell";
+        packages = [ pkgs.deploy-rs.deploy-rs pkgs.openssh ];
+      });
 
       checks = builtins.mapAttrs
-        (system: deployLib: deployLib.deployChecks self.deploy)
-        deploy-rs.lib;
+        (system: deployLib: deployLib.deployChecks self.deploy) deploy-rs.lib;
     };
 }

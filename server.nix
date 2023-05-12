@@ -1,5 +1,9 @@
 { config, lib, pkgs, modulesPath, ... }: {
-  imports = [ (modulesPath + "/profiles/qemu-guest.nix") ./niketsu.nix ./certificate.nix ];
+  imports = [
+    (modulesPath + "/profiles/qemu-guest.nix")
+    ./niketsu.nix
+    ./certificate.nix
+  ];
 
   boot.loader.grub.enable = true;
   boot.loader.grub.version = 2;
