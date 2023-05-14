@@ -478,19 +478,19 @@ type Capitalist struct {
 
 func NewCapitalist(config ServerConfig) Capitalist {
 	var capitalist Capitalist
-	capitalist.config = &CapitalistConfig{host: *config.General.Host, port: *config.General.Port, cert: *config.General.Cert, key: *config.General.Key, password: *config.General.Password, dbpath: *config.General.DBPath, dbUpdateInterval: *config.General.DbUpdateInterval, dbWaitTimeout: *config.General.DbWaitTimeout, dbStatInterval: *config.General.DbStatInterval}
+	capitalist.config = &CapitalistConfig{host: config.General.Host, port: config.General.Port, cert: config.General.Cert, key: config.General.Key, password: config.General.Password, dbpath: config.General.DBPath, dbUpdateInterval: config.General.DBUpdateInterval, dbWaitTimeout: config.General.DBWaitTimeout, dbStatInterval: config.General.DBStatInterval}
 
 	// create database directory
-	_, err := os.Stat(*config.General.DBPath)
+	_, err := os.Stat(config.General.DBPath)
 	if os.IsNotExist(err) {
-		err := os.Mkdir(*config.General.DBPath, 0700)
+		err := os.Mkdir(config.General.DBPath, 0700)
 		if err != nil {
-			logger.Fatalw("Failed to create directory of db path", "path", *config.General.DBPath, "error", err)
+			logger.Fatalw("Failed to create directory of db path", "path", config.General.DBPath, "error", err)
 		}
 	}
 
 	// generate general database that contains the available rooms
-	general_db := filepath.Join(*config.General.DBPath, ".main/general.db")
+	general_db := filepath.Join(config.General.DBPath, ".main/general.db")
 	_, err = os.Stat(general_db)
 	if os.IsNotExist(err) {
 		err := os.Mkdir(filepath.Dir(general_db), 0700)
@@ -510,7 +510,7 @@ func NewCapitalist(config ServerConfig) Capitalist {
 	// create rooms given in general db
 	roomConfigs := capitalist.GeneralKaren.GetRoomConfigs("general")
 	for name, roomConfig := range roomConfigs {
-		newRoom := NewRoom(name, *config.General.DBPath, *config.General.DbUpdateInterval, *config.General.DbWaitTimeout, *config.General.DbStatInterval, roomConfig.Persistent)
+		newRoom := NewRoom(name, config.General.DBPath, config.General.DBUpdateInterval, config.General.DBWaitTimeout, config.General.DBStatInterval, roomConfig.Persistent)
 		rooms[name] = &newRoom
 	}
 
@@ -520,7 +520,7 @@ func NewCapitalist(config ServerConfig) Capitalist {
 			continue
 		}
 
-		newRoom := NewRoom(name, *config.General.DBPath, *config.General.DbUpdateInterval, *config.General.DbWaitTimeout, *config.General.DbStatInterval, roomConfig.Persistent)
+		newRoom := NewRoom(name, config.General.DBPath, config.General.DBUpdateInterval, config.General.DBWaitTimeout, config.General.DBStatInterval, roomConfig.Persistent)
 		capitalist.writeRoom(&newRoom)
 		rooms[name] = &newRoom
 	}
