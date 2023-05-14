@@ -35,7 +35,7 @@ This software has been thoroughly investigated by a group of Gophers.
 Be careful though, the Gophers are crazy.
 And infested by some Ferris companions.
 
-In case of inconsistencies, please report [here](https://github.com/sevenautumns/niketsu/issues) and open up and issue.
+In case of inconsistencies, please report [here](https://github.com/sevenautumns/niketsu/issues) and open up an issue.
 </div>
 
 <div>
@@ -71,8 +71,8 @@ In case of inconsistencies, please report [here](https://github.com/sevenautumns
 </div>
 </div>
 
-If it is deteced by some Malware program to be malicious, feel free to blame Ferris.
+If it is deteced by some malware program to be malicious, feel free to blame Ferris.
 
-Please check the code if you feel uncertain: [Github](https://github.com/sevenautumns/niketsu)
+Please check out the code if you feel uncertain: [Github](https://github.com/sevenautumns/niketsu)
 </div>
 </div>

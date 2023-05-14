@@ -2,12 +2,10 @@ package niketsu_server
 
 import (
 	"encoding/json"
-	"flag"
 	"log"
-	"os"
-	"strconv"
 
 	"github.com/BurntSushi/toml"
+	"github.com/jessevdk/go-flags"
 )
 
 type RoomConfig struct {
@@ -15,16 +13,17 @@ type RoomConfig struct {
 }
 
 type General struct {
-	Host             *string
-	Port             *uint16
-	Cert             *string
-	Key              *string
-	Password         *string
-	DBPath           *string
-	DbUpdateInterval *uint64
-	DbWaitTimeout    *uint64
-	DbStatInterval   *uint64
-	Debug            *bool
+	Config           string `long:"config" default:"" env:"CONFIG" description:"path to config file (toml)"`
+	Host             string `long:"host" default:"" env:"HOST" description:"host name (e.g. 0.0.0.0). If left empty (= ''), listens on all IPs of the machine"`
+	Port             uint16 `long:"port" default:"7766" env:"PORT" description:"port (range from 0 to 65535) to listen on"`
+	Cert             string `long:"cert" default:"" env:"CERT" description:"path to TLS certificate file. If none is given, plain TCP is used"`
+	Key              string `long:"key" default:"" env:"KEY" description:"path to TLS key corresponding to the TLS certificate. If none is given, plain TCP is used"`
+	Password         string `long:"password" default:"" env:"PASSWORD" description:"general server password for client connections"`
+	DBPath           string `long:"dbpath" default:"./.db/" env:"DBPATH" description:"path to where database files are stored"`
+	DBUpdateInterval uint64 `long:"dbupdateinterval" default:"2" env:"DBUPDATEINTERVAL" description:"update intervals (in seconds) of writes to the database"`
+	DBWaitTimeout    uint64 `long:"dbwaittimeout" default:"4" env:"DBWAITTIMEOUT" description:"wait time (in seconds) until write to database is aborted"`
+	DBStatInterval   uint64 `long:"dbstatinterval" default:"120" env:"DBSTATINTERVAL" description:"update intervals (in seconds) of logged database statistics"`
+	Debug            bool   `long:"debug" env:"DEBUG" description:"whether to log debugging entries"`
 }
 
 type ServerConfig struct {
@@ -32,204 +31,39 @@ type ServerConfig struct {
 	Rooms   map[string]RoomConfig
 }
 
-func fromConfigFile(configFile string, serverConfig *ServerConfig) {
-	_, err := toml.DecodeFile(configFile, &serverConfig)
+func fromConfigFile(general General, serverConfig *ServerConfig) {
+	_, err := toml.DecodeFile(general.Config, &serverConfig)
 	if err != nil {
-		log.Panicf("Failed to load config file at %s. Make sure the correct file format (toml) is used and the file exists.\nError:%s", configFile, err)
-	}
-	log.Println("Configurations successfully set.")
-}
-
-// what is love
-func setDefaults(defaultConfig *General, serverConfig *ServerConfig) {
-	if serverConfig.General.Cert == nil {
-		serverConfig.General.Cert = defaultConfig.Cert
-	}
-	if serverConfig.General.DBPath == nil {
-		serverConfig.General.DBPath = defaultConfig.DBPath
-	}
-	if serverConfig.General.DbStatInterval == nil {
-		serverConfig.General.DbStatInterval = defaultConfig.DbStatInterval
-	}
-	if serverConfig.General.DbUpdateInterval == nil {
-		serverConfig.General.DbUpdateInterval = defaultConfig.DbUpdateInterval
-	}
-	if serverConfig.General.DbWaitTimeout == nil {
-		serverConfig.General.DbWaitTimeout = defaultConfig.DbWaitTimeout
-	}
-	if serverConfig.General.Debug == nil {
-		serverConfig.General.Debug = defaultConfig.Debug
-	}
-	if serverConfig.General.Host == nil {
-		serverConfig.General.Host = defaultConfig.Host
-	}
-	if serverConfig.General.Key == nil {
-		serverConfig.General.Key = defaultConfig.Key
-	}
-	if serverConfig.General.Password == nil {
-		serverConfig.General.Password = defaultConfig.Password
-	}
-	if serverConfig.General.Port == nil {
-		serverConfig.General.Port = defaultConfig.Port
-	}
-}
-
-func fromCommandArguments(serverConfig *ServerConfig) {
-	if f := flag.CommandLine.Lookup("cert"); f != nil {
-		val := f.Value.(flag.Getter).Get().(string)
-		serverConfig.General.Cert = &val
-	}
-	if f := flag.CommandLine.Lookup("dbpath"); f != nil {
-		val := f.Value.(flag.Getter).Get().(string)
-		serverConfig.General.DBPath = &val
-	}
-	if f := flag.CommandLine.Lookup("dbstatinterval"); f != nil {
-		val := f.Value.(flag.Getter).Get().(uint64)
-		serverConfig.General.DbStatInterval = &val
-	}
-	if f := flag.CommandLine.Lookup("dbupdateinterval"); f != nil {
-		val := f.Value.(flag.Getter).Get().(uint64)
-		serverConfig.General.DbUpdateInterval = &val
-	}
-	if f := flag.CommandLine.Lookup("dbwaittimeout"); f != nil {
-		val := f.Value.(flag.Getter).Get().(uint64)
-		serverConfig.General.DbWaitTimeout = &val
-	}
-	if f := flag.CommandLine.Lookup("debug"); f != nil {
-		val := f.Value.(flag.Getter).Get().(bool)
-		serverConfig.General.Debug = &val
-	}
-	if f := flag.CommandLine.Lookup("host"); f != nil {
-		val := f.Value.(flag.Getter).Get().(string)
-		serverConfig.General.Host = &val
-	}
-	if f := flag.CommandLine.Lookup("key"); f != nil {
-		val := f.Value.(flag.Getter).Get().(string)
-		serverConfig.General.Key = &val
-	}
-	if f := flag.CommandLine.Lookup("password"); f != nil {
-		val := f.Value.(flag.Getter).Get().(string)
-		serverConfig.General.Password = &val
-	}
-	if f := flag.CommandLine.Lookup("port"); f != nil {
-		val := f.Value.(flag.Getter).Get().(uint)
-		uval := uint16(val)
-		serverConfig.General.Port = &uval
-	}
-}
-
-func fromEnvs(serverConfig *ServerConfig) {
-	cert, ok := os.LookupEnv("CERT")
-	if ok {
-		serverConfig.General.Cert = &cert
+		log.Panicf("Failed to load config file. Given: %s. Make sure the correct file format (toml) is used and the file exists.\nError:%s", general.Config, err)
 	}
 
-	dbpath, ok := os.LookupEnv("DBPATH")
-	if ok {
-		serverConfig.General.DBPath = &dbpath
+	enc, err := json.Marshal(general)
+	if err != nil {
+		log.Panicf("Failed to marshal configuration. Error: %s", err)
 	}
 
-	value, ok := os.LookupEnv("DBSTATINTERVAL")
-	if ok {
-		int_val, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			log.Panicf("Environment variable DBSTATINTERVAL is not an int. Given %s", value)
-		}
-		uint_val := uint64(int_val)
-		serverConfig.General.DbStatInterval = &uint_val
-	}
-
-	value, ok = os.LookupEnv("DBUPDATEINTERVAL")
-	if ok {
-		int_val, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			log.Panicf("Environment variable DBUPDATEINTERVAL is not an int. Given %s", value)
-		}
-		uint_val := uint64(int_val)
-		serverConfig.General.DbUpdateInterval = &uint_val
-	}
-
-	value, ok = os.LookupEnv("DBWAITTIMEOUT")
-	if ok {
-		int_val, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			log.Panicf("Environment variable DBWAITTIMEOUT is not an int. Given %s", value)
-		}
-		uint_val := uint64(int_val)
-		serverConfig.General.DbWaitTimeout = &uint_val
-	}
-
-	value, ok = os.LookupEnv("DEBUG")
-	if ok {
-		bool_val, err := strconv.ParseBool(value)
-		if err != nil {
-			log.Panicf("Environment variable DEBUG is not a bool. Given %s", value)
-		}
-		serverConfig.General.Debug = &bool_val
-	}
-
-	host, ok := os.LookupEnv("HOST")
-	if ok {
-		serverConfig.General.Host = &host
-	}
-
-	key, ok := os.LookupEnv("KEY")
-	if ok {
-		serverConfig.General.Key = &key
-	}
-
-	password, ok := os.LookupEnv("PASSWORD")
-	if ok {
-		serverConfig.General.Password = &password
-	}
-
-	value, ok = os.LookupEnv("PORT")
-	if ok {
-		int_val, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			log.Panicf("Environment variable PORT is not an int. Given %s", value)
-		}
-		uint_val := uint16(int_val)
-		serverConfig.General.Port = &uint_val
+	err = json.Unmarshal(enc, &serverConfig.General)
+	if err != nil {
+		log.Panicf("Failed to umarshal configuration. Error: %s", err)
 	}
 }
 
 func printConfig(serverConfig ServerConfig) {
 	s, _ := json.MarshalIndent(serverConfig, "", "\t")
-	log.Printf("Configuration:\n%s", string(s))
+	log.Printf("Configurations successfully set:\n%s", string(s))
 }
 
 func GetConfig() ServerConfig {
-	configFile := flag.String("config", "", "path to config file (toml)")
-	host := flag.String("host", "", "host name (e.g. 0.0.0.0). If left empty (= ''), listens on all IPs of the machine")
-	port := flag.Uint("port", 7766, "port (16bit unsigned integer) to listen on")
-	cert := flag.String("cert", "", "TLS certificate. If none is given, plain TCP is used")
-	key := flag.String("key", "", "TLS key corresponding to the TLS certificate. If none is given, plain TCP is used")
-	password := flag.String("password", "", "general server password for client connections")
-	dbPath := flag.String("dbpath", ".db/", "path to where database files are stored")
-	dbUpdateInterval := flag.Uint64("dbupdateinterval", 2, "update intervals of writes to the database")
-	dbWaitTimeout := flag.Uint64("dbwaittimeout", 4, "wait time until write to database is aborted")
-	dbStatInterval := flag.Uint64("dbstatinterval", 120, "update intervals of database statistics")
-	debug := flag.Bool("debug", false, "whether to log debugging entries")
-	flag.Parse()
+	var general General
+	parser := flags.NewParser(&general, 0)
+	parser.Parse()
 
-	var serverConfig ServerConfig
-	serverConfig.Rooms = make(map[string]RoomConfig, 0)
-	if *configFile != "" {
-		fromConfigFile(*configFile, &serverConfig)
-	}
-
-	var port16 *uint16
-	if port == nil {
-		port16 = nil
+	serverConfig := ServerConfig{Rooms: make(map[string]RoomConfig, 0)}
+	if general.Config != "" {
+		fromConfigFile(general, &serverConfig)
 	} else {
-		tmp := uint16(*port)
-		port16 = &tmp
+		serverConfig.General = general
 	}
-	defaultConfig := General{Host: host, Port: port16, Cert: cert, Key: key, Password: password, DBPath: dbPath, DbUpdateInterval: dbUpdateInterval, DbWaitTimeout: dbWaitTimeout, DbStatInterval: dbStatInterval, Debug: debug}
-	setDefaults(&defaultConfig, &serverConfig)
-	fromCommandArguments(&serverConfig)
-	fromEnvs(&serverConfig)
 
 	printConfig(serverConfig)
 	return serverConfig
