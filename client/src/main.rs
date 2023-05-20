@@ -6,23 +6,22 @@ use anyhow::Result;
 use arc_swap::ArcSwap;
 use config::Config;
 use iced::{Application, Settings};
+use iced_window::MainWindow;
 use log::*;
 use once_cell::sync::Lazy;
-use window::MainWindow;
 
 pub mod client;
 pub mod config;
-pub mod file_table;
 pub mod fs;
 pub mod heartbeat;
+pub mod iced_window;
 pub mod messages;
 pub mod mpv;
+pub mod playlist;
 pub mod rooms;
-pub mod start_ui;
 pub mod styling;
 pub mod user;
 pub mod video;
-pub mod window;
 pub mod ws;
 
 pub static TEXT_SIZE: Lazy<ArcSwap<f32>> = Lazy::new(|| ArcSwap::new(Arc::new(14.0)));

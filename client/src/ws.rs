@@ -19,11 +19,11 @@ use tokio_native_tls::TlsStream;
 use url::Url;
 
 use crate::client::{ClientInner, LogResult, PlayerMessage};
-use crate::file_table::PlaylistWidgetState;
+use crate::iced_window::MainMessage;
+use crate::playlist::PlaylistWidgetState;
 use crate::rooms::RoomsWidgetState;
 use crate::user::ThisUser;
 use crate::video::Video;
-use crate::window::MainMessage;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
@@ -161,7 +161,7 @@ impl ServerWebsocket {
     #[must_use]
     pub fn reboot(self) -> Self {
         // TODO only reboot if msg_sender is closed?
-        Self::new(self.addr.clone(), self.client_sender.clone())
+        Self::new(self.addr.clone(), self.client_sender)
     }
 
     pub fn new(addr: Url, client_sender: MpscSender<PlayerMessage>) -> Self {
