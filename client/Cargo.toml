@@ -36,6 +36,7 @@ chrono = "0.4"
 atomic-counter = "1.0"
 elsa = "1.8"
 crossbeam-channel = "0.5"
+enum_dispatch = "0.3"
 whoami = "1.4"
 
 [build-dependencies]

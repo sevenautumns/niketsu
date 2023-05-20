@@ -245,7 +245,7 @@ impl Application for MainWindow {
                 MainMessage::StartUi(msg) => warn!("{msg:?}"),
                 MainMessage::PlayerChanged => {
                     trace!("Player Changed");
-                    let snap = if RelativeOffset::END.eq(messages_scroll) {
+                    let snap = if RelativeOffset::END.y.eq(&messages_scroll.y) {
                         iced_native::widget::scrollable::snap_to(
                             Id::new("messages"),
                             *messages_scroll,
@@ -346,7 +346,7 @@ pub trait LogResult {
 impl<T> LogResult for anyhow::Result<T> {
     fn log(&self) {
         if let Err(e) = self {
-            error!("{e:?}")
+            warn!("{e:?}")
         }
     }
 }

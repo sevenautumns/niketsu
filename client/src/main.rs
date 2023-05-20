@@ -41,6 +41,7 @@ fn main() -> Result<()> {
     TEXT_SIZE.store(Arc::new(config.text_size));
     let mut settings = Settings::with_flags(config);
     settings.default_text_size = *TEXT_SIZE.load_full();
+    settings.window.size = (600, 770);
     // settings
     MainWindow::run(settings)?;
     Ok(())
