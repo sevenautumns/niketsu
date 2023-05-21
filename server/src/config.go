@@ -12,8 +12,8 @@ type RoomConfig struct {
 	Persistent bool
 }
 
-type General struct {
-	Config           string `long:"config" default:"" env:"CONFIG" description:"path to config file (toml)"`
+type GeneralConfig struct {
+	ConfigPath       string `long:"config" default:"" env:"CONFIG" description:"path to config file (toml)"`
 	Host             string `long:"host" default:"" env:"HOST" description:"host name (e.g. 0.0.0.0). If left empty (= ''), listens on all IPs of the machine"`
 	Port             uint16 `long:"port" default:"7766" env:"PORT" description:"port (range from 0 to 65535) to listen on"`
 	Cert             string `long:"cert" default:"" env:"CERT" description:"path to TLS certificate file. If none is given, plain TCP is used"`
@@ -26,45 +26,56 @@ type General struct {
 	Debug            bool   `long:"debug" env:"DEBUG" description:"whether to log debugging entries"`
 }
 
-type ServerConfig struct {
-	General General
+type Config struct {
+	General GeneralConfig
 	Rooms   map[string]RoomConfig
 }
 
-func fromConfigFile(general General, serverConfig *ServerConfig) {
-	_, err := toml.DecodeFile(general.Config, &serverConfig)
-	if err != nil {
-		log.Panicf("Failed to load config file. Given: %s. Make sure the correct file format (toml) is used and the file exists.\nError:%s", general.Config, err)
-	}
+// Parses command arguments, environment variables and config file in case one is given.
+// Order of precedence is: config file < environment variables < command arguments
+func GetConfig() Config {
+	generalConfig := parseCommandArgs()
 
-	enc, err := json.Marshal(general)
+	config := Config{Rooms: make(map[string]RoomConfig, 0)}
+	if generalConfig.ConfigPath != "" {
+		readConfigFile(generalConfig.ConfigPath, &config)
+		mergeConfigs(generalConfig, &config)
+	} else {
+		config.General = generalConfig
+	}
+	printConfig(config)
+
+	return config
+}
+
+func parseCommandArgs() GeneralConfig {
+	var general GeneralConfig
+	parser := flags.NewParser(&general, 0)
+	parser.Parse()
+
+	return general
+}
+
+func readConfigFile(path string, config *Config) {
+	_, err := toml.DecodeFile(path, &config)
+	if err != nil {
+		log.Panicf("Failed to load config file. Given: %s. Make sure the correct file format (toml) is used and the file exists.\nError:%s", path, err)
+	}
+}
+
+func mergeConfigs(generalConfig GeneralConfig, config *Config) {
+	enc, err := json.Marshal(generalConfig)
 	if err != nil {
 		log.Panicf("Failed to marshal configuration. Error: %s", err)
 	}
 
-	err = json.Unmarshal(enc, &serverConfig.General)
+	err = json.Unmarshal(enc, &config.General)
 	if err != nil {
 		log.Panicf("Failed to umarshal configuration. Error: %s", err)
 	}
 }
 
-func printConfig(serverConfig ServerConfig) {
+func printConfig(serverConfig Config) {
 	s, _ := json.MarshalIndent(serverConfig, "", "\t")
 	log.Printf("Configurations successfully set:\n%s", string(s))
-}
-
-func GetConfig() ServerConfig {
-	var general General
-	parser := flags.NewParser(&general, 0)
-	parser.Parse()
-
-	serverConfig := ServerConfig{Rooms: make(map[string]RoomConfig, 0)}
-	if general.Config != "" {
-		fromConfigFile(general, &serverConfig)
-	} else {
-		serverConfig.General = general
-	}
-
-	printConfig(serverConfig)
-	return serverConfig
 }

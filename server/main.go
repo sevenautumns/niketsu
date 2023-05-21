@@ -4,7 +4,7 @@ import (
 	server "github.com/sevenautumns/niketsu/server/src"
 )
 
-var config server.ServerConfig
+var config server.Config
 
 func init() {
 	config = server.GetConfig()
@@ -14,6 +14,6 @@ func init() {
 func main() {
 	defer server.LoggerSync()
 
-	capitalist := server.NewCapitalist(config)
-	capitalist.Start()
+	overseer := server.NewOverseer(config)
+	overseer.Start()
 }
