@@ -60,9 +60,9 @@ func (overseer *Overseer) handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (overseer *Overseer) createDir(path string) {
-	_, err := os.Stat(path)
+	_, err := os.Stat(filepath.Dir(path))
 	if os.IsNotExist(err) {
-		err := os.Mkdir(path, 0700)
+		err := os.MkdirAll(filepath.Dir(path), os.ModePerm)
 		if err != nil {
 			logger.Fatalw("Failed to create directory of db path", "path", path, "error", err)
 		}
