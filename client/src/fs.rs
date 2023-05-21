@@ -17,8 +17,9 @@ use tokio::sync::mpsc::UnboundedSender as MpscSender;
 use tokio::sync::{Notify, RwLock, Semaphore};
 
 use crate::client::{ClientInner, PlayerMessage};
+use crate::iced_window::running::message::{StartDbUpdate, StopDbUpdate, UserMessage};
+use crate::iced_window::MainMessage;
 use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
-use crate::window::MainMessage;
 use crate::TEXT_SIZE;
 
 #[derive(Debug, Clone)]
@@ -113,8 +114,8 @@ impl FileDatabase {
         };
 
         let update_msg = match finished {
-            true => MainMessage::User(crate::window::UserMessage::StartDbUpdate),
-            false => MainMessage::User(crate::window::UserMessage::StopDbUpdate),
+            true => UserMessage::from(StartDbUpdate).into(),
+            false => UserMessage::from(StopDbUpdate).into(),
         };
         let update_btn = match finished {
             true => Button::new("Update"),

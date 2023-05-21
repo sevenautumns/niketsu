@@ -86,6 +86,7 @@ impl MpvProperty {
 pub enum MpvCommand {
     Loadfile,
     Stop,
+    ShowText,
 }
 
 impl TryFrom<MpvCommand> for CString {
@@ -257,6 +258,12 @@ impl Mpv {
 
         let cmd = MpvCommand::Loadfile.try_into()?;
         self.send_command(&[&cmd, &path])?;
+        Ok(())
+    }
+
+    pub fn show_text(&self, text: &str) -> Result<()> {
+        let cmd = MpvCommand::ShowText.try_into()?;
+        self.send_command(&[&cmd, &CString::new(text)?])?;
         Ok(())
     }
 

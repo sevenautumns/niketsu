@@ -6,17 +6,17 @@ use std::sync::Arc;
 
 use anyhow::{Error, Result};
 use arc_swap::{ArcSwap, ArcSwapOption};
-use log::{error, trace};
+use log::{error, trace, warn};
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
 
 use crate::config::Config;
-use crate::file_table::PlaylistWidgetState;
 use crate::fs::{DatabaseMessage, FileDatabase};
 use crate::heartbeat::Heartbeat;
 use crate::messages::{MessagesReceiver, MessagesSender};
 use crate::mpv::event::MpvEvent;
 use crate::mpv::Mpv;
+use crate::playlist::PlaylistWidgetState;
 use crate::rooms::RoomsWidgetState;
 use crate::user::ThisUser;
 use crate::video::{PlayingFile, Video};
@@ -189,7 +189,7 @@ pub trait LogResult {
 impl<T> LogResult for anyhow::Result<T> {
     fn log(&self) {
         if let Err(e) = self {
-            error!("{e:?}")
+            warn!("{e:?}")
         }
     }
 }

@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::process::exit;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,11 +19,11 @@ use tokio_native_tls::TlsStream;
 use url::Url;
 
 use crate::client::{ClientInner, LogResult, PlayerMessage};
-use crate::file_table::PlaylistWidgetState;
+use crate::iced_window::MainMessage;
+use crate::playlist::PlaylistWidgetState;
 use crate::rooms::RoomsWidgetState;
 use crate::user::ThisUser;
 use crate::video::Video;
-use crate::window::MainMessage;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
@@ -159,9 +158,10 @@ pub struct ServerWebsocket {
 }
 
 impl ServerWebsocket {
-    pub fn reboot(&self) -> Self {
+    #[must_use]
+    pub fn reboot(self) -> Self {
         // TODO only reboot if msg_sender is closed?
-        Self::new(self.addr.clone(), self.client_sender.clone())
+        Self::new(self.addr.clone(), self.client_sender)
     }
 
     pub fn new(addr: Url, client_sender: MpscSender<PlayerMessage>) -> Self {
@@ -187,11 +187,13 @@ impl ServerWebsocket {
                                 match serde_json::to_string(&msg) {
                                     Ok(msg) => {
                                         if let Err(err) = sink.send(TsMessage::Text(msg)).await {
+                                            warn!("Websocket ended: {err:?}");
                                             client_sender
                                                 .send(PlayerMessage::Server(
                                                     WebSocketMessage::Error(Arc::new(err.into())),
                                                 ))
                                                 .expect("Client sender unexpectedly ended");
+                                            return;
                                         }
                                     }
                                     Err(err) => client_sender
@@ -201,28 +203,38 @@ impl ServerWebsocket {
                                         .expect("Client sender unexpectedly ended"),
                                 }
                             } else {
-                                error!("Server message sender unexpectedly ended");
-                                exit(1);
+                                // error!("Server message sender unexpectedly ended");
+                                // exit(1);
+                                return;
                             }
                         }
                     });
                     loop {
                         match Self::recv(&mut stream).await {
-                            Ok(msg) => client_sender
-                                .send(PlayerMessage::Server(msg))
-                                .expect("Client sender unexpectedly ended"),
-                            Err(err) => {
-                                error!("Websocket ended: {err:?}");
+                            Ok(msg @ WebSocketMessage::WsStreamEnded) => {
                                 client_sender
-                                    .send(PlayerMessage::Server(WebSocketMessage::WsStreamEnded))
-                                    .expect("Client sender unexpectedly ended")
+                                    .send(PlayerMessage::Server(msg))
+                                    .expect("Client sender unexpectedly ended");
+                                return;
+                            }
+                            Ok(msg) => {
+                                client_sender
+                                    .send(PlayerMessage::Server(msg))
+                                    .expect("Client sender unexpectedly ended");
+                            }
+                            Err(err) => {
+                                client_sender
+                                    .send(PlayerMessage::Server(WebSocketMessage::Error(Arc::new(
+                                        err,
+                                    ))))
+                                    .expect("Client sender unexpectedly ended");
                             }
                         }
                     }
                 }
-                Err(_) => {
-                    client_sender.send(PlayerMessage::Server(WebSocketMessage::WsStreamEnded))
-                }
+                Err(_) => client_sender
+                    .send(PlayerMessage::Server(WebSocketMessage::WsStreamEnded))
+                    .expect("Client sender unexpectedly ended"),
             }
         });
         Self {
@@ -381,9 +393,8 @@ impl ClientInner {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     ws.rcu(|w| {
                         let ws = ServerWebsocket::clone(w);
-                        ws.reboot();
-                        ws
-                    })
+                        ws.reboot()
+                    });
                 });
                 Ok(())
             }

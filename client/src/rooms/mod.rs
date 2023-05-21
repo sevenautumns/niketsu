@@ -7,11 +7,14 @@ use iced::{Element, Length, Renderer, Theme};
 use iced_native::widget::Tree;
 use iced_native::Widget;
 
-use crate::file_table::MAX_DOUBLE_CLICK_INTERVAL;
+use self::message::{ClickRoom, RoomsWidgetMessage};
+use crate::iced_window::MainMessage;
+use crate::playlist::MAX_DOUBLE_CLICK_INTERVAL;
 use crate::styling::FileButton;
 use crate::user::ThisUser;
-use crate::window::MainMessage;
 use crate::ws::UserStatus;
+
+pub mod message;
 
 pub struct RoomsWidget<'a> {
     base: Element<'a, MainMessage>,
@@ -26,9 +29,7 @@ impl<'a> RoomsWidget<'a> {
             let selected = state.selected.eq(room.0);
             elements.push(
                 Button::new(Container::new(Text::new(room.0.clone())).padding(2))
-                    .on_press(MainMessage::Rooms(RoomsWidgetMessage::ClickRoom(
-                        room.0.to_string(),
-                    )))
+                    .on_press(RoomsWidgetMessage::from(ClickRoom(room.0.to_string())).into())
                     .padding(0)
                     .width(Length::Fill)
                     .style(FileButton::theme(selected, true))
@@ -155,11 +156,6 @@ impl<'a> Widget<MainMessage, Renderer> for RoomsWidget<'a> {
             shell,
         )
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum RoomsWidgetMessage {
-    ClickRoom(String),
 }
 
 #[derive(Debug, Clone)]

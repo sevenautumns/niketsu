@@ -10,7 +10,8 @@ use tokio::sync::mpsc::UnboundedSender as MpscSender;
 use tokio::sync::Notify;
 
 use crate::client::{ClientInner, PlayerMessage};
-use crate::window::MainMessage;
+use crate::iced_window::message::PlayerChanged;
+use crate::iced_window::MainMessage;
 use crate::ws::ServerMessage;
 
 pub struct Heartbeat;
@@ -45,7 +46,7 @@ impl Changed {
     pub fn next(notify: Arc<Notify>) -> Command<MainMessage> {
         async fn changed(notify: Arc<Notify>) -> MainMessage {
             notify.notified().await;
-            MainMessage::PlayerChanged
+            PlayerChanged.into()
         }
         Command::single(Action::Future(changed(notify).boxed()))
     }
