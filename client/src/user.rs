@@ -1,4 +1,4 @@
-use crate::ws::ServerMessage;
+use crate::client::server::{NiketsuMessage, NiketsuStatus};
 
 #[derive(Debug, Clone)]
 pub struct ThisUser {
@@ -15,7 +15,7 @@ impl ThisUser {
     }
 
     #[must_use]
-    pub fn set_ready(&mut self, ready: bool) -> Option<ServerMessage> {
+    pub fn set_ready(&mut self, ready: bool) -> Option<NiketsuMessage> {
         if ready != self.ready {
             self.ready = ready;
             return Some(self.status());
@@ -35,15 +35,16 @@ impl ThisUser {
         self.name.clone()
     }
 
-    pub fn status(&self) -> ServerMessage {
-        ServerMessage::Status {
+    pub fn status(&self) -> NiketsuMessage {
+        NiketsuStatus {
             ready: self.ready,
             username: self.name(),
         }
+        .into()
     }
 
     #[must_use]
-    pub fn set_name(&mut self, user: String) -> Option<ServerMessage> {
+    pub fn set_name(&mut self, user: String) -> Option<NiketsuMessage> {
         if user.eq(&self.name) {
             self.name = user;
             return Some(self.status());

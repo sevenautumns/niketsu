@@ -8,9 +8,9 @@ use iced_native::command::Action;
 use log::{error, info, warn};
 
 use super::StartUI;
-use crate::client::Client;
+use crate::client::heartbeat::Changed;
+use crate::client::Core;
 use crate::config::{Config, RgbWrap};
-use crate::heartbeat::Changed;
 use crate::iced_window::message::IcedMessage;
 use crate::iced_window::{LogResult, MainMessage, MainWindow, RunningWindow};
 use crate::TEXT_SIZE;
@@ -205,7 +205,7 @@ impl IcedMessage for StartButton {
             let config: Config = ui.clone().into();
             TEXT_SIZE.store(Arc::new(config.text_size));
             config.save().log();
-            match Client::new(config.clone()) {
+            match Core::new(config.clone()) {
                 Ok(client) => {
                     let notify = client.changed();
                     *win = RunningWindow::new(client, config).into();

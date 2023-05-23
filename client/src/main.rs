@@ -1,4 +1,5 @@
 #![warn(clippy::unwrap_used)]
+#![warn(clippy::too_many_lines)]
 
 use std::sync::Arc;
 
@@ -12,17 +13,14 @@ use once_cell::sync::Lazy;
 
 pub mod client;
 pub mod config;
-pub mod fs;
-pub mod heartbeat;
 pub mod iced_window;
+pub mod media_player;
 pub mod messages;
-pub mod mpv;
 pub mod playlist;
 pub mod rooms;
 pub mod styling;
 pub mod user;
 pub mod video;
-pub mod ws;
 
 pub static TEXT_SIZE: Lazy<ArcSwap<f32>> = Lazy::new(|| ArcSwap::new(Arc::new(14.0)));
 

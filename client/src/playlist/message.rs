@@ -4,14 +4,14 @@ use iced::Command;
 use log::{debug, warn};
 
 use super::FileInteraction;
-use crate::client::UiMessage;
+use crate::client::server::{NiketsuPlaylist, NiketsuSelect};
+use crate::client::ui::MpvSelect;
 use crate::iced_window::message::IcedMessage;
 use crate::iced_window::running::message::RunningWindowMessage;
 use crate::iced_window::running::RunningWindow;
 use crate::iced_window::{MainMessage, MainWindow};
 use crate::playlist::PlaylistWidgetState;
 use crate::video::Video;
-use crate::ws::ServerMessage;
 
 #[enum_dispatch(RunningWindowMessage)]
 #[derive(Debug, Clone)]
@@ -42,11 +42,11 @@ impl RunningWindowMessage for DoubleClick {
     fn handle(self, win: &mut RunningWindow) -> Result<Command<MainMessage>> {
         debug!("FileTable doubleclick: {:?}", self.video);
         let client = win.client();
-        client.ws().send(ServerMessage::Select {
+        client.ws().send(NiketsuSelect {
             filename: self.video.as_str().to_string().into(),
             username: client.user().load().name(),
         })?;
-        client.send_ui_message(UiMessage::MpvSelect(self.video));
+        client.send_ui_message(MpvSelect(self.video).into());
         Ok(Command::none())
     }
 }
@@ -72,7 +72,7 @@ impl RunningWindowMessage for Delete {
             .drain(..)
             .map(|v| v.as_str().to_string())
             .collect();
-        client.ws().send(ServerMessage::Playlist {
+        client.ws().send(NiketsuPlaylist {
             playlist,
             username: client.user().load().name(),
         })?;
@@ -102,7 +102,7 @@ impl RunningWindowMessage for Move {
             .drain(..)
             .map(|v| v.as_str().to_string())
             .collect();
-        client.ws().send(ServerMessage::Playlist {
+        client.ws().send(NiketsuPlaylist {
             playlist,
             username: client.user().load().name(),
         })?;

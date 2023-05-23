@@ -17,7 +17,7 @@ Do not worry, we provide some documentation here.
 
 #### Requirements
 
-As of yet, the client is not statically (but dynamically) linked. Thus, the following program needs to be installed:
+As yet, the client is not statically (but dynamically) linked. Thus, the following program needs to be installed:
 
 - [mpv](https://mpv.io/installation/)
 
@@ -29,7 +29,7 @@ The latest version of the `niketsu-client` greets the user with the following st
 
 The `niketsu-client` can be used to synchronously watch videos with multiple users. Events of the media player such as starts, stops, seeks or positions and playback speeds are synchronized between clients according to the protocol of the server. Typically, the "slowest client wins". 
 
-Sources of videos can either be any online source (such as youtube) that is supported by [mpv](https://mpv.io) or offline sources (local videos on your hard drives or network drives).
+Sources of videos can either be any online source (such as YouTube) that is supported by [mpv](https://mpv.io) or offline sources (local videos on your hard drives or network drives).
 
 Note that at the moment all clients need to have the exact same names for the sources.
 
@@ -50,7 +50,7 @@ Make sure to check the secure check button if the server supports a secure conne
 
 Example: autumnal.de:7766
 
-where autumnal.de is the host and 7766 the port.
+Where autumnal.de is the host and 7766 the port.
 
 ##### Password
 
@@ -84,7 +84,7 @@ Example: animeIs4Weebs
 
 Click the "+"-Button to add a directory. Multiple directories may be added or (in hindsight) deleted by clicking on the "-"-button.
 
-Directories and all their subdirectories are searched and all video files are appended to a local database.
+Directories and all their subdirectories are searched, and all video files are appended to a local database.
 
 Once a connection to a server is established, the files from the directories may be added to the client to be watched together with other users.
 
@@ -117,7 +117,7 @@ After logging in, the GUI should look like this (two separate windows):
 
 Currently, the media player mpv is unchanged. If you are familiar with mpv, you may enjoy `niketsu` out of the box.
 
-Otherwise if you are unfamiliar with mpv, check out their [manual on controls and keybindings](https://mpv.io/manual/stable/#keyboard-control).
+Otherwise, if you are unfamiliar with mpv, check out their [manual on controls and keybindings](https://mpv.io/manual/stable/#keyboard-control).
 
 Apart from user specific settings for mpv (such as volume, fonts, brightness, etc.), the most relevant events and options for playback (such as start, stop, seek, position, etc.) are synchronized between `niketsu-clients` in the same room.
 
@@ -133,7 +133,7 @@ At the top right of the GUI, there is loading bar with an "Update"-button. Insid
 
 ###### Room overview
 
-Below the file database, a box with all available rooms and logged in users is shown.
+Below the file database, a box with all available rooms and logged-in users is shown.
 
 At the top-level, room names are shown and users logged into a room are slightly indented and ordered below that room.
 
@@ -162,7 +162,7 @@ Typically, the default options should suffice. However, if you are interested, t
 
 The configuration may be given in a config file, via the command line or via environment variables.
 
-The order of precedence is: config file -> environment variable -> command line arguments.
+The order of precedence is: config file → environment variable → command line arguments.
 
 Thus, if a config file has defined a value for an argument, this will be overwritten by both the corresponding environment variable or the command line argument.
 
@@ -182,7 +182,7 @@ Default: none
 
 ##### PORT
 
-Port on which the server listens on websocket connections.
+Port on which the server listens on web socket connections.
 
 Default: 7766
 
@@ -203,12 +203,6 @@ Default: none
 Path to where the databases are saved.
 
 Default: .db
-
-##### DBSTATINTERVAL
-
-Time interval (in seconds) that determines how often statistics of the database are logged. Might be changed in the future.
-
-Default: 120
 
 ##### DBUPDATEINTERVAL
 
@@ -235,7 +229,7 @@ Default: false
 
 The config file should be in toml format.
 
-In the github repository you can find a [default config toml](https://github.com/sevenautumns/niketsu/blob/main/server/config.toml):
+In the GitHub repository you can find a [default config TOML](https://github.com/sevenautumns/niketsu/blob/main/server/config.toml):
 
 ```toml
 title = "Server Configuration"
@@ -260,11 +254,11 @@ Persistent = true
 Persistent = true
 ```
 
-Make sure to use the correct upper- and lowercase letters for the arguments and follow the structure of the default toml file. Conveniently, just copy the file from the repository and change the arguments as you see fit.
+Make sure to use the correct upper- and lowercase letters for the arguments and follow the structure of the default TOML file. Conveniently, just copy the file from the repository and change the arguments as you see fit.
 
-If arguments are not defined, incorrectly spelled or, for example as hash tag is prepended, the arguments are ignored and default values will be used instead.
+If arguments are not defined, incorrectly spelled or, for example as hashtag is prepended, the arguments are ignored, and default values will be used instead.
 
-Under the tag `[General]` all of the server arguments (see [above](./usage.md#arguments)) may be defined.
+Under the tag `[General]` all the server arguments (see [above](./usage.md#arguments)) may be defined.
 
 In addition, the tag `[Rooms]` may be added with additional pre-defined rooms. Rooms can be created with additional tags starting with `Rooms.` followed by their name, e.g. `[Rooms.General]` will create a room called `General` on the server.
 At the moment, rooms only use one additional setting `Persistent` which is either `true` or `false` (default) which determines if rooms will persist on the server even if they are no longer used. This behaviour might change in the future.
@@ -280,7 +274,7 @@ Arguments are fully lowercase. A config file may be specified by setting the `--
 
 #### Environment variables
 
-Finally, each of the arguments (see [above](./usage.md#arguments)) can set set via environment variables.
+Finally, each of the arguments (see [above](./usage.md#arguments)) can be set via environment variables.
 
 Environment variables precede config arguments and may overwrite them. However, command line arguments hold the highest priority.
 

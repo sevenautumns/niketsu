@@ -1,6 +1,6 @@
 # News <img src="./images/morning-coffee.gif" alt="Coffee Gopher" style="height: 3rem"/>
 
-For nightly updates, check [Github](https://github.com/sevenautumns/niketsu/releases).
+For nightly updates, check [GitHub](https://github.com/sevenautumns/niketsu/releases).
 
 
 
@@ -10,13 +10,14 @@ For nightly updates, check [Github](https://github.com/sevenautumns/niketsu/rele
 - Added rooms (somewhat stable)
 - TLS and password protection on server
 
+## Current Development <img src="./images/network.svg" alt="Network Gopher" style="height: 3rem"/>
 
-## Current Development  <img src="./images/network.svg" alt="Network Gopher" style="height: 3rem"/>
-
-- Predictive and dynamic synchronisation based on client caches
+- Predictive and dynamic synchronization based on client caches
 - Client-side convenience and settings
-- Add docker image to the Github registry https://ghcr.io
-
+- Add docker image to the GitHub registry https://ghcr.io
+- apply clean code practices
+  - refactor
+  - add tests
 
 ## Changelog <img src="./images/morning-beer.gif" alt="Beer Gopher" style="height: 3rem"/>
 
