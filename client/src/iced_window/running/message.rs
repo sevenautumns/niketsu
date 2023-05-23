@@ -5,11 +5,11 @@ use iced::Command;
 use log::{debug, trace, warn};
 
 use super::RunningWindow;
-use crate::fs::FileDatabase;
+use crate::client::database::FileDatabase;
+use crate::client::server::ServerMessage;
 use crate::iced_window::message::IcedMessage;
 use crate::iced_window::{MainMessage, MainWindow};
 use crate::user::ThisUser;
-use crate::ws::ServerMessage;
 
 #[enum_dispatch]
 pub trait RunningWindowMessage {

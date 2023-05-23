@@ -12,26 +12,24 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use iced::widget::{row, Button, Container, ProgressBar, Text, Tooltip};
 use iced::{Element, Length, Renderer};
-use log::{debug, trace};
+use log::trace;
 use tokio::sync::mpsc::UnboundedSender as MpscSender;
 use tokio::sync::{Notify, RwLock, Semaphore};
 
-use crate::client::{ClientInner, PlayerMessage};
+use self::message::UpdateFinished;
+use crate::client::database::message::{Changed, DatabaseMessage};
+use crate::client::PlayerMessage;
 use crate::iced_window::running::message::{StartDbUpdate, StopDbUpdate, UserMessage};
 use crate::iced_window::MainMessage;
 use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
 use crate::TEXT_SIZE;
 
+pub mod message;
+
 #[derive(Debug, Clone)]
 pub struct File {
     pub name: OsString,
     pub path: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-pub enum DatabaseMessage {
-    Changed,
-    UpdateFinished,
 }
 
 #[derive(Debug)]
@@ -145,9 +143,7 @@ impl FileDatabase {
 
         *stop = Notify::new();
         self.database.clear();
-        self.sender
-            .send(PlayerMessage::Database(DatabaseMessage::Changed))
-            .ok();
+        self.sender.send(DatabaseMessage::from(Changed).into()).ok();
         self.queued_dirs.reset();
         self.finished_dirs.reset();
         let paths = self.search_paths.read().await.clone();
@@ -231,27 +227,12 @@ impl FileDatabase {
         for f in files {
             self.database.insert(f.name.clone(), f);
         }
+        self.sender.send(DatabaseMessage::from(Changed).into()).ok();
         self.sender
-            .send(PlayerMessage::Database(DatabaseMessage::Changed))
-            .ok();
-        self.sender
-            .send(PlayerMessage::Database(DatabaseMessage::UpdateFinished))
+            .send(DatabaseMessage::from(UpdateFinished).into())
             .ok();
 
         self.finished_dirs.inc();
-        Ok(())
-    }
-}
-
-impl ClientInner {
-    pub fn react_to_database(&mut self, event: DatabaseMessage) -> Result<()> {
-        match event {
-            DatabaseMessage::Changed => {
-                trace!("Database: changed");
-                self.mpv.may_reload(&self.db)?;
-            }
-            DatabaseMessage::UpdateFinished => debug!("Database: update finished"),
-        }
         Ok(())
     }
 }

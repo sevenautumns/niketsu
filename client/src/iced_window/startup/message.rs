@@ -8,9 +8,9 @@ use iced_native::command::Action;
 use log::{error, info, warn};
 
 use super::StartUI;
+use crate::client::heartbeat::Changed;
 use crate::client::Client;
 use crate::config::{Config, RgbWrap};
-use crate::heartbeat::Changed;
 use crate::iced_window::message::IcedMessage;
 use crate::iced_window::{LogResult, MainMessage, MainWindow, RunningWindow};
 use crate::TEXT_SIZE;

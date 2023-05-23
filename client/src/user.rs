@@ -1,4 +1,4 @@
-use crate::ws::ServerMessage;
+use crate::client::server::ServerMessage;
 
 #[derive(Debug, Clone)]
 pub struct ThisUser {

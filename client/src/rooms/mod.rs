@@ -8,11 +8,11 @@ use iced_native::widget::Tree;
 use iced_native::Widget;
 
 use self::message::{ClickRoom, RoomsWidgetMessage};
+use crate::client::server::UserStatus;
 use crate::iced_window::MainMessage;
 use crate::playlist::MAX_DOUBLE_CLICK_INTERVAL;
 use crate::styling::FileButton;
 use crate::user::ThisUser;
-use crate::ws::UserStatus;
 
 pub mod message;
 

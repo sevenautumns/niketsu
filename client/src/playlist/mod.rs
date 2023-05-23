@@ -10,7 +10,7 @@ use iced_native::{Layout, Widget};
 use log::*;
 
 use self::message::{Delete, DoubleClick, Interaction, Move, PlaylistMessage};
-use crate::fs::FileDatabase;
+use crate::client::database::FileDatabase;
 use crate::iced_window::MainMessage;
 use crate::styling::{FileButton, FileRuleTheme};
 use crate::video::{PlayingFile, Video};

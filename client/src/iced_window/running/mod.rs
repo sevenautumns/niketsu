@@ -91,7 +91,7 @@ impl InnerApplication for RunningWindow {
                 Container::new(
                     Scrollable::new(PlaylistWidget::new(
                         client.playlist().load().deref().deref().clone(),
-                        client.playing(),
+                        client.player().playing_file(),
                         &client.db()
                     ))
                     .width(Length::Fill)

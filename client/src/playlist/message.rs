@@ -4,14 +4,14 @@ use iced::Command;
 use log::{debug, warn};
 
 use super::FileInteraction;
-use crate::client::UiMessage;
+use crate::client::server::ServerMessage;
+use crate::client::ui::MpvSelect;
 use crate::iced_window::message::IcedMessage;
 use crate::iced_window::running::message::RunningWindowMessage;
 use crate::iced_window::running::RunningWindow;
 use crate::iced_window::{MainMessage, MainWindow};
 use crate::playlist::PlaylistWidgetState;
 use crate::video::Video;
-use crate::ws::ServerMessage;
 
 #[enum_dispatch(RunningWindowMessage)]
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ impl RunningWindowMessage for DoubleClick {
             filename: self.video.as_str().to_string().into(),
             username: client.user().load().name(),
         })?;
-        client.send_ui_message(UiMessage::MpvSelect(self.video));
+        client.send_ui_message(MpvSelect(self.video).into());
         Ok(Command::none())
     }
 }
