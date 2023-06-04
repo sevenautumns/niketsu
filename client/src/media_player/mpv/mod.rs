@@ -1,24 +1,20 @@
 use std::ffi::{c_void, CString};
 use std::mem::MaybeUninit;
 use std::process::exit;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
+use async_trait::async_trait;
 use bindings::{
     mpv_command_async, mpv_create, mpv_error, mpv_format, mpv_get_property, mpv_handle,
     mpv_initialize, mpv_observe_property, mpv_set_property, mpv_terminate_destroy,
 };
 use futures::StreamExt;
-use log::error;
-use parking_lot::Mutex;
 use strum::{AsRefStr, EnumString};
-use tokio::sync::mpsc::UnboundedSender as MpscSender;
 
-use self::event::{MpvEventPipe, PropertyValue};
+use self::event::{MpvEventPipe, MpvEventTrait, PropertyValue};
+use super::event::MediaPlayerEvent;
 use super::MediaPlayer;
-use crate::client::PlayerMessage;
-use crate::media_player::mpv::event::ProcesableMpvEvent;
 pub mod bindings;
 pub mod error;
 pub mod event;
@@ -113,9 +109,10 @@ impl Default for MpvStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Mpv {
-    status: Arc<Mutex<MpvStatus>>,
+    status: MpvStatus,
+    event_pipe: MpvEventPipe,
     handle: MpvHandle,
 }
 
@@ -127,7 +124,7 @@ impl Drop for Mpv {
 }
 
 impl Mpv {
-    fn init(self) -> Result<Self> {
+    fn init(mut self) -> Result<Self> {
         self.pre_init()?;
         self.init_handle()?;
         self.post_init()?;
@@ -158,7 +155,7 @@ impl Mpv {
         Ok(())
     }
 
-    fn post_init(&self) -> Result<()> {
+    fn post_init(&mut self) -> Result<()> {
         self.pause()?;
         self.observe_property(MpvProperty::Pause)?;
         self.observe_property(MpvProperty::Filename)?;
@@ -166,46 +163,43 @@ impl Mpv {
     }
 
     fn set_ocs(&self, ocs: bool) -> Result<()> {
-        self.set_property(MpvProperty::Osc, PropertyValue::Flag(ocs))
+        self.set_property(MpvProperty::Osc, ocs.into())
     }
 
     fn set_keep_open(&self, keep_open: bool) -> Result<()> {
-        self.set_property(MpvProperty::KeepOpen, PropertyValue::Flag(keep_open))
+        self.set_property(MpvProperty::KeepOpen, keep_open.into())
     }
 
     fn set_keep_open_pause(&self, keep_open_pause: bool) -> Result<()> {
-        self.set_property(
-            MpvProperty::KeepOpenPause,
-            PropertyValue::Flag(keep_open_pause),
-        )
+        self.set_property(MpvProperty::KeepOpenPause, keep_open_pause.into())
     }
 
     fn set_idle_mode(&self, idle_mode: bool) -> Result<()> {
-        self.set_property(MpvProperty::Idle, PropertyValue::Flag(idle_mode))
+        self.set_property(MpvProperty::Idle, idle_mode.into())
     }
 
     fn set_force_window(&self, force_window: bool) -> Result<()> {
-        self.set_property(MpvProperty::ForceWindow, PropertyValue::Flag(force_window))
+        self.set_property(MpvProperty::ForceWindow, force_window.into())
     }
 
     fn set_config(&self, config: bool) -> Result<()> {
-        self.set_property(MpvProperty::Config, PropertyValue::Flag(config))
+        self.set_property(MpvProperty::Config, config.into())
     }
 
     fn set_input_default_bindings(&self, flag: bool) -> Result<()> {
-        self.set_property(MpvProperty::InputDefaultBindings, PropertyValue::Flag(flag))
+        self.set_property(MpvProperty::InputDefaultBindings, flag.into())
     }
 
     fn set_input_vo_keyboard(&self, flag: bool) -> Result<()> {
-        self.set_property(MpvProperty::InputVoKeyboard, PropertyValue::Flag(flag))
+        self.set_property(MpvProperty::InputVoKeyboard, flag.into())
     }
 
     fn set_cache_pause(&self, flag: bool) -> Result<()> {
-        self.set_property(MpvProperty::CachePause, PropertyValue::Flag(flag))
+        self.set_property(MpvProperty::CachePause, flag.into())
     }
 
     fn set_input_media_keys(&self, flag: bool) -> Result<()> {
-        self.set_property(MpvProperty::InputMediaKeys, PropertyValue::Flag(flag))
+        self.set_property(MpvProperty::InputMediaKeys, flag.into())
     }
 
     fn set_property(&self, prop: MpvProperty, value: PropertyValue) -> Result<()> {
@@ -273,51 +267,38 @@ impl Mpv {
     }
 }
 
+#[async_trait]
 impl MediaPlayer for Mpv {
-    fn new(client_sender: MpscSender<PlayerMessage>) -> Result<Self> {
+    fn new() -> Result<Self> {
         let ctx = unsafe { mpv_create() };
         let handle = MpvHandle(ctx);
-        let mut event_pipe = MpvEventPipe::new(handle);
-        let status = Arc::new(Mutex::new(MpvStatus::default()));
-        let mpv = Self { status, handle };
-        let event_pipe_mpv = mpv.clone();
-
-        // TODO move this to its own function
-        tokio::spawn(async move {
-            loop {
-                if let Some(event) = event_pipe.next().await {
-                    if let Some(event) = event.process(&event_pipe_mpv) {
-                        if let Err(err) = client_sender.send(event.into()) {
-                            error!("Client sender unexpectedly ended: {err:?}");
-                            return;
-                        }
-                    }
-                } else {
-                    error!("Mpv event pipeline unexpectedly ended");
-                    return;
-                }
-            }
-        });
+        let event_pipe = MpvEventPipe::new(handle);
+        let status = MpvStatus::default();
+        let mpv = Self {
+            status,
+            handle,
+            event_pipe,
+        };
 
         mpv.init()
     }
 
-    fn pause(&self) -> Result<()> {
-        self.status.lock().paused = true;
-        self.set_property(MpvProperty::Pause, PropertyValue::Flag(true))
+    fn pause(&mut self) -> Result<()> {
+        self.status.paused = true;
+        self.set_property(MpvProperty::Pause, true.into())
     }
 
     fn is_paused(&self) -> Result<bool> {
         self.get_property_flag(MpvProperty::Pause)
     }
 
-    fn start(&self) -> Result<()> {
-        self.status.lock().paused = false;
-        self.set_property(MpvProperty::Pause, PropertyValue::Flag(false))
+    fn start(&mut self) -> Result<()> {
+        self.status.paused = false;
+        self.set_property(MpvProperty::Pause, false.into())
     }
 
-    fn set_speed(&self, speed: f64) -> Result<()> {
-        self.status.lock().speed = speed;
+    fn set_speed(&mut self, speed: f64) -> Result<()> {
+        self.status.speed = speed;
         self.set_property(MpvProperty::Speed, PropertyValue::Double(speed))
     }
 
@@ -325,8 +306,8 @@ impl MediaPlayer for Mpv {
         self.get_property_f64(MpvProperty::Speed)
     }
 
-    fn set_position(&self, pos: Duration) -> Result<()> {
-        self.status.lock().seeking = true;
+    fn set_position(&mut self, pos: Duration) -> Result<()> {
+        self.status.seeking = true;
         self.set_property(
             MpvProperty::PlaybackTime,
             PropertyValue::Double(pos.as_secs_f64()),
@@ -342,12 +323,25 @@ impl MediaPlayer for Mpv {
         let cmd = MpvCommand::Loadfile.try_into()?;
         let path = CString::new(path)?;
         let replace = CString::new("replace")?;
-        let options = CString::new(format!("start={},pause={}", pos.as_secs_f64(), paused))?;
+        let start = pos.as_secs_f64();
+        let options = CString::new(format!("start={start},pause={paused}"))?;
 
         self.send_command(&[&cmd, &path, &replace, &options])
     }
 
     fn is_seeking(&self) -> Result<bool> {
-        Ok(self.status.lock().seeking)
+        Ok(self.status.seeking)
+    }
+
+    async fn receive_event(&mut self) -> Result<MediaPlayerEvent> {
+        loop {
+            if let Some(event) = self.event_pipe.next().await {
+                if let Some(event) = event.process(self) {
+                    return Ok(event);
+                }
+            } else {
+                bail!("Mpv event pipeline unexpectedly ended");
+            }
+        }
     }
 }

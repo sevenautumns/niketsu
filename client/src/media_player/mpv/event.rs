@@ -10,7 +10,10 @@ use enum_dispatch::enum_dispatch;
 use log::trace;
 
 use super::{Mpv, MpvProperty};
-use crate::media_player::event::{Exit, Paused, PlaybackEnded, PositionChanged, SpeedChanged, Started};
+use crate::media_player::event::{
+    PlayerExit, PlayerPaused, PlayerPlaybackEnded, PlayerPositionChanged, PlayerSpeedChanged,
+    PlayerStarted,
+};
 use crate::media_player::mpv::bindings::*;
 use crate::media_player::{MediaPlayer, MediaPlayerEvent, MpvHandle};
 
@@ -23,76 +26,76 @@ unsafe extern "C" fn on_mpv_event(_: *mut c_void) {
 static EVENT_WAKER: ArcSwapOption<Waker> = ArcSwapOption::const_empty();
 
 #[enum_dispatch]
-pub trait ProcesableMpvEvent {
-    fn process(self, mpv: &Mpv) -> Option<MediaPlayerEvent>;
+pub trait MpvEventTrait {
+    fn process(self, mpv: &mut Mpv) -> Option<MediaPlayerEvent>;
 }
 
-#[enum_dispatch(ProcesableMpvEvent)]
+#[enum_dispatch(MpvEventTrait)]
 #[derive(Debug, Clone)]
 pub enum MpvEvent {
-    None,
-    Shutdown,
-    PropertyChanged,
-    FileLoaded,
-    Seek,
-    PlaybackRestart,
+    MpvNone,
+    MpvShutdown,
+    MpvPropertyChanged,
+    MpvFileLoaded,
+    MpvSeek,
+    MpvPlaybackRestart,
     Unparsed,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct None;
+pub struct MpvNone;
 
-impl ProcesableMpvEvent for None {
-    fn process(self, _: &Mpv) -> Option<MediaPlayerEvent> {
+impl MpvEventTrait for MpvNone {
+    fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
         Option::None
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Shutdown;
+pub struct MpvShutdown;
 
-impl ProcesableMpvEvent for Shutdown {
-    fn process(self, _: &Mpv) -> Option<MediaPlayerEvent> {
-        Some(Exit.into())
+impl MpvEventTrait for MpvShutdown {
+    fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
+        Some(PlayerExit.into())
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct PropertyChanged {
+pub struct MpvPropertyChanged {
     property: MpvProperty,
     value: PropertyValue,
 }
 
-impl PropertyChanged {
-    fn process_pause(self, paused: bool, mpv: &Mpv) -> Option<MediaPlayerEvent> {
-        let mut status = mpv.status.lock();
-        if status.paused == paused {
+impl MpvPropertyChanged {
+    fn process_pause(self, paused: bool, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
+        if mpv.status.paused == paused {
             return Option::None;
         }
-        status.paused = paused;
+        mpv.status.paused = paused;
         if mpv.eof_reached().unwrap_or_default() {
-            return Some(PlaybackEnded.into());
+            return Some(PlayerPlaybackEnded.into());
         }
         if paused {
-            return Some(Paused.into())
+            return Some(PlayerPaused.into());
         }
-        Some(Started.into())
+        Some(PlayerStarted.into())
     }
 
-    fn process_speed(self, speed: f64, mpv: &Mpv) -> Option<MediaPlayerEvent> {
-        let mut status = mpv.status.lock();
-        if status.speed == speed {
+    fn process_speed(self, speed: f64, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
+        if mpv.status.speed == speed {
             return Option::None;
         }
-        status.speed = speed;
-        Some(SpeedChanged(speed).into())
+        mpv.status.speed = speed;
+        Some(PlayerSpeedChanged(speed).into())
     }
 }
 
-impl ProcesableMpvEvent for PropertyChanged {
-    fn process(self, mpv: &Mpv) -> Option<MediaPlayerEvent> {
+impl MpvEventTrait for MpvPropertyChanged {
+    fn process(self, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
         match (self.property, self.value.clone()) {
-            (MpvProperty::Pause, PropertyValue::Flag(paused)) => self.process_pause(paused, mpv),
+            (MpvProperty::Pause, PropertyValue::Flag(paused)) => {
+                self.process_pause(paused > 0, mpv)
+            }
             (MpvProperty::Speed, PropertyValue::Double(speed)) => self.process_speed(speed, mpv),
             _ => Option::None,
         }
@@ -100,46 +103,43 @@ impl ProcesableMpvEvent for PropertyChanged {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct FileLoaded;
+pub struct MpvFileLoaded;
 
-impl ProcesableMpvEvent for FileLoaded {
-    fn process(self, _: &Mpv) -> Option<MediaPlayerEvent> {
+impl MpvEventTrait for MpvFileLoaded {
+    fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
         trace!("File loaded");
         Option::None
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Seek;
+pub struct MpvSeek;
 
-impl ProcesableMpvEvent for Seek {
-    fn process(self, mpv: &Mpv) -> Option<MediaPlayerEvent> {
-        mpv.status.lock().seeking = true;
+impl MpvEventTrait for MpvSeek {
+    fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
         Option::None
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct PlaybackRestart;
+pub struct MpvPlaybackRestart;
 
-impl ProcesableMpvEvent for PlaybackRestart {
-    fn process(self, mpv: &Mpv) -> Option<MediaPlayerEvent> {
-        let mut status = mpv.status.lock();
-        if status.seeking {
-            status.seeking = false;
+impl MpvEventTrait for MpvPlaybackRestart {
+    fn process(self, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
+        if mpv.status.seeking {
+            mpv.status.seeking = false;
             return Option::None;
         }
-        drop(status);
         let pos = mpv.get_position().unwrap_or_default();
-        Some(PositionChanged(pos).into())
+        Some(PlayerPositionChanged(pos).into())
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Unparsed;
 
-impl ProcesableMpvEvent for Unparsed {
-    fn process(self, _: &Mpv) -> Option<MediaPlayerEvent> {
+impl MpvEventTrait for Unparsed {
+    fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
         Option::None
     }
 }
@@ -148,11 +148,13 @@ impl From<mpv_event> for MpvEvent {
     fn from(event: mpv_event) -> Self {
         trace!("Mpv event: {event:?}");
         match event.event_id {
-            mpv_event_id::MPV_EVENT_NONE => Self::None(None),
-            mpv_event_id::MPV_EVENT_SHUTDOWN => Self::Shutdown(Shutdown),
-            mpv_event_id::MPV_EVENT_FILE_LOADED => Self::FileLoaded(FileLoaded),
-            mpv_event_id::MPV_EVENT_SEEK => Self::Seek(Seek),
-            mpv_event_id::MPV_EVENT_PLAYBACK_RESTART => Self::PlaybackRestart(PlaybackRestart),
+            mpv_event_id::MPV_EVENT_NONE => Self::MpvNone(MpvNone),
+            mpv_event_id::MPV_EVENT_SHUTDOWN => Self::MpvShutdown(MpvShutdown),
+            mpv_event_id::MPV_EVENT_FILE_LOADED => Self::MpvFileLoaded(MpvFileLoaded),
+            mpv_event_id::MPV_EVENT_SEEK => Self::MpvSeek(MpvSeek),
+            mpv_event_id::MPV_EVENT_PLAYBACK_RESTART => {
+                Self::MpvPlaybackRestart(MpvPlaybackRestart)
+            }
             mpv_event_id::MPV_EVENT_PROPERTY_CHANGE => {
                 let name;
                 unsafe {
@@ -165,7 +167,7 @@ impl From<mpv_event> for MpvEvent {
                         Err(_) => return Self::Unparsed(Unparsed),
                     }
                     match PropertyValue::from_ptr(prop.data, prop.format) {
-                        Some(value) => PropertyChanged {
+                        Some(value) => MpvPropertyChanged {
                             property: name,
                             value,
                         }
@@ -182,13 +184,13 @@ impl From<mpv_event> for MpvEvent {
 #[derive(Debug, Clone)]
 pub enum PropertyValue {
     Double(f64),
-    Flag(bool),
+    Flag(i64),
     String(CString),
 }
 
 impl From<bool> for PropertyValue {
     fn from(value: bool) -> Self {
-        PropertyValue::Flag(value)
+        PropertyValue::Flag(value as u8 as i64)
     }
 }
 
@@ -208,7 +210,7 @@ impl PropertyValue {
     pub fn as_mut_ptr(&self) -> *mut c_void {
         match self {
             PropertyValue::Double(double) => double as *const f64 as *mut c_void,
-            PropertyValue::Flag(flag) => flag as *const bool as *mut c_void,
+            PropertyValue::Flag(flag) => flag as *const i64 as *mut c_void,
             PropertyValue::String(string) => string as *const CString as *mut c_void,
         }
     }
@@ -223,7 +225,7 @@ impl PropertyValue {
                 CStr::from_ptr(data as *mut c_char).clone_into(&mut string);
                 Some(PropertyValue::String(string))
             }
-            mpv_format::MPV_FORMAT_FLAG => Some(PropertyValue::Flag(*(data as *mut bool))),
+            mpv_format::MPV_FORMAT_FLAG => Some(PropertyValue::Flag(*(data as *mut i64))),
             mpv_format::MPV_FORMAT_DOUBLE => Some(PropertyValue::Double(*(data as *mut f64))),
             _ => Option::None,
         }
@@ -267,7 +269,7 @@ impl futures::stream::Stream for MpvEventPipe {
         let s = self.get_mut();
 
         match s.check_for_event() {
-            MpvEvent::None(_) => Poll::Pending,
+            MpvEvent::MpvNone(_) => Poll::Pending,
             e => Poll::Ready(Some(e)),
         }
     }

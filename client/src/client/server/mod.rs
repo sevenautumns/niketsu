@@ -2,25 +2,24 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_tungstenite::stream::Stream;
 use async_tungstenite::tokio::TokioAdapter;
 use async_tungstenite::tungstenite::Message as TsMessage;
 use async_tungstenite::WebSocketStream;
-use futures::stream::SplitStream;
+use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use iced::widget::{Row, Text};
 use iced::{Renderer, Theme};
 use log::{error, warn};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::UnboundedSender as MpscSender;
+use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio_native_tls::TlsStream;
 use url::Url;
 
 use self::message::{Connected, Received, WebSocketMessage, WsStreamEnded};
 use crate::client::server::message::ServerError;
-use crate::client::PlayerMessage;
 use crate::iced_window::MainMessage;
 use crate::user::ThisUser;
 
@@ -29,7 +28,7 @@ pub mod message;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
-pub enum ServerMessage {
+pub enum NiketsuMessage {
     Ping {
         uuid: String,
     },
@@ -136,121 +135,152 @@ impl UserStatus {
     }
 }
 
+type WsSink = SplitSink<
+    WebSocketStream<Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<TcpStream>>>>,
+    TsMessage,
+>;
 type WsStream = SplitStream<
-    WebSocketStream<
-        Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<tokio::net::TcpStream>>>,
-    >,
+    WebSocketStream<Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<TcpStream>>>>,
 >;
 
-#[derive(Debug, Clone)]
-pub struct ServerWebsocket {
+#[derive(Debug)]
+pub struct ServerConnectionReceiver {
     addr: Url,
-    client_sender: MpscSender<PlayerMessage>,
-    msg_sender: MpscSender<ServerMessage>,
+    stream_proxy_rx: MpscReceiver<WebSocketMessage>,
+    stream_proxy_tx: MpscSender<WebSocketMessage>,
+    sender: ServerConnectionSender,
 }
 
-impl ServerWebsocket {
+impl ServerConnectionReceiver {
     #[must_use]
-    pub fn reboot(self) -> Self {
+    pub fn reboot(&self) -> Self {
         // TODO only reboot if msg_sender is closed?
-        Self::new(self.addr.clone(), self.client_sender)
+        Self::new(self.addr.clone())
     }
 
-    pub fn new(addr: Url, client_sender: MpscSender<PlayerMessage>) -> Self {
-        let (msg_sender, mut rx): (MpscSender<ServerMessage>, _) =
+    pub fn new(addr: Url) -> Self {
+        let (sink_proxy_tx, sink_proxy_rx): (MpscSender<NiketsuMessage>, _) =
             tokio::sync::mpsc::unbounded_channel();
-        let addr2 = addr.clone();
-        let client_sender2 = client_sender.clone();
+        let (stream_proxy_tx, stream_proxy_rx): (MpscSender<WebSocketMessage>, _) =
+            tokio::sync::mpsc::unbounded_channel();
+        let sender = ServerConnectionSender {
+            sink_proxy_tx,
+            stream_proxy_tx: stream_proxy_tx.clone(),
+        };
+
+        Self {
+            addr,
+            stream_proxy_rx,
+            stream_proxy_tx,
+            sender,
+        }
+        .start(sink_proxy_rx)
+    }
+
+    fn start(self, sink_proxy_rx: MpscReceiver<NiketsuMessage>) -> Self {
+        let addr = self.addr.clone();
+        let sender = self.sender.clone();
+        let stream_proxy_tx = self.stream_proxy_tx.clone();
         tokio::spawn(async move {
-            let addr = addr2;
-            let client_sender = client_sender2;
-            let client_sender2 = client_sender.clone();
             let connection = async_tungstenite::tokio::connect_async(addr).await;
             match connection {
                 Ok((ws, _)) => {
-                    client_sender
-                        .send(WebSocketMessage::from(Connected).into())
+                    stream_proxy_tx
+                        .send(WebSocketMessage::from(Connected))
                         .expect("Client sender unexpectedly ended");
-                    let (mut sink, mut stream) = ws.split();
-                    tokio::spawn(async move {
-                        let client_sender = client_sender2;
-                        loop {
-                            if let Some(msg) = rx.recv().await {
-                                match serde_json::to_string(&msg) {
-                                    Ok(msg) => {
-                                        if let Err(err) = sink.send(TsMessage::Text(msg)).await {
-                                            warn!("Websocket ended: {err:?}");
-                                            client_sender
-                                                .send(
-                                                    WebSocketMessage::from(ServerError(Arc::new(
-                                                        err.into(),
-                                                    )))
-                                                    .into(),
-                                                )
-                                                .expect("Client sender unexpectedly ended");
-                                            return;
-                                        }
-                                    }
-                                    Err(err) => client_sender
-                                        .send(
-                                            WebSocketMessage::from(ServerError(Arc::new(
-                                                err.into(),
-                                            )))
-                                            .into(),
-                                        )
-                                        .expect("Client sender unexpectedly ended"),
-                                }
-                            } else {
-                                // error!("Server message sender unexpectedly ended");
-                                // exit(1);
-                                return;
-                            }
-                        }
-                    });
-                    loop {
-                        match Self::recv(&mut stream).await {
-                            Ok(msg @ WebSocketMessage::WsStreamEnded(_)) => {
-                                client_sender
-                                    .send(msg.into())
-                                    .expect("Client sender unexpectedly ended");
-                                return;
-                            }
-                            Ok(msg) => {
-                                client_sender
-                                    .send(msg.into())
-                                    .expect("Client sender unexpectedly ended");
-                            }
-                            Err(err) => {
-                                client_sender
-                                    .send(WebSocketMessage::from(ServerError(Arc::new(err))).into())
-                                    .expect("Client sender unexpectedly ended");
-                            }
-                        }
-                    }
+                    let (socket_sink, socket_stream) = ws.split();
+                    let send_sender = sender.clone();
+                    tokio::spawn(
+                        async move { send_sender.run_send(socket_sink, sink_proxy_rx).await },
+                    );
+                    tokio::spawn(async move { sender.run_recv(socket_stream).await });
                 }
-                Err(_) => client_sender
-                    .send(WebSocketMessage::from(WsStreamEnded).into())
+                Err(_) => stream_proxy_tx
+                    .send(WebSocketMessage::from(WsStreamEnded))
                     .expect("Client sender unexpectedly ended"),
             }
         });
-        Self {
-            addr,
-            client_sender,
-            msg_sender,
+
+        self
+    }
+
+    pub async fn recv(&mut self) -> Result<WebSocketMessage> {
+        self.stream_proxy_rx
+            .recv()
+            .await
+            .ok_or_else(|| anyhow!("Socket ended"))
+    }
+
+    pub fn sender(&self) -> &ServerConnectionSender {
+        &self.sender
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ServerConnectionSender {
+    sink_proxy_tx: MpscSender<NiketsuMessage>,
+    stream_proxy_tx: MpscSender<WebSocketMessage>,
+}
+
+impl ServerConnectionSender {
+    async fn run_send(
+        &self,
+        mut socket_sink: WsSink,
+        mut sink_proxy_rx: MpscReceiver<NiketsuMessage>,
+    ) {
+        loop {
+            if let Some(msg) = sink_proxy_rx.recv().await {
+                match serde_json::to_string(&msg) {
+                    Ok(msg) => {
+                        if let Err(err) = socket_sink.send(TsMessage::Text(msg)).await {
+                            warn!("Websocket ended: {err:?}");
+                            self.stream_proxy_tx
+                                .send(WebSocketMessage::from(ServerError(Arc::new(err.into()))))
+                                .expect("Client sender unexpectedly ended");
+                            return;
+                        }
+                    }
+                    Err(err) => self
+                        .stream_proxy_tx
+                        .send(WebSocketMessage::from(ServerError(Arc::new(err.into()))))
+                        .expect("Client sender unexpectedly ended"),
+                }
+            } else {
+                return;
+            }
         }
     }
 
-    pub fn send(&self, msg: ServerMessage) -> Result<()> {
-        self.msg_sender.send(msg)?;
-        Ok(())
+    // TODO move run_send and run_recv to their own struct
+    async fn run_recv(&self, mut socket_stream: WsStream) {
+        loop {
+            match Self::recv_stream(&mut socket_stream).await {
+                Ok(msg @ WebSocketMessage::WsStreamEnded(_)) => {
+                    self.stream_proxy_tx
+                        .send(msg)
+                        .expect("Client sender unexpectedly ended");
+                    return;
+                }
+                Ok(msg) => {
+                    self.stream_proxy_tx
+                        .send(msg)
+                        .expect("Client sender unexpectedly ended");
+                }
+                Err(err) => {
+                    self.stream_proxy_tx
+                        .send(WebSocketMessage::from(ServerError(Arc::new(err))))
+                        .expect("Client sender unexpectedly ended");
+                }
+            }
+        }
     }
 
-    async fn recv(stream: &mut WsStream) -> Result<WebSocketMessage> {
+    async fn recv_stream(stream: &mut WsStream) -> Result<WebSocketMessage> {
         if let Some(msg) = stream.next().await {
             match msg {
                 Ok(msg) => {
                     let msg = msg.into_text()?;
-                    let msg = serde_json::from_str::<ServerMessage>(&msg)?;
+                    let msg = serde_json::from_str::<NiketsuMessage>(&msg)?;
                     return Ok(Received(msg).into());
                 }
                 Err(err) => {
@@ -260,5 +290,10 @@ impl ServerWebsocket {
             }
         }
         Ok(WsStreamEnded.into())
+    }
+
+    pub fn send(&self, msg: NiketsuMessage) -> Result<()> {
+        self.sink_proxy_tx.send(msg)?;
+        Ok(())
     }
 }

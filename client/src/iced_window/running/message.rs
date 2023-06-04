@@ -5,8 +5,8 @@ use iced::Command;
 use log::{debug, trace, warn};
 
 use super::RunningWindow;
-use crate::client::database::FileDatabase;
-use crate::client::server::ServerMessage;
+use crate::client::database::FileDatabaseSender;
+use crate::client::server::NiketsuMessage;
 use crate::iced_window::message::IcedMessage;
 use crate::iced_window::{MainMessage, MainWindow};
 use crate::user::ThisUser;
@@ -65,7 +65,7 @@ impl RunningWindowMessage for SendMessage {
             let msg = message.clone();
             *message = Default::default();
             let client = win.client();
-            client.ws().send(ServerMessage::UserMessage {
+            client.ws().send(NiketsuMessage::UserMessage {
                 message: msg.clone(),
                 username: client.user().load().name(),
             })?;
@@ -93,7 +93,7 @@ pub struct StartDbUpdate;
 impl RunningWindowMessage for StartDbUpdate {
     fn handle(self, win: &mut RunningWindow) -> Result<Command<MainMessage>> {
         trace!("Start database update request received");
-        FileDatabase::start_update(&win.client().db());
+        FileDatabaseSender::start_update(&win.client().db());
         Ok(Command::none())
     }
 }

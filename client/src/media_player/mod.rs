@@ -2,29 +2,30 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use parking_lot::RwLock;
-use tokio::sync::mpsc::UnboundedSender as MpscSender;
+use async_trait::async_trait;
 
 use self::event::MediaPlayerEvent;
 use self::mpv::MpvHandle;
-use crate::client::database::FileDatabase;
-use crate::client::PlayerMessage;
+use crate::client::database::FileDatabaseSender;
 use crate::video::PlayingFile;
 
 pub mod event;
 pub mod mpv;
 
+#[async_trait]
 pub trait MediaPlayer: Sized {
-    fn new(client_sender: MpscSender<PlayerMessage>) -> Result<Self>;
-    fn pause(&self) -> Result<()>;
+    fn new() -> Result<Self>;
+    fn pause(&mut self) -> Result<()>;
     fn is_paused(&self) -> Result<bool>;
     fn is_seeking(&self) -> Result<bool>;
-    fn start(&self) -> Result<()>;
-    fn set_speed(&self, speed: f64) -> Result<()>;
+    fn start(&mut self) -> Result<()>;
+    fn set_speed(&mut self, speed: f64) -> Result<()>;
     fn get_speed(&self) -> Result<f64>;
-    fn set_position(&self, pos: Duration) -> Result<()>;
+    fn set_position(&mut self, pos: Duration) -> Result<()>;
     fn get_position(&self) -> Result<Duration>;
     fn open(&self, path: String, paused: bool, pos: Duration) -> Result<()>;
+    #[must_use]
+    async fn receive_event(&mut self) -> Result<MediaPlayerEvent>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -33,16 +34,16 @@ pub struct MediaPlayerStatus {
     file_loaded: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MediaPlayerWrapper<M: MediaPlayer> {
     player: M,
-    db: Arc<FileDatabase>,
-    status: Arc<RwLock<MediaPlayerStatus>>,
+    db: Arc<FileDatabaseSender>,
+    status: MediaPlayerStatus,
 }
 
 impl<M: MediaPlayer> MediaPlayerWrapper<M> {
-    pub fn new(client: MpscSender<PlayerMessage>, db: Arc<FileDatabase>) -> Result<Self> {
-        let player = M::new(client)?;
+    pub fn new(db: Arc<FileDatabaseSender>) -> Result<Self> {
+        let player = M::new()?;
 
         Ok(Self {
             player,
@@ -51,12 +52,10 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
         })
     }
 
-    pub fn pause(&self) -> Result<()> {
-        let mut status = self.status.write();
-        if let Some(file) = status.file.as_mut() {
+    pub fn pause(&mut self) -> Result<()> {
+        if let Some(file) = self.status.file.as_mut() {
             if !file.paused {
                 file.paused = true;
-                drop(status);
                 return self.player.pause();
             }
         }
@@ -64,31 +63,26 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
     }
 
     pub fn is_paused(&self) -> Result<bool> {
-        let file = self.status.read().file.clone();
-        if let Some(file) = file {
+        if let Some(file) = &self.status.file {
             return Ok(file.paused);
         }
         self.player.is_paused()
     }
 
-    pub fn start(&self) -> Result<()> {
-        let mut status = self.status.write();
-        if let Some(file) = status.file.as_mut() {
+    pub fn start(&mut self) -> Result<()> {
+        if let Some(file) = self.status.file.as_mut() {
             if file.paused {
                 file.paused = false;
-                drop(status);
                 return self.player.start();
             }
         }
         Ok(())
     }
 
-    pub fn set_speed(&self, speed: f64) -> Result<()> {
-        let mut status = self.status.write();
-        if let Some(file) = status.file.as_mut() {
+    pub fn set_speed(&mut self, speed: f64) -> Result<()> {
+        if let Some(file) = self.status.file.as_mut() {
             if file.speed != speed {
                 file.speed = speed;
-                drop(status);
                 return self.player.set_speed(speed);
             }
         }
@@ -96,8 +90,7 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
     }
 
     pub fn get_speed(&self) -> Result<f64> {
-        let file = self.status.read().file.clone();
-        if let Some(file) = file {
+        if let Some(file) = &self.status.file {
             return Ok(file.speed);
         }
         self.player.get_speed()
@@ -107,9 +100,8 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
         self.player.get_position()
     }
 
-    pub fn load(&self, play: PlayingFile) -> Result<()> {
-        let file = self.status.read().file.clone();
-        if let Some(file) = file {
+    pub fn load(&mut self, play: PlayingFile) -> Result<()> {
+        if let Some(file) = &self.status.file {
             if file.video.as_str().eq(play.video.as_str()) {
                 self.seek(play)
             } else {
@@ -120,9 +112,13 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
         }
     }
 
-    fn seek(&self, play: PlayingFile) -> Result<()> {
-        let file = self.status.read().file.clone();
-        if let Some(file) = file {
+    pub fn unload(&mut self) {
+        self.status.file = None;
+        self.status.file_loaded = false;
+    }
+
+    fn seek(&mut self, play: PlayingFile) -> Result<()> {
+        if let Some(file) = self.status.file.clone() {
             if play.paused != file.paused {
                 if play.paused {
                     self.pause()?;
@@ -138,26 +134,22 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
         Ok(())
     }
 
-    fn open(&self, play: PlayingFile) -> Result<()> {
-        let mut status = self.status.write();
-        status.file = Some(play.clone());
+    fn open(&mut self, play: PlayingFile) -> Result<()> {
+        self.status.file = Some(play.clone());
         if let Some(path) = play.video.to_path_str(&self.db) {
-            status.file_loaded = true;
-            drop(status);
+            self.status.file_loaded = true;
             self.player.open(path, play.paused, play.pos)
         } else {
-            status.file_loaded = false;
+            self.status.file_loaded = false;
             Ok(())
         }
     }
 
-    pub fn reload(&self) -> Result<()> {
-        let mut status = self.status.write();
-        if !status.file_loaded {
-            if let Some(file) = status.file.clone() {
+    pub fn reload(&mut self) -> Result<()> {
+        if !self.status.file_loaded {
+            if let Some(file) = self.status.file.clone() {
                 if let Some(path) = file.video.to_path_str(&self.db) {
-                    status.file_loaded = true;
-                    drop(status);
+                    self.status.file_loaded = true;
                     return self.player.open(path, file.paused, file.pos);
                 }
             }
@@ -166,23 +158,18 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
     }
 
     pub fn playing_file(&self) -> Option<PlayingFile> {
-        let file = self.status.read().file.clone();
-        if let Some(file) = file {
+        if let Some(file) = self.status.file.clone() {
             return Some(file);
         }
         None
     }
 
-    pub fn playing_file_mut<F>(&self, f: F)
-    where
-        F: FnOnce(&mut Option<PlayingFile>),
-    {
-        let mut status = self.status.write();
-        f(&mut status.file)
-    }
-
     pub fn is_seeking(&self) -> Result<bool> {
         self.player.is_seeking()
+    }
+
+    pub async fn recv(&mut self) -> Result<MediaPlayerEvent> {
+        self.player.receive_event().await
     }
 }
 

@@ -4,19 +4,21 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{Error, Result};
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use enum_dispatch::enum_dispatch;
 use log::{error, warn};
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
 
-use self::heartbeat::Heartbeat;
+use self::database::FileDatabaseSender;
+use self::heartbeat::{Heartbeat, Pacemaker};
+use self::server::ServerConnectionReceiver;
 use self::ui::UiMessage;
-use crate::client::database::message::DatabaseMessage;
-use crate::client::database::FileDatabase;
-use crate::client::message::ClientMessage;
+use crate::client::database::message::DatabaseEvent;
+use crate::client::database::FileDatabaseReceiver;
+use crate::client::message::ClientMessageTrait;
 use crate::client::server::message::WebSocketMessage;
-use crate::client::server::ServerWebsocket;
+use crate::client::server::ServerConnectionSender;
 use crate::config::Config;
 use crate::media_player::event::MediaPlayerEvent;
 use crate::media_player::mpv::Mpv;
@@ -25,6 +27,7 @@ use crate::messages::{MessagesReceiver, MessagesSender};
 use crate::playlist::PlaylistWidgetState;
 use crate::rooms::RoomsWidgetState;
 use crate::user::ThisUser;
+use crate::video::PlayingFile;
 
 pub mod database;
 pub mod heartbeat;
@@ -33,49 +36,48 @@ pub mod server;
 pub mod ui;
 
 #[derive(Debug)]
-pub struct Client {
+pub struct Core {
     changed: Arc<Notify>,
-    sender: MpscSender<PlayerMessage>,
-    db: Arc<FileDatabase>,
-    ws: Arc<ArcSwap<ServerWebsocket>>,
+    sender: MpscSender<UiMessage>,
+    db: Arc<FileDatabaseSender>,
+    ws: Arc<ArcSwap<ServerConnectionSender>>,
     user: Arc<ArcSwap<ThisUser>>,
     messages: MessagesReceiver,
     playlist_widget: Arc<ArcSwap<PlaylistWidgetState>>,
-    player: Arc<MediaPlayerWrapper<Mpv>>,
+    playing_file: Arc<ArcSwapOption<PlayingFile>>,
     rooms_widget: Arc<ArcSwap<RoomsWidgetState>>,
 }
 
-pub struct ClientInner {
-    pub db: Arc<FileDatabase>,
-    pub ws: Arc<ArcSwap<ServerWebsocket>>,
+pub struct CoreRunner {
+    pub db: FileDatabaseReceiver,
+    pub ws: ServerConnectionReceiver,
+    pub ws_sender: Arc<ArcSwap<ServerConnectionSender>>,
     pub config: Config,
     pub changed: Arc<Notify>,
-    pub receiver: MpscReceiver<PlayerMessage>,
+    pub receiver: MpscReceiver<UiMessage>,
     pub user: Arc<ArcSwap<ThisUser>>,
     pub messages: MessagesSender,
+    pub pacemaker: Pacemaker,
     pub playlist_widget: Arc<ArcSwap<PlaylistWidgetState>>,
-    pub player: Arc<MediaPlayerWrapper<Mpv>>,
+    pub player: MediaPlayerWrapper<Mpv>,
+    pub playing_file: Arc<ArcSwapOption<PlayingFile>>,
     pub rooms_widget: Arc<ArcSwap<RoomsWidgetState>>,
 }
 
-impl Client {
+impl Core {
     pub fn new(config: Config) -> Result<Self> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let db = Arc::new(FileDatabase::new(
+        let db = FileDatabaseReceiver::new(
             &config
                 .media_dirs
                 .iter()
                 .map(|d| PathBuf::from_str(d).map_err(Error::msg))
                 .collect::<Result<Vec<_>>>()?,
-            tx.clone(),
-        ));
-        let db2 = db.clone();
-        tokio::spawn(async move { db2.update().await });
-        let player = Arc::new(MediaPlayerWrapper::new(tx.clone(), db.clone())?);
-        let ws = Arc::new(ArcSwap::new(Arc::new(ServerWebsocket::new(
-            config.addr()?,
-            tx.clone(),
-        ))));
+        );
+        FileDatabaseSender::start_update(db.sender());
+        let db_sender = db.sender().clone();
+        let player = MediaPlayerWrapper::new(db_sender.clone())?;
+        let ws = ServerConnectionReceiver::new(config.addr()?);
         let user = Arc::new(ArcSwap::new(Arc::new(ThisUser::new(
             config.username.clone(),
         ))));
@@ -84,39 +86,39 @@ impl Client {
             crate::messages::messages_pair();
         let playlist_widget: Arc<ArcSwap<PlaylistWidgetState>> = Default::default();
         let rooms_widget: Arc<ArcSwap<RoomsWidgetState>> = Default::default();
-        let inner = ClientInner {
-            db: db.clone(),
-            ws: ws.clone(),
+        let playing_file: Arc<ArcSwapOption<PlayingFile>> = Default::default();
+        let ws_sender = Arc::new(ArcSwap::new(Arc::new(ws.sender().clone())));
+        let inner = CoreRunner {
+            db,
+            ws,
+            ws_sender: ws_sender.clone(),
             config,
             changed: changed.clone(),
             receiver: rx,
-            player: player.clone(),
+            player,
+            playing_file: playing_file.clone(),
             user: user.clone(),
             messages: msgs_tx,
             playlist_widget: playlist_widget.clone(),
             rooms_widget: rooms_widget.clone(),
+            pacemaker: Default::default(),
         };
         tokio::spawn(inner.run());
-        Heartbeat::start(tx.clone());
         Ok(Self {
             changed,
             sender: tx,
-            db,
-            ws,
+            db: db_sender,
+            ws: ws_sender,
             user,
+            playing_file,
             messages: msgs_rx,
             playlist_widget,
             rooms_widget,
-            player,
         })
     }
 
-    pub fn player(&self) -> &MediaPlayerWrapper<Mpv> {
-        &self.player
-    }
-
     pub fn send_ui_message(&self, msg: UiMessage) {
-        self.sender.send(msg.into()).map_err(Error::msg).log();
+        self.sender.send(msg).map_err(Error::msg).log();
     }
 
     pub fn messages(&self) -> &MessagesReceiver {
@@ -135,12 +137,16 @@ impl Client {
         self.user.clone()
     }
 
-    pub fn db(&self) -> Arc<FileDatabase> {
+    pub fn playing_file(&self) -> Option<PlayingFile> {
+        self.playing_file.load_full().map(|p| (*p).clone())
+    }
+
+    pub fn db(&self) -> Arc<FileDatabaseSender> {
         self.db.clone()
     }
 
-    pub fn ws(&self) -> Arc<ServerWebsocket> {
-        self.ws.load_full()
+    pub fn ws(&self) -> Arc<ServerConnectionSender> {
+        self.ws.load().clone()
     }
 
     pub fn changed(&self) -> Arc<Notify> {
@@ -148,28 +154,44 @@ impl Client {
     }
 }
 
-impl ClientInner {
+impl CoreRunner {
     pub async fn run(mut self) -> ! {
         loop {
-            match self.receiver.recv().await {
-                Some(msg) => msg.handle(&mut self).log(),
-                None => {
-                    error!("Inner loop receiver unexpectedly ended");
-                    exit(1);
-                }
+            match self.recv().await {
+                Ok(msg) => msg.handle(&mut self).log(),
+                Err(e) => error!("{e:?}"),
             }
+
+            self.playing_file
+                .store(self.player.playing_file().map(Arc::new));
             self.changed.notify_waiters();
+        }
+    }
+
+    async fn recv(&mut self) -> Result<ClientMessage> {
+        tokio::select! {
+            p = self.player.recv() => p.map(ClientMessage::from),
+            h = self.pacemaker.recv() => Ok(ClientMessage::from(h)),
+            u = self.receiver.recv() => {
+                let Some(u) = u else {
+                    error!("UI receiver ended");
+                    exit(1);
+                };
+                Ok(ClientMessage::from(u))
+            }
+            d = self.db.recv() => d.map(ClientMessage::from),
+            w = self.ws.recv() => w.map(ClientMessage::from),
         }
     }
 }
 
-#[enum_dispatch(ClientMessage)]
+#[enum_dispatch(ClientMessageTrait)]
 #[derive(Debug, Clone)]
-pub enum PlayerMessage {
+pub enum ClientMessage {
     MediaPlayerEvent,
     Heartbeat,
     UiMessage,
-    DatabaseMessage,
+    DatabaseEvent,
     WebSocketMessage,
 }
 

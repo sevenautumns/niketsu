@@ -5,15 +5,14 @@ use anyhow::{Error, Result};
 use enum_dispatch::enum_dispatch;
 use log::{debug, error, trace, warn};
 
-use super::ServerMessage;
-use crate::client::message::ClientMessage;
-use crate::client::server::ServerWebsocket;
-use crate::client::{ClientInner, LogResult};
+use super::NiketsuMessage;
+use crate::client::message::ClientMessageTrait;
+use crate::client::{CoreRunner, LogResult};
 use crate::playlist::PlaylistWidgetState;
 use crate::rooms::RoomsWidgetState;
 use crate::video::{PlayingFile, Video};
 
-#[enum_dispatch(ClientMessage)]
+#[enum_dispatch(ClientMessageTrait)]
 #[derive(Debug, Clone)]
 pub enum WebSocketMessage {
     Received,
@@ -24,18 +23,18 @@ pub enum WebSocketMessage {
 }
 
 #[derive(Debug, Clone)]
-pub struct Received(pub ServerMessage);
+pub struct Received(pub NiketsuMessage);
 
-impl ClientMessage for Received {
-    fn handle(self, client: &mut ClientInner) -> Result<()> {
+impl ClientMessageTrait for Received {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
         // TODO break down this match
         match self.0 {
-            ServerMessage::Ping { uuid } => {
+            NiketsuMessage::Ping { uuid } => {
                 debug!("Socket: received ping {uuid}");
-                client.ws.load().send(ServerMessage::Ping { uuid })?;
+                client.ws.sender().send(NiketsuMessage::Ping { uuid })?;
                 Ok(())
             }
-            ServerMessage::VideoStatus {
+            NiketsuMessage::VideoStatus {
                 filename,
                 position,
                 paused,
@@ -44,7 +43,7 @@ impl ClientMessage for Received {
                 trace!("{filename:?}, {position:?}, {paused:?}, {speed:?}");
                 Ok(())
             }
-            ServerMessage::StatusList { rooms } => {
+            NiketsuMessage::StatusList { rooms } => {
                 debug!("Socket: received rooms: {rooms:?}");
                 client.rooms_widget.rcu(|r| {
                     let mut rs = RoomsWidgetState::clone(r);
@@ -53,19 +52,19 @@ impl ClientMessage for Received {
                 });
                 Ok(())
             }
-            ServerMessage::Pause { username, .. } => {
+            NiketsuMessage::Pause { username, .. } => {
                 debug!("Socket: received pause");
                 client.player.pause()?;
                 client.messages.push_paused(username);
                 Ok(())
             }
-            ServerMessage::Start { username, .. } => {
+            NiketsuMessage::Start { username, .. } => {
                 debug!("Socket: received start");
                 client.player.start()?;
                 client.messages.push_started(username);
                 Ok(())
             }
-            ServerMessage::Seek {
+            NiketsuMessage::Seek {
                 filename,
                 position,
                 username,
@@ -90,7 +89,7 @@ impl ClientMessage for Received {
                 }
                 Ok(())
             }
-            ServerMessage::Select { filename, username } => {
+            NiketsuMessage::Select { filename, username } => {
                 debug!("Socket: received select: {filename:?}");
                 match filename.clone() {
                     Some(filename) => client
@@ -102,17 +101,17 @@ impl ClientMessage for Received {
                             pos: Duration::ZERO,
                         })
                         .log(),
-                    None => client.player.playing_file_mut(|file| *file = None),
+                    None => client.player.unload(),
                 }
                 client.messages.push_select(filename, username);
                 Ok(())
             }
-            ServerMessage::UserMessage { message, username } => {
+            NiketsuMessage::UserMessage { message, username } => {
                 trace!("Socket: received: {username}: {message}");
                 client.messages.push_user_chat(message, username);
                 Ok(())
             }
-            ServerMessage::Playlist { playlist, username } => {
+            NiketsuMessage::Playlist { playlist, username } => {
                 trace!("Socket: received playlist: {username}");
                 client.playlist_widget.rcu(|p| {
                     let mut plist = PlaylistWidgetState::clone(p);
@@ -122,20 +121,20 @@ impl ClientMessage for Received {
                 client.messages.push_playlist_changed(username);
                 Ok(())
             }
-            ServerMessage::Status { ready, username } => {
+            NiketsuMessage::Status { ready, username } => {
                 warn!("Received: {username}: {ready:?}");
                 Ok(())
             }
-            ServerMessage::Join { room, username, .. } => {
+            NiketsuMessage::Join { room, username, .. } => {
                 warn!("Received: {room}: {username}");
                 Ok(())
             }
-            ServerMessage::ServerMessage { message, error } => {
+            NiketsuMessage::ServerMessage { message, error } => {
                 trace!("Socket: received server message: {error}: {message}");
                 client.messages.push_server_chat(message, error);
                 Ok(())
             }
-            ServerMessage::PlaybackSpeed { speed, username } => {
+            NiketsuMessage::PlaybackSpeed { speed, username } => {
                 trace!("Socket: received playback speed: {username}, {speed}");
                 client.player.set_speed(speed).log();
                 client.messages.push_playback_speed(speed, username);
@@ -148,8 +147,8 @@ impl ClientMessage for Received {
 #[derive(Debug, Clone)]
 pub struct ServerError(pub Arc<Error>);
 
-impl ClientMessage for ServerError {
-    fn handle(self, client: &mut ClientInner) -> Result<()> {
+impl ClientMessageTrait for ServerError {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
         warn!("Connection Error: {}", self.0);
         client.messages.push_connection_error(self.0.to_string());
         Ok(())
@@ -159,18 +158,12 @@ impl ClientMessage for ServerError {
 #[derive(Debug, Clone, Copy)]
 pub struct WsStreamEnded;
 
-impl ClientMessage for WsStreamEnded {
-    fn handle(self, client: &mut ClientInner) -> Result<()> {
+impl ClientMessageTrait for WsStreamEnded {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
         error!("Websocket ended");
         client.messages.push_disconnected();
-        let ws = client.ws.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            ws.rcu(|w| {
-                let ws = ServerWebsocket::clone(w);
-                ws.reboot()
-            });
-        });
+        client.ws = client.ws.reboot();
+        client.ws_sender.store(Arc::new(client.ws.sender().clone()));
         Ok(())
     }
 }
@@ -178,10 +171,10 @@ impl ClientMessage for WsStreamEnded {
 #[derive(Debug, Clone)]
 pub struct Connected;
 
-impl ClientMessage for Connected {
-    fn handle(self, client: &mut ClientInner) -> Result<()> {
+impl ClientMessageTrait for Connected {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
         trace!("Socket: connected");
-        client.ws.load().send(ServerMessage::Join {
+        client.ws.sender().send(NiketsuMessage::Join {
             password: client.config.password.clone(),
             room: client.config.room.clone(),
             username: client.config.username.clone(),
@@ -194,8 +187,8 @@ impl ClientMessage for Connected {
 #[derive(Debug, Clone)]
 pub struct SendFinished(pub Arc<Result<()>>);
 
-impl ClientMessage for SendFinished {
-    fn handle(self, _: &mut ClientInner) -> Result<()> {
+impl ClientMessageTrait for SendFinished {
+    fn handle(self, _: &mut CoreRunner) -> Result<()> {
         trace!("{:?}", self.0);
         Ok(())
     }

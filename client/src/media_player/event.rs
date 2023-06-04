@@ -5,28 +5,34 @@ use anyhow::Result;
 use enum_dispatch::enum_dispatch;
 use log::debug;
 
-use crate::client::message::ClientMessage;
-use crate::client::server::ServerMessage;
-use crate::client::ClientInner;
+use super::{MediaPlayer, MediaPlayerWrapper};
+use crate::client::message::ClientMessageTrait;
+use crate::client::server::NiketsuMessage;
+use crate::client::CoreRunner;
 use crate::user::ThisUser;
 use crate::video::PlayingFile;
 
-#[enum_dispatch(ClientMessage)]
+#[enum_dispatch]
+pub trait MediaPlayerEventTrait {
+    fn handle<M: MediaPlayer>(self, player: &mut MediaPlayerWrapper<M>) -> Result<()>;
+}
+
+#[enum_dispatch(MediaPlayerEventTrait, ClientMessageTrait)]
 #[derive(Debug, Clone)]
 pub enum MediaPlayerEvent {
-    Paused,
-    Started,
-    PositionChanged,
-    SpeedChanged,
-    PlaybackEnded,
-    Exit,
+    PlayerPaused,
+    PlayerStarted,
+    PlayerPositionChanged,
+    PlayerSpeedChanged,
+    PlayerPlaybackEnded,
+    PlayerExit,
 }
 
 #[derive(Debug, Clone)]
-pub struct Paused;
+pub struct PlayerPaused;
 
-impl Paused {
-    fn set_not_ready(client: &mut ClientInner) -> Option<ServerMessage> {
+impl PlayerPaused {
+    fn set_not_ready(client: &mut CoreRunner) -> Option<NiketsuMessage> {
         let mut state = None;
         client.user.rcu(|u| {
             let mut user = ThisUser::clone(u);
@@ -35,37 +41,36 @@ impl Paused {
         });
         state
     }
+}
 
-    fn set_paused(client: &mut ClientInner) {
-        client.player.playing_file_mut(|file| {
-            if let Some(file) = file {
-                file.paused = true;
-            }
+impl ClientMessageTrait for PlayerPaused {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        let state = Self::set_not_ready(client);
+
+        if let Some(state) = state {
+            client.ws.sender().send(state)?;
+        }
+        client.ws.sender().send(NiketsuMessage::Pause {
+            username: client.user.load().name(),
         })
     }
 }
 
-impl ClientMessage for Paused {
-    fn handle(self, client: &mut ClientInner) -> anyhow::Result<()> {
+impl MediaPlayerEventTrait for PlayerPaused {
+    fn handle<M: MediaPlayer>(self, player: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
         debug!("Mpv process: pause");
-        Self::set_paused(client);
-        let state = Self::set_not_ready(client);
-
-        if let Some(state) = state {
-            client.ws.load().send(state)?;
+        if let Some(file) = &mut player.status.file {
+            file.paused = true;
         }
-        client.ws.load().send(ServerMessage::Pause {
-            username: client.user.load().name(),
-        })?;
         Ok(())
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Started;
+pub struct PlayerStarted;
 
-impl Started {
-    fn set_ready(client: &mut ClientInner) -> Option<ServerMessage> {
+impl PlayerStarted {
+    fn set_ready(client: &mut CoreRunner) -> Option<NiketsuMessage> {
         let mut state = None;
         client.user.rcu(|u| {
             let mut user = ThisUser::clone(u);
@@ -74,84 +79,89 @@ impl Started {
         });
         state
     }
+}
 
-    fn set_playing(client: &mut ClientInner) {
-        client.player.playing_file_mut(|file| {
-            if let Some(file) = file {
-                file.paused = false;
-            }
+impl ClientMessageTrait for PlayerStarted {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        let state = Self::set_ready(client);
+
+        if let Some(state) = state {
+            client.ws.sender().send(state)?;
+        }
+        client.ws.sender().send(NiketsuMessage::Start {
+            username: client.user.load().name(),
         })
     }
 }
 
-impl ClientMessage for Started {
-    fn handle(self, client: &mut ClientInner) -> anyhow::Result<()> {
+impl MediaPlayerEventTrait for PlayerStarted {
+    fn handle<M: MediaPlayer>(self, player: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
         debug!("Mpv process: start");
-        Self::set_playing(client);
-        let state = Self::set_ready(client);
-
-        if let Some(state) = state {
-            client.ws.load().send(state)?;
+        if let Some(file) = &mut player.status.file {
+            file.paused = false;
         }
-        client.ws.load().send(ServerMessage::Start {
-            username: client.user.load().name(),
-        })?;
         Ok(())
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct PositionChanged(pub Duration);
+pub struct PlayerPositionChanged(pub Duration);
 
-impl ClientMessage for PositionChanged {
-    fn handle(self, client: &mut ClientInner) -> anyhow::Result<()> {
-        debug!("Mpv process: seek {:?}", self.0);
+impl ClientMessageTrait for PlayerPositionChanged {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
         let Some(playing) = client.player.playing_file() else  {
             return Ok(());
         };
-        client.ws.load().send(ServerMessage::Seek {
+        client.ws.sender().send(NiketsuMessage::Seek {
             filename: playing.video.as_str().to_string(),
             position: self.0,
             username: client.user.load().name(),
             paused: playing.paused,
             desync: false,
             speed: playing.speed,
-        })?;
+        })
+    }
+}
+
+impl MediaPlayerEventTrait for PlayerPositionChanged {
+    fn handle<M: MediaPlayer>(self, _: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
+        debug!("Mpv process: seek {:?}", self.0);
         Ok(())
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct SpeedChanged(pub f64);
+pub struct PlayerSpeedChanged(pub f64);
 
-impl ClientMessage for SpeedChanged {
-    fn handle(self, client: &mut ClientInner) -> anyhow::Result<()> {
-        debug!("Mpv process: playback speed");
-        client.player.playing_file_mut(|file| {
-            if let Some(file) = file.as_mut() {
-                file.speed = self.0;
-            };
-        });
-
-        client.ws.load().send(ServerMessage::PlaybackSpeed {
+impl ClientMessageTrait for PlayerSpeedChanged {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        client.ws.sender().send(NiketsuMessage::PlaybackSpeed {
             username: client.user.load().name(),
             speed: self.0,
-        })?;
+        })
+    }
+}
+
+impl MediaPlayerEventTrait for PlayerSpeedChanged {
+    fn handle<M: MediaPlayer>(self, player: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
+        debug!("Mpv process: playback speed");
+        if let Some(file) = &mut player.status.file {
+            file.speed = self.0;
+        };
         Ok(())
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct PlaybackEnded;
+pub struct PlayerPlaybackEnded;
 
-impl ClientMessage for PlaybackEnded {
-    fn handle(self, client: &mut ClientInner) -> anyhow::Result<()> {
-        debug!("Mpv process: play next");
+impl ClientMessageTrait for PlayerPlaybackEnded {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
         let Some(file) = client.player.playing_file() else {
             return Ok(());
         };
         if let Some(next) = client.playlist_widget.load().next_video(&file.video) {
-            client.ws.load().send(ServerMessage::Select {
+            client.ws.sender().send(NiketsuMessage::Select {
                 filename: next.as_str().to_string().into(),
                 username: client.user.load().name(),
             })?;
@@ -163,7 +173,7 @@ impl ClientMessage for PlaybackEnded {
             };
             client.player.load(next)
         } else {
-            client.ws.load().send(ServerMessage::Select {
+            client.ws.sender().send(NiketsuMessage::Select {
                 filename: None,
                 username: client.user.load().name(),
             })?;
@@ -172,12 +182,25 @@ impl ClientMessage for PlaybackEnded {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Exit;
+impl MediaPlayerEventTrait for PlayerPlaybackEnded {
+    fn handle<M: MediaPlayer>(self, _: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
+        debug!("Mpv process: play next");
+        Ok(())
+    }
+}
 
-impl ClientMessage for Exit {
-    fn handle(self, _: &mut ClientInner) -> anyhow::Result<()> {
-        debug!("Mpv process: exit");
+#[derive(Debug, Clone)]
+pub struct PlayerExit;
+
+impl ClientMessageTrait for PlayerExit {
+    fn handle(self, _: &mut CoreRunner) -> Result<()> {
         exit(0)
+    }
+}
+
+impl MediaPlayerEventTrait for PlayerExit {
+    fn handle<M: MediaPlayer>(self, _: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
+        debug!("Mpv process: exit");
+        Ok(())
     }
 }

@@ -7,7 +7,7 @@ use iced::{Element, Length, Padding, Renderer, Theme};
 
 use self::message::{ReadyButton, UserMessage};
 use super::{InnerApplication, MainMessage};
-use crate::client::Client;
+use crate::client::Core;
 use crate::config::Config;
 use crate::iced_window::running::message::{MessageInput, SendMessage};
 use crate::playlist::PlaylistWidget;
@@ -19,7 +19,7 @@ pub mod message;
 #[derive(Debug, Getters, MutGetters)]
 #[getset(get = "pub")]
 pub struct RunningWindow {
-    client: Client,
+    client: Core,
     config: Config,
     #[getset(get_mut = "pub")]
     message: String,
@@ -28,7 +28,7 @@ pub struct RunningWindow {
 }
 
 impl RunningWindow {
-    pub fn new(client: Client, config: Config) -> Self {
+    pub fn new(client: Core, config: Config) -> Self {
         RunningWindow {
             client,
             message: Default::default(),
@@ -91,7 +91,7 @@ impl InnerApplication for RunningWindow {
                 Container::new(
                     Scrollable::new(PlaylistWidget::new(
                         client.playlist().load().deref().deref().clone(),
-                        client.player().playing_file(),
+                        client.playing_file(),
                         &client.db()
                     ))
                     .width(Length::Fill)

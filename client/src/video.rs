@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use url::Url;
 
-use crate::client::database::FileDatabase;
+use crate::client::database::FileDatabaseSender;
 
 #[derive(Debug, Clone, Eq)]
 pub enum Video {
@@ -34,7 +34,7 @@ impl Video {
         }
     }
 
-    pub fn to_path_str(&self, db: &Arc<FileDatabase>) -> Option<String> {
+    pub fn to_path_str(&self, db: &Arc<FileDatabaseSender>) -> Option<String> {
         match self {
             Video::File { name } => match db.find_file(name) {
                 Ok(Some(file)) => Some(file.path.as_os_str().to_str()?.to_string()),

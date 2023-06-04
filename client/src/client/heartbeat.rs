@@ -6,26 +6,34 @@ use futures::FutureExt;
 use iced::Command;
 use iced_native::command::Action;
 use log::debug;
-use tokio::sync::mpsc::UnboundedSender as MpscSender;
 use tokio::sync::Notify;
+use tokio::time::Interval;
 
-use super::message::ClientMessage;
-use crate::client::server::ServerMessage;
-use crate::client::{ClientInner, PlayerMessage};
+use super::message::ClientMessageTrait;
+use super::CoreRunner;
+use crate::client::server::NiketsuMessage;
 use crate::iced_window::message::PlayerChanged;
 use crate::iced_window::MainMessage;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Heartbeat;
 
-impl Heartbeat {
-    pub fn start(client_sender: MpscSender<PlayerMessage>) {
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                client_sender.send(Heartbeat.into()).ok();
-            }
-        });
+pub struct Pacemaker {
+    interval: Interval,
+}
+
+impl Default for Pacemaker {
+    fn default() -> Self {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        Self { interval }
+    }
+}
+
+impl Pacemaker {
+    pub async fn recv(&mut self) -> Heartbeat {
+        self.interval.tick().await;
+        Heartbeat
     }
 }
 
@@ -41,11 +49,11 @@ impl Changed {
     }
 }
 
-impl ClientMessage for Heartbeat {
-    fn handle(self, client: &mut ClientInner) -> Result<()> {
+impl ClientMessageTrait for Heartbeat {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
         debug!("Heartbeat");
         let playing = client.player.playing_file();
-        client.ws.load().send(ServerMessage::VideoStatus {
+        client.ws.sender().send(NiketsuMessage::VideoStatus {
             filename: playing.as_ref().map(|p| p.video.as_str().to_string()),
             position: playing.and_then(|_| client.player.get_position().ok()),
             paused: client.player.is_paused()?,
