@@ -27,7 +27,8 @@
         system = "x86_64-linux";
         overlays = [ devshell.overlays.default deploy-rs.overlay ];
       };
-    in {
+    in
+    {
       nixosConfigurations.niketsu = lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
@@ -41,21 +42,23 @@
         specialArgs = { inherit inputs; };
       };
 
-      deploy.nodes.niketsu = let
-        known-hosts = pkgs.writeText "known_hosts" ''
-          autumnal.de ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOB5kFkv5hNVA0nbeIo1LtGZDOORTH+lXrxq8h2EmI3e
-        '';
-      in {
-        hostname = "autumnal.de";
-        fastConnection = false;
-        sshOpts = [ "-o" "UserKnownHostsFile=${known-hosts}" ];
-        profiles.system = {
-          sshUser = "admin";
-          path = deploy-rs.lib.x86_64-linux.activate.nixos
-            self.nixosConfigurations.niketsu;
-          user = "root";
+      deploy.nodes.niketsu =
+        let
+          known-hosts = pkgs.writeText "known_hosts" ''
+            autumnal.de ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOB5kFkv5hNVA0nbeIo1LtGZDOORTH+lXrxq8h2EmI3e
+          '';
+        in
+        {
+          hostname = "autumnal.de";
+          fastConnection = false;
+          sshOpts = [ "-o" "UserKnownHostsFile=${known-hosts}" ];
+          profiles.system = {
+            sshUser = "admin";
+            path = deploy-rs.lib.x86_64-linux.activate.nixos
+              self.nixosConfigurations.niketsu;
+            user = "root";
+          };
         };
-      };
 
       devShells.x86_64-linux.default = (pkgs.devshell.mkShell {
         name = "niketsu-deploy-shell";
@@ -63,6 +66,7 @@
       });
 
       checks = builtins.mapAttrs
-        (system: deployLib: deployLib.deployChecks self.deploy) deploy-rs.lib;
+        (system: deployLib: deployLib.deployChecks self.deploy)
+        deploy-rs.lib;
     };
 }
