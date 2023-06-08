@@ -1,19 +1,26 @@
 package main
 
 import (
-	server "github.com/sevenautumns/niketsu/server/src"
+	"github.com/sevenautumns/niketsu/server/src/communication"
+	"github.com/sevenautumns/niketsu/server/src/config"
+	"github.com/sevenautumns/niketsu/server/src/logger"
 )
 
-var config server.Config
+var conf config.Config
 
 func init() {
-	config = server.GetConfig()
-	server.InitLogger(config.General.Debug)
+	conf = config.GetConfig()
+	logger.NewGlobalLogger(conf.General.Debug)
 }
 
 func main() {
-	defer server.LoggerSync()
+	defer logger.Sync()
 
-	overseer := server.NewOverseer(config)
-	overseer.Start()
+	server := communication.NewServer(conf.General)
+	err := server.Init(conf.Rooms)
+	if err != nil {
+		logger.Fatalw("Failed to initialize handler", "error", err)
+	}
+	handler := communication.NewWebSocketHandler(conf.General, server)
+	handler.HandleRequests()
 }

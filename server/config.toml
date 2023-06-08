@@ -8,9 +8,9 @@ Debug = true
 # Cert = "cert.pem"
 # Key = "key.pem"
 # Password = "1234"
-# DbUpdateInterval = 2
-# DbWaitTimeout = 4
-# DbStatInterval = 120
+# DbUpdateInterval = 10
+# DbWaitTimeout = 5
+# DbStatInterval = 3600
 
 [Rooms]
 [Rooms.General]
