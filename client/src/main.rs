@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use config::Config;
-use iced::{Application, Settings};
+use iced::Application;
 use iced_window::MainWindow;
 use log::*;
 use once_cell::sync::Lazy;
@@ -27,19 +27,7 @@ pub static TEXT_SIZE: Lazy<ArcSwap<f32>> = Lazy::new(|| ArcSwap::new(Arc::new(14
 fn main() -> Result<()> {
     pretty_env_logger::init();
 
-    let maybe_config = Config::load();
-    let config = match maybe_config {
-        Ok(conf) => conf,
-        Err(e) => {
-            warn!("No config loaded: {e:?}");
-            Default::default()
-        }
-    };
-    TEXT_SIZE.store(Arc::new(config.text_size));
-    let mut settings = Settings::with_flags(config);
-    settings.default_text_size = *TEXT_SIZE.load_full();
-    settings.window.size = (600, 770);
-    // settings
+    let settings = Config::load_or_default().into();
     MainWindow::run(settings)?;
     Ok(())
 }

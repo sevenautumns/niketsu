@@ -252,17 +252,22 @@ impl Mpv {
         }
     }
 
-    fn send_command(&self, cmd: &[&CString]) -> Result<()> {
+    fn build_cmd(cmd: &[&CString]) -> Vec<*const i8>{
         let mut cmd_ptr = vec![];
         for c in cmd {
             cmd_ptr.push(c.as_ptr())
         }
         cmd_ptr.push(std::ptr::null());
-        let ret = unsafe { mpv_command_async(self.handle.0, 0, cmd_ptr.as_mut_ptr()) };
+        cmd_ptr
+    }
+
+    fn send_command(&self, cmd: &[&CString]) -> Result<()> {
+        let mut cmd = Self::build_cmd(cmd);
+        let ret = unsafe { mpv_command_async(self.handle.0, 0, cmd.as_mut_ptr()) };
         Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
     }
 
-    pub(super) fn eof_reached(&self) -> Result<bool> {
+    fn eof_reached(&self) -> Result<bool> {
         self.get_property_flag(MpvProperty::EofReached)
     }
 }

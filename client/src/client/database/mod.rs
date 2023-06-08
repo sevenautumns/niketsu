@@ -5,19 +5,23 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use anyhow::Result;
-use async_recursion::async_recursion;
+use anyhow::{bail, Result};
 use dashmap::DashMap;
+use enum_dispatch::enum_dispatch;
 use futures::future::join_all;
-use futures::stream::FuturesUnordered;
+use futures::stream::FusedStream;
 use futures::StreamExt;
 use iced::widget::{row, Button, Container, ProgressBar, Text, Tooltip};
 use iced::{Element, Length, Renderer};
-use log::trace;
+use log::{debug, warn};
+use tokio::fs::{DirEntry, ReadDir};
 use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
-use tokio::sync::{Notify, RwLock, Semaphore};
+use tokio::sync::{Notify, OwnedSemaphorePermit, RwLock, RwLockReadGuard, Semaphore};
+use tokio::task::JoinSet;
 
 use self::message::UpdateFinished;
+use self::updater::FusedReadDir;
+use super::LogResult;
 use crate::client::database::message::{Changed, DatabaseEvent};
 use crate::iced_window::running::message::{StartDbUpdate, StopDbUpdate, UserEvent};
 use crate::iced_window::MainMessage;
@@ -25,6 +29,7 @@ use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton}
 use crate::TEXT_SIZE;
 
 pub mod message;
+pub mod updater;
 
 #[derive(Debug, Clone)]
 pub struct File {
@@ -57,14 +62,55 @@ impl FileDatabaseReceiver {
 }
 
 #[derive(Debug)]
-pub struct FileDatabaseSender {
-    semaphore: Semaphore,
-    stop: RwLock<Notify>,
+pub struct FileDatabaseUpdateData {
+    semaphore: Arc<Semaphore>,
     database: DashMap<OsString, File>,
-    search_paths: RwLock<Vec<PathBuf>>,
     queued_dirs: AtomicUsize,
     finished_dirs: AtomicUsize,
     event_tx: WatchSender<DatabaseEvent>,
+}
+
+impl FileDatabaseUpdateData {
+    fn new(event_tx: WatchSender<DatabaseEvent>) -> Self {
+        Self {
+            event_tx,
+            database: Default::default(),
+            queued_dirs: AtomicUsize::new(0),
+            finished_dirs: AtomicUsize::new(0),
+            semaphore: Arc::new(Semaphore::new(100)),
+        }
+    }
+
+    fn finished_dirs(&self) -> usize {
+        self.finished_dirs.load(Ordering::Relaxed)
+    }
+
+    fn finished_dirs_inc(&self) {
+        self.finished_dirs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn finished_dirs_reset(&self) {
+        self.finished_dirs.store(0, Ordering::Relaxed);
+    }
+
+    fn queued_dirs(&self) -> usize {
+        self.queued_dirs.load(Ordering::Relaxed)
+    }
+
+    fn queued_dirs_inc(&self) {
+        self.queued_dirs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn queued_dirs_reset(&self) {
+        self.queued_dirs.store(0, Ordering::Relaxed);
+    }
+}
+
+#[derive(Debug)]
+pub struct FileDatabaseSender {
+    stop: RwLock<Notify>,
+    search_paths: RwLock<Vec<PathBuf>>,
+    data: Arc<FileDatabaseUpdateData>,
 }
 
 impl FileDatabaseSender {
@@ -72,11 +118,7 @@ impl FileDatabaseSender {
         Self {
             search_paths: RwLock::new(path.to_vec()),
             stop: Default::default(),
-            database: Default::default(),
-            semaphore: Semaphore::new(100),
-            queued_dirs: AtomicUsize::new(0),
-            finished_dirs: AtomicUsize::new(0),
-            event_tx,
+            data: Arc::new(FileDatabaseUpdateData::new(event_tx)),
         }
     }
 
@@ -95,7 +137,7 @@ impl FileDatabaseSender {
 
     pub fn find_file(&self, name: &str) -> Result<Option<File>> {
         let name = OsString::from_str(name)?;
-        Ok(self.database.get(&name).map(|p| p.value().clone()))
+        Ok(self.data.database.get(&name).map(|p| p.value().clone()))
     }
 
     pub fn stop_update(&self) {
@@ -103,13 +145,13 @@ impl FileDatabaseSender {
     }
 
     pub fn get_status(&self) -> (usize, usize) {
-        let finished = self.finished_dirs.load(Ordering::Relaxed);
-        let queued = self.queued_dirs.load(Ordering::Relaxed);
+        let finished = self.data.finished_dirs();
+        let queued = self.data.queued_dirs();
         (finished, queued)
     }
 
     pub fn is_updating(&self) -> bool {
-        self.stop.try_write().is_ok()
+        self.stop.try_write().is_err()
     }
 
     pub fn view<'a>(&self) -> Element<'a, MainMessage, Renderer> {
@@ -117,7 +159,7 @@ impl FileDatabaseSender {
         let finished = fin == que;
         let main: Element<_, _> = match finished {
             true => {
-                let len = self.database.len();
+                let len = self.data.database.len();
                 Container::new(
                     Button::new(Text::new(format!("{len} files in database")))
                         .style(FileButton::theme(false, true)),
@@ -160,101 +202,217 @@ impl FileDatabaseSender {
     }
 
     pub async fn update(&self) {
-        let mut stop = match self.stop.try_write() {
-            Ok(lock) => lock,
-            Err(_) => return,
+        let Ok(stop) = self.update_init() else {
+            // If the init failed, we simply return.
+            // We can do this because update_init()
+            // can only fail if there is already an update in progress
+            return;
         };
-
-        *stop = Notify::new();
-        self.database.clear();
-        self.queued_dirs.store(0, Ordering::Relaxed);
-        self.finished_dirs.store(0, Ordering::Relaxed);
-        self.event_tx.send(Changed.into()).ok();
-        let paths = self.search_paths.read().await.clone();
-        let stop = stop.downgrade();
-
-        let mut join = vec![];
-        for p in paths {
-            join.push(self.update_inner(p.to_path_buf()));
-        }
-
-        tokio::select! {
-            _ = join_all(join) => { }
-            _ = stop.notified() => trace!("update stop requested")
-        }
-
-        self.queued_dirs.store(0, Ordering::Relaxed);
-        self.finished_dirs.store(0, Ordering::Relaxed);
-        self.event_tx.send(UpdateFinished.into()).ok();
+        self.update_paths(&stop).await;
+        self.update_finish_up();
         drop(stop);
     }
 
-    #[async_recursion]
-    async fn update_inner(&self, path: PathBuf) -> Result<()> {
-        self.queued_dirs.fetch_add(1, Ordering::Relaxed);
-        let sem = self.semaphore.acquire().await;
-        let mut files = vec![];
-        let mut join_rec = FuturesUnordered::new();
-        let mut join_type = FuturesUnordered::new();
-        let mut dir = tokio::fs::read_dir(path).await?;
+    fn update_init(&self) -> Result<RwLockReadGuard<Notify>> {
+        let mut stop = self.stop.try_write()?;
+        *stop = Notify::new();
 
-        loop {
-            tokio::select! {
-                entry = dir.next_entry() => {
-                    match entry? {
-                        Some(entry) => {
-                            join_type.push(async move {
-                                (entry.file_name(), entry.path(), entry.file_type().await)
-                            });
-                        },
-                        None => break,
-                    }
-                },
-                Some((name, path, typ)) = join_type.next() => {
-                    if let Ok(typ) = typ {
-                        if typ.is_dir() {
-                            join_rec.push(self.update_inner(path))
-                        } else if typ.is_file() {
-                            files.push(File {
-                                name,
-                                path,
-                            })
-                        }
-                    }
-                }
-                Some(_) = join_rec.next() => {}
-            }
-        }
-        loop {
-            tokio::select! {
-                res = join_type.next() => {
-                    if let Some((name, path, typ)) = res {
-                        if let Ok(typ) = typ {
-                            if typ.is_dir() {
-                                join_rec.push(self.update_inner(path))
-                            } else if typ.is_file() {
-                                files.push(File {
-                                    name,
-                                    path,
-                                })
-                            }
-                        }
-                    } else {
-                        drop(sem);
-                        break
-                    }
-                }
-                Some(_) = join_rec.next() => {}
-            }
-        }
-        while join_rec.next().await.is_some() {}
+        self.data.database.clear();
+        self.data.queued_dirs_reset();
+        self.data.finished_dirs_reset();
+        self.data.event_tx.send(Changed.into()).ok();
 
-        for f in files {
-            self.database.insert(f.name.clone(), f);
-        }
+        Ok(stop.downgrade())
+    }
 
-        self.finished_dirs.fetch_add(1, Ordering::Relaxed);
-        self.event_tx.send(Changed.into())?;
+    async fn update_paths<'a>(&self, stop: &RwLockReadGuard<'a, Notify>) {
+        let mut paths = self.search_paths.read().await.clone();
+        let futures = paths.drain(..).map(|p| self.update_path(p));
+        tokio::select! {
+            _ = join_all(futures) => { }
+            _ = stop.notified() => debug!("update stop requested")
+        }
+    }
+
+    fn update_finish_up(&self) {
+        self.data.queued_dirs_reset();
+        self.data.finished_dirs_reset();
+        self.data.event_tx.send(UpdateFinished.into()).ok();
+    }
+
+    async fn update_path(&self, path: PathBuf) -> Result<()> {
+        let updater = FileDatabaseUpdater::new(path, self.data.clone());
+        updater.complete().await.log();
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FileDatabaseUpdater {
+    path: PathBuf,
+    data: Arc<FileDatabaseUpdateData>,
+}
+
+impl FileDatabaseUpdater {
+    fn new(path: PathBuf, data: Arc<FileDatabaseUpdateData>) -> Self {
+        FileDatabaseUpdater { path, data }
+    }
+
+    fn new_from_this(&self, path: PathBuf) -> Self {
+        FileDatabaseUpdater {
+            path,
+            ..self.clone()
+        }
+    }
+
+    async fn complete(self) -> Result<()> {
+        self.data.queued_dirs_inc();
+
+        let mut crawler = DirectoryCrawler::new(self.path, self.data.clone()).await?;
+        crawler.complete().await?;
+
+        self.data.finished_dirs_inc();
+        self.data.event_tx.send(Changed.into())?;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct DirectoryCrawler {
+    data: Arc<FileDatabaseUpdateData>,
+    permit: Option<OwnedSemaphorePermit>,
+    dir: FusedReadDir,
+    typ_tasks: JoinSet<Result<Item>>,
+    rec_tasks: JoinSet<Result<()>>,
+}
+
+impl Drop for DirectoryCrawler {
+    fn drop(&mut self) {
+        self.typ_tasks.abort_all();
+        self.rec_tasks.abort_all();
+    }
+}
+
+impl DirectoryCrawler {
+    async fn new(path: PathBuf, data: Arc<FileDatabaseUpdateData>) -> Result<Self> {
+        Ok(Self {
+            permit: None,
+            dir: FusedReadDir::new(path).await?,
+            typ_tasks: JoinSet::new(),
+            rec_tasks: JoinSet::new(),
+            data,
+        })
+    }
+
+    fn completed(&self) -> bool {
+        self.completed_locally() && self.rec_tasks.is_empty()
+    }
+
+    fn completed_locally(&self) -> bool {
+        self.dir.is_terminated() && self.typ_tasks.is_empty()
+    }
+
+    async fn complete(&mut self) -> Result<()> {
+        while !self.completed() {
+            self.next().await?
+        }
+        Ok(())
+    }
+
+    async fn next(&mut self) -> Result<()> {
+        self.check_permit().await?;
+        tokio::select! {
+            Some(entry) = self.dir.next() => {
+                self.typ_tasks.spawn(Item::from_dir_entry(entry));
+            }
+            Some(Ok(entry)) = self.typ_tasks.join_next() => self.handle_entry(entry),
+            Some(Ok(res)) = self.rec_tasks.join_next() => self.handle_rec_res(res),
+        }
+        Ok(())
+    }
+
+    /// Drop permit if this crawler finished locally
+    /// Acquire permit if it is not finished and no permit exists
+    async fn check_permit(&mut self) -> Result<()> {
+        if self.completed_locally() && self.permit.is_some() {
+            drop(self.permit.take());
+        }
+
+        if !self.completed_locally() && self.permit.is_none() {
+            self.permit = Some(self.data.semaphore.clone().acquire_owned().await?);
+        }
+
+        Ok(())
+    }
+
+    fn handle_entry(&mut self, entry: Result<Item>) {
+        let Ok(entry) = entry else {
+            warn!("{entry:?}");
+            return;
+        };
+        entry.handle(self)
+    }
+
+    fn handle_rec_res(&self, res: Result<()>) {
+        if let Err(e) = res {
+            warn!("{e:?}")
+        }
+    }
+}
+
+#[enum_dispatch(CrawlerItem)]
+#[derive(Debug)]
+enum Item {
+    File,
+    Directory,
+}
+
+impl Item {
+    async fn from_dir_entry(dir_entry: DirEntry) -> Result<Self> {
+        let typ = dir_entry.file_type().await?;
+        let path = dir_entry.path();
+        if typ.is_symlink() {
+            bail!("symlinks are not supported: {path:?}")
+        }
+        if typ.is_dir() {
+            return Ok(Directory::new(path).into());
+        }
+        let name = dir_entry.file_name();
+        Ok(File::new(name, path).into())
+    }
+}
+
+#[enum_dispatch]
+trait CrawlerItem {
+    fn handle(self, crawler: &mut DirectoryCrawler);
+}
+
+#[derive(Debug)]
+struct Directory {
+    path: PathBuf,
+}
+
+impl Directory {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl CrawlerItem for Directory {
+    fn handle(self, crawler: &mut DirectoryCrawler) {
+        let updater = crawler.new_from_this(self.path);
+        crawler.rec_tasks.spawn(updater.complete());
+    }
+}
+
+impl File {
+    pub fn new(name: OsString, path: PathBuf) -> Self {
+        Self { name, path }
+    }
+}
+
+impl CrawlerItem for File {
+    fn handle(self, crawler: &mut DirectoryCrawler) {
+        crawler.data.database.insert(self.name.clone(), self);
     }
 }
