@@ -1,45 +1,33 @@
-#![warn(clippy::unwrap_used)]
-#![warn(clippy::too_many_lines)]
-
-use std::sync::Arc;
-
 use anyhow::Result;
-use arc_swap::ArcSwap;
-use config::Config;
-use iced::{Application, Settings};
-use iced_window::MainWindow;
-use log::*;
-use once_cell::sync::Lazy;
+use niketsu::communicator::WebsocketCommunicator;
+use niketsu::config::Config;
+use niketsu::core::build::CoreBuilder;
+use niketsu::file_database::FileDatabase;
+use niketsu::iced_ui::IcedUI;
+use niketsu::player::mpv::Mpv;
 
-pub mod client;
-pub mod config;
-pub mod iced_window;
-pub mod media_player;
-pub mod messages;
-pub mod playlist;
-pub mod rooms;
-pub mod styling;
-pub mod user;
-pub mod video;
-
-pub static TEXT_SIZE: Lazy<ArcSwap<f32>> = Lazy::new(|| ArcSwap::new(Arc::new(14.0)));
-
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     pretty_env_logger::init();
 
-    let maybe_config = Config::load();
-    let config = match maybe_config {
-        Ok(conf) => conf,
-        Err(e) => {
-            warn!("No config loaded: {e:?}");
-            Default::default()
-        }
-    };
-    TEXT_SIZE.store(Arc::new(config.text_size));
-    let mut settings = Settings::with_flags(config);
-    settings.default_text_size = *TEXT_SIZE.load_full();
-    settings.window.size = (600, 770);
-    // settings
-    MainWindow::run(settings)?;
-    Ok(())
+    let config: Config = Config::load_or_default();
+
+    let (view, ui_fn) = IcedUI::new(config.clone());
+    let database = FileDatabase::default();
+    let player = Mpv::new().unwrap();
+    let communicator = WebsocketCommunicator::default();
+
+    let core = CoreBuilder::builder()
+        .username(config.username)
+        .password(config.password)
+        .room(config.room)
+        .ui(Box::new(view))
+        .database(Box::new(database))
+        .player(Box::new(player))
+        .communicator(Box::new(communicator))
+        .build();
+
+    tokio::task::spawn(async move { core.run().await });
+
+    ui_fn()
 }

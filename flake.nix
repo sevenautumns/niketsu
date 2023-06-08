@@ -28,8 +28,14 @@
           cargo = rust-toolchain;
           rustc = rust-toolchain;
         });
-        C_INCLUDE_PATH = lib.makeSearchPathOutput "dev" "include"
-          (with pkgs; [ xorg.libX11 mpv-unwrapped fontconfig freetype expat musl ]);
+        C_INCLUDE_PATH = lib.makeSearchPathOutput "dev" "include" (with pkgs; [
+          xorg.libX11
+          mpv-unwrapped
+          fontconfig
+          freetype
+          expat
+          musl
+        ]);
         LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.libclang.lib ];
         libraries = with pkgs; [
           mpv-unwrapped
@@ -84,15 +90,14 @@
             cp -r * $out/
           '';
         };
-      in
-      rec {
+      in rec {
         packages = {
           default = packages.niketsu-client;
           niketsu-client = naersk-lib.buildPackage rec {
             name = "niketsu";
             version = VERSION;
             root = ./.;
-            nativeBuildInputs = with pkgs; [ cmake pkgconfig ] ++ libraries;
+            nativeBuildInputs = with pkgs; [ cmake pkg-config ] ++ libraries;
             buildInputs = with pkgs; [ yt-dlp ];
             LIBCLANG_PATH =
               lib.makeLibraryPath [ pkgs.llvmPackages.libclang.lib ];
@@ -137,7 +142,8 @@
             name = "niketsu-server";
             version = VERSION;
             src = ./.;
-            SSL_CERT_FILE = "${./server/src/communication/testdata/certificate.crt}";
+            SSL_CERT_FILE =
+              "${./server/src/communication/testdata/certificate.crt}";
             buildInputs = with pkgs; [ stdenv go glibc.static ];
             ldflags =
               [ "-s" "-w" "-linkmode external" "-extldflags" "-static" ];
@@ -157,12 +163,13 @@
             cargo-audit
             cargo-outdated
             cargo-udeps
+            cargo-tarpaulin
             cargo-watch
             nixpkgs-fmt
             libclang
             gcc
             mdbook
-            pkgconfig
+            pkg-config
             yt-dlp
             go
           ];
@@ -177,7 +184,8 @@
             }
             {
               name = "SSL_CERT_FILE";
-              eval = "$PRJ_ROOT/server/src/communication/testdata/certificate.crt";
+              eval =
+                "$PRJ_ROOT/server/src/communication/testdata/certificate.crt";
             }
             {
               name = "LIBRARY_PATH";
@@ -216,17 +224,23 @@
               command = "cargo-audit audit";
               help = pkgs.cargo-audit.meta.description;
             }
+            {
+              name = "tarpaulin";
+              command = ''
+                PATH=${fenix.packages.${system}.latest.rustc}/bin:$PATH
+                cargo tarpaulin $@
+              '';
+              help = pkgs.cargo-tarpaulin.meta.description;
+            }
           ];
         });
         checks = {
-          nixpkgs-fmt = pkgs.runCommand "nixpkgs-fmt"
-            {
-              nativeBuildInputs = [ pkgs.nixpkgs-fmt ];
-            } "nixpkgs-fmt --check ${./.}; touch $out";
-          cargo-fmt = pkgs.runCommand "cargo-fmt"
-            {
-              nativeBuildInputs = [ rust-toolchain ];
-            } "cd ${./.}; cargo fmt --check; touch $out";
+          nixpkgs-fmt = pkgs.runCommand "nixpkgs-fmt" {
+            nativeBuildInputs = [ pkgs.nixpkgs-fmt ];
+          } "nixpkgs-fmt --check ${./.}; touch $out";
+          cargo-fmt = pkgs.runCommand "cargo-fmt" {
+            nativeBuildInputs = [ rust-toolchain ];
+          } "cd ${./.}; cargo fmt --check; touch $out";
         };
       });
 }

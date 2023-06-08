@@ -4,12 +4,15 @@ use std::str::FromStr;
 
 use anyhow::{bail, Result};
 use directories::ProjectDirs;
-use iced::{Color, Theme};
+use iced::{Color, Settings, Theme};
+use log::warn;
 use palette::rgb::Rgb;
 use palette::Srgb;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 use url::Url;
+
+use crate::TEXT_SIZE;
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -125,6 +128,13 @@ impl Config {
         Ok(toml::from_str(&content)?)
     }
 
+    pub fn load_or_default() -> Self {
+        Self::load().unwrap_or_else(|e| {
+            warn!("No config loaded: {e:?}");
+            Default::default()
+        })
+    }
+
     pub fn save(&self) -> Result<()> {
         let path = Self::file_path()?;
         if let Some(parent) = path.parent() {
@@ -165,5 +175,14 @@ impl From<RgbWrap> for Color {
             b: c.0.blue as f32 / 255.0,
             a: 1.0,
         }
+    }
+}
+
+impl From<Config> for Settings<Config> {
+    fn from(value: Config) -> Self {
+        let mut settings = Settings::with_flags(value);
+        settings.default_text_size = *TEXT_SIZE.load_full();
+        settings.window.size = (600, 770);
+        settings
     }
 }

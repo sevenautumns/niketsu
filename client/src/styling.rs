@@ -1,6 +1,8 @@
 use iced::widget::rule::FillMode;
 use iced::{Color, Theme, Vector};
 
+use crate::core::ui::MessageLevel;
+
 pub struct ResultButton {
     success: bool,
 }
@@ -72,7 +74,7 @@ impl iced::widget::container::StyleSheet for ContainerBorder {
     fn appearance(&self, style: &Self::Style) -> iced::widget::container::Appearance {
         iced::widget::container::Appearance {
             border_color: style.palette().text,
-            border_radius: 5.0,
+            border_radius: 5.0.into(),
             border_width: 2.0,
             ..Default::default()
         }
@@ -100,7 +102,7 @@ impl iced::widget::button::StyleSheet for FileButton {
         };
         iced::widget::button::Appearance {
             shadow_offset: Vector::ZERO,
-            border_radius: 0.0,
+            border_radius: 0.0.into(),
             border_width: 0.0,
             background,
             text_color: style.palette().text,
@@ -136,7 +138,7 @@ impl iced::widget::rule::StyleSheet for FileRuleTheme {
         iced::widget::rule::Appearance {
             color: style.palette().text,
             width: 1,
-            radius: 0.0,
+            radius: 0.0.into(),
             fill_mode: FillMode::Full,
         }
     }
@@ -163,7 +165,7 @@ impl iced::widget::progress_bar::StyleSheet for FileProgressBar {
         iced::widget::progress_bar::Appearance {
             bar,
             background: style.palette().text.into(),
-            border_radius: 5.0,
+            border_radius: 5.0.into(),
         }
     }
 }
@@ -208,5 +210,28 @@ impl iced::widget::button::StyleSheet for ColorButton {
             background: iced::Background::Color(self.color).into(),
             ..style.active(&iced::theme::Button::Text)
         }
+    }
+}
+
+pub struct MessageColor {
+    level: MessageLevel,
+}
+
+impl MessageColor {
+    pub fn theme(level: MessageLevel) -> iced::theme::Container {
+        iced::theme::Container::Custom(Box::new(Self { level }))
+    }
+}
+
+impl iced::widget::container::StyleSheet for MessageColor {
+    type Style = Theme;
+
+    fn appearance(&self, style: &Self::Style) -> iced::widget::container::Appearance {
+        let color = match self.level {
+            MessageLevel::Normal => style.palette().background,
+            MessageLevel::Warn => style.palette().danger,
+            MessageLevel::Error => style.palette().danger,
+        };
+        ContainerBackground { color }.appearance(style)
     }
 }

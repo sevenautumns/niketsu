@@ -1,3 +1,6 @@
 [workspace]
 members = ["client"]
 resolver = "2"
+
+[patch.crates-io]
+cosmic-text = { git = "https://github.com/pop-os/cosmic-text", branch = "main" }
