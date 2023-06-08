@@ -53,13 +53,14 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
     }
 
     pub fn pause(&mut self) -> Result<()> {
-        if let Some(file) = self.status.file.as_mut() {
-            if !file.paused {
-                file.paused = true;
-                return self.player.pause();
-            }
+        let Some(file) = self.status.file.as_mut() else {
+            return Ok(());
+        };
+        if file.paused {
+            return Ok(());
         }
-        Ok(())
+        file.paused = true;
+        self.player.pause()
     }
 
     pub fn is_paused(&self) -> Result<bool> {
@@ -70,23 +71,25 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
     }
 
     pub fn start(&mut self) -> Result<()> {
-        if let Some(file) = self.status.file.as_mut() {
-            if file.paused {
-                file.paused = false;
-                return self.player.start();
-            }
+        let Some(file) = self.status.file.as_mut() else {
+            return Ok(());
+        };
+        if !file.paused {
+            return Ok(());
         }
-        Ok(())
+        file.paused = false;
+        self.player.start()
     }
 
     pub fn set_speed(&mut self, speed: f64) -> Result<()> {
-        if let Some(file) = self.status.file.as_mut() {
-            if file.speed != speed {
-                file.speed = speed;
-                return self.player.set_speed(speed);
-            }
+        let Some(file) = self.status.file.as_mut() else {
+            return Ok(());
+        };
+        if file.speed == speed {
+            return Ok(());
         }
-        Ok(())
+        file.speed = speed;
+        self.player.set_speed(speed)
     }
 
     pub fn get_speed(&self) -> Result<f64> {
@@ -101,15 +104,13 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
     }
 
     pub fn load(&mut self, play: PlayingFile) -> Result<()> {
-        if let Some(file) = &self.status.file {
-            if file.video.as_str().eq(play.video.as_str()) {
-                self.seek(play)
-            } else {
-                self.open(play)
-            }
-        } else {
-            self.open(play)
+        let Some(file) = &self.status.file else {
+            return self.open(play);
+        };
+        if file.video.as_str().eq(play.video.as_str()) {
+            return self.seek(play);
         }
+        self.open(play)
     }
 
     pub fn unload(&mut self) {
@@ -118,20 +119,16 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
     }
 
     fn seek(&mut self, play: PlayingFile) -> Result<()> {
-        if let Some(file) = self.status.file.clone() {
-            if play.paused != file.paused {
-                if play.paused {
-                    self.pause()?;
-                } else {
-                    self.start()?;
-                }
-            }
-            if play.speed != file.speed {
-                self.set_speed(play.speed)?;
-            }
-            return self.player.set_position(play.pos);
+        if self.status.file.is_none() {
+            return Ok(());
         }
-        Ok(())
+        if play.paused {
+            self.pause()?;
+        } else {
+            self.start()?;
+        }
+        self.set_speed(play.speed)?;
+        self.player.set_position(play.pos)
     }
 
     fn open(&mut self, play: PlayingFile) -> Result<()> {
@@ -145,16 +142,18 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
         }
     }
 
-    pub fn reload(&mut self) -> Result<()> {
-        if !self.status.file_loaded {
-            if let Some(file) = self.status.file.clone() {
-                if let Some(path) = file.video.to_path_str(&self.db) {
-                    self.status.file_loaded = true;
-                    return self.player.open(path, file.paused, file.pos);
-                }
-            }
-        }
-        Ok(())
+    pub fn retry_load(&mut self) -> Result<()> {
+        if self.status.file_loaded {
+            return Ok(());
+        };
+        let Some(file) = self.status.file.clone() else {
+            return Ok(());
+        };
+        let Some(path) = file.video.to_path_str(&self.db) else {
+            return Ok(());
+        };
+        self.status.file_loaded = true;
+        self.player.open(path, file.paused, file.pos)
     }
 
     pub fn playing_file(&self) -> Option<PlayingFile> {
@@ -172,81 +171,3 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
         self.player.receive_event().await
     }
 }
-
-// impl Mpv {
-// pub fn reload(&mut self, db: &FileDatabase) -> Result<()> {
-//     if let Some(playing) = &self.playing {
-//         self.load(
-//             playing.video.clone(),
-//             playing.last_seek.pos(),
-//             self.paused,
-//             db,
-//         )?;
-//     }
-//     Ok(())
-// }
-
-// pub fn may_reload(&mut self, db: &FileDatabase) -> Result<()> {
-//     if let Some(PlayingFile {
-//         video: Video::File { path, .. },
-//         ..
-//     }) = &self.playing
-//     {
-//         if path.is_none() {
-//             return self.reload(db);
-//         }
-//     }
-//     Ok(())
-// }
-
-// pub fn unload(&mut self) {
-//     self.playing = None;
-// }
-
-// pub fn load(
-//     &mut self,
-//     mut video: Video,
-//     seek: Option<Duration>,
-//     paused: bool,
-//     db: &FileDatabase,
-// ) -> Result<()> {
-//     let last_seek = seek.map(SeekEvent::new);
-//     trace!("Set pause to {paused} during video load");
-//     self.pause(paused)?;
-//     let path = match &mut video {
-//         Video::File { name, path } => {
-//             let path = match path {
-//                 Some(path) => path.clone(),
-//                 None => {
-//                     if let Ok(Some(file)) = db.find_file(name) {
-//                         file.path
-//                     } else {
-//                         self.playing = Some(PlayingFile {
-//                             video,
-//                             last_seek,
-//                             heartbeat: false,
-//                         });
-//                         return Ok(());
-//                     }
-//                 }
-//             };
-//             if let Some(path) = path.as_os_str().to_str() {
-//                 CString::new(path)?
-//             } else {
-//                 bail!("Can not convert \"{path:?}\" to os_string")
-//             }
-//         }
-//         Video::Url(url) => CString::new(url.as_str())?,
-//     };
-
-//     self.playing = Some(PlayingFile {
-//         video,
-//         last_seek,
-//         heartbeat: false,
-//     });
-
-//     let cmd = MpvCommand::Loadfile.try_into()?;
-//     self.send_command(&[&cmd, &path])?;
-//     Ok(())
-// }
-// }

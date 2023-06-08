@@ -18,7 +18,7 @@ pub struct Changed;
 impl CoreMessageTrait for Changed {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
         trace!("Database: changed");
-        client.player.reload()
+        client.player.retry_load()
     }
 }
 
