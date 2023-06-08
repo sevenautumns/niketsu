@@ -6,8 +6,8 @@ use enum_dispatch::enum_dispatch;
 use log::debug;
 
 use super::{MediaPlayer, MediaPlayerWrapper};
-use crate::client::message::ClientMessageTrait;
-use crate::client::server::NiketsuMessage;
+use crate::client::message::CoreMessageTrait;
+use crate::client::server::{NiketsuMessage, NiketsuPause, NiketsuStart, NiketsuSeek, NiketsuPlaybackSpeed, NiketsuSelect};
 use crate::client::CoreRunner;
 use crate::user::ThisUser;
 use crate::video::PlayingFile;
@@ -17,7 +17,7 @@ pub trait MediaPlayerEventTrait {
     fn handle<M: MediaPlayer>(self, player: &mut MediaPlayerWrapper<M>) -> Result<()>;
 }
 
-#[enum_dispatch(MediaPlayerEventTrait, ClientMessageTrait)]
+#[enum_dispatch(MediaPlayerEventTrait, CoreMessageTrait)]
 #[derive(Debug, Clone)]
 pub enum MediaPlayerEvent {
     PlayerPaused,
@@ -43,14 +43,14 @@ impl PlayerPaused {
     }
 }
 
-impl ClientMessageTrait for PlayerPaused {
+impl CoreMessageTrait for PlayerPaused {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
         let state = Self::set_not_ready(client);
 
         if let Some(state) = state {
             client.ws.sender().send(state)?;
         }
-        client.ws.sender().send(NiketsuMessage::Pause {
+        client.ws.sender().send(NiketsuPause {
             username: client.user.load().name(),
         })
     }
@@ -81,14 +81,14 @@ impl PlayerStarted {
     }
 }
 
-impl ClientMessageTrait for PlayerStarted {
+impl CoreMessageTrait for PlayerStarted {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
         let state = Self::set_ready(client);
 
         if let Some(state) = state {
             client.ws.sender().send(state)?;
         }
-        client.ws.sender().send(NiketsuMessage::Start {
+        client.ws.sender().send(NiketsuStart {
             username: client.user.load().name(),
         })
     }
@@ -107,12 +107,12 @@ impl MediaPlayerEventTrait for PlayerStarted {
 #[derive(Debug, Clone)]
 pub struct PlayerPositionChanged(pub Duration);
 
-impl ClientMessageTrait for PlayerPositionChanged {
+impl CoreMessageTrait for PlayerPositionChanged {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
         let Some(playing) = client.player.playing_file() else  {
             return Ok(());
         };
-        client.ws.sender().send(NiketsuMessage::Seek {
+        client.ws.sender().send(NiketsuSeek {
             filename: playing.video.as_str().to_string(),
             position: self.0,
             username: client.user.load().name(),
@@ -133,9 +133,9 @@ impl MediaPlayerEventTrait for PlayerPositionChanged {
 #[derive(Debug, Clone)]
 pub struct PlayerSpeedChanged(pub f64);
 
-impl ClientMessageTrait for PlayerSpeedChanged {
+impl CoreMessageTrait for PlayerSpeedChanged {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
-        client.ws.sender().send(NiketsuMessage::PlaybackSpeed {
+        client.ws.sender().send(NiketsuPlaybackSpeed {
             username: client.user.load().name(),
             speed: self.0,
         })
@@ -155,13 +155,13 @@ impl MediaPlayerEventTrait for PlayerSpeedChanged {
 #[derive(Debug, Clone)]
 pub struct PlayerPlaybackEnded;
 
-impl ClientMessageTrait for PlayerPlaybackEnded {
+impl CoreMessageTrait for PlayerPlaybackEnded {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
         let Some(file) = client.player.playing_file() else {
             return Ok(());
         };
         if let Some(next) = client.playlist_widget.load().next_video(&file.video) {
-            client.ws.sender().send(NiketsuMessage::Select {
+            client.ws.sender().send(NiketsuSelect {
                 filename: next.as_str().to_string().into(),
                 username: client.user.load().name(),
             })?;
@@ -173,7 +173,7 @@ impl ClientMessageTrait for PlayerPlaybackEnded {
             };
             client.player.load(next)
         } else {
-            client.ws.sender().send(NiketsuMessage::Select {
+            client.ws.sender().send(NiketsuSelect {
                 filename: None,
                 username: client.user.load().name(),
             })?;
@@ -192,7 +192,7 @@ impl MediaPlayerEventTrait for PlayerPlaybackEnded {
 #[derive(Debug, Clone)]
 pub struct PlayerExit;
 
-impl ClientMessageTrait for PlayerExit {
+impl CoreMessageTrait for PlayerExit {
     fn handle(self, _: &mut CoreRunner) -> Result<()> {
         exit(0)
     }

@@ -4,7 +4,7 @@ use iced::Command;
 use log::{debug, warn};
 
 use super::FileInteraction;
-use crate::client::server::NiketsuMessage;
+use crate::client::server::{ NiketsuSelect, NiketsuPlaylist};
 use crate::client::ui::MpvSelect;
 use crate::iced_window::message::IcedMessage;
 use crate::iced_window::running::message::RunningWindowMessage;
@@ -42,7 +42,7 @@ impl RunningWindowMessage for DoubleClick {
     fn handle(self, win: &mut RunningWindow) -> Result<Command<MainMessage>> {
         debug!("FileTable doubleclick: {:?}", self.video);
         let client = win.client();
-        client.ws().send(NiketsuMessage::Select {
+        client.ws().send(NiketsuSelect {
             filename: self.video.as_str().to_string().into(),
             username: client.user().load().name(),
         })?;
@@ -72,7 +72,7 @@ impl RunningWindowMessage for Delete {
             .drain(..)
             .map(|v| v.as_str().to_string())
             .collect();
-        client.ws().send(NiketsuMessage::Playlist {
+        client.ws().send(NiketsuPlaylist {
             playlist,
             username: client.user().load().name(),
         })?;
@@ -102,7 +102,7 @@ impl RunningWindowMessage for Move {
             .drain(..)
             .map(|v| v.as_str().to_string())
             .collect();
-        client.ws().send(NiketsuMessage::Playlist {
+        client.ws().send(NiketsuPlaylist {
             playlist,
             username: client.user().load().name(),
         })?;

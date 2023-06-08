@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,120 +8,318 @@ use async_tungstenite::stream::Stream;
 use async_tungstenite::tokio::TokioAdapter;
 use async_tungstenite::tungstenite::Message as TsMessage;
 use async_tungstenite::WebSocketStream;
+use enum_dispatch::enum_dispatch;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use iced::widget::{Row, Text};
 use iced::{Renderer, Theme};
-use log::{error, warn};
+use log::{debug, error,  warn};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio_native_tls::TlsStream;
 use url::Url;
 
-use self::message::{Connected, Received, WebSocketMessage, WsStreamEnded};
+use self::message::{Connected, WebSocketMessage, WsStreamEnded};
+use super::CoreRunner;
+use crate::client::LogResult;
+use crate::client::message::CoreMessageTrait;
 use crate::client::server::message::ServerError;
 use crate::iced_window::MainMessage;
+use crate::playlist::PlaylistWidgetState;
+use crate::rooms::RoomsWidgetState;
 use crate::user::ThisUser;
+use crate::video::{PlayingFile, Video};
 
 pub mod message;
 
+#[enum_dispatch(CoreMessageTrait)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
 pub enum NiketsuMessage {
-    Ping {
-        uuid: String,
-    },
-    Join {
-        password: String,
-        room: String,
-        username: String,
-    },
-    VideoStatus {
-        filename: Option<String>,
-        #[serde(with = "serde_millis")]
-        position: Option<Duration>,
-        speed: f64,
-        paused: bool,
-    },
-    StatusList {
-        rooms: BTreeMap<String, BTreeSet<UserStatus>>,
-    },
-    Pause {
-        #[serde(skip_serializing)]
-        username: String,
-    },
-    Start {
-        #[serde(skip_serializing)]
-        username: String,
-    },
-    PlaybackSpeed {
-        speed: f64,
-        #[serde(skip_serializing)]
-        username: String,
-    },
-    Seek {
-        filename: String,
-        #[serde(with = "serde_millis")]
-        position: Duration,
-        #[serde(skip_serializing)]
-        username: String,
-        paused: bool,
-        speed: f64,
-        #[serde(skip_serializing)]
-        desync: bool,
-    },
-    Select {
-        filename: Option<String>,
-        #[serde(skip_serializing)]
-        username: String,
-    },
-    UserMessage {
-        message: String,
-        #[serde(skip_serializing)]
-        username: String,
-    },
-    ServerMessage {
-        message: String,
-        error: bool,
-    },
-    Playlist {
-        playlist: Vec<String>,
-        #[serde(skip_serializing)]
-        username: String,
-    },
-    Status {
-        ready: bool,
-        username: String,
-    },
+    Ping(NiketsuPing),
+    Join(NiketsuJoin),
+    VideoStatus(NiketsuVideoStatus),
+    StatusList(NiketsuStatusList),
+    Pause(NiketsuPause),
+    Start(NiketsuStart),
+    PlaybackSpeed(NiketsuPlaybackSpeed),
+    Seek(NiketsuSeek),
+    Select(NiketsuSelect),
+    UserMessage(NiketsuUserMessage),
+    ServerMessage(NiketsuServerMessage),
+    Playlist(NiketsuPlaylist),
+    Status(NiketsuStatus),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuPing {
+    uuid: String,
+}
+
+impl CoreMessageTrait for NiketsuPing {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        debug!("Received: {self:?}");
+        client.ws.sender().send(self)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuJoin {
+    pub password: String,
+    pub room: String,
+    pub username: String,
+}
+
+impl CoreMessageTrait for NiketsuJoin {
+    fn handle(self, _: &mut CoreRunner) -> Result<()> {
+        warn!("Received: {self:?}");
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuVideoStatus {
+    pub filename: Option<String>,
+    #[serde(with = "serde_millis")]
+    pub position: Option<Duration>,
+    pub speed: f64,
+    pub paused: bool,
+}
+
+impl CoreMessageTrait for NiketsuVideoStatus {
+    fn handle(self, _: &mut CoreRunner) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuStatusList {
+    pub rooms: BTreeMap<String, BTreeSet<NiketsuUserStatus>>,
+}
+
+impl CoreMessageTrait for NiketsuStatusList {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        debug!("Received: {self:?}");
+        client.rooms_widget.rcu(|r| {
+            let mut rs = RoomsWidgetState::clone(r);
+            rs.replace_rooms(self.rooms.clone());
+            rs
+        });
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuPause {
+    #[serde(skip_serializing)]
+    pub username: String,
+}
+
+impl CoreMessageTrait for NiketsuPause {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        debug!("Received: {self:?}");
+        client.player.pause()?;
+        client.messages.push_paused(self.username);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuStart {
+    #[serde(skip_serializing)]
+    pub username: String,
+}
+
+impl CoreMessageTrait for NiketsuStart {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        debug!("Received: {self:?}");
+        client.player.start()?;
+        client.messages.push_started(self.username);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuPlaybackSpeed {
+    pub speed: f64,
+    #[serde(skip_serializing)]
+    pub username: String,
+}
+
+impl CoreMessageTrait for NiketsuPlaybackSpeed {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        debug!("Received: {self:?}");
+        client.player.set_speed(self.speed).log();
+        client.messages.push_playback_speed(self.speed, self.username);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuSeek {
+    pub filename: String,
+    #[serde(with = "serde_millis")]
+    pub position: Duration,
+    #[serde(skip_serializing)]
+    pub username: String,
+    pub paused: bool,
+    pub speed: f64,
+    #[serde(skip_serializing)]
+    pub desync: bool,
+}
+
+impl CoreMessageTrait for NiketsuSeek {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        debug!("Received: {self:?}");
+        if !client.player.is_seeking()? {
+            client
+                .player
+                .load(self.borrow().into())
+                .log();
+            client
+                .messages
+                .push_seek(self.position, self.filename, self.desync, self.username);
+        }
+        Ok(())
+    }
+}
+
+impl From<&NiketsuSeek> for PlayingFile {
+    fn from(seek: &NiketsuSeek) -> Self {
+        PlayingFile { video: Video::from_string(seek.filename.clone()), paused: seek.paused, speed: seek.speed, pos: seek.position }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuSelect {
+    pub filename: Option<String>,
+    #[serde(skip_serializing)]
+    pub username: String,
+}
+
+impl CoreMessageTrait for NiketsuSelect {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        debug!("Received: {self:?}");
+        match self.filename.clone() {
+            Some(filename) => client
+                .player
+                .load(PlayingFile {
+                    video: Video::from_string(filename),
+                    paused: true,
+                    speed: client.player.get_speed()?,
+                    pos: Duration::ZERO,
+                })
+                .log(),
+            None => client.player.unload(),
+        }
+        client.messages.push_select(self.filename, self.username);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuUserMessage {
+    pub message: String,
+    #[serde(skip_serializing)]
+    pub username: String,
+}
+
+impl CoreMessageTrait for NiketsuUserMessage {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        debug!("Received: {self:?}");
+        client.messages.push_user_chat(self.message, self.username);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuServerMessage {
+    pub message: String,
+    pub error: bool,
+}
+
+impl CoreMessageTrait for NiketsuServerMessage {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        debug!("Received: {self:?}");
+        client.messages.push_server_chat(self.message, self.error);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuPlaylist {
+    pub playlist: Vec<String>,
+    #[serde(skip_serializing)]
+    pub username: String,
+}
+
+impl CoreMessageTrait for NiketsuPlaylist {
+    fn handle(self, client: &mut CoreRunner) -> Result<()> {
+        debug!("Received: {self:?}");
+        client.playlist_widget.rcu(|p| {
+            let mut plist = PlaylistWidgetState::clone(p);
+            plist.replace_videos(self.playlist.clone());
+            plist
+        });
+        client.messages.push_playlist_changed(self.username);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NiketsuStatus {
+    pub ready: bool,
+    pub username: String,
+}
+
+impl CoreMessageTrait for NiketsuStatus {
+    fn handle(self, _: &mut CoreRunner) -> Result<()> {
+        warn!("Received: {self:?}");
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct UserStatus {
+pub struct NiketsuUserStatus {
     pub username: String,
     pub ready: bool,
 }
 
-impl PartialEq for UserStatus {
+impl PartialEq for NiketsuUserStatus {
     fn eq(&self, other: &Self) -> bool {
         self.username.eq(&other.username)
     }
 }
 
-impl Ord for UserStatus {
+impl Ord for NiketsuUserStatus {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.username.cmp(&other.username)
     }
 }
-impl PartialOrd for UserStatus {
+impl PartialOrd for NiketsuUserStatus {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.username.partial_cmp(&other.username)
     }
 }
 
-impl UserStatus {
+impl NiketsuUserStatus {
     pub fn to_text<'a>(&self, user: &ThisUser, theme: &Theme) -> Row<'a, MainMessage, Renderer> {
         let mut row = Row::new();
         if self.username.eq(&user.name()) {
@@ -230,6 +429,7 @@ impl ServerConnectionSender {
     ) {
         loop {
             if let Some(msg) = sink_proxy_rx.recv().await {
+                debug!("Sending {msg:?}");
                 match serde_json::to_string(&msg) {
                     Ok(msg) => {
                         if let Err(err) = socket_sink.send(TsMessage::Text(msg)).await {
@@ -281,7 +481,7 @@ impl ServerConnectionSender {
                 Ok(msg) => {
                     let msg = msg.into_text()?;
                     let msg = serde_json::from_str::<NiketsuMessage>(&msg)?;
-                    return Ok(Received(msg).into());
+                    return Ok(msg.into());
                 }
                 Err(err) => {
                     error!("{err}");
@@ -292,8 +492,8 @@ impl ServerConnectionSender {
         Ok(WsStreamEnded.into())
     }
 
-    pub fn send(&self, msg: NiketsuMessage) -> Result<()> {
-        self.sink_proxy_tx.send(msg)?;
+    pub fn send<M: Into<NiketsuMessage>>(&self, msg: M) -> Result<()> {
+        self.sink_proxy_tx.send(msg.into())?;
         Ok(())
     }
 }

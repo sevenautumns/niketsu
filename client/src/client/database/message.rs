@@ -2,10 +2,10 @@ use anyhow::Result;
 use enum_dispatch::enum_dispatch;
 use log::{debug, trace};
 
-use crate::client::message::ClientMessageTrait;
+use crate::client::message::CoreMessageTrait;
 use crate::client::CoreRunner;
 
-#[enum_dispatch(ClientMessageTrait)]
+#[enum_dispatch(CoreMessageTrait)]
 #[derive(Debug, Clone, Copy)]
 pub enum DatabaseEvent {
     Changed,
@@ -15,7 +15,7 @@ pub enum DatabaseEvent {
 #[derive(Debug, Clone, Copy)]
 pub struct Changed;
 
-impl ClientMessageTrait for Changed {
+impl CoreMessageTrait for Changed {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
         trace!("Database: changed");
         client.player.reload()
@@ -25,7 +25,7 @@ impl ClientMessageTrait for Changed {
 #[derive(Debug, Clone, Copy)]
 pub struct UpdateFinished;
 
-impl ClientMessageTrait for UpdateFinished {
+impl CoreMessageTrait for UpdateFinished {
     fn handle(self, _: &mut CoreRunner) -> Result<()> {
         debug!("Database: update finished");
         Ok(())

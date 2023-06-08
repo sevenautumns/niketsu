@@ -19,7 +19,7 @@ use tokio::sync::{Notify, RwLock, Semaphore};
 
 use self::message::UpdateFinished;
 use crate::client::database::message::{Changed, DatabaseEvent};
-use crate::iced_window::running::message::{StartDbUpdate, StopDbUpdate, UserMessage};
+use crate::iced_window::running::message::{StartDbUpdate, StopDbUpdate, UserEvent};
 use crate::iced_window::MainMessage;
 use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
 use crate::TEXT_SIZE;
@@ -136,8 +136,8 @@ impl FileDatabaseSender {
         };
 
         let update_msg = match finished {
-            true => UserMessage::from(StartDbUpdate).into(),
-            false => UserMessage::from(StopDbUpdate).into(),
+            true => UserEvent::from(StartDbUpdate).into(),
+            false => UserEvent::from(StopDbUpdate).into(),
         };
         let update_btn = match finished {
             true => Button::new("Update"),

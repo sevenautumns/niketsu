@@ -8,7 +8,7 @@ use iced_native::widget::Tree;
 use iced_native::Widget;
 
 use self::message::{ClickRoom, RoomsWidgetMessage};
-use crate::client::server::UserStatus;
+use crate::client::server::NiketsuUserStatus;
 use crate::iced_window::MainMessage;
 use crate::playlist::MAX_DOUBLE_CLICK_INTERVAL;
 use crate::styling::FileButton;
@@ -160,7 +160,7 @@ impl<'a> Widget<MainMessage, Renderer> for RoomsWidget<'a> {
 
 #[derive(Debug, Clone)]
 pub struct RoomsWidgetState {
-    rooms: BTreeMap<String, BTreeSet<UserStatus>>,
+    rooms: BTreeMap<String, BTreeSet<NiketsuUserStatus>>,
     last_press: Instant,
     selected: String,
 }
@@ -180,7 +180,7 @@ impl RoomsWidgetState {
         Self::default()
     }
 
-    pub fn replace_rooms(&mut self, rooms: BTreeMap<String, BTreeSet<UserStatus>>) {
+    pub fn replace_rooms(&mut self, rooms: BTreeMap<String, BTreeSet<NiketsuUserStatus>>) {
         self.rooms = rooms
     }
 

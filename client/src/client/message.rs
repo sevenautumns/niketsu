@@ -6,6 +6,6 @@ use super::CoreRunner;
 use crate::client::database::message::*;
 
 #[enum_dispatch]
-pub trait ClientMessageTrait {
+pub trait CoreMessageTrait {
     fn handle(self, client: &mut CoreRunner) -> Result<()>;
 }

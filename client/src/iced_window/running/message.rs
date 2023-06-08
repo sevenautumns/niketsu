@@ -6,7 +6,7 @@ use log::{debug, trace, warn};
 
 use super::RunningWindow;
 use crate::client::database::FileDatabaseSender;
-use crate::client::server::NiketsuMessage;
+use crate::client::server::NiketsuUserMessage;
 use crate::iced_window::message::IcedMessage;
 use crate::iced_window::{MainMessage, MainWindow};
 use crate::user::ThisUser;
@@ -18,7 +18,7 @@ pub trait RunningWindowMessage {
 
 #[enum_dispatch(RunningWindowMessage)]
 #[derive(Debug, Clone)]
-pub enum UserMessage {
+pub enum UserEvent {
     ReadyButton,
     SendMessage,
     StopDbUpdate,
@@ -27,10 +27,10 @@ pub enum UserMessage {
     MessageInput,
 }
 
-impl IcedMessage for UserMessage {
+impl IcedMessage for UserEvent {
     fn handle(self, win: &mut MainWindow) -> Result<Command<MainMessage>> {
         if let Some(win) = win.get_running() {
-            <UserMessage as RunningWindowMessage>::handle(self, win)
+            <UserEvent as RunningWindowMessage>::handle(self, win)
         } else {
             warn!("Got RunningWindow message outside RunningWindow");
             Ok(Command::none())
@@ -65,7 +65,7 @@ impl RunningWindowMessage for SendMessage {
             let msg = message.clone();
             *message = Default::default();
             let client = win.client();
-            client.ws().send(NiketsuMessage::UserMessage {
+            client.ws().send(NiketsuUserMessage {
                 message: msg.clone(),
                 username: client.user().load().name(),
             })?;

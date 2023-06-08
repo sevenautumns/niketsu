@@ -9,9 +9,9 @@ use log::debug;
 use tokio::sync::Notify;
 use tokio::time::Interval;
 
-use super::message::ClientMessageTrait;
+use super::message::CoreMessageTrait;
 use super::CoreRunner;
-use crate::client::server::NiketsuMessage;
+use crate::client::server::NiketsuVideoStatus;
 use crate::iced_window::message::PlayerChanged;
 use crate::iced_window::MainMessage;
 
@@ -24,7 +24,7 @@ pub struct Pacemaker {
 
 impl Default for Pacemaker {
     fn default() -> Self {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        let mut interval = tokio::time::interval(Duration::from_millis(500));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         Self { interval }
     }
@@ -49,11 +49,11 @@ impl Changed {
     }
 }
 
-impl ClientMessageTrait for Heartbeat {
+impl CoreMessageTrait for Heartbeat {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
         debug!("Heartbeat");
         let playing = client.player.playing_file();
-        client.ws.sender().send(NiketsuMessage::VideoStatus {
+        client.ws.sender().send(NiketsuVideoStatus {
             filename: playing.as_ref().map(|p| p.video.as_str().to_string()),
             position: playing.and_then(|_| client.player.get_position().ok()),
             paused: client.player.is_paused()?,

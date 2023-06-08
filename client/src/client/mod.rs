@@ -16,7 +16,7 @@ use self::server::ServerConnectionReceiver;
 use self::ui::UiMessage;
 use crate::client::database::message::DatabaseEvent;
 use crate::client::database::FileDatabaseReceiver;
-use crate::client::message::ClientMessageTrait;
+use crate::client::message::CoreMessageTrait;
 use crate::client::server::message::WebSocketMessage;
 use crate::client::server::ServerConnectionSender;
 use crate::config::Config;
@@ -168,26 +168,26 @@ impl CoreRunner {
         }
     }
 
-    async fn recv(&mut self) -> Result<ClientMessage> {
+    async fn recv(&mut self) -> Result<CoreMessage> {
         tokio::select! {
-            p = self.player.recv() => p.map(ClientMessage::from),
-            h = self.pacemaker.recv() => Ok(ClientMessage::from(h)),
+            p = self.player.recv() => p.map(CoreMessage::from),
+            h = self.pacemaker.recv() => Ok(CoreMessage::from(h)),
             u = self.receiver.recv() => {
                 let Some(u) = u else {
                     error!("UI receiver ended");
                     exit(1);
                 };
-                Ok(ClientMessage::from(u))
+                Ok(CoreMessage::from(u))
             }
-            d = self.db.recv() => d.map(ClientMessage::from),
-            w = self.ws.recv() => w.map(ClientMessage::from),
+            d = self.db.recv() => d.map(CoreMessage::from),
+            w = self.ws.recv() => w.map(CoreMessage::from),
         }
     }
 }
 
-#[enum_dispatch(ClientMessageTrait)]
+#[enum_dispatch(CoreMessageTrait)]
 #[derive(Debug, Clone)]
-pub enum ClientMessage {
+pub enum CoreMessage {
     MediaPlayerEvent,
     Heartbeat,
     UiMessage,

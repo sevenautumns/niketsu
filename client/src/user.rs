@@ -1,4 +1,4 @@
-use crate::client::server::NiketsuMessage;
+use crate::client::server::{NiketsuMessage, NiketsuStatus};
 
 #[derive(Debug, Clone)]
 pub struct ThisUser {
@@ -36,10 +36,10 @@ impl ThisUser {
     }
 
     pub fn status(&self) -> NiketsuMessage {
-        NiketsuMessage::Status {
+        NiketsuStatus {
             ready: self.ready,
             username: self.name(),
-        }
+        }.into()
     }
 
     #[must_use]
