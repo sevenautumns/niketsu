@@ -1,4 +1,4 @@
-package niketsu_server
+package config
 
 import (
 	"encoding/json"
@@ -20,9 +20,8 @@ type GeneralConfig struct {
 	Key              string `long:"key" default:"" env:"KEY" description:"path to TLS key corresponding to the TLS certificate. If none is given, plain TCP is used"`
 	Password         string `long:"password" default:"" env:"PASSWORD" description:"general server password for client connections"`
 	DBPath           string `long:"dbpath" default:"./.db/" env:"DBPATH" description:"path to where database files are stored"`
-	DBUpdateInterval uint64 `long:"dbupdateinterval" default:"2" env:"DBUPDATEINTERVAL" description:"update intervals (in seconds) of writes to the database"`
+	DBUpdateInterval uint64 `long:"dbupdateinterval" default:"10" env:"DBUPDATEINTERVAL" description:"update intervals (in seconds) of writes to the database"`
 	DBWaitTimeout    uint64 `long:"dbwaittimeout" default:"4" env:"DBWAITTIMEOUT" description:"wait time (in seconds) until write to database is aborted"`
-	DBStatInterval   uint64 `long:"dbstatinterval" default:"120" env:"DBSTATINTERVAL" description:"update intervals (in seconds) of logged database statistics"`
 	Debug            bool   `long:"debug" env:"DEBUG" description:"whether to log debugging entries"`
 }
 
@@ -59,19 +58,19 @@ func parseCommandArgs() GeneralConfig {
 func readConfigFile(path string, config *Config) {
 	_, err := toml.DecodeFile(path, &config)
 	if err != nil {
-		log.Panicf("Failed to load config file. Given: %s. Make sure the correct file format (toml) is used and the file exists.\nError:%s", path, err)
+		log.Fatalf("Failed to load config file. Given: %s. Make sure the correct file format (toml) is used and the file exists.\nError:%s", path, err)
 	}
 }
 
 func mergeConfigs(generalConfig GeneralConfig, config *Config) {
 	enc, err := json.Marshal(generalConfig)
 	if err != nil {
-		log.Panicf("Failed to marshal configuration. Error: %s", err)
+		log.Fatalf("Failed to marshal configuration. Error: %s", err)
 	}
 
 	err = json.Unmarshal(enc, &config.General)
 	if err != nil {
-		log.Panicf("Failed to umarshal configuration. Error: %s", err)
+		log.Fatalf("Failed to umarshal configuration. Error: %s", err)
 	}
 }
 
