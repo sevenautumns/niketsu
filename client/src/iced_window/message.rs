@@ -6,7 +6,7 @@ use log::{trace, warn};
 
 use super::running::message::RunningWindowMessage;
 use super::{MainMessage, MainWindow};
-use crate::heartbeat::Changed;
+use crate::client::heartbeat::Changed;
 
 #[enum_dispatch]
 pub trait IcedMessage {

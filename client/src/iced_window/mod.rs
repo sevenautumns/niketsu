@@ -7,7 +7,7 @@ use self::startup::message::StartUIMessage;
 use crate::client::LogResult;
 use crate::config::Config;
 use crate::iced_window::message::{IcedMessage, PlayerChanged};
-use crate::iced_window::running::message::UserMessage;
+use crate::iced_window::running::message::UserEvent;
 use crate::iced_window::running::RunningWindow;
 use crate::iced_window::startup::StartUI;
 use crate::playlist::message::PlaylistMessage;
@@ -55,7 +55,7 @@ pub enum MainMessage {
     StartUIMessage,
     StartButton,
     PlaylistMessage,
-    UserMessage,
+    UserEvent,
     RoomsWidgetMessage,
     PlayerChanged,
 }

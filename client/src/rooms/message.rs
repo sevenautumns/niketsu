@@ -4,11 +4,11 @@ use iced::Command;
 use log::warn;
 
 use super::RoomsWidgetState;
+use crate::client::server::NiketsuJoin;
 use crate::iced_window::message::IcedMessage;
 use crate::iced_window::running::message::RunningWindowMessage;
 use crate::iced_window::running::RunningWindow;
 use crate::iced_window::{MainMessage, MainWindow};
-use crate::ws::ServerMessage;
 
 #[enum_dispatch(RunningWindowMessage)]
 #[derive(Debug, Clone)]
@@ -30,7 +30,7 @@ impl RunningWindowMessage for ClickRoom {
             rooms
         });
         if double_click {
-            client.ws().send(ServerMessage::Join {
+            client.ws().send(NiketsuJoin {
                 password: config.password.clone(),
                 room: self.0,
                 username: config.username.clone(),

@@ -10,7 +10,7 @@ use iced_native::{Layout, Widget};
 use log::*;
 
 use self::message::{Delete, DoubleClick, Interaction, Move, PlaylistMessage};
-use crate::fs::FileDatabase;
+use crate::client::database::FileDatabaseSender;
 use crate::iced_window::MainMessage;
 use crate::styling::{FileButton, FileRuleTheme};
 use crate::video::{PlayingFile, Video};
@@ -29,7 +29,7 @@ impl<'a> PlaylistWidget<'a> {
     pub fn new(
         state: PlaylistWidgetState,
         playing: Option<PlayingFile>,
-        db: &Arc<FileDatabase>,
+        db: &Arc<FileDatabaseSender>,
     ) -> Self {
         // TODO Add context menu
 

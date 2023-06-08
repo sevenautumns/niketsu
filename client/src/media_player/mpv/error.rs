@@ -1,7 +1,7 @@
 use anyhow::bail;
 use num_traits::FromPrimitive;
 
-use crate::mpv::bindings::*;
+use crate::media_player::mpv::bindings::*;
 
 impl TryFrom<i32> for mpv_error {
     type Error = anyhow::Error;

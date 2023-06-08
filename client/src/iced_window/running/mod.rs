@@ -5,9 +5,9 @@ use iced::widget::scrollable::{Id, RelativeOffset};
 use iced::widget::{column, row, Button, Container, Scrollable, Text, TextInput};
 use iced::{Element, Length, Padding, Renderer, Theme};
 
-use self::message::{ReadyButton, UserMessage};
+use self::message::{ReadyButton, UserEvent};
 use super::{InnerApplication, MainMessage};
-use crate::client::Client;
+use crate::client::Core;
 use crate::config::Config;
 use crate::iced_window::running::message::{MessageInput, SendMessage};
 use crate::playlist::PlaylistWidget;
@@ -19,7 +19,7 @@ pub mod message;
 #[derive(Debug, Getters, MutGetters)]
 #[getset(get = "pub")]
 pub struct RunningWindow {
-    client: Client,
+    client: Core,
     config: Config,
     #[getset(get_mut = "pub")]
     message: String,
@@ -28,7 +28,7 @@ pub struct RunningWindow {
 }
 
 impl RunningWindow {
-    pub fn new(client: Client, config: Config) -> Self {
+    pub fn new(client: Core, config: Config) -> Self {
         RunningWindow {
             client,
             message: Default::default(),
@@ -60,7 +60,7 @@ impl InnerApplication for RunningWindow {
                 .style(ResultButton::not_ready())
             }
         }
-        btn = btn.on_press(UserMessage::from(ReadyButton).into());
+        btn = btn.on_press(UserEvent::from(ReadyButton).into());
 
         row!(
             column!(
@@ -68,9 +68,9 @@ impl InnerApplication for RunningWindow {
                 row!(
                     TextInput::new("Message", &self.message)
                         .width(Length::Fill)
-                        .on_input(|m| UserMessage::from(MessageInput(m)).into())
-                        .on_submit(UserMessage::from(SendMessage).into()),
-                    Button::new("Send").on_press(UserMessage::from(SendMessage).into())
+                        .on_input(|m| UserEvent::from(MessageInput(m)).into())
+                        .on_submit(UserEvent::from(SendMessage).into()),
+                    Button::new("Send").on_press(UserEvent::from(SendMessage).into())
                 )
                 .spacing(5.0)
             )
@@ -91,7 +91,7 @@ impl InnerApplication for RunningWindow {
                 Container::new(
                     Scrollable::new(PlaylistWidget::new(
                         client.playlist().load().deref().deref().clone(),
-                        client.playing(),
+                        client.playing_file(),
                         &client.db()
                     ))
                     .width(Length::Fill)
