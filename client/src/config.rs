@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use anyhow::{bail, Result};
 use directories::ProjectDirs;
-use iced::{Color, Theme, Settings};
+use iced::{Color, Settings, Theme};
 use log::warn;
 use palette::rgb::Rgb;
 use palette::Srgb;

@@ -5,24 +5,23 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
+use async_recursion::async_recursion;
 use dashmap::DashMap;
-use enum_dispatch::enum_dispatch;
 use futures::future::join_all;
-use futures::stream::FusedStream;
 use futures::StreamExt;
 use iced::widget::{row, Button, Container, ProgressBar, Text, Tooltip};
 use iced::{Element, Length, Renderer};
 use log::{debug, warn};
-use tokio::fs::{DirEntry, ReadDir};
+use tokio::fs::DirEntry;
 use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
-use tokio::sync::{Notify, OwnedSemaphorePermit, RwLock, RwLockReadGuard, Semaphore};
+use tokio::sync::{Notify, RwLock, RwLockReadGuard, Semaphore};
 use tokio::task::JoinSet;
 
 use self::message::UpdateFinished;
 use self::updater::FusedReadDir;
-use super::LogResult;
-use crate::client::database::message::{Changed, DatabaseEvent};
+use crate::client::LogResult;
+use crate::file_system::message::{Changed, DatabaseEvent};
 use crate::iced_window::running::message::{StartDbUpdate, StopDbUpdate, UserEvent};
 use crate::iced_window::MainMessage;
 use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
@@ -31,6 +30,9 @@ use crate::TEXT_SIZE;
 pub mod message;
 pub mod updater;
 
+#[cfg(test)]
+pub mod file_database_test;
+
 #[derive(Debug, Clone)]
 pub struct File {
     pub name: OsString,
@@ -38,19 +40,19 @@ pub struct File {
 }
 
 #[derive(Debug)]
-pub struct FileDatabaseReceiver {
-    sender: Arc<FileDatabaseSender>,
+pub struct FileDatabase {
+    sender: Arc<FileDatabaseProxy>,
     event_rx: WatchReceiver<DatabaseEvent>,
 }
 
-impl FileDatabaseReceiver {
+impl FileDatabase {
     pub fn new(path: &[PathBuf]) -> Self {
         let (event_tx, event_rx) = tokio::sync::watch::channel(Changed.into());
-        let sender = Arc::new(FileDatabaseSender::new(path, event_tx));
+        let sender = Arc::new(FileDatabaseProxy::new(path, event_tx));
         Self { sender, event_rx }
     }
 
-    pub fn sender(&self) -> &Arc<FileDatabaseSender> {
+    pub fn sender(&self) -> &Arc<FileDatabaseProxy> {
         &self.sender
     }
 
@@ -107,13 +109,13 @@ impl FileDatabaseUpdateData {
 }
 
 #[derive(Debug)]
-pub struct FileDatabaseSender {
+pub struct FileDatabaseProxy {
     stop: RwLock<Notify>,
     search_paths: RwLock<Vec<PathBuf>>,
     data: Arc<FileDatabaseUpdateData>,
 }
 
-impl FileDatabaseSender {
+impl FileDatabaseProxy {
     pub fn new(path: &[PathBuf], event_tx: WatchSender<DatabaseEvent>) -> Self {
         Self {
             search_paths: RwLock::new(path.to_vec()),
@@ -247,172 +249,88 @@ impl FileDatabaseSender {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct FileDatabaseUpdater {
     path: PathBuf,
+    subdirs: JoinSet<Result<()>>,
     data: Arc<FileDatabaseUpdateData>,
 }
 
 impl FileDatabaseUpdater {
     fn new(path: PathBuf, data: Arc<FileDatabaseUpdateData>) -> Self {
-        FileDatabaseUpdater { path, data }
-    }
-
-    fn new_from_this(&self, path: PathBuf) -> Self {
         FileDatabaseUpdater {
             path,
-            ..self.clone()
+            data,
+            subdirs: JoinSet::default(),
         }
     }
 
-    async fn complete(self) -> Result<()> {
+    fn clone_with(&self, path: PathBuf) -> Self {
+        FileDatabaseUpdater {
+            path,
+            subdirs: Default::default(),
+            data: self.data.clone(),
+        }
+    }
+
+    #[async_recursion]
+    async fn complete(mut self) -> Result<()> {
         self.data.queued_dirs_inc();
 
-        let mut crawler = DirectoryCrawler::new(self.path, self.data.clone()).await?;
-        crawler.complete().await?;
+        self.crawl_dir().await?;
+        self.finish_subdirs().await;
 
         self.data.finished_dirs_inc();
         self.data.event_tx.send(Changed.into())?;
         Ok(())
     }
-}
 
-#[derive(Debug)]
-struct DirectoryCrawler {
-    data: Arc<FileDatabaseUpdateData>,
-    permit: Option<OwnedSemaphorePermit>,
-    dir: FusedReadDir,
-    typ_tasks: JoinSet<Result<Item>>,
-    rec_tasks: JoinSet<Result<()>>,
-}
-
-impl Drop for DirectoryCrawler {
-    fn drop(&mut self) {
-        self.typ_tasks.abort_all();
-        self.rec_tasks.abort_all();
-    }
-}
-
-impl DirectoryCrawler {
-    async fn new(path: PathBuf, data: Arc<FileDatabaseUpdateData>) -> Result<Self> {
-        Ok(Self {
-            permit: None,
-            dir: FusedReadDir::new(path).await?,
-            typ_tasks: JoinSet::new(),
-            rec_tasks: JoinSet::new(),
-            data,
-        })
-    }
-
-    fn completed(&self) -> bool {
-        self.completed_locally() && self.rec_tasks.is_empty()
-    }
-
-    fn completed_locally(&self) -> bool {
-        self.dir.is_terminated() && self.typ_tasks.is_empty()
-    }
-
-    async fn complete(&mut self) -> Result<()> {
-        while !self.completed() {
-            self.next().await?
+    async fn crawl_dir(&mut self) -> Result<()> {
+        let permit = self.data.semaphore.clone().acquire_owned();
+        let mut dir = FusedReadDir::new(self.path.clone()).await?;
+        while let Some(entry) = dir.next().await {
+            self.handle_entry(entry).await;
         }
+        drop(permit);
         Ok(())
     }
 
-    async fn next(&mut self) -> Result<()> {
-        self.check_permit().await?;
-        tokio::select! {
-            Some(entry) = self.dir.next() => {
-                self.typ_tasks.spawn(Item::from_dir_entry(entry));
-            }
-            Some(Ok(entry)) = self.typ_tasks.join_next() => self.handle_entry(entry),
-            Some(Ok(res)) = self.rec_tasks.join_next() => self.handle_rec_res(res),
-        }
-        Ok(())
-    }
-
-    /// Drop permit if this crawler finished locally
-    /// Acquire permit if it is not finished and no permit exists
-    async fn check_permit(&mut self) -> Result<()> {
-        if self.completed_locally() && self.permit.is_some() {
-            drop(self.permit.take());
-        }
-
-        if !self.completed_locally() && self.permit.is_none() {
-            self.permit = Some(self.data.semaphore.clone().acquire_owned().await?);
-        }
-
-        Ok(())
-    }
-
-    fn handle_entry(&mut self, entry: Result<Item>) {
-        let Ok(entry) = entry else {
-            warn!("{entry:?}");
+    async fn handle_entry(&mut self, entry: DirEntry) {
+        let Ok(typ) = entry.file_type().await else {
             return;
         };
-        entry.handle(self)
-    }
-
-    fn handle_rec_res(&self, res: Result<()>) {
-        if let Err(e) = res {
-            warn!("{e:?}")
-        }
-    }
-}
-
-#[enum_dispatch(CrawlerItem)]
-#[derive(Debug)]
-enum Item {
-    File,
-    Directory,
-}
-
-impl Item {
-    async fn from_dir_entry(dir_entry: DirEntry) -> Result<Self> {
-        let typ = dir_entry.file_type().await?;
-        let path = dir_entry.path();
-        if typ.is_symlink() {
-            bail!("symlinks are not supported: {path:?}")
-        }
         if typ.is_dir() {
-            return Ok(Directory::new(path).into());
+            self.spawn_subdir_crawler(entry.path())
+        } else if typ.is_file() {
+            self.insert_file(entry.into())
         }
-        let name = dir_entry.file_name();
-        Ok(File::new(name, path).into())
+    }
+
+    fn spawn_subdir_crawler(&mut self, path: PathBuf) {
+        let subdir = self.clone_with(path).complete();
+        self.subdirs.spawn(subdir);
+    }
+
+    fn insert_file(&self, file: File) {
+        self.data.database.insert(file.name.clone(), file);
+    }
+
+    async fn finish_subdirs(&mut self) {
+        while let Some(subdir) = self.subdirs.join_next().await {
+            match subdir {
+                Ok(Err(err)) => warn!("{err:?}"),
+                Err(err) => warn!("{err:?}"),
+                _ => {}
+            }
+        }
     }
 }
 
-#[enum_dispatch]
-trait CrawlerItem {
-    fn handle(self, crawler: &mut DirectoryCrawler);
-}
-
-#[derive(Debug)]
-struct Directory {
-    path: PathBuf,
-}
-
-impl Directory {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
-    }
-}
-
-impl CrawlerItem for Directory {
-    fn handle(self, crawler: &mut DirectoryCrawler) {
-        let updater = crawler.new_from_this(self.path);
-        crawler.rec_tasks.spawn(updater.complete());
-    }
-}
-
-impl File {
-    pub fn new(name: OsString, path: PathBuf) -> Self {
-        Self { name, path }
-    }
-}
-
-impl CrawlerItem for File {
-    fn handle(self, crawler: &mut DirectoryCrawler) {
-        crawler.data.database.insert(self.name.clone(), self);
+impl From<DirEntry> for File {
+    fn from(entry: DirEntry) -> Self {
+        File {
+            name: entry.file_name(),
+            path: entry.path(),
+        }
     }
 }

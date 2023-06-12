@@ -252,7 +252,7 @@ impl Mpv {
         }
     }
 
-    fn build_cmd(cmd: &[&CString]) -> Vec<*const i8>{
+    fn build_cmd(cmd: &[&CString]) -> Vec<*const i8> {
         let mut cmd_ptr = vec![];
         for c in cmd {
             cmd_ptr.push(c.as_ptr())

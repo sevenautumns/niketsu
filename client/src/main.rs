@@ -13,6 +13,7 @@ use once_cell::sync::Lazy;
 
 pub mod client;
 pub mod config;
+pub mod file_system;
 pub mod iced_window;
 pub mod media_player;
 pub mod messages;

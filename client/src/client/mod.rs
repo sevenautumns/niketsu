@@ -10,16 +10,15 @@ use log::{error, warn};
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
 
-use self::database::FileDatabaseSender;
 use self::heartbeat::{Heartbeat, Pacemaker};
 use self::server::ServerConnectionReceiver;
 use self::ui::UiMessage;
-use crate::client::database::message::DatabaseEvent;
-use crate::client::database::FileDatabaseReceiver;
 use crate::client::message::CoreMessageTrait;
 use crate::client::server::message::WebSocketMessage;
 use crate::client::server::ServerConnectionSender;
 use crate::config::Config;
+use crate::file_system::message::DatabaseEvent;
+use crate::file_system::{FileDatabase, FileDatabaseProxy};
 use crate::media_player::event::MediaPlayerEvent;
 use crate::media_player::mpv::Mpv;
 use crate::media_player::MediaPlayerWrapper;
@@ -29,7 +28,6 @@ use crate::rooms::RoomsWidgetState;
 use crate::user::ThisUser;
 use crate::video::PlayingFile;
 
-pub mod database;
 pub mod heartbeat;
 pub mod message;
 pub mod server;
@@ -39,7 +37,7 @@ pub mod ui;
 pub struct Core {
     changed: Arc<Notify>,
     sender: MpscSender<UiMessage>,
-    db: Arc<FileDatabaseSender>,
+    db: Arc<FileDatabaseProxy>,
     ws: Arc<ArcSwap<ServerConnectionSender>>,
     user: Arc<ArcSwap<ThisUser>>,
     messages: MessagesReceiver,
@@ -49,7 +47,7 @@ pub struct Core {
 }
 
 pub struct CoreRunner {
-    pub db: FileDatabaseReceiver,
+    pub db: FileDatabase,
     pub ws: ServerConnectionReceiver,
     pub ws_sender: Arc<ArcSwap<ServerConnectionSender>>,
     pub config: Config,
@@ -67,14 +65,14 @@ pub struct CoreRunner {
 impl Core {
     pub fn new(config: Config) -> Result<Self> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let db = FileDatabaseReceiver::new(
+        let db = FileDatabase::new(
             &config
                 .media_dirs
                 .iter()
                 .map(|d| PathBuf::from_str(d).map_err(Error::msg))
                 .collect::<Result<Vec<_>>>()?,
         );
-        FileDatabaseSender::start_update(db.sender());
+        FileDatabaseProxy::start_update(db.sender());
         let db_sender = db.sender().clone();
         let player = MediaPlayerWrapper::new(db_sender.clone())?;
         let ws = ServerConnectionReceiver::new(config.addr()?);
@@ -141,7 +139,7 @@ impl Core {
         self.playing_file.load_full().map(|p| (*p).clone())
     }
 
-    pub fn db(&self) -> Arc<FileDatabaseSender> {
+    pub fn db(&self) -> Arc<FileDatabaseProxy> {
         self.db.clone()
     }
 
