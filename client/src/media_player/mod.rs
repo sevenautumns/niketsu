@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use self::event::MediaPlayerEvent;
 use self::mpv::MpvHandle;
-use crate::client::database::FileDatabaseSender;
+use crate::file_system::FileDatabaseProxy;
 use crate::video::PlayingFile;
 
 pub mod event;
@@ -37,12 +37,12 @@ pub struct MediaPlayerStatus {
 #[derive(Debug)]
 pub struct MediaPlayerWrapper<M: MediaPlayer> {
     player: M,
-    db: Arc<FileDatabaseSender>,
+    db: Arc<FileDatabaseProxy>,
     status: MediaPlayerStatus,
 }
 
 impl<M: MediaPlayer> MediaPlayerWrapper<M> {
-    pub fn new(db: Arc<FileDatabaseSender>) -> Result<Self> {
+    pub fn new(db: Arc<FileDatabaseProxy>) -> Result<Self> {
         let player = M::new()?;
 
         Ok(Self {

@@ -5,8 +5,8 @@ use iced::Command;
 use log::{debug, trace, warn};
 
 use super::RunningWindow;
-use crate::client::database::FileDatabaseSender;
 use crate::client::server::NiketsuUserMessage;
+use crate::file_system::FileDatabaseProxy;
 use crate::iced_window::message::IcedMessage;
 use crate::iced_window::{MainMessage, MainWindow};
 use crate::user::ThisUser;
@@ -93,7 +93,7 @@ pub struct StartDbUpdate;
 impl RunningWindowMessage for StartDbUpdate {
     fn handle(self, win: &mut RunningWindow) -> Result<Command<MainMessage>> {
         trace!("Start database update request received");
-        FileDatabaseSender::start_update(&win.client().db());
+        FileDatabaseProxy::start_update(&win.client().db());
         Ok(Command::none())
     }
 }

@@ -27,6 +27,7 @@ async-recursion = "1.0"
 async-tungstenite = { version = "0.22", features = [ "tokio-runtime", "tokio-native-tls" ] }
 serde_millis = "0.1"
 directories = "5.0"
+tempfile = "3.6"
 dashmap = "5"
 url = "2.3"
 toml = "0.7"
