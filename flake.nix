@@ -150,6 +150,7 @@
           imports = [ "${devshell}/extra/git/hooks.nix" ];
           name = "niketsu-dev-shell";
           packages = with pkgs; [
+            openssl
             rust-toolchain
             rust-analyzer
             cargo-outdated
@@ -171,6 +172,10 @@
             {
               name = "LD_LIBRARY_PATH";
               value = LD_LIBRARY_PATH;
+            }
+            {
+              name = "SSL_CERT_FILE";
+              eval = "$PRJ_ROOT/server/src/communication/testdata/certificate.crt";
             }
             {
               name = "LIBRARY_PATH";

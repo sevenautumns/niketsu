@@ -42,6 +42,8 @@ var (
 	playbackSpeedMessage  string   = fmt.Sprintf(`{"speed":%g,"username":"%s","type":"playbackSpeed"}`, testSpeed, testUsername)
 	unknownMessage        string   = fmt.Sprintf(`{"username":"%s","%s":"%s"}`, testUsername, testCommand, testCommandValue)
 	unsupportedMessage    string   = fmt.Sprintf(`{"username":"%s","%s":%t,"type":"unsupported"}`, testUsername, testOtherCommand, testOtherCommandValue)
+	failedFormatMessage   string   = `this may not be: a json {}`
+	failedFormatMessage2  string   = `{"type":"wrong","failed":true}`
 )
 
 func TestUnmarshal(t *testing.T) {
@@ -98,7 +100,17 @@ func testType(t *testing.T, messageType MessageType, expectedMessage Message, ac
 	require.IsType(t, expectedMessage, actualMessage)
 }
 
-func TestMarshall(t *testing.T) {
+func TestFailedUnmarshal(t *testing.T) {
+	msg, err := UnmarshalMessage([]byte(failedFormatMessage))
+	require.Nil(t, msg)
+	require.Error(t, err)
+
+	msg2, err := UnmarshalMessage([]byte(failedFormatMessage2))
+	require.IsType(t, &Unknown{}, msg2)
+	require.NoError(t, err)
+}
+
+func TestMarshal(t *testing.T) {
 	join, err := MarshalMessage(Join{
 		Password: testPassword,
 		Room:     testRoom,
@@ -186,4 +198,11 @@ func TestMarshall(t *testing.T) {
 func testMessageContent(t *testing.T, expectedMessage []byte, actualMessage []byte, err error) {
 	require.NoError(t, err)
 	require.Equal(t, expectedMessage, actualMessage)
+}
+
+func TestFailedMarshal(t *testing.T) {
+	unknownMessage := Unknown{testUsername, []byte(failedFormatMessage)}
+	payload, err := MarshalMessage(unknownMessage)
+	require.Nil(t, payload)
+	require.Error(t, err)
 }

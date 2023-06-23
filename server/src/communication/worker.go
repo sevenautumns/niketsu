@@ -57,12 +57,12 @@ type workerState struct {
 	room        *atomic.Value
 	loggedIn    *atomic.Bool
 	stopRequest chan int
-	closeOnce   sync.Once
+	closeOnce   *sync.Once
 }
 
 type Worker struct {
 	roomHandler     ServerStateHandler
-	webSocket       WebSocket
+	websocket       WebsocketReaderWriter
 	state           workerState
 	userStatus      *atomic.Pointer[Status]
 	videoState      *videoState
@@ -71,29 +71,29 @@ type Worker struct {
 	latencyMutex    *sync.RWMutex
 }
 
-func NewWorker(roomHandler ServerStateHandler, webSocket WebSocket, userName string, filename *string, position *uint64) Worker {
+func NewWorker(roomHandler ServerStateHandler, webSocket WebsocketReaderWriter, userName string) ClientWorker {
 	var worker Worker
 	worker.roomHandler = roomHandler
-	worker.webSocket = webSocket
+	worker.websocket = webSocket
 
 	atomicUUID := atomic.Pointer[uuid.UUID]{}
 	newUUID := uuid.New()
 	atomicUUID.Store(&newUUID)
 	atomicBool := atomic.Bool{}
 	atomicBool.Store(false)
-	worker.state = workerState{uuid: &atomicUUID, room: &atomic.Value{}, loggedIn: &atomicBool, stopRequest: make(chan int)}
+	worker.state = workerState{uuid: &atomicUUID, room: &atomic.Value{}, loggedIn: &atomicBool, stopRequest: make(chan int), closeOnce: &sync.Once{}}
 
 	atomicStatus := atomic.Pointer[Status]{}
 	atomicStatus.Store(&Status{Ready: false, Username: userName})
 	worker.userStatus = &atomicStatus
 
-	worker.videoState = &videoState{video: filename, position: position, paused: true, speed: 1.0}
+	worker.videoState = &videoState{paused: true, speed: 1.0}
 	worker.videoStateMutex = &sync.RWMutex{}
 
 	worker.latency = &latency{roundTripTime: 0, timestamps: make(map[uuid.UUID]time.Time)}
 	worker.latencyMutex = &sync.RWMutex{}
 
-	return worker
+	return &worker
 }
 
 func (worker *Worker) GetUUID() *uuid.UUID {
@@ -134,7 +134,7 @@ func (worker *Worker) Close() {
 }
 
 func (worker *Worker) Start() {
-	defer worker.webSocket.Close()
+	defer worker.websocket.Close()
 
 	go worker.handleRequests()
 	go worker.generatePings()
@@ -174,7 +174,7 @@ func (worker *Worker) sendPing() {
 	}
 	worker.addPingEntry(uuid)
 
-	err = worker.webSocket.WriteMessage(payload)
+	err = worker.websocket.WriteMessage(payload)
 	if err != nil {
 		logger.Errorw("Unable to send ping message", "error", err)
 		worker.Close()
@@ -222,18 +222,11 @@ func (worker *Worker) handleRequests() {
 }
 
 func (worker *Worker) handleData() {
-	data, op, err := worker.webSocket.ReadMessage()
+	data, err := worker.websocket.ReadMessage()
 	arrivalTime := time.Now()
 
 	if err != nil {
 		logger.Infow("Unable to read from client. Closing connection", "error", err, "worker", worker.state.uuid)
-		worker.Close()
-		return
-	}
-
-	//TODO handle different op code
-	if op.IsClose() {
-		logger.Infow("Client closed connection")
 		worker.Close()
 		return
 	}
@@ -468,7 +461,7 @@ func (worker *Worker) setSpeed(speed float64) {
 }
 
 func (worker *Worker) SendMessage(message []byte) {
-	err := worker.webSocket.WriteMessage(message)
+	err := worker.websocket.WriteMessage(message)
 	if err != nil {
 		logger.Errorw("Unable to send message", "error", err)
 		worker.Close()

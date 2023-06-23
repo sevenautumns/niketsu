@@ -21,6 +21,9 @@ func main() {
 	if err != nil {
 		logger.Fatalw("Failed to initialize handler", "error", err)
 	}
-	handler := communication.NewWebSocketHandler(conf.General, server)
-	handler.HandleRequests()
+	handler := communication.NewWebSocketHandler(conf.General, server, communication.NewWsReaderWriter, communication.NewWorker)
+	err = handler.Listen()
+	if err != nil {
+		logger.Fatalw("Shutting down server", "error", err)
+	}
 }

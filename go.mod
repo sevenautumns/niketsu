@@ -12,6 +12,8 @@ require (
 	go.uber.org/zap v1.24.0
 )
 
+require github.com/klauspost/compress v1.10.3 // indirect
+
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
@@ -22,4 +24,5 @@ require (
 	golang.org/x/sys v0.7.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	nhooyr.io/websocket v1.8.7
 )
