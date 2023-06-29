@@ -1,14 +1,19 @@
 use std::process::exit;
 use std::time::Duration;
 
+use actix::{Handler, Message};
 use anyhow::Result;
 use enum_dispatch::enum_dispatch;
 use log::debug;
 
+use super::actor::Player;
 use super::{MediaPlayer, MediaPlayerWrapper};
 use crate::client::message::CoreMessageTrait;
-use crate::client::server::{NiketsuMessage, NiketsuPause, NiketsuStart, NiketsuSeek, NiketsuPlaybackSpeed, NiketsuSelect};
+use crate::client::server::{
+    NiketsuMessage, NiketsuPause, NiketsuPlaybackSpeed, NiketsuSeek, NiketsuSelect, NiketsuStart,
+};
 use crate::client::CoreRunner;
+use crate::file_system::actor::FileDatabaseModel;
 use crate::user::ThisUser;
 use crate::video::PlayingFile;
 
@@ -28,7 +33,8 @@ pub enum MediaPlayerEvent {
     PlayerExit,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Message)]
+#[rtype(result = "()")]
 pub struct PlayerPaused;
 
 impl PlayerPaused {

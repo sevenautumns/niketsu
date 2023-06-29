@@ -1,5 +1,8 @@
 use crate::client::server::{NiketsuMessage, NiketsuStatus};
 
+pub mod actor;
+pub mod control;
+
 #[derive(Debug, Clone)]
 pub struct ThisUser {
     name: String,
@@ -39,7 +42,8 @@ impl ThisUser {
         NiketsuStatus {
             ready: self.ready,
             username: self.name(),
-        }.into()
+        }
+        .into()
     }
 
     #[must_use]

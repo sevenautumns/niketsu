@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use actix::Message;
 use anyhow::{anyhow, Result};
 use async_tungstenite::stream::Stream;
 use async_tungstenite::tokio::TokioAdapter;
@@ -13,7 +14,7 @@ use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use iced::widget::{Row, Text};
 use iced::{Renderer, Theme};
-use log::{debug, error,  warn};
+use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
@@ -22,19 +23,23 @@ use url::Url;
 
 use self::message::{Connected, WebSocketMessage, WsStreamEnded};
 use super::CoreRunner;
-use crate::client::LogResult;
 use crate::client::message::CoreMessageTrait;
 use crate::client::server::message::ServerError;
+use crate::client::LogResult;
 use crate::iced_window::MainMessage;
 use crate::playlist::PlaylistWidgetState;
 use crate::rooms::RoomsWidgetState;
 use crate::user::ThisUser;
 use crate::video::{PlayingFile, Video};
 
+pub mod actor;
+pub mod control;
+pub mod event;
 pub mod message;
 
 #[enum_dispatch(CoreMessageTrait)]
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Message)]
+#[rtype(result = "()")]
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
 pub enum NiketsuMessage {
@@ -116,7 +121,8 @@ impl CoreMessageTrait for NiketsuStatusList {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, Message)]
+#[rtype(result = "()")]
 #[serde(rename_all = "camelCase")]
 pub struct NiketsuPause {
     #[serde(skip_serializing)]
@@ -132,7 +138,8 @@ impl CoreMessageTrait for NiketsuPause {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, Message)]
+#[rtype(result = "()")]
 #[serde(rename_all = "camelCase")]
 pub struct NiketsuStart {
     #[serde(skip_serializing)]
@@ -148,7 +155,8 @@ impl CoreMessageTrait for NiketsuStart {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, Message)]
+#[rtype(result = "()")]
 #[serde(rename_all = "camelCase")]
 pub struct NiketsuPlaybackSpeed {
     pub speed: f64,
@@ -156,16 +164,28 @@ pub struct NiketsuPlaybackSpeed {
     pub username: String,
 }
 
+impl NiketsuPlaybackSpeed {
+    pub fn new(speed: f64) -> Self {
+        Self {
+            speed,
+            ..Self::default()
+        }
+    }
+}
+
 impl CoreMessageTrait for NiketsuPlaybackSpeed {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
         debug!("Received: {self:?}");
         client.player.set_speed(self.speed).log();
-        client.messages.push_playback_speed(self.speed, self.username);
+        client
+            .messages
+            .push_playback_speed(self.speed, self.username);
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Message)]
+#[rtype(result = "()")]
 #[serde(rename_all = "camelCase")]
 pub struct NiketsuSeek {
     pub filename: String,
@@ -183,10 +203,7 @@ impl CoreMessageTrait for NiketsuSeek {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
         debug!("Received: {self:?}");
         if !client.player.is_seeking()? {
-            client
-                .player
-                .load(self.borrow().into())
-                .log();
+            client.player.load(self.borrow().into()).log();
             client
                 .messages
                 .push_seek(self.position, self.filename, self.desync, self.username);
@@ -197,11 +214,17 @@ impl CoreMessageTrait for NiketsuSeek {
 
 impl From<&NiketsuSeek> for PlayingFile {
     fn from(seek: &NiketsuSeek) -> Self {
-        PlayingFile { video: Video::from_string(seek.filename.clone()), paused: seek.paused, speed: seek.speed, pos: seek.position }
+        PlayingFile {
+            video: Video::from_string(seek.filename.clone()),
+            paused: seek.paused,
+            speed: seek.speed,
+            pos: seek.position,
+        }
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Message)]
+#[rtype(result = "()")]
 #[serde(rename_all = "camelCase")]
 pub struct NiketsuSelect {
     pub filename: Option<String>,

@@ -1,132 +1,64 @@
 use std::ffi::{c_void, CString};
 use std::mem::MaybeUninit;
-use std::process::exit;
 use std::time::Duration;
 
+use actix::{Actor, AsyncContext, Context, Recipient, WrapFuture};
 use anyhow::{bail, Result};
-use async_trait::async_trait;
-use bindings::{
-    mpv_command_async, mpv_create, mpv_error, mpv_format, mpv_get_property, mpv_handle,
-    mpv_initialize, mpv_observe_property, mpv_set_property, mpv_terminate_destroy,
-};
 use futures::StreamExt;
-use strum::{AsRefStr, EnumString};
+use log::error;
 
-use self::event::{MpvEventPipe, MpvEventTrait, PropertyValue};
-use super::event::MediaPlayerEvent;
-use super::MediaPlayer;
-
-pub mod actor;
-pub mod bindings;
-pub mod control;
-pub mod error;
-pub mod event;
-
-#[derive(Debug, Clone, Copy)]
-pub struct MpvHandle(pub *mut mpv_handle);
-
-unsafe impl Send for MpvHandle {}
-
-unsafe impl Sync for MpvHandle {}
-
-#[derive(Debug, EnumString, AsRefStr, Clone, Copy)]
-#[strum(serialize_all = "kebab-case")]
-pub enum MpvProperty {
-    PlaybackTime,
-    Osc,
-    Pause,
-    Speed,
-    Filename,
-    KeepOpen,
-    KeepOpenPause,
-    CachePause,
-    ForceWindow,
-    Idle,
-    EofReached,
-    Config,
-    InputDefaultBindings,
-    InputVoKeyboard,
-    InputMediaKeys,
-}
-
-impl TryFrom<MpvProperty> for CString {
-    type Error = anyhow::Error;
-
-    fn try_from(prop: MpvProperty) -> Result<Self> {
-        Ok(CString::new(prop.as_ref())?)
-    }
-}
-
-impl MpvProperty {
-    pub fn format(&self) -> mpv_format {
-        match self {
-            MpvProperty::PlaybackTime => mpv_format::MPV_FORMAT_DOUBLE,
-            MpvProperty::Osc => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::Pause => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::Filename => mpv_format::MPV_FORMAT_STRING,
-            MpvProperty::KeepOpen => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::ForceWindow => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::Idle => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::Config => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::KeepOpenPause => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::EofReached => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::InputDefaultBindings => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::InputVoKeyboard => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::InputMediaKeys => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::CachePause => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::Speed => mpv_format::MPV_FORMAT_DOUBLE,
-        }
-    }
-}
-
-#[derive(Debug, AsRefStr)]
-#[strum(serialize_all = "kebab-case")]
-pub enum MpvCommand {
-    Loadfile,
-    Stop,
-    ShowText,
-}
-
-impl TryFrom<MpvCommand> for CString {
-    type Error = anyhow::Error;
-
-    fn try_from(cmd: MpvCommand) -> Result<Self> {
-        Ok(CString::new(cmd.as_ref())?)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct MpvStatus {
-    paused: bool,
-    seeking: bool,
-    speed: f64,
-}
-
-impl Default for MpvStatus {
-    fn default() -> Self {
-        Self {
-            paused: true,
-            seeking: false,
-            speed: 1.0,
-        }
-    }
-}
+use super::bindings::*;
+use super::event::{MpvEvent, MpvEventPipe, PropertyValue};
+use super::{MpvCommand, MpvHandle, MpvProperty, MpvStatus};
+use crate::client::server::NiketsuMessage;
+use crate::file_system::actor::FileDatabaseData;
+use crate::user::control::UserReady;
+use crate::video::PlayingFile;
 
 #[derive(Debug)]
-pub struct Mpv {
-    status: MpvStatus,
-    event_pipe: MpvEventPipe,
-    handle: MpvHandle,
+pub struct MpvActor {
+    pub(super) status: MpvStatus,
+    pub(super) event_pipe: Option<MpvEventPipe>,
+    pub(super) handle: MpvHandle,
+    pub(super) file: Option<PlayingFile>,
+    pub(super) file_loaded: bool,
+    pub(super) db: FileDatabaseData,
+    pub(super) server: Recipient<NiketsuMessage>,
+    pub(super) user: Recipient<UserReady>,
 }
 
-impl Drop for Mpv {
-    fn drop(&mut self) {
-        unsafe { mpv_terminate_destroy(self.handle.0) };
-        exit(0)
+impl Actor for MpvActor {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        let addr = ctx.address();
+        let mut event_pipe = self
+            .event_pipe
+            .take()
+            .expect("event_pipe should not be None");
+        ctx.spawn(
+            async move {
+                loop {
+                    if let Some(event) = event_pipe.next().await {
+                        match event {
+                            MpvEvent::MpvShutdown(e) => addr.do_send(e),
+                            MpvEvent::MpvPropertyChanged(e) => addr.do_send(e),
+                            MpvEvent::MpvFileLoaded(e) => addr.do_send(e),
+                            MpvEvent::MpvPlaybackRestart(e) => addr.do_send(e),
+                            _ => {}
+                        }
+                    } else {
+                        error!("Mpv event pipeline unexpectedly ended");
+                        break;
+                    }
+                }
+            }
+            .into_actor(self),
+        );
     }
 }
 
-impl Mpv {
+impl MpvActor {
     fn init(mut self) -> Result<Self> {
         self.pre_init()?;
         self.init_handle()?;
@@ -270,14 +202,11 @@ impl Mpv {
         Ok(TryInto::<mpv_error>::try_into(ret)?.try_into()?)
     }
 
-    fn eof_reached(&self) -> Result<bool> {
+    pub(super) fn eof_reached(&self) -> Result<bool> {
         self.get_property_flag(MpvProperty::EofReached)
     }
-}
 
-#[async_trait]
-impl MediaPlayer for Mpv {
-    fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let ctx = unsafe { mpv_create() };
         let handle = MpvHandle(ctx);
         let event_pipe = MpvEventPipe::new(handle);
@@ -285,32 +214,76 @@ impl MediaPlayer for Mpv {
         let mpv = Self {
             status,
             handle,
-            event_pipe,
+            event_pipe: Some(event_pipe),
+            file: None,
+            file_loaded: false,
+            server: todo!(),
+            db: todo!(),
+            user: todo!(),
         };
 
         mpv.init()
     }
 
-    fn pause(&mut self) -> Result<()> {
+    pub(super) fn pause(&mut self) -> Result<()> {
+        let Some(file) = self.file.as_mut() else {
+            return Ok(());
+        };
+        if file.paused {
+            return Ok(());
+        }
+        file.paused = true;
+        self.pause_cmd()
+    }
+
+    fn pause_cmd(&mut self) -> Result<()> {
         self.status.paused = true;
         self.set_property(MpvProperty::Pause, true.into())
     }
 
-    fn is_paused(&self) -> Result<bool> {
+    pub(super) fn is_paused(&self) -> Result<bool> {
+        if let Some(file) = &self.file {
+            return Ok(file.paused);
+        }
         self.get_property_flag(MpvProperty::Pause)
     }
 
-    fn start(&mut self) -> Result<()> {
+    pub(super) fn start(&mut self) -> Result<()> {
+        let Some(file) = self.file.as_mut() else {
+            return Ok(());
+        };
+        if !file.paused {
+            return Ok(());
+        }
+        file.paused = false;
+        self.start_cmd()
+    }
+
+    fn start_cmd(&mut self) -> Result<()> {
         self.status.paused = false;
         self.set_property(MpvProperty::Pause, false.into())
     }
 
-    fn set_speed(&mut self, speed: f64) -> Result<()> {
+    pub(super) fn set_speed(&mut self, speed: f64) -> Result<()> {
+        let Some(file) = self.file.as_mut() else {
+            return Ok(());
+        };
+        if file.speed == speed {
+            return Ok(());
+        }
+        file.speed = speed;
+        self.set_speed_cmd(speed)
+    }
+
+    fn set_speed_cmd(&mut self, speed: f64) -> Result<()> {
         self.status.speed = speed;
         self.set_property(MpvProperty::Speed, PropertyValue::Double(speed))
     }
 
-    fn get_speed(&self) -> Result<f64> {
+    pub(super) fn get_speed(&self) -> Result<f64> {
+        if let Some(file) = &self.file {
+            return Ok(file.speed);
+        }
         self.get_property_f64(MpvProperty::Speed)
     }
 
@@ -322,12 +295,36 @@ impl MediaPlayer for Mpv {
         )
     }
 
-    fn get_position(&self) -> Result<Duration> {
+    pub(super) fn get_position(&self) -> Result<Duration> {
         let duration = self.get_property_f64(MpvProperty::PlaybackTime)?;
         Ok(Duration::from_secs_f64(duration))
     }
 
-    fn open(&self, path: String, paused: bool, pos: Duration) -> Result<()> {
+    pub(super) fn load(&mut self, play: PlayingFile) -> Result<()> {
+        let Some(file) = &self.file else {
+            return self.open(play);
+        };
+        if file.video.as_str().eq(play.video.as_str()) {
+            if self.is_seeking()? {
+                return Ok(());
+            }
+            return self.seek(play);
+        }
+        self.open(play)
+    }
+
+    fn open(&mut self, play: PlayingFile) -> Result<()> {
+        self.file = Some(play.clone());
+        if let Some(path) = play.video.to_path_str_new(&self.db) {
+            self.file_loaded = true;
+            self.open_cmd(path, play.paused, play.pos)
+        } else {
+            self.file_loaded = false;
+            Ok(())
+        }
+    }
+
+    fn open_cmd(&self, path: String, paused: bool, pos: Duration) -> Result<()> {
         let cmd = MpvCommand::Loadfile.try_into()?;
         let path = CString::new(path)?;
         let replace = CString::new("replace")?;
@@ -337,19 +334,25 @@ impl MediaPlayer for Mpv {
         self.send_command(&[&cmd, &path, &replace, &options])
     }
 
-    fn is_seeking(&self) -> Result<bool> {
-        Ok(self.status.seeking)
+    fn seek(&mut self, play: PlayingFile) -> Result<()> {
+        if self.file.is_none() {
+            return Ok(());
+        }
+        if play.paused {
+            self.pause()?;
+        } else {
+            self.start()?;
+        }
+        self.set_speed(play.speed)?;
+        self.set_position(play.pos)
     }
 
-    async fn receive_event(&mut self) -> Result<MediaPlayerEvent> {
-        loop {
-            if let Some(event) = self.event_pipe.next().await {
-                if let Some(event) = event.process(self) {
-                    return Ok(event);
-                }
-            } else {
-                bail!("Mpv event pipeline unexpectedly ended");
-            }
-        }
+    pub(super) fn unload(&mut self) {
+        self.file = None;
+        self.file_loaded = false;
+    }
+
+    pub(super) fn is_seeking(&self) -> Result<bool> {
+        Ok(self.status.seeking)
     }
 }

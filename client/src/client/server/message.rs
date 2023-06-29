@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use actix::Message;
 use anyhow::{Error, Result};
 use enum_dispatch::enum_dispatch;
 use log::{error, trace, warn};
@@ -30,7 +31,8 @@ impl CoreMessageTrait for ServerError {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Message)]
+#[rtype(result = "()")]
 pub struct WsStreamEnded;
 
 impl CoreMessageTrait for WsStreamEnded {

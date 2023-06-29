@@ -9,11 +9,13 @@ use self::mpv::MpvHandle;
 use crate::file_system::FileDatabaseProxy;
 use crate::video::PlayingFile;
 
+pub mod actor;
+pub mod control;
 pub mod event;
 pub mod mpv;
 
 #[async_trait]
-pub trait MediaPlayer: Sized {
+pub trait MediaPlayer: Sized + Unpin + 'static {
     fn new() -> Result<Self>;
     fn pause(&mut self) -> Result<()>;
     fn is_paused(&self) -> Result<bool>;
@@ -108,6 +110,9 @@ impl<M: MediaPlayer> MediaPlayerWrapper<M> {
             return self.open(play);
         };
         if file.video.as_str().eq(play.video.as_str()) {
+            if self.player.is_seeking()? {
+                return Ok(());
+            }
             return self.seek(play);
         }
         self.open(play)

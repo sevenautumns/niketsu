@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use url::Url;
 
+use crate::file_system::actor::FileDatabaseModel;
 use crate::file_system::FileDatabaseProxy;
 
 #[derive(Debug, Clone, Eq)]
@@ -44,6 +45,17 @@ impl Video {
         }
     }
 
+    // TODO remove old function
+    pub fn to_path_str_new<F: FileDatabaseModel>(&self, db: &F) -> Option<String> {
+        match self {
+            Video::File { name } => match db.find_file(name) {
+                Some(file) => Some(file.path.as_os_str().to_str()?.to_string()),
+                _ => None,
+            },
+            Video::Url(url) => Some(url.as_str().to_string()),
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         match self {
             Video::File { name, .. } => name,
@@ -56,6 +68,7 @@ impl Video {
 pub struct PlayingFile {
     pub video: Video,
     pub paused: bool,
+    // TODO decide whether speed belongs to the player or the file
     pub speed: f64,
     pub pos: Duration,
 }

@@ -1,21 +1,27 @@
 #![allow(non_upper_case_globals)]
 
 use std::ffi::{c_char, c_void, CStr, CString};
+use std::process::exit;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Poll, Waker};
 
+use actix::{Handler, Message};
 use arc_swap::ArcSwapOption;
 use enum_dispatch::enum_dispatch;
-use log::trace;
+use log::{debug, trace};
 
+use super::actor::MpvActor;
 use super::{Mpv, MpvProperty};
+use crate::client::server::{NiketsuPause, NiketsuPlaybackSpeed, NiketsuSeek, NiketsuStart};
+use crate::file_system::actor::FileDatabaseModel;
 use crate::media_player::event::{
     PlayerExit, PlayerPaused, PlayerPlaybackEnded, PlayerPositionChanged, PlayerSpeedChanged,
     PlayerStarted,
 };
 use crate::media_player::mpv::bindings::*;
 use crate::media_player::{MediaPlayer, MediaPlayerEvent, MpvHandle};
+use crate::user::control::UserReady;
 
 unsafe extern "C" fn on_mpv_event(_: *mut c_void) {
     if let Some(waker) = EVENT_WAKER.load().as_ref() {
@@ -51,7 +57,8 @@ impl MpvEventTrait for MpvNone {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Message)]
+#[rtype(result = "()")]
 pub struct MpvShutdown;
 
 impl MpvEventTrait for MpvShutdown {
@@ -60,7 +67,16 @@ impl MpvEventTrait for MpvShutdown {
     }
 }
 
-#[derive(Debug, Clone)]
+impl Handler<MpvShutdown> for MpvActor {
+    type Result = ();
+
+    fn handle(&mut self, _: MpvShutdown, _: &mut Self::Context) -> Self::Result {
+        exit(0)
+    }
+}
+
+#[derive(Debug, Clone, Message)]
+#[rtype(result = "()")]
 pub struct MpvPropertyChanged {
     property: MpvProperty,
     value: PropertyValue,
@@ -102,7 +118,78 @@ impl MpvEventTrait for MpvPropertyChanged {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+impl MpvActor {
+    fn check_and_process_pause(&mut self, paused: bool) {
+        if self.status.paused == paused {
+            return;
+        }
+        if self.eof_reached().unwrap_or_default() {
+            return self.process_eof_reached();
+        }
+        if paused {
+            return self.process_paused();
+        }
+        self.process_started()
+    }
+
+    fn process_eof_reached(&mut self) {
+        debug!("Mpv process: eof reached");
+        self.status.paused = true;
+    }
+
+    fn process_paused(&mut self) {
+        debug!("Mpv process: pause");
+        if let Some(file) = &mut self.file {
+            file.paused = true;
+            self.user.do_send(UserReady::NotReady);
+            self.server.do_send(NiketsuPause::default().into());
+        }
+    }
+
+    fn process_started(&mut self) {
+        debug!("Mpv process: start");
+        if let Some(file) = &mut self.file {
+            file.paused = false;
+            self.user.do_send(UserReady::Ready);
+            self.server.do_send(NiketsuStart::default().into());
+        }
+    }
+
+    fn check_and_process_speed(&mut self, speed: f64) {
+        if self.status.speed == speed {
+            return;
+        }
+        self.process_speed_changed(speed);
+    }
+
+    fn process_speed_changed(&mut self, speed: f64) {
+        debug!("Mpv process: playback speed");
+        self.status.speed = speed;
+        if let Some(file) = &mut self.file {
+            file.speed = speed;
+            self.server.do_send(NiketsuPlaybackSpeed::new(speed).into())
+        };
+    }
+}
+
+impl Handler<MpvPropertyChanged> for MpvActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: MpvPropertyChanged, _: &mut Self::Context) -> Self::Result {
+        match (msg.property, msg.value) {
+            (MpvProperty::Pause, PropertyValue::Flag(paused)) => {
+                self.check_and_process_pause(paused > 0)
+            }
+            (MpvProperty::Speed, PropertyValue::Double(speed)) => {
+                self.check_and_process_speed(speed)
+            }
+            _ => {}
+        };
+    }
+}
+
+#[derive(Debug, Clone, Message)]
+#[rtype(result = "()")]
 pub struct MpvFileLoaded;
 
 impl MpvEventTrait for MpvFileLoaded {
@@ -112,7 +199,15 @@ impl MpvEventTrait for MpvFileLoaded {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+impl Handler<MpvFileLoaded> for MpvActor {
+    type Result = ();
+
+    fn handle(&mut self, _: MpvFileLoaded, _: &mut Self::Context) -> Self::Result {
+        trace!("File loaded");
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct MpvSeek;
 
 impl MpvEventTrait for MpvSeek {
@@ -121,7 +216,8 @@ impl MpvEventTrait for MpvSeek {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Message)]
+#[rtype(result = "()")]
 pub struct MpvPlaybackRestart;
 
 impl MpvEventTrait for MpvPlaybackRestart {
@@ -132,6 +228,38 @@ impl MpvEventTrait for MpvPlaybackRestart {
         }
         let pos = mpv.get_position().unwrap_or_default();
         Some(PlayerPositionChanged(pos).into())
+    }
+}
+
+impl MpvActor {
+    fn process_seeked(&mut self) {
+        let pos = self.get_position().unwrap_or_default();
+        debug!("Mpv process: seek {pos:?}");
+        if let Some(playing) = &self.file {
+            self.server.do_send(
+                NiketsuSeek {
+                    filename: playing.video.as_str().to_string(),
+                    position: pos,
+                    username: Default::default(),
+                    paused: playing.paused,
+                    desync: false,
+                    speed: playing.speed,
+                }
+                .into(),
+            )
+        }
+    }
+}
+
+impl Handler<MpvPlaybackRestart> for MpvActor {
+    type Result = ();
+
+    fn handle(&mut self, _: MpvPlaybackRestart, _: &mut Self::Context) -> Self::Result {
+        if self.status.seeking {
+            self.status.seeking = false;
+            return;
+        }
+        self.process_seeked();
     }
 }
 

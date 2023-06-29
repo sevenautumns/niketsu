@@ -19,6 +19,7 @@ pub mod media_player;
 pub mod messages;
 pub mod playlist;
 pub mod rooms;
+pub mod router;
 pub mod styling;
 pub mod user;
 pub mod video;

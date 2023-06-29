@@ -27,6 +27,8 @@ use crate::iced_window::MainMessage;
 use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
 use crate::TEXT_SIZE;
 
+pub mod actor;
+pub mod control;
 pub mod message;
 pub mod updater;
 
