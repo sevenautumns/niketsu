@@ -58,7 +58,7 @@ type Room struct {
 }
 
 // Creates a new Room which handles requests from workers in a shared channel. The database is created in a file at path/name.db
-func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout uint64, persistent bool) (*Room, error) {
+func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout uint64, persistent bool) (RoomStateHandler, error) {
 	var room Room
 	room.name = name
 	room.workers = make([]ClientWorker, 0)

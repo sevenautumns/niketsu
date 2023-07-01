@@ -62,7 +62,9 @@ func init() {
 
 func TestNewRoom(t *testing.T) {
 	room, err := NewRoom(roomName, dbPath, dbUpdateInterval, dbWaitTimeout, persistent)
-	testCorrectState(t, room, err)
+	require.NotNil(t, room)
+	require.IsType(t, &Room{}, room)
+	testCorrectState(t, room.(*Room), err)
 
 	t.Cleanup(func() {
 		os.Remove(filepath.Join(dbPath, roomName+".db"))
@@ -122,7 +124,7 @@ func TestStartClose(t *testing.T) {
 	})
 }
 
-func startRoom(t *testing.T, room *Room) {
+func startRoom(t *testing.T, room RoomStateHandler) {
 	room.Start()
 	t.Failed()
 }
@@ -130,12 +132,12 @@ func startRoom(t *testing.T, room *Room) {
 func TestWritePlaylist(t *testing.T) {
 	room, _ := NewRoom(roomName, dbPath, dbUpdateInterval, dbWaitTimeout, persistent)
 	state := &RoomState{playlist: playlist, video: video, position: defaultPosition, lastSeek: defaultLastSeek, paused: defaultPaused, speed: defaultSpeed}
-	testCorrectWritePlaylist(t, room, state)
+	testCorrectWritePlaylist(t, room.(*Room), state)
 
 	state = &RoomState{playlist: defaultPlaylist, video: video2, position: highPosition, lastSeek: defaultLastSeek, paused: defaultPaused, speed: defaultSpeed}
-	testCorrectWritePlaylist(t, room, state)
+	testCorrectWritePlaylist(t, room.(*Room), state)
 
-	testFailedWritePlaylist(t, room)
+	testFailedWritePlaylist(t, room.(*Room))
 
 	t.Cleanup(func() {
 		os.Remove(filepath.Join(dbPath, roomName+".db"))
@@ -179,9 +181,9 @@ func testCorrectDBState(t *testing.T, room *Room) {
 
 func TestRoomClose(t *testing.T) {
 	room, _ := NewRoom(roomName, dbPath, dbUpdateInterval, dbWaitTimeout, persistent)
-	testCorrectClose(t, room)
-	testFailedClose(t, room)
-	testClosedDB(t, room)
+	testCorrectClose(t, room.(*Room))
+	testFailedClose(t, room.(*Room))
+	testClosedDB(t, room.(*Room))
 
 	t.Cleanup(func() {
 		os.Remove(filepath.Join(dbPath, roomName+".db"))
@@ -218,7 +220,8 @@ func testClosedDB(t *testing.T, room *Room) {
 }
 
 func TestRoomStart(t *testing.T) {
-	room, _ := NewRoom(roomName, dbPath, dbUpdateInterval, dbWaitTimeout, persistent)
+	roomStateHandler, _ := NewRoom(roomName, dbPath, dbUpdateInterval, dbWaitTimeout, persistent)
+	room := roomStateHandler.(*Room)
 	room.state = &RoomState{playlist: playlist, video: video, position: defaultPosition, lastSeek: defaultLastSeek, paused: defaultPaused, speed: defaultSpeed}
 	go room.Start()
 	time.Sleep(2 * time.Second)
@@ -643,7 +646,8 @@ func TestSetPaused(t *testing.T) {
 }
 
 func TestSetStateFromDB(t *testing.T) {
-	room, _ := NewRoom(roomName, dbPath, dbUpdateInterval, dbWaitTimeout, persistent)
+	roomStateHandler, _ := NewRoom(roomName, dbPath, dbUpdateInterval, dbWaitTimeout, persistent)
+	room := roomStateHandler.(*Room)
 	room.state = &RoomState{
 		playlist: playlist,
 		video:    video,
