@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -50,13 +49,13 @@ func NewServer(config config.GeneralConfig) Server {
 }
 
 func (server *Server) Init(roomConfigs map[string]config.RoomConfig) error {
-	err := server.createDir(server.config.dbPath)
+	err := CreateDir(server.config.dbPath)
 	if err != nil {
 		return errors.New(fmt.Sprintf("Failed to create directory of db path %s\n%s", server.config.dbPath, err))
 	}
 
 	path := filepath.Join(server.config.dbPath, generalDBPath)
-	err = server.createDir(path)
+	err = CreateDir(path)
 	if err != nil {
 		return errors.New(fmt.Sprintf("Failed to create directory of general db path %s\n%s", path, err))
 	}
@@ -70,15 +69,6 @@ func (server *Server) Init(roomConfigs map[string]config.RoomConfig) error {
 	server.addRooms(roomConfigs)
 
 	return nil
-}
-
-func (server *Server) createDir(path string) error {
-	_, err := os.Stat(filepath.Dir(path))
-	if os.IsNotExist(err) {
-		return os.MkdirAll(filepath.Dir(path), os.ModePerm)
-	}
-
-	return err
 }
 
 func (server *Server) initNewRoomsDB(path string) error {
@@ -112,8 +102,13 @@ func (server *Server) addRoomsFromDB(rooms map[string]RoomStateHandler) map[stri
 	}
 
 	for name, roomConfig := range roomConfigs {
-		newRoom := NewRoom(name, server.config.dbPath, server.config.dbUpdateInterval, server.config.dbWaitTimeout, roomConfig.Persistent)
-		rooms[name] = &newRoom
+		newRoom, err := NewRoom(name, server.config.dbPath, server.config.dbUpdateInterval, server.config.dbWaitTimeout, roomConfig.Persistent)
+		if err != nil {
+			continue
+		}
+
+		rooms[name] = newRoom
+		go newRoom.Start()
 	}
 
 	return rooms
@@ -125,20 +120,29 @@ func (server *Server) addRoomsFromConfig(rooms map[string]RoomStateHandler, room
 			continue
 		}
 
-		newRoom := NewRoom(name, server.config.dbPath, server.config.dbUpdateInterval, server.config.dbWaitTimeout, roomConfig.Persistent)
-		server.writeRoom(&newRoom)
-		rooms[name] = &newRoom
+		newRoom, err := NewRoom(name, server.config.dbPath, server.config.dbUpdateInterval, server.config.dbWaitTimeout, roomConfig.Persistent)
+		if err != nil {
+			continue
+		}
+
+		server.writeRoom(newRoom)
+		rooms[name] = newRoom
+		newRoom.Start()
 	}
 
 	return rooms
 }
 
-func (server *Server) createOrFindRoom(roomName string) RoomStateHandler {
+func (server *Server) createOrFindRoom(roomName string) (RoomStateHandler, error) {
 	if server.rooms[roomName] == nil {
-		tmpRoom := NewRoom(roomName, server.config.dbPath, server.config.dbUpdateInterval, server.config.dbWaitTimeout, false) //new rooms are never persistent
-		return &tmpRoom
+		tmpRoom, err := NewRoom(roomName, server.config.dbPath, server.config.dbUpdateInterval, server.config.dbWaitTimeout, false) //new rooms are never persistent
+		if err != nil {
+			return nil, err
+		}
+
+		return tmpRoom, nil
 	} else {
-		return server.rooms[roomName]
+		return server.rooms[roomName], nil
 	}
 }
 
@@ -149,10 +153,16 @@ func (server Server) HandleJoin(join Join, worker ClientWorker) {
 		return
 	}
 
-	if worker.IsLoggedIn() {
-		server.handleRoomChange(join, worker)
+	var err error
+	if worker.LoggedIn() {
+		err = server.handleRoomChange(join, worker)
 	} else {
-		server.handleFirstLogin(join, worker)
+		err = server.handleFirstLogin(join, worker)
+	}
+
+	if err != nil {
+		logger.Infow("Room change failed", "error", err)
+		worker.SendServerMessage("Failed to access room. Please try again", true)
 	}
 }
 
@@ -160,19 +170,28 @@ func (server *Server) passwordCheckFailed(password string) bool {
 	return server.config.password != "" && password != server.config.password
 }
 
-func (server *Server) handleRoomChange(join Join, worker ClientWorker) {
+func (server *Server) handleRoomChange(join Join, worker ClientWorker) error {
 	worker.DeleteWorkerFromRoom()
-	server.updateRoomChangeState(join.Room, worker)
+	err := server.updateRoomChangeState(join.Room, worker)
+	if err != nil {
+		return err
+	}
+
 	server.sendRoomChangeUpdates(worker)
+	return nil
 }
 
-func (server *Server) handleFirstLogin(join Join, worker ClientWorker) {
+func (server *Server) handleFirstLogin(join Join, worker ClientWorker) error {
 	// it is important to first set the state and then login.
 	// Otherwise, messages from the client may be handle with an incorrect state
-	server.updateRoomChangeState(join.Room, worker)
+	err := server.updateRoomChangeState(join.Room, worker)
+	if err != nil {
+		return err
+	}
 	worker.SetUserStatus(Status{Ready: false, Username: join.Username}) // update username based on join
 	worker.Login()
 	server.sendRoomChangeUpdates(worker)
+	return nil
 }
 
 func (server *Server) sendRoomChangeUpdates(worker ClientWorker) {
@@ -181,17 +200,22 @@ func (server *Server) sendRoomChangeUpdates(worker ClientWorker) {
 	worker.SendSeek(true)
 }
 
-func (server *Server) updateRoomChangeState(roomName string, worker ClientWorker) {
-	room := server.createOrFindRoom(roomName)
+func (server *Server) updateRoomChangeState(roomName string, worker ClientWorker) error {
+	room, err := server.createOrFindRoom(roomName)
+	if err != nil {
+		return err
+	}
+
+	room.Start()
 	server.appendRoom(room)
 	server.writeRoom(room)
-
-	room.WritePlaylist()
 	room.AppendWorker(worker)
 
 	roomState := room.RoomState()
 	worker.SetVideoState(VideoStatus{Filename: roomState.video, Position: roomState.position, Paused: roomState.paused}, time.Now())
 	worker.SetRoom(room)
+
+	return nil
 }
 
 func (server *Server) appendRoom(room RoomStateHandler) {
@@ -256,7 +280,7 @@ func (server *Server) statusList() map[string][]Status {
 func (server Server) BroadcastStatusList(worker ClientWorker) {
 	rooms := server.statusList()
 
-	userStatus := worker.GetUserStatus()
+	userStatus := worker.UserStatus()
 	statusList := StatusList{Rooms: rooms, Username: userStatus.Username}
 	message, err := MarshalMessage(statusList)
 	if err != nil {

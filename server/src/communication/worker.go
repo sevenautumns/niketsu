@@ -21,18 +21,17 @@ const (
 )
 
 type ClientWorker interface {
-	GetUUID() *uuid.UUID
+	UUID() *uuid.UUID
 	SetUserStatus(status Status)
-	GetUserStatus() *Status
-	GetVideoState() *videoState
+	UserStatus() *Status
 	SetVideoState(videoStatus VideoStatus, arrivalTime time.Time)
 	Login()
-	IsLoggedIn() bool
+	LoggedIn() bool
 	SendMessage(payload []byte)
 	SendServerMessage(message string, isError bool)
 	SendSeek(desync bool)
 	SendPlaylist()
-	EstimatePosition() uint64
+	EstimatePosition() *uint64
 	DeleteWorkerFromRoom()
 	SetRoom(room RoomStateHandler)
 	Close()
@@ -96,7 +95,7 @@ func NewWorker(roomHandler ServerStateHandler, webSocket WebsocketReaderWriter, 
 	return &worker
 }
 
-func (worker *Worker) GetUUID() *uuid.UUID {
+func (worker *Worker) UUID() *uuid.UUID {
 	return worker.state.uuid.Load()
 }
 
@@ -104,11 +103,11 @@ func (worker *Worker) SetUserStatus(status Status) {
 	worker.userStatus.Store(&status)
 }
 
-func (worker *Worker) GetUserStatus() *Status {
+func (worker *Worker) UserStatus() *Status {
 	return worker.userStatus.Load()
 }
 
-func (worker *Worker) GetVideoState() *videoState {
+func (worker *Worker) VideoState() *videoState {
 	worker.videoStateMutex.RLock()
 	defer worker.videoStateMutex.RUnlock()
 
@@ -119,7 +118,7 @@ func (worker *Worker) Login() {
 	worker.state.loggedIn.Store(true)
 }
 
-func (worker *Worker) IsLoggedIn() bool {
+func (worker *Worker) LoggedIn() bool {
 	return worker.state.loggedIn.Load()
 }
 
@@ -256,7 +255,7 @@ func (worker *Worker) handleMessage(data []byte, arrivalTime time.Time) {
 }
 
 func (worker *Worker) ignoreNotLoggedIn(message Message) bool {
-	if !worker.IsLoggedIn() && message.Type() != JoinType {
+	if !worker.LoggedIn() && message.Type() != JoinType {
 		return true
 	}
 
@@ -285,8 +284,7 @@ func (worker *Worker) handleMessageTypes(message Message, arrivalTime time.Time)
 		worker.handleSelect(*message)
 	case UserMessageType:
 		message := message.(*UserMessage)
-		room := worker.Room()
-		room.BroadcastUserMessage(message.Message, worker)
+		worker.broadcastUserMessage(message.Message)
 	case PlaylistType:
 		message := message.(*Playlist)
 		worker.handlePlaylist(*message)
@@ -324,7 +322,7 @@ func (worker *Worker) setRoomState() {
 		return
 	}
 
-	uuid := worker.GetUUID()
+	uuid := worker.UUID()
 	room.DeleteWorker(*uuid)
 
 	if !room.IsEmpty() {
@@ -366,8 +364,7 @@ func (worker *Worker) setRoundTripTime(uuid uuid.UUID, arrivalTime time.Time) {
 func (worker *Worker) handleStatus(status Status) {
 	worker.SetUserStatus(status)
 	worker.roomHandler.BroadcastStatusList(worker)
-	room := worker.Room()
-	room.BroadcastStartOnReady(worker)
+	worker.broadcastStartOnReady()
 }
 
 func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime time.Time) {
@@ -381,7 +378,7 @@ func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime tim
 
 	if worker.isValidVideoStatus(videoStatus, roomState) {
 		worker.SetVideoState(videoStatus, arrivalTime)
-		room.HandleVideoStatus(worker)
+		worker.handleTimeDifference()
 	} else {
 		worker.SendSeek(true)
 	}
@@ -406,41 +403,39 @@ func (worker *Worker) isValidVideoStatus(videoStatus VideoStatus, roomState *Roo
 func (worker *Worker) handleStart(start Start) {
 	room := worker.Room()
 	room.SetPaused(false)
-	room.BroadcastStart(worker, false)
+	worker.broadcastStart()
 }
 
 func (worker *Worker) handleSeek(seek Seek, arrivalTime time.Time) {
 	room := worker.Room()
-	room.SetPosition(seek.Position)
-	room.SetLastSeek(seek.Position)
+	room.SetPlaylistState(&seek.Filename, seek.Position, seek.Paused, seek.Position)
 	worker.SetVideoState(VideoStatus{Filename: &seek.Filename, Position: &seek.Position, Paused: seek.Paused}, arrivalTime)
-	room.BroadcastSeek(seek.Filename, seek.Position, worker, false)
+	worker.broadcastSeek(seek.Filename, seek.Position, false)
 }
 
 func (worker *Worker) handleSelect(sel Select) {
 	room := worker.Room()
 	room.SetPlaylistState(sel.Filename, 0, true, 0)
-	room.BroadcastSelect(sel.Filename, worker, false)
-	room.BroadcastStartOnReady(worker)
+	worker.broadcastSelect(sel.Filename, false)
+	worker.broadcastStartOnReady()
 }
 
 func (worker *Worker) handlePlaylist(playlist Playlist) {
-	room := worker.Room()
-	room.HandlePlaylistUpdate(playlist.Playlist, worker)
-	room.BroadcastPlaylist(playlist, worker, true)
+	worker.HandlePlaylistUpdate(playlist.Playlist)
+	worker.broadcastPlaylist(playlist, true)
 }
 
 func (worker *Worker) handlePause(pause Pause) {
 	room := worker.Room()
 	room.SetPaused(true)
-	room.BroadcastPause(worker)
+	worker.broadcastPause()
 }
 
 func (worker *Worker) handlePlaybackSpeed(speed PlaybackSpeed) {
 	room := worker.Room()
 	worker.setSpeed(speed.Speed)
 	room.SetSpeed(speed.Speed)
-	room.BroadcastPlaybackSpeed(speed.Speed, worker)
+	worker.broadcastPlaybackSpeed(speed.Speed)
 }
 
 func (worker *Worker) SetVideoState(videoStatus VideoStatus, arrivalTime time.Time) {
@@ -484,7 +479,7 @@ func (worker *Worker) SendSeek(desync bool) {
 		position += uint64(worker.latency.roundTripTime / float64(time.Millisecond) / 2)
 	}
 
-	userStatus := worker.GetUserStatus()
+	userStatus := worker.UserStatus()
 	seek := Seek{Filename: *roomState.video, Position: position, Speed: roomState.speed, Paused: roomState.paused, Desync: desync, Username: userStatus.Username}
 	payload, err := MarshalMessage(seek)
 	if err != nil {
@@ -508,7 +503,7 @@ func (worker *Worker) SendServerMessage(message string, isError bool) {
 func (worker *Worker) SendPlaylist() {
 	room := worker.Room()
 	roomState := room.RoomState()
-	userStatus := worker.GetUserStatus()
+	userStatus := worker.UserStatus()
 
 	playlist := Playlist{Playlist: roomState.playlist, Username: userStatus.Username}
 	message, err := MarshalMessage(playlist)
@@ -520,9 +515,13 @@ func (worker *Worker) SendPlaylist() {
 	worker.SendMessage(message)
 }
 
-func (worker *Worker) EstimatePosition() uint64 {
+func (worker *Worker) EstimatePosition() *uint64 {
 	worker.videoStateMutex.RLock()
 	defer worker.videoStateMutex.RUnlock()
+
+	if worker.videoState.position == nil {
+		return nil
+	}
 
 	var estimatedPosition uint64
 	if worker.videoState.paused {
@@ -532,10 +531,200 @@ func (worker *Worker) EstimatePosition() uint64 {
 		estimatedPosition = *worker.videoState.position + timeElapsed
 	}
 
-	return estimatedPosition
+	return &estimatedPosition
 }
 
 func (worker *Worker) DeleteWorkerFromRoom() {
-	uuid := worker.GetUUID()
+	uuid := worker.UUID()
 	worker.Room().DeleteWorker(*uuid)
+}
+
+func (worker *Worker) broadcastStart() {
+	userStatus := worker.UserStatus()
+	start := Start{Username: userStatus.Username}
+	payload, err := MarshalMessage(start)
+	if err != nil {
+		logger.Errorw("Unable to marshal start message", "error", err)
+		return
+	}
+
+	room := worker.Room()
+	uuid := worker.UUID()
+	room.BroadcastExcept(payload, *uuid)
+}
+
+func (worker *Worker) broadcastSeek(filename string, position uint64, desync bool) {
+	userStatus := worker.UserStatus()
+	room := worker.Room()
+	state := room.RoomState()
+
+	seek := Seek{Filename: filename, Position: position, Speed: state.speed, Paused: state.paused, Desync: desync, Username: userStatus.Username}
+	payload, err := MarshalMessage(seek)
+	if err != nil {
+		logger.Errorw("Unable to marshal broadcast seek", "error", err)
+		return
+	}
+
+	uuid := worker.UUID()
+	room.BroadcastExcept(payload, *uuid)
+}
+
+func (worker *Worker) broadcastSelect(filename *string, all bool) {
+	userStatus := worker.UserStatus()
+	sel := Select{Filename: filename, Username: userStatus.Username}
+	payload, err := MarshalMessage(sel)
+	if err != nil {
+		logger.Errorw("Unable to marshal broadcast select", "error", err)
+		return
+	}
+	room := worker.Room()
+
+	if all {
+		room.BroadcastAll(payload)
+	} else {
+		uuid := worker.UUID()
+		room.BroadcastExcept(payload, *uuid)
+	}
+}
+
+func (worker *Worker) broadcastUserMessage(message string) {
+	userStatus := worker.UserStatus()
+	userMessage := UserMessage{Message: message, Username: userStatus.Username}
+	payload, err := MarshalMessage(userMessage)
+	if err != nil {
+		logger.Errorw("Unable to marshal broadcast user message", "error", err)
+		return
+	}
+
+	room := worker.Room()
+	uuid := worker.UUID()
+	room.BroadcastExcept(payload, *uuid)
+}
+
+func (worker *Worker) broadcastPlaylist(playlist Playlist, all bool) {
+	userStatus := worker.UserStatus()
+	pl := Playlist{Playlist: playlist.Playlist, Username: userStatus.Username}
+	payload, err := MarshalMessage(pl)
+	if err != nil {
+		logger.Errorw("Unable to marshal broadcast playlist", "error", err)
+		return
+	}
+
+	room := worker.Room()
+	if all {
+		room.BroadcastAll(payload)
+	} else {
+		uuid := worker.UUID()
+		room.BroadcastExcept(payload, *uuid)
+	}
+}
+
+func (worker *Worker) broadcastPause() {
+	userStatus := worker.UserStatus()
+	pause := Pause{Username: userStatus.Username}
+	payload, err := MarshalMessage(pause)
+	if err != nil {
+		logger.Errorw("Unable to marshal broadcast pause", "error", err)
+		return
+	}
+
+	room := worker.Room()
+	uuid := worker.UUID()
+	room.BroadcastExcept(payload, *uuid)
+}
+
+// set paused to false since video will start
+func (worker *Worker) broadcastStartOnReady() {
+	// cannot start nil video
+	room := worker.Room()
+	video := room.RoomState().video
+	if video == nil {
+		return
+	}
+
+	if room.AllUsersReady() {
+		userStatus := worker.UserStatus()
+		start := Start{Username: userStatus.Username}
+		payload, err := MarshalMessage(start)
+		if err != nil {
+			logger.Errorw("Unable to marshal start message", "error", err)
+			return
+		}
+
+		room.BroadcastAll(payload)
+		room.SetPaused(false)
+	}
+}
+
+func (worker *Worker) broadcastPlaybackSpeed(speed float64) {
+	userStatus := worker.UserStatus()
+	playbackSpeed := PlaybackSpeed{Speed: speed, Username: userStatus.Username}
+	payload, err := MarshalMessage(playbackSpeed)
+	if err != nil {
+		logger.Errorw("Unable to marshal broadcast playbackspeed", "error", err)
+		return
+	}
+
+	room := worker.Room()
+	uuid := worker.UUID()
+	room.BroadcastExcept(payload, *uuid)
+}
+
+func (worker *Worker) HandlePlaylistUpdate(playlist []string) {
+	room := worker.Room()
+	state := room.RoomState()
+
+	if worker.isPlaylistUpdateRequired(state.video, state.playlist, playlist) {
+		nextVideo := worker.findNext(playlist, state)
+		worker.setNextVideo(nextVideo, *state.video, room)
+	}
+}
+
+func (worker *Worker) isPlaylistUpdateRequired(video *string, oldPlaylist []string, newPlaylist []string) bool {
+	return video != nil && len(newPlaylist) != 0 && len(newPlaylist) < len(oldPlaylist)
+}
+
+func (worker *Worker) findNext(newPlaylist []string, state *RoomState) string {
+	newPlaylistPosition := 0
+
+	for _, video := range state.playlist {
+		if video == *state.video {
+			break
+		}
+
+		if video == newPlaylist[newPlaylistPosition] {
+			newPlaylistPosition += 1
+		}
+
+		if newPlaylistPosition >= len(newPlaylist) {
+			newPlaylistPosition -= 1
+			break
+		}
+	}
+
+	return newPlaylist[newPlaylistPosition]
+}
+
+func (worker *Worker) setNextVideo(nextVideo string, oldVideo string, room RoomStateHandler) {
+	if nextVideo != oldVideo {
+		room.SetPlaylistState(&nextVideo, 0, true, 0)
+		worker.broadcastSelect(&nextVideo, true)
+	}
+}
+
+// Evaluates the video states of all clients and broadcasts seek if difference between
+// fastest and slowest clients is too large. Can not seek before the last seek's position.
+func (worker *Worker) handleTimeDifference() {
+	room := worker.Room()
+	maxPosition := room.FastestClientPosition()
+	state := worker.VideoState()
+	room.SetPosition(*state.position)
+
+	if worker.isClientDifferenceTooLarge(maxPosition, state.position, state.speed) {
+		worker.SendSeek(true)
+	}
+}
+
+func (worker *Worker) isClientDifferenceTooLarge(maxPosition uint64, workerPosition *uint64, speed float64) bool {
+	return workerPosition == nil || maxPosition-*workerPosition > uint64(float64(maxClientDifferenceMillisecodns)*speed)
 }

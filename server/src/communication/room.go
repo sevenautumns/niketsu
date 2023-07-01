@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"sync"
 	"time"
@@ -14,35 +15,25 @@ import (
 )
 
 type RoomStateHandler interface {
+	AllUsersReady() bool
+	AppendWorker(worker ClientWorker)
 	BroadcastAll(message []byte)
-	BroadcastStart(worker ClientWorker, all bool)
-	BroadcastSeek(filename string, position uint64, worker ClientWorker, desync bool)
-	BroadcastSelect(filename *string, worker ClientWorker, all bool)
-	BroadcastUserMessage(message string, worker ClientWorker)
-	BroadcastPlaylist(playlist Playlist, worker ClientWorker, all bool)
-	BroadcastPause(worker ClientWorker)
-	BroadcastStartOnReady(worker ClientWorker)
-	BroadcastPlaybackSpeed(speed float64, worker ClientWorker)
-	SetVideo(fileName *string)
+	BroadcastExcept(payload []byte, uuid uuid.UUID)
+	DeleteWorker(uuid uuid.UUID)
+	FastestClientPosition() uint64
 	SetPosition(position uint64)
 	SetLastSeek(position uint64)
 	SetSpeed(speed float64)
 	SetPlaylistState(video *string, position uint64, paused bool, lastSeek uint64)
-	SetPlaylist(playlist []string)
-	Speed() float64
-	DeleteWorker(uuid uuid.UUID)
-	AppendWorker(worker ClientWorker)
 	SetPaused(paused bool)
 	RoomState() *RoomState
 	Name() string
 	WorkerStatus() []Status
-	HandleVideoStatus(worker ClientWorker)
-	HandlePlaylistUpdate(playlist []string, worker ClientWorker)
-	WritePlaylist()
 	IsEmpty() bool
 	IsPlaylistEmpty() bool
 	IsPersistent() bool
 	Close() error
+	Start()
 }
 
 type RoomState struct {
@@ -67,40 +58,49 @@ type Room struct {
 }
 
 // Creates a new Room which handles requests from workers in a shared channel. The database is created in a file at path/name.db
-func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout uint64, persistent bool) Room {
+func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout uint64, persistent bool) (*Room, error) {
 	var room Room
 	room.name = name
 	room.workers = make([]ClientWorker, 0)
 	room.workersMutex = &sync.RWMutex{}
-	room.initNewDB(path, dbWaitTimeout)
+	err := room.initDB(path, dbWaitTimeout)
+	if err != nil {
+		return nil, err
+	}
 	room.stateMutex = &sync.RWMutex{}
 	room.state = &RoomState{lastSeek: 0, paused: true, speed: 1.0}
 	room.setStateFromDB()
 	room.dbUpdateInterval = time.Duration(dbUpdateInterval * uint64(time.Second))
 	room.dbChannel = make(chan int)
 	room.persistent = persistent
-	go room.dbIntervalUpdate()
 
-	return room
+	return &room, nil
 }
 
-func (room *Room) initNewDB(path string, dbWaitTimeout uint64) {
+func (room *Room) initDB(path string, dbWaitTimeout uint64) error {
+	err := CreateDir(path)
+	if err != nil {
+		return err
+	}
 	dbpath := filepath.Join(path, room.name+".db")
 
 	keyValueStore, err := db.NewBoltKeyValueStore(dbpath, dbWaitTimeout)
 	if err != nil {
-		logger.Fatalw("Failed to create database for room", "room", room.name, "error", err)
+		return errors.New("Failed to create database for room")
 	}
 	db := db.NewDBManager(keyValueStore)
 	room.db = &db
 
 	err = room.db.Open()
 	if err != nil {
-		logger.Fatalw("Failed to open database for room", "room", room.name, "error", err)
+		return errors.New("Failed to open database for room")
 	}
+
+	return nil
 }
 
-func (room *Room) dbIntervalUpdate() {
+func (room *Room) Start() {
+	room.dbChannel = make(chan int)
 	ticker := time.NewTicker(room.dbUpdateInterval)
 	defer ticker.Stop()
 
@@ -109,7 +109,10 @@ func (room *Room) dbIntervalUpdate() {
 		case <-room.dbChannel:
 			return
 		case <-ticker.C:
-			room.WritePlaylist()
+			err := room.writePlaylist()
+			if err != nil {
+				logger.Warnw("Failed to write playlist to db", "error", err)
+			}
 		}
 	}
 }
@@ -126,18 +129,18 @@ func (room *Room) DeleteWorker(uuid uuid.UUID) {
 	defer room.workersMutex.Unlock()
 
 	for i, otherWorker := range room.workers {
-		if *otherWorker.GetUUID() == uuid {
+		if *otherWorker.UUID() == uuid {
 			room.workers = append(room.workers[:i], room.workers[i+1:]...)
 		}
 	}
 }
 
-func (room *Room) broadcastExcept(payload []byte, uuid uuid.UUID) {
+func (room *Room) BroadcastExcept(payload []byte, uuid uuid.UUID) {
 	room.workersMutex.RLock()
 	defer room.workersMutex.RUnlock()
 
 	for _, worker := range room.workers {
-		if *worker.GetUUID() != uuid {
+		if *worker.UUID() != uuid {
 			worker.SendMessage(payload)
 		}
 	}
@@ -152,235 +155,37 @@ func (room *Room) BroadcastAll(payload []byte) {
 	}
 }
 
-func (room *Room) BroadcastStart(worker ClientWorker, all bool) {
-	userStatus := worker.GetUserStatus()
-	start := Start{Username: userStatus.Username}
-	payload, err := MarshalMessage(start)
-	if err != nil {
-		logger.Errorw("Unable to marshal start message", "error", err)
-		return
-	}
-
-	if all {
-		room.BroadcastAll(payload)
-
-	} else {
-		uuid := worker.GetUUID()
-		room.broadcastExcept(payload, *uuid)
-	}
-}
-
-func (room *Room) BroadcastSeek(filename string, position uint64, worker ClientWorker, desync bool) {
-	userStatus := worker.GetUserStatus()
-	seek := Seek{Filename: filename, Position: position, Speed: room.state.speed, Paused: room.state.paused, Desync: desync, Username: userStatus.Username}
-	payload, err := MarshalMessage(seek)
-	if err != nil {
-		logger.Errorw("Unable to marshal broadcast seek", "error", err)
-		return
-	}
-
-	uuid := worker.GetUUID()
-	room.broadcastExcept(payload, *uuid)
-}
-
-func (room *Room) BroadcastSelect(filename *string, worker ClientWorker, all bool) {
-	userStatus := worker.GetUserStatus()
-	sel := Select{Filename: filename, Username: userStatus.Username}
-	payload, err := MarshalMessage(sel)
-	if err != nil {
-		logger.Errorw("Unable to marshal broadcast select", "error", err)
-		return
-	}
-
-	if all {
-		room.BroadcastAll(payload)
-	} else {
-		uuid := worker.GetUUID()
-		room.broadcastExcept(payload, *uuid)
-	}
-}
-
-func (room *Room) BroadcastUserMessage(message string, worker ClientWorker) {
-	userStatus := worker.GetUserStatus()
-	userMessage := UserMessage{Message: message, Username: userStatus.Username}
-	payload, err := MarshalMessage(userMessage)
-	if err != nil {
-		logger.Errorw("Unable to marshal broadcast user message", "error", err)
-		return
-	}
-
-	uuid := worker.GetUUID()
-	room.broadcastExcept(payload, *uuid)
-}
-
-func (room *Room) BroadcastPlaylist(playlist Playlist, worker ClientWorker, all bool) {
-	userStatus := worker.GetUserStatus()
-	pl := Playlist{Playlist: playlist.Playlist, Username: userStatus.Username}
-	payload, err := MarshalMessage(pl)
-	if err != nil {
-		logger.Errorw("Unable to marshal broadcast playlist", "error", err)
-		return
-	}
-
-	if all {
-		room.BroadcastAll(payload)
-	} else {
-		uuid := worker.GetUUID()
-		room.broadcastExcept(payload, *uuid)
-	}
-}
-
-func (room *Room) BroadcastPause(worker ClientWorker) {
-	userStatus := worker.GetUserStatus()
-	pause := Pause{Username: userStatus.Username}
-	payload, err := MarshalMessage(pause)
-	if err != nil {
-		logger.Errorw("Unable to marshal broadcast pause", "error", err)
-		return
-	}
-
-	uuid := worker.GetUUID()
-	room.broadcastExcept(payload, *uuid)
-}
-
-// set paused to false since video will start
-func (room *Room) BroadcastStartOnReady(worker ClientWorker) {
-	// cannot start nil video
-	if room.isVideoNil() {
-		return
-	}
-
-	if room.allUsersReady() {
-		userStatus := worker.GetUserStatus()
-		start := Start{Username: userStatus.Username}
-		payload, err := MarshalMessage(start)
-		if err != nil {
-			logger.Errorw("Unable to marshal start message", "error", err)
-			return
-		}
-
-		room.BroadcastAll(payload)
-		room.SetPaused(false)
-	}
-}
-
-func (room *Room) allUsersReady() bool {
+func (room *Room) AllUsersReady() bool {
 	room.workersMutex.RLock()
 	defer room.workersMutex.RUnlock()
 
 	ready := true
 	for _, worker := range room.workers {
-		userStatus := worker.GetUserStatus()
+		userStatus := worker.UserStatus()
 		ready = ready && userStatus.Ready
 	}
 
 	return ready
 }
 
-func (room *Room) BroadcastPlaybackSpeed(speed float64, worker ClientWorker) {
-	userStatus := worker.GetUserStatus()
-	playbackSpeed := PlaybackSpeed{Speed: speed, Username: userStatus.Username}
-	payload, err := MarshalMessage(playbackSpeed)
-	if err != nil {
-		logger.Errorw("Unable to marshal broadcast playbackspeed", "error", err)
-		return
-	}
-
-	uuid := worker.GetUUID()
-	room.broadcastExcept(payload, *uuid)
-}
-
-// Evaluates the video states of all clients and broadcasts seek if difference between
-// fastest and slowest clients is too large. Can not seek before the last seek's position.
-func (room *Room) HandleVideoStatus(worker ClientWorker) {
-	maxPosition := room.findFastest()
-	workerPosition := worker.GetVideoState().position
-	room.setNewPosition(*workerPosition)
-
-	if workerPosition == nil || maxPosition-*workerPosition > uint64(float64(maxClientDifferenceMillisecodns)*room.state.speed) {
-		worker.SendSeek(true)
-	}
-}
-
-func (room *Room) findFastest() uint64 {
+func (room *Room) FastestClientPosition() uint64 {
 	room.workersMutex.RLock()
 	defer room.workersMutex.RUnlock()
 
 	maxPosition := uint64(0)
 
 	for _, worker := range room.workers {
-		videoStatus := worker.GetVideoState()
-		if videoStatus.position == nil {
+		estimatedPosition := worker.EstimatePosition()
+		if estimatedPosition == nil {
 			continue
 		}
 
-		estimatedPosition := worker.EstimatePosition()
-		if estimatedPosition > maxPosition {
-			maxPosition = estimatedPosition
+		if *estimatedPosition > maxPosition {
+			maxPosition = *estimatedPosition
 		}
 	}
 
 	return maxPosition
-}
-
-func (room *Room) setNewPosition(position uint64) {
-	lastSeek := room.RoomState().lastSeek
-	if position > lastSeek {
-		room.SetPosition(position)
-	} else {
-		room.SetPosition(lastSeek)
-	}
-}
-
-func (room *Room) HandlePlaylistUpdate(playlist []string, worker ClientWorker) {
-	if !room.isVideoNil() && room.playlistLessElementsThan(playlist) {
-		nextVideo := room.findNext(playlist)
-		room.setNextVideo(nextVideo, worker)
-	}
-
-	room.SetPlaylist(playlist)
-}
-
-func (room *Room) isVideoNil() bool {
-	room.stateMutex.RLock()
-	defer room.stateMutex.RUnlock()
-
-	return room.state.video == nil
-}
-
-func (room *Room) playlistLessElementsThan(playlist []string) bool {
-	room.stateMutex.RLock()
-	defer room.stateMutex.RUnlock()
-
-	return len(playlist) != 0 && len(playlist) < len(room.state.playlist)
-}
-
-func (room *Room) findNext(newPlaylist []string) string {
-	newPlaylistPosition := 0
-
-	for _, video := range room.state.playlist {
-		if video == *room.state.video {
-			break
-		}
-
-		if video == newPlaylist[newPlaylistPosition] {
-			newPlaylistPosition += 1
-		}
-
-		if newPlaylistPosition >= len(newPlaylist) {
-			newPlaylistPosition -= 1
-			break
-		}
-	}
-
-	return newPlaylist[newPlaylistPosition]
-}
-
-func (room *Room) setNextVideo(nextVideo string, worker ClientWorker) {
-	if nextVideo != *room.state.video {
-		room.SetPlaylistState(&nextVideo, 0, true, 0)
-		room.BroadcastSelect(room.state.video, worker, true)
-	}
 }
 
 func (room *Room) SetPlaylistState(video *string, position uint64, paused bool, lastSeek uint64) {
@@ -393,18 +198,16 @@ func (room *Room) SetPlaylistState(video *string, position uint64, paused bool, 
 	room.state.lastSeek = lastSeek
 }
 
-func (room *Room) SetVideo(fileName *string) {
-	room.stateMutex.Lock()
-	defer room.stateMutex.Unlock()
-
-	room.state.video = fileName
-}
-
 func (room *Room) SetPosition(position uint64) {
 	room.stateMutex.Lock()
 	defer room.stateMutex.Unlock()
 
-	room.state.position = &position
+	lastSeek := room.state.lastSeek
+	if position > lastSeek {
+		room.state.position = &position
+	} else {
+		room.state.position = &lastSeek
+	}
 }
 
 func (room *Room) SetLastSeek(position uint64) {
@@ -421,13 +224,6 @@ func (room *Room) SetSpeed(speed float64) {
 	room.state.speed = speed
 }
 
-func (room *Room) Speed() float64 {
-	room.stateMutex.RLock()
-	defer room.stateMutex.RUnlock()
-
-	return room.state.speed
-}
-
 func (room *Room) SetPaused(paused bool) {
 	room.stateMutex.Lock()
 	defer room.stateMutex.Unlock()
@@ -435,35 +231,29 @@ func (room *Room) SetPaused(paused bool) {
 	room.state.paused = paused
 }
 
-func (room *Room) SetPlaylist(playlist []string) {
-	room.stateMutex.Lock()
-	defer room.stateMutex.Unlock()
-
-	room.state.playlist = playlist
-}
-
-// Writes playlist to database. Currently does not lock playlist to ensure that the lock does not block during writing.
-func (room *Room) WritePlaylist() {
-	bytePlaylist, err := json.Marshal(room.state.playlist)
+func (room *Room) writePlaylist() error {
+	state := room.RoomState()
+	bytePlaylist, err := json.Marshal(state.playlist)
 	if err != nil {
-		logger.Warnw("Failed to marshal playlist", "error", err)
-		return
+		return errors.New("Failed to marshal playlist")
 	}
 
 	video := ""
-	if room.state.video != nil {
+	if state.video != nil {
 		video = *room.state.video
 	}
 
 	position := uint64(0)
-	if room.state.position != nil {
+	if state.position != nil {
 		position = *room.state.position
 	}
 
 	err = room.db.UpdatePlaylist(room.name, bytePlaylist, video, position)
 	if err != nil {
-		logger.Warnw("Update key/value transaction for playlist failed", "error", err)
+		return errors.New("Update key/value transaction for playlist failed")
 	}
+
+	return nil
 }
 
 // Accesses database and gets state. If failed, falls back to default values
@@ -477,7 +267,7 @@ func (room *Room) setStateFromDB() {
 }
 
 func (room *Room) setPlaylistFromDB() {
-	values, err := room.getPlaylist()
+	values, err := room.playlist()
 	if err != nil {
 		logger.Debugw("Failed to retrieve playlist. Setting playlist to default state (empty)", "error", err)
 		room.state.playlist = make([]string, 0)
@@ -495,7 +285,7 @@ func (room *Room) setPlaylistFromDB() {
 
 // Retrieves video from database and updates the state of the room
 func (room *Room) setVideoFromDB() {
-	values, err := room.getVideo()
+	values, err := room.video()
 	if err != nil {
 		logger.Debugw("Failed to retrieve video. Setting video to default state (nil)", "error", err)
 		room.state.video = nil
@@ -507,7 +297,7 @@ func (room *Room) setVideoFromDB() {
 
 // Retrieves position from database and updates the state of the room
 func (room *Room) setPositionFromDB() {
-	values, err := room.getPosition()
+	values, err := room.position()
 	if err != nil {
 		logger.Debugw("Failed to retrieve position. Setting position to default state (nil)", "error", err)
 		room.state.position = nil
@@ -523,20 +313,20 @@ func (room *Room) setPositionFromDB() {
 	}
 }
 
-func (room *Room) getPlaylist() ([]byte, error) {
+func (room *Room) playlist() ([]byte, error) {
 	return room.db.GetValue(room.name, db.PlaylistKey)
 }
 
-func (room *Room) getVideo() ([]byte, error) {
+func (room *Room) video() ([]byte, error) {
 	return room.db.GetValue(room.name, db.VideoKey)
 }
 
-func (room *Room) getPosition() ([]byte, error) {
+func (room *Room) position() ([]byte, error) {
 	return room.db.GetValue(room.name, db.PositionKey)
 }
 
 func (room *Room) Close() error {
-	close(room.dbChannel)
+	room.closeChan()
 
 	err := room.deleteDB()
 	if err != nil {
@@ -551,8 +341,12 @@ func (room *Room) Close() error {
 	return nil
 }
 
+func (room *Room) closeChan() {
+	close(room.dbChannel)
+}
+
 func (room *Room) deleteDB() error {
-	return room.db.DeleteBucket(room.name)
+	return room.db.Delete()
 }
 
 func (room *Room) closeDB() error {
@@ -576,7 +370,7 @@ func (room *Room) WorkerStatus() []Status {
 
 	statusList := make([]Status, 0)
 	for _, worker := range room.workers {
-		userStatus := worker.GetUserStatus()
+		userStatus := worker.UserStatus()
 		statusList = append(statusList, *userStatus)
 	}
 

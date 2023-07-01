@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"os"
 	"time"
 
 	"github.com/sevenautumns/niketsu/server/src/config"
@@ -21,6 +22,7 @@ const (
 type KeyValueStore interface {
 	Open() error
 	Close() error
+	Delete() error
 	Update(bucket string, key string, value []byte) error
 	GetValue(bucket string, key string) ([]byte, error)
 	DeleteKey(bucket string, key string) error
@@ -62,6 +64,10 @@ func (keyValueStore BoltKeyValueStore) Close() error {
 		return errors.New("Database not initialized. Can not call Close()")
 	}
 	return keyValueStore.db.Close()
+}
+
+func (keyValueStore BoltKeyValueStore) Delete() error {
+	return os.Remove(keyValueStore.path)
 }
 
 func (keyValueStore BoltKeyValueStore) Update(bucket string, key string, value []byte) error {
@@ -182,10 +188,6 @@ func (keyValueStore BoltKeyValueStore) GetRoomConfigs(bucket string) (map[string
 	return roomConfigs, nil
 }
 
-func (keyValueStore BoltKeyValueStore) Stats() interface{} {
-	return keyValueStore.db.Stats()
-}
-
 func NewDBManager(keyValueStore KeyValueStore) DBManager {
 	return DBManager{db: keyValueStore}
 }
@@ -196,6 +198,10 @@ func (dbManager DBManager) Open() error {
 
 func (dbManager DBManager) Close() error {
 	return dbManager.db.Close()
+}
+
+func (dbManager DBManager) Delete() error {
+	return dbManager.db.Delete()
 }
 
 func (dbManager DBManager) Update(bucket string, key string, value []byte) error {
