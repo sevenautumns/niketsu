@@ -10,7 +10,7 @@ use crate::iced_window::message::{IcedMessage, PlayerChanged};
 use crate::iced_window::running::message::UserEvent;
 use crate::iced_window::running::RunningWindow;
 use crate::iced_window::startup::StartUI;
-use crate::playlist::message::PlaylistMessage;
+use crate::playlist_old::message::PlaylistMessage;
 use crate::rooms::message::RoomsWidgetMessage;
 
 pub mod message;

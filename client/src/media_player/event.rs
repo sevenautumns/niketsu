@@ -5,7 +5,7 @@ use anyhow::Result;
 use enum_dispatch::enum_dispatch;
 use log::debug;
 
-use super::{MediaPlayer, MediaPlayerWrapper};
+use super::MediaPlayerWrapper;
 use crate::client::message::CoreMessageTrait;
 use crate::client::server::{
     NiketsuMessage, NiketsuPause, NiketsuPlaybackSpeed, NiketsuSeek, NiketsuSelect, NiketsuStart,
@@ -16,10 +16,10 @@ use crate::video::PlayingFile;
 
 #[enum_dispatch]
 pub trait MediaPlayerEventTrait {
-    fn handle<M: MediaPlayer>(self, player: &mut MediaPlayerWrapper<M>) -> Result<()>;
+    fn handle(self, player: &mut MediaPlayerWrapper) -> Result<()>;
 }
 
-#[enum_dispatch(MediaPlayerEventTrait, CoreMessageTrait)]
+#[enum_dispatch(MediaPlayerEventTrait, CoreMessageTrait, NiketsuEventTrait)]
 #[derive(Debug, Clone)]
 pub enum MediaPlayerEvent {
     PlayerPaused,
@@ -59,7 +59,7 @@ impl CoreMessageTrait for PlayerPaused {
 }
 
 impl MediaPlayerEventTrait for PlayerPaused {
-    fn handle<M: MediaPlayer>(self, player: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
+    fn handle(self, player: &mut MediaPlayerWrapper) -> anyhow::Result<()> {
         debug!("Mpv process: pause");
         if let Some(file) = &mut player.status.file {
             file.paused = true;
@@ -97,7 +97,7 @@ impl CoreMessageTrait for PlayerStarted {
 }
 
 impl MediaPlayerEventTrait for PlayerStarted {
-    fn handle<M: MediaPlayer>(self, player: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
+    fn handle(self, player: &mut MediaPlayerWrapper) -> anyhow::Result<()> {
         debug!("Mpv process: start");
         if let Some(file) = &mut player.status.file {
             file.paused = false;
@@ -126,7 +126,7 @@ impl CoreMessageTrait for PlayerPositionChanged {
 }
 
 impl MediaPlayerEventTrait for PlayerPositionChanged {
-    fn handle<M: MediaPlayer>(self, _: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
+    fn handle(self, _: &mut MediaPlayerWrapper) -> anyhow::Result<()> {
         debug!("Mpv process: seek {:?}", self.0);
         Ok(())
     }
@@ -145,7 +145,7 @@ impl CoreMessageTrait for PlayerSpeedChanged {
 }
 
 impl MediaPlayerEventTrait for PlayerSpeedChanged {
-    fn handle<M: MediaPlayer>(self, player: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
+    fn handle(self, player: &mut MediaPlayerWrapper) -> anyhow::Result<()> {
         debug!("Mpv process: playback speed");
         if let Some(file) = &mut player.status.file {
             file.speed = self.0;
@@ -185,7 +185,7 @@ impl CoreMessageTrait for PlayerPlaybackEnded {
 }
 
 impl MediaPlayerEventTrait for PlayerPlaybackEnded {
-    fn handle<M: MediaPlayer>(self, _: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
+    fn handle(self, _: &mut MediaPlayerWrapper) -> anyhow::Result<()> {
         debug!("Mpv process: play next");
         Ok(())
     }
@@ -201,7 +201,7 @@ impl CoreMessageTrait for PlayerExit {
 }
 
 impl MediaPlayerEventTrait for PlayerExit {
-    fn handle<M: MediaPlayer>(self, _: &mut MediaPlayerWrapper<M>) -> anyhow::Result<()> {
+    fn handle(self, _: &mut MediaPlayerWrapper) -> anyhow::Result<()> {
         debug!("Mpv process: exit");
         Ok(())
     }

@@ -10,7 +10,7 @@ use super::{InnerApplication, MainMessage};
 use crate::client::Core;
 use crate::config::Config;
 use crate::iced_window::running::message::{MessageInput, SendMessage};
-use crate::playlist::PlaylistWidget;
+use crate::playlist_old::PlaylistWidget;
 use crate::rooms::RoomsWidget;
 use crate::styling::{ContainerBorder, ResultButton};
 

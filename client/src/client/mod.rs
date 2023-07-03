@@ -15,15 +15,14 @@ use self::server::ServerConnectionReceiver;
 use self::ui::UiMessage;
 use crate::client::message::CoreMessageTrait;
 use crate::client::server::message::WebSocketMessage;
-use crate::client::server::ServerConnectionSender;
+use crate::client::server::{NiketsuMessage, ServerConnectionSender};
 use crate::config::Config;
 use crate::file_system::message::DatabaseEvent;
 use crate::file_system::{FileDatabase, FileDatabaseProxy};
 use crate::media_player::event::MediaPlayerEvent;
-use crate::media_player::mpv::Mpv;
 use crate::media_player::MediaPlayerWrapper;
 use crate::messages::{MessagesReceiver, MessagesSender};
-use crate::playlist::PlaylistWidgetState;
+use crate::playlist_old::PlaylistWidgetState;
 use crate::rooms::RoomsWidgetState;
 use crate::user::ThisUser;
 use crate::video::PlayingFile;
@@ -57,7 +56,7 @@ pub struct CoreRunner {
     pub messages: MessagesSender,
     pub pacemaker: Pacemaker,
     pub playlist_widget: Arc<ArcSwap<PlaylistWidgetState>>,
-    pub player: MediaPlayerWrapper<Mpv>,
+    pub player: MediaPlayerWrapper,
     pub playing_file: Arc<ArcSwapOption<PlayingFile>>,
     pub rooms_widget: Arc<ArcSwap<RoomsWidgetState>>,
 }
@@ -193,14 +192,34 @@ pub enum CoreMessage {
     WebSocketMessage,
 }
 
+#[enum_dispatch(NiketsuEventTrait)]
+#[derive(Debug, Clone)]
+pub enum NiketsuEvent {
+    MediaPlayerEvent,
+    NiketsuMessage,
+}
+
 pub trait LogResult {
-    fn log(&self);
+    fn log(self);
 }
 
 impl<T> LogResult for anyhow::Result<T> {
-    fn log(&self) {
+    fn log(self) {
         if let Err(e) = self {
             warn!("{e:?}")
         }
+    }
+}
+
+pub trait LogResultDefault<T> {
+    fn log_and_default(self) -> T;
+}
+
+impl<T: Default> LogResultDefault<T> for anyhow::Result<T> {
+    fn log_and_default(self) -> T {
+        self.unwrap_or_else(|e| {
+            warn!("{e:?}");
+            T::default()
+        })
     }
 }

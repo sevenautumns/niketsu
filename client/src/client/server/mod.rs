@@ -26,14 +26,14 @@ use crate::client::message::CoreMessageTrait;
 use crate::client::server::message::ServerError;
 use crate::client::LogResult;
 use crate::iced_window::MainMessage;
-use crate::playlist::PlaylistWidgetState;
+use crate::playlist_old::PlaylistWidgetState;
 use crate::rooms::RoomsWidgetState;
 use crate::user::ThisUser;
 use crate::video::{PlayingFile, Video};
 
 pub mod message;
 
-#[enum_dispatch(CoreMessageTrait)]
+#[enum_dispatch(CoreMessageTrait, NiketsuEventTrait)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]

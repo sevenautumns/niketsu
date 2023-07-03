@@ -10,7 +10,7 @@ use iced_native::Widget;
 use self::message::{ClickRoom, RoomsWidgetMessage};
 use crate::client::server::NiketsuUserStatus;
 use crate::iced_window::MainMessage;
-use crate::playlist::MAX_DOUBLE_CLICK_INTERVAL;
+use crate::playlist_old::MAX_DOUBLE_CLICK_INTERVAL;
 use crate::styling::FileButton;
 use crate::user::ThisUser;
 

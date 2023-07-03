@@ -12,12 +12,17 @@ use log::*;
 use once_cell::sync::Lazy;
 
 pub mod client;
+pub mod communicator;
 pub mod config;
+pub mod core;
+pub mod file_database;
 pub mod file_system;
 pub mod iced_window;
 pub mod media_player;
 pub mod messages;
+pub mod player;
 pub mod playlist;
+pub mod playlist_old;
 pub mod rooms;
 pub mod styling;
 pub mod user;

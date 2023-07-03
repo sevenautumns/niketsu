@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
-use async_recursion::async_recursion;
 use dashmap::DashMap;
 use futures::future::join_all;
 use futures::StreamExt;
@@ -273,7 +272,6 @@ impl FileDatabaseUpdater {
         }
     }
 
-    #[async_recursion]
     async fn complete(mut self) -> Result<()> {
         self.data.queued_dirs_inc();
 

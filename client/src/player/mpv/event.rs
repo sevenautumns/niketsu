@@ -9,13 +9,10 @@ use arc_swap::ArcSwapOption;
 use enum_dispatch::enum_dispatch;
 use log::trace;
 
-use super::{Mpv, MpvProperty};
-use crate::media_player::event::{
-    PlayerExit, PlayerPaused, PlayerPlaybackEnded, PlayerPositionChanged, PlayerSpeedChanged,
-    PlayerStarted,
-};
-use crate::media_player::mpv::bindings::*;
-use crate::media_player::{MediaPlayer, MediaPlayerEvent, MpvHandle};
+use super::bindings::mpv_event;
+use super::{Mpv, MpvHandle, MpvProperty};
+use crate::core::player::*;
+use crate::player::mpv::bindings::*;
 
 unsafe extern "C" fn on_mpv_event(_: *mut c_void) {
     if let Some(waker) = EVENT_WAKER.load().as_ref() {
@@ -26,13 +23,13 @@ unsafe extern "C" fn on_mpv_event(_: *mut c_void) {
 static EVENT_WAKER: ArcSwapOption<Waker> = ArcSwapOption::const_empty();
 
 #[enum_dispatch]
-pub trait MpvEventTraitOld {
+pub trait MpvEventTrait {
     fn process(self, mpv: &mut Mpv) -> Option<MediaPlayerEvent>;
 }
 
-#[enum_dispatch(MpvEventTraitOld)]
+#[enum_dispatch(MpvEventTrait)]
 #[derive(Debug, Clone)]
-pub enum MpvEventOld {
+pub enum MpvEvent {
     MpvNone,
     MpvShutdown,
     MpvPropertyChanged,
@@ -45,7 +42,7 @@ pub enum MpvEventOld {
 #[derive(Debug, Clone, Copy)]
 pub struct MpvNone;
 
-impl MpvEventTraitOld for MpvNone {
+impl MpvEventTrait for MpvNone {
     fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
         Option::None
     }
@@ -54,7 +51,7 @@ impl MpvEventTraitOld for MpvNone {
 #[derive(Debug, Clone, Copy)]
 pub struct MpvShutdown;
 
-impl MpvEventTraitOld for MpvShutdown {
+impl MpvEventTrait for MpvShutdown {
     fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
         Some(PlayerExit.into())
     }
@@ -73,12 +70,12 @@ impl MpvPropertyChanged {
         }
         mpv.status.paused = paused;
         if mpv.eof_reached().unwrap_or_default() {
-            return Some(PlayerPlaybackEnded.into());
+            return Some(PlayerFileEnd.into());
         }
         if paused {
-            return Some(PlayerPaused.into());
+            return Some(PlayerPause.into());
         }
-        Some(PlayerStarted.into())
+        Some(PlayerStart.into())
     }
 
     fn process_speed(self, speed: f64, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
@@ -86,11 +83,11 @@ impl MpvPropertyChanged {
             return Option::None;
         }
         mpv.status.speed = speed;
-        Some(PlayerSpeedChanged(speed).into())
+        Some(PlayerSpeedChange::new(speed).into())
     }
 }
 
-impl MpvEventTraitOld for MpvPropertyChanged {
+impl MpvEventTrait for MpvPropertyChanged {
     fn process(self, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
         match (self.property, self.value.clone()) {
             (MpvProperty::Pause, PropertyValue::Flag(paused)) => {
@@ -105,7 +102,7 @@ impl MpvEventTraitOld for MpvPropertyChanged {
 #[derive(Debug, Clone, Copy)]
 pub struct MpvFileLoaded;
 
-impl MpvEventTraitOld for MpvFileLoaded {
+impl MpvEventTrait for MpvFileLoaded {
     fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
         trace!("File loaded");
         Option::None
@@ -115,7 +112,7 @@ impl MpvEventTraitOld for MpvFileLoaded {
 #[derive(Debug, Clone, Copy)]
 pub struct MpvSeek;
 
-impl MpvEventTraitOld for MpvSeek {
+impl MpvEventTrait for MpvSeek {
     fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
         Option::None
     }
@@ -124,27 +121,27 @@ impl MpvEventTraitOld for MpvSeek {
 #[derive(Debug, Clone, Copy)]
 pub struct MpvPlaybackRestart;
 
-impl MpvEventTraitOld for MpvPlaybackRestart {
+impl MpvEventTrait for MpvPlaybackRestart {
     fn process(self, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
         if mpv.status.seeking {
             mpv.status.seeking = false;
             return Option::None;
         }
-        let pos = mpv.get_position().unwrap_or_default();
-        Some(PlayerPositionChanged(pos).into())
+        let pos = mpv.get_position();
+        Some(PlayerPositionChange::new(pos).into())
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Unparsed;
 
-impl MpvEventTraitOld for Unparsed {
+impl MpvEventTrait for Unparsed {
     fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
         Option::None
     }
 }
 
-impl From<mpv_event> for MpvEventOld {
+impl From<mpv_event> for MpvEvent {
     fn from(event: mpv_event) -> Self {
         trace!("Mpv event: {event:?}");
         match event.event_id {
@@ -253,13 +250,13 @@ impl MpvEventPipe {
         Self { mpv }
     }
 
-    fn check_for_event(&mut self) -> MpvEventOld {
+    fn check_for_event(&mut self) -> MpvEvent {
         unsafe { (*mpv_wait_event(self.mpv.0, 0.0)).into() }
     }
 }
 
 impl futures::stream::Stream for MpvEventPipe {
-    type Item = MpvEventOld;
+    type Item = MpvEvent;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
@@ -269,7 +266,7 @@ impl futures::stream::Stream for MpvEventPipe {
         let s = self.get_mut();
 
         match s.check_for_event() {
-            MpvEventOld::MpvNone(_) => Poll::Pending,
+            MpvEvent::MpvNone(_) => Poll::Pending,
             e => Poll::Ready(Some(e)),
         }
     }

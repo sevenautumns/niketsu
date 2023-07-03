@@ -3,18 +3,21 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use enum_dispatch::enum_dispatch;
 
 use self::event::MediaPlayerEvent;
-use self::mpv::MpvHandle;
+use self::mpv::{Mpv, MpvHandle};
 use crate::file_system::FileDatabaseProxy;
 use crate::video::PlayingFile;
 
 pub mod event;
+pub mod handler;
 pub mod mpv;
 
 #[async_trait]
+#[enum_dispatch]
 pub trait MediaPlayer: Sized {
-    fn new() -> Result<Self>;
+    // fn new() -> Result<Self>;
     fn pause(&mut self) -> Result<()>;
     fn is_paused(&self) -> Result<bool>;
     fn is_seeking(&self) -> Result<bool>;
@@ -28,6 +31,12 @@ pub trait MediaPlayer: Sized {
     async fn receive_event(&mut self) -> Result<MediaPlayerEvent>;
 }
 
+#[enum_dispatch(MediaPlayer)]
+#[derive(Debug)]
+pub enum MediaPlayerVariant {
+    Mpv,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MediaPlayerStatus {
     file: Option<PlayingFile>,
@@ -35,15 +44,15 @@ pub struct MediaPlayerStatus {
 }
 
 #[derive(Debug)]
-pub struct MediaPlayerWrapper<M: MediaPlayer> {
-    player: M,
+pub struct MediaPlayerWrapper {
+    player: MediaPlayerVariant,
     db: Arc<FileDatabaseProxy>,
     status: MediaPlayerStatus,
 }
 
-impl<M: MediaPlayer> MediaPlayerWrapper<M> {
+impl MediaPlayerWrapper {
     pub fn new(db: Arc<FileDatabaseProxy>) -> Result<Self> {
-        let player = M::new()?;
+        let player = Mpv::new()?.into();
 
         Ok(Self {
             player,
