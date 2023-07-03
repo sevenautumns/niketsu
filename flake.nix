@@ -160,6 +160,8 @@
             libclang
             gcc
             mdbook
+            mdbook-plantuml
+            plantuml
             pkgconfig
             yt-dlp
             go
