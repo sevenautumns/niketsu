@@ -10,5 +10,6 @@
 - [Downloads](./downloads.md)
 - [Usage](./usage.md)
 - [Support](./support.md)
+- [Protocol](./protocol.md)
 - [Contribute](./contribute.md)
 - [About](./about.md)
