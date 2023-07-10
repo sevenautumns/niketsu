@@ -155,6 +155,7 @@
             cargo-audit
             cargo-outdated
             cargo-udeps
+            cargo-tarpaulin
             cargo-watch
             nixpkgs-fmt
             libclang
@@ -209,6 +210,14 @@
               name = "audit";
               command = "cargo-audit audit";
               help = pkgs.cargo-audit.meta.description;
+            }
+            {
+              name = "tarpaulin";
+              command = ''
+                PATH=${fenix.packages.${system}.latest.rustc}/bin:$PATH
+                cargo tarpaulin $@
+              '';
+              help = pkgs.cargo-tarpaulin.meta.description;
             }
           ];
         });

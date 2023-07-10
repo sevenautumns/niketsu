@@ -10,26 +10,23 @@ use log::{error, warn};
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
 
-use self::database::FileDatabaseSender;
 use self::heartbeat::{Heartbeat, Pacemaker};
 use self::server::ServerConnectionReceiver;
 use self::ui::UiMessage;
-use crate::client::database::message::DatabaseEvent;
-use crate::client::database::FileDatabaseReceiver;
 use crate::client::message::CoreMessageTrait;
 use crate::client::server::message::WebSocketMessage;
-use crate::client::server::ServerConnectionSender;
+use crate::client::server::{NiketsuMessage, ServerConnectionSender};
 use crate::config::Config;
+use crate::file_system::message::DatabaseEvent;
+use crate::file_system::{FileDatabase, FileDatabaseProxy};
 use crate::media_player::event::MediaPlayerEvent;
-use crate::media_player::mpv::Mpv;
 use crate::media_player::MediaPlayerWrapper;
 use crate::messages::{MessagesReceiver, MessagesSender};
-use crate::playlist::PlaylistWidgetState;
+use crate::playlist_old::PlaylistWidgetState;
 use crate::rooms::RoomsWidgetState;
 use crate::user::ThisUser;
 use crate::video::PlayingFile;
 
-pub mod database;
 pub mod heartbeat;
 pub mod message;
 pub mod server;
@@ -39,7 +36,7 @@ pub mod ui;
 pub struct Core {
     changed: Arc<Notify>,
     sender: MpscSender<UiMessage>,
-    db: Arc<FileDatabaseSender>,
+    db: Arc<FileDatabaseProxy>,
     ws: Arc<ArcSwap<ServerConnectionSender>>,
     user: Arc<ArcSwap<ThisUser>>,
     messages: MessagesReceiver,
@@ -49,7 +46,7 @@ pub struct Core {
 }
 
 pub struct CoreRunner {
-    pub db: FileDatabaseReceiver,
+    pub db: FileDatabase,
     pub ws: ServerConnectionReceiver,
     pub ws_sender: Arc<ArcSwap<ServerConnectionSender>>,
     pub config: Config,
@@ -59,7 +56,7 @@ pub struct CoreRunner {
     pub messages: MessagesSender,
     pub pacemaker: Pacemaker,
     pub playlist_widget: Arc<ArcSwap<PlaylistWidgetState>>,
-    pub player: MediaPlayerWrapper<Mpv>,
+    pub player: MediaPlayerWrapper,
     pub playing_file: Arc<ArcSwapOption<PlayingFile>>,
     pub rooms_widget: Arc<ArcSwap<RoomsWidgetState>>,
 }
@@ -67,14 +64,14 @@ pub struct CoreRunner {
 impl Core {
     pub fn new(config: Config) -> Result<Self> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let db = FileDatabaseReceiver::new(
+        let db = FileDatabase::new(
             &config
                 .media_dirs
                 .iter()
                 .map(|d| PathBuf::from_str(d).map_err(Error::msg))
                 .collect::<Result<Vec<_>>>()?,
         );
-        FileDatabaseSender::start_update(db.sender());
+        FileDatabaseProxy::start_update(db.sender());
         let db_sender = db.sender().clone();
         let player = MediaPlayerWrapper::new(db_sender.clone())?;
         let ws = ServerConnectionReceiver::new(config.addr()?);
@@ -141,7 +138,7 @@ impl Core {
         self.playing_file.load_full().map(|p| (*p).clone())
     }
 
-    pub fn db(&self) -> Arc<FileDatabaseSender> {
+    pub fn db(&self) -> Arc<FileDatabaseProxy> {
         self.db.clone()
     }
 
@@ -195,14 +192,45 @@ pub enum CoreMessage {
     WebSocketMessage,
 }
 
-pub trait LogResult {
-    fn log(&self);
+#[enum_dispatch(NiketsuEventTrait)]
+#[derive(Debug, Clone)]
+pub enum NiketsuEvent {
+    MediaPlayerEvent,
+    NiketsuMessage,
 }
 
-impl<T> LogResult for anyhow::Result<T> {
-    fn log(&self) {
+pub trait LogResult<T> {
+    fn log(self);
+    fn default_and_log(self, default: T) -> T;
+}
+
+impl<T> LogResult<T> for anyhow::Result<T> {
+    fn log(self) {
         if let Err(e) = self {
             warn!("{e:?}")
         }
+    }
+
+    fn default_and_log(self, default: T) -> T {
+        match self {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("{err:?}");
+                default
+            }
+        }
+    }
+}
+
+pub trait LogResultDefault<T> {
+    fn log_and_default(self) -> T;
+}
+
+impl<T: Default> LogResultDefault<T> for anyhow::Result<T> {
+    fn log_and_default(self) -> T {
+        self.unwrap_or_else(|e| {
+            warn!("{e:?}");
+            T::default()
+        })
     }
 }

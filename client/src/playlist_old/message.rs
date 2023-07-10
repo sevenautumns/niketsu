@@ -10,7 +10,7 @@ use crate::iced_window::message::IcedMessage;
 use crate::iced_window::running::message::RunningWindowMessage;
 use crate::iced_window::running::RunningWindow;
 use crate::iced_window::{MainMessage, MainWindow};
-use crate::playlist::PlaylistWidgetState;
+use crate::playlist_old::PlaylistWidgetState;
 use crate::video::Video;
 
 #[enum_dispatch(RunningWindowMessage)]

@@ -16,6 +16,8 @@ use crate::iced_window::MainMessage;
 use crate::styling::{ColorButton, FileButton};
 use crate::TEXT_SIZE;
 
+const SPACING: u16 = 10;
+
 pub mod message;
 
 #[derive(Debug, Clone, Setters, MutGetters)]
@@ -109,7 +111,7 @@ impl InnerApplication for Box<StartUI> {
                     .on_press(StartUIMessage::from(DeletePath(i)).into())
                     .width(text_size * 2.0),
                 )
-                .spacing(10)
+                .spacing(SPACING)
                 .into()
             })
             .collect();
@@ -127,7 +129,7 @@ impl InnerApplication for Box<StartUI> {
                     Button::new("Username").style(FileButton::theme(false, true)),
                     Button::new("Room").style(FileButton::theme(false, true)),
                 )
-                .spacing(10)
+                .spacing(SPACING)
                 .width(Length::Shrink),
                 column!(
                     row!(
@@ -138,12 +140,12 @@ impl InnerApplication for Box<StartUI> {
                                 SecureCheckbox(b)
                             )
                             .into())
-                            .spacing(10),
+                            .spacing(SPACING),
                         )
                         .center_y()
                         .height(text_size + 10.0),
                     )
-                    .spacing(10),
+                    .spacing(SPACING),
                     TextInput::new("Password", &self.password)
                         .on_input(|u| StartUIMessage::from(PasswordInput(u)).into())
                         .password(),
@@ -152,14 +154,14 @@ impl InnerApplication for Box<StartUI> {
                     TextInput::new("Room", &self.room)
                         .on_input(|u| StartUIMessage::from(RoomInput(u)).into()),
                 )
-                .spacing(10)
+                .spacing(SPACING)
                 .width(Length::Fill),
             )
-            .spacing(10),
+            .spacing(SPACING),
             Space::with_height(text_size),
             Text::new("Directories").size(text_size + 15.0),
             column!(
-                Column::with_children(file_paths).spacing(10),
+                Column::with_children(file_paths).spacing(SPACING),
                 Button::new(
                     Container::new(Text::new("+"))
                         .center_x()
@@ -168,75 +170,15 @@ impl InnerApplication for Box<StartUI> {
                 .on_press(StartUIMessage::from(AddPath).into())
                 .width(Length::Fill),
             )
-            .spacing(10),
+            .spacing(SPACING),
             Space::with_height(text_size),
             Text::new("Theme").size(text_size + 15.0),
             row!(
-                column!(
-                    Button::new("Text").style(FileButton::theme(false, true)),
-                    Button::new("Background").style(FileButton::theme(false, true)),
-                    Button::new("Primary").style(FileButton::theme(false, true)),
-                    Button::new("Success").style(FileButton::theme(false, true)),
-                    Button::new("Danger").style(FileButton::theme(false, true)),
-                )
-                .spacing(10)
-                .width(Length::Shrink),
-                column!(
-                    TextInput::new("Text Color", &self.text_color_input)
-                        .on_input(|c| StartUIMessage::from(TextColorInput(c)).into()),
-                    TextInput::new("Background Color", &self.background_color_input)
-                        .on_input(|c| StartUIMessage::from(BackgroundColorInput(c)).into()),
-                    TextInput::new("Primary Color", &self.primary_color_input)
-                        .on_input(|c| { StartUIMessage::from(PrimaryColorInput(c)).into() }),
-                    TextInput::new("Success Color", &self.success_color_input)
-                        .on_input(|c| { StartUIMessage::from(SuccessColorInput(c)).into() }),
-                    TextInput::new("Danger Color", &self.danger_color_input)
-                        .on_input(|c| { StartUIMessage::from(DangerColorInput(c)).into() }),
-                )
-                .spacing(10)
-                .width(Length::Fill),
-                column!(
-                    Button::new(" ")
-                        .style(ColorButton::theme(self.text_color.into()))
-                        .on_press(
-                            StartUIMessage::from(TextColorInput(default_text().to_string())).into()
-                        )
-                        .width(text_size * 2.0),
-                    Button::new(" ")
-                        .style(ColorButton::theme(self.background_color.into()))
-                        .on_press(
-                            StartUIMessage::from(BackgroundColorInput(
-                                default_background().to_string()
-                            ))
-                            .into()
-                        )
-                        .width(text_size * 2.0),
-                    Button::new(" ")
-                        .style(ColorButton::theme(self.primary_color.into()))
-                        .on_press(
-                            StartUIMessage::from(PrimaryColorInput(default_primary().to_string()))
-                                .into()
-                        )
-                        .width(text_size * 2.0),
-                    Button::new(" ")
-                        .style(ColorButton::theme(self.success_color.into()))
-                        .on_press(
-                            StartUIMessage::from(SuccessColorInput(default_success().to_string()))
-                                .into()
-                        )
-                        .width(text_size * 2.0),
-                    Button::new(" ")
-                        .style(ColorButton::theme(self.danger_color.into()))
-                        .on_press(
-                            StartUIMessage::from(DangerColorInput(default_danger().to_string()))
-                                .into()
-                        )
-                        .width(text_size * 2.0),
-                )
-                .spacing(10)
-                .width(Length::Shrink)
+                self.theme_text_column(),
+                self.theme_input_column(),
+                self.theme_reset_column(),
             )
-            .spacing(10),
+            .spacing(SPACING),
             Space::with_height(text_size),
             Button::new(
                 Text::new("Start")
@@ -249,8 +191,8 @@ impl InnerApplication for Box<StartUI> {
         .align_items(Alignment::Center)
         .width(Length::Fill)
         .max_width(500)
-        .spacing(10)
-        .padding(10);
+        .spacing(SPACING)
+        .padding(SPACING);
 
         Container::new(Scrollable::new(
             Container::new(column)
@@ -259,12 +201,106 @@ impl InnerApplication for Box<StartUI> {
                 .width(Length::Fill),
         ))
         .height(Length::Fill)
-        .padding(10)
+        .padding(SPACING)
         .center_y()
         .into()
     }
 
     fn config(&self) -> &Config {
         &self.config
+    }
+}
+
+impl StartUI {
+    fn theme_text_column<'a>(&self) -> Element<'a, MainMessage, iced::Renderer<Theme>> {
+        Column::new()
+            .push(Button::new("Text").style(FileButton::theme(false, true)))
+            .push(Button::new("Background").style(FileButton::theme(false, true)))
+            .push(Button::new("Primary").style(FileButton::theme(false, true)))
+            .push(Button::new("Success").style(FileButton::theme(false, true)))
+            .push(Button::new("Danger").style(FileButton::theme(false, true)))
+            .spacing(SPACING)
+            .width(Length::Shrink)
+            .into()
+    }
+
+    fn theme_input_column<'a>(&self) -> Element<'a, MainMessage, iced::Renderer<Theme>> {
+        Column::new()
+            .push(
+                TextInput::new("Text Color", &self.text_color_input)
+                    .on_input(|c| StartUIMessage::from(TextColorInput(c)).into()),
+            )
+            .push(
+                TextInput::new("Background Color", &self.background_color_input)
+                    .on_input(|c| StartUIMessage::from(BackgroundColorInput(c)).into()),
+            )
+            .push(
+                TextInput::new("Primary Color", &self.primary_color_input)
+                    .on_input(|c| StartUIMessage::from(PrimaryColorInput(c)).into()),
+            )
+            .push(
+                TextInput::new("Success Color", &self.success_color_input)
+                    .on_input(|c| StartUIMessage::from(SuccessColorInput(c)).into()),
+            )
+            .push(
+                TextInput::new("Danger Color", &self.danger_color_input)
+                    .on_input(|c| StartUIMessage::from(DangerColorInput(c)).into()),
+            )
+            .spacing(SPACING)
+            .width(Length::Fill)
+            .into()
+    }
+
+    fn theme_reset_column<'a>(&self) -> Element<'a, MainMessage, iced::Renderer<Theme>> {
+        let text_size = *TEXT_SIZE.load_full();
+        Column::new()
+            .push(
+                Button::new(" ")
+                    .style(ColorButton::theme(self.text_color.into()))
+                    .on_press(
+                        StartUIMessage::from(TextColorInput(default_text().to_string())).into(),
+                    )
+                    .width(text_size * 2.0),
+            )
+            .push(
+                Button::new(" ")
+                    .style(ColorButton::theme(self.background_color.into()))
+                    .on_press(
+                        StartUIMessage::from(BackgroundColorInput(
+                            default_background().to_string(),
+                        ))
+                        .into(),
+                    )
+                    .width(text_size * 2.0),
+            )
+            .push(
+                Button::new(" ")
+                    .style(ColorButton::theme(self.primary_color.into()))
+                    .on_press(
+                        StartUIMessage::from(PrimaryColorInput(default_primary().to_string()))
+                            .into(),
+                    )
+                    .width(text_size * 2.0),
+            )
+            .push(
+                Button::new(" ")
+                    .style(ColorButton::theme(self.success_color.into()))
+                    .on_press(
+                        StartUIMessage::from(SuccessColorInput(default_success().to_string()))
+                            .into(),
+                    )
+                    .width(text_size * 2.0),
+            )
+            .push(
+                Button::new(" ")
+                    .style(ColorButton::theme(self.danger_color.into()))
+                    .on_press(
+                        StartUIMessage::from(DangerColorInput(default_danger().to_string())).into(),
+                    )
+                    .width(text_size * 2.0),
+            )
+            .spacing(SPACING)
+            .width(Length::Shrink)
+            .into()
     }
 }
