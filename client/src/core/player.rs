@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Result;
 use async_trait::async_trait;
 use url::Url;
 
@@ -9,12 +8,12 @@ use url::Url;
 pub trait MediaPlayer {
     fn start(&mut self);
     fn pause(&mut self);
-    fn is_paused(&self) -> Result<bool>;
+    fn is_paused(&self) -> Option<bool>;
     fn set_speed(&mut self, speed: f64);
     fn get_speed(&self) -> f64;
     fn set_position(&mut self, pos: Duration);
     fn get_position(&mut self) -> Duration;
-    fn load_video(&mut self, video: Video);
+    fn load_video(&mut self, load: LoadVideo);
     fn unload_video(&mut self);
     fn playing_video(&self) -> Option<Video>;
     async fn event(&mut self) -> MediaPlayerEvent;
@@ -24,6 +23,30 @@ pub trait MediaPlayer {
 pub enum Video {
     Url(Url),
     File(PathBuf),
+}
+
+impl Video {
+    pub fn path_str(&self) -> Option<&str> {
+        match self {
+            Video::Url(url) => Some(url.as_str()),
+            Video::File(path) => path.to_str(),
+        }
+    }
+
+    pub fn name_str(&self) -> Option<&str> {
+        match self {
+            Video::Url(url) => Some(url.as_str()),
+            Video::File(path) => path.file_name().and_then(|p| p.to_str()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadVideo {
+    pub video: Video,
+    pub pos: Duration,
+    pub speed: f64,
+    pub paused: bool,
 }
 
 #[derive(Debug, Clone)]

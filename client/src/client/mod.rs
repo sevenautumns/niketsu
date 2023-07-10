@@ -199,14 +199,25 @@ pub enum NiketsuEvent {
     NiketsuMessage,
 }
 
-pub trait LogResult {
+pub trait LogResult<T> {
     fn log(self);
+    fn default_and_log(self, default: T) -> T;
 }
 
-impl<T> LogResult for anyhow::Result<T> {
+impl<T> LogResult<T> for anyhow::Result<T> {
     fn log(self) {
         if let Err(e) = self {
             warn!("{e:?}")
+        }
+    }
+
+    fn default_and_log(self, default: T) -> T {
+        match self {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("{err:?}");
+                default
+            }
         }
     }
 }

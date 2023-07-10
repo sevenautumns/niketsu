@@ -9,6 +9,7 @@ pub struct UserStatus {
     pub ready: bool,
 }
 
+#[derive(Debug, Clone)]
 pub struct RoomList {
     rooms: BTreeMap<String, BTreeSet<NiketsuUserStatus>>,
 }

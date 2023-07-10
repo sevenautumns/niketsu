@@ -15,7 +15,7 @@ use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as Mp
 use tokio::task::JoinHandle;
 use tokio_native_tls::TlsStream;
 
-use self::messages::{NiketsuMessage, SeekMessage};
+use self::messages::NiketsuMessage;
 use crate::client::LogResult;
 use crate::core::communicator::*;
 
@@ -33,11 +33,6 @@ pub const RECONNECT_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub struct WebsocketCommunicator {
-    // TODO remove with resolution of issue #83
-    last_filename: String,
-    // TODO remove with resolution of issue #83
-    last_paused_state: bool,
-
     addr: String,
     last_reconnect: Instant,
     reconnect: Option<JoinHandle<Result<WebsocketConnection>>>,
@@ -80,47 +75,12 @@ impl WebsocketCommunicator {
             .elapsed()
             .saturating_sub(RECONNECT_INTERVAL)
     }
-
-    // TODO remove this when #83 lands and implement a general `From` instead of this
-    fn outgoing_to_niketsu_message(&mut self, msg: OutgoingMessage) -> NiketsuMessage {
-        match msg {
-            OutgoingMessage::Join(m) => m.into(),
-            OutgoingMessage::VideoStatus(m) => {
-                self.last_filename = m.filename.clone().unwrap_or_default();
-                self.last_paused_state = m.paused;
-                m.into()
-            }
-            OutgoingMessage::Start(m) => {
-                self.last_paused_state = false;
-                m.into()
-            }
-            OutgoingMessage::Pause(m) => {
-                self.last_paused_state = true;
-                m.into()
-            }
-            OutgoingMessage::PlaybackSpeed(m) => m.into(),
-            OutgoingMessage::Seek(m) => NiketsuMessage::Seek(SeekMessage::new(
-                m,
-                self.last_filename.clone(),
-                self.last_paused_state,
-            )),
-            OutgoingMessage::Select(m) => {
-                self.last_filename = m.filename.clone().unwrap_or_default();
-                m.into()
-            }
-            OutgoingMessage::UserMessage(m) => m.into(),
-            OutgoingMessage::Playlist(m) => m.into(),
-            OutgoingMessage::UserStatus(m) => m.into(),
-        }
-    }
 }
 
 #[async_trait]
 impl CommunicatorTrait for WebsocketCommunicator {
     fn new(addr: String) -> Self {
         let mut com = Self {
-            last_filename: Default::default(),
-            last_paused_state: true,
             in_queue: VecDeque::new(),
             addr,
             last_reconnect: Instant::now(),
@@ -132,16 +92,14 @@ impl CommunicatorTrait for WebsocketCommunicator {
     }
 
     fn send(&mut self, msg: OutgoingMessage) {
-        let msg = self.outgoing_to_niketsu_message(msg);
         let Some(conn) = &self.connection else {
             warn!("message dropped: {msg:?}");
             return;
         };
-        conn.send(msg);
+        conn.send(msg.into());
     }
 
     async fn receive(&mut self) -> IncomingMessage {
-        // TODO remove with resolution of issue #83
         if let Some(msg) = self.in_queue.pop_front() {
             return msg;
         }
@@ -152,27 +110,6 @@ impl CommunicatorTrait for WebsocketCommunicator {
                         if let ping @ NiketsuMessage::Ping(_) = msg {
                             conn.send(ping);
                             continue;
-                        }
-                        // TODO remove with resolution of issue #83
-                        if let NiketsuMessage::Seek(seek) = msg {
-                            self.last_filename = seek.filename.clone();
-                            self.last_paused_state = seek.paused;
-                            for msg in seek.into_incoming_message() {
-                                self.in_queue.push_back(msg);
-                            }
-                            return self
-                                .in_queue
-                                .pop_front()
-                                .expect("Left over messages are empty");
-                        }
-                        if let NiketsuMessage::Select(select) = &msg {
-                            self.last_filename = select.filename.clone().unwrap_or_default();
-                        }
-                        if let NiketsuMessage::Pause(_) = &msg {
-                            self.last_paused_state = true;
-                        }
-                        if let NiketsuMessage::Start(_) = &msg {
-                            self.last_paused_state = false;
                         }
                         match msg.try_into() {
                             Ok(msg) => return msg,

@@ -1,9 +1,9 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::task::Poll;
 
 use anyhow::Result;
-use dashmap::DashMap;
 use futures::stream::FusedStream;
 use futures::{Stream, StreamExt};
 use log::warn;
@@ -18,52 +18,42 @@ pub const MAX_CONCURRENT_CRAWLER: usize = 100;
 pub(super) struct FileDatabaseUpdater {
     path: PathBuf,
     semaphore: Arc<Semaphore>,
-    data: Arc<DashMap<String, PathBuf>>,
+    paths: HashMap<String, PathBuf>,
     progress: Arc<UpdateProgress>,
-    subdirs: JoinSet<Result<()>>,
+    subdirs: JoinSet<Result<HashMap<String, PathBuf>>>,
 }
 
 impl FileDatabaseUpdater {
     // TODO extract into its own struct
     pub(super) async fn update_all(
         paths: impl Iterator<Item = PathBuf>,
-        data: Arc<DashMap<String, PathBuf>>,
         progress: Arc<UpdateProgress>,
-    ) {
+    ) -> HashMap<String, PathBuf> {
         let mut updater = JoinSet::default();
         let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_CRAWLER));
         for path in paths {
             updater.spawn(
-                Self::new(
-                    path.to_path_buf(),
-                    data.clone(),
-                    progress.clone(),
-                    semaphore.clone(),
-                )
-                .complete(),
+                Self::new(path.to_path_buf(), progress.clone(), semaphore.clone()).complete(),
             );
         }
+        let mut database = HashMap::new();
         while let Some(res) = updater.join_next().await {
             match res {
                 Ok(Err(err)) => warn!("{err:?}"),
                 Err(err) => warn!("{err:?}"),
-                _ => {}
+                Ok(Ok(db)) => database.extend(db),
             }
         }
+        database
     }
 
-    fn new(
-        path: PathBuf,
-        data: Arc<DashMap<String, PathBuf>>,
-        progress: Arc<UpdateProgress>,
-        semaphore: Arc<Semaphore>,
-    ) -> Self {
+    fn new(path: PathBuf, progress: Arc<UpdateProgress>, semaphore: Arc<Semaphore>) -> Self {
         Self {
             path,
-            data,
             progress,
             semaphore,
             subdirs: JoinSet::default(),
+            paths: HashMap::default(),
         }
     }
 
@@ -71,20 +61,20 @@ impl FileDatabaseUpdater {
         Self {
             path,
             semaphore: self.semaphore.clone(),
-            data: self.data.clone(),
             progress: self.progress.clone(),
             subdirs: JoinSet::default(),
+            paths: HashMap::default(),
         }
     }
 
-    async fn complete(mut self) -> Result<()> {
+    async fn complete(mut self) -> Result<HashMap<String, PathBuf>> {
         self.progress.inc_queued();
 
         self.crawl_dir().await?;
         self.finish_subdirs().await;
 
         self.progress.inc_finished();
-        Ok(())
+        Ok(self.paths)
     }
 
     async fn crawl_dir(&mut self) -> Result<()> {
@@ -113,10 +103,10 @@ impl FileDatabaseUpdater {
         self.subdirs.spawn(subdir);
     }
 
-    fn insert_file(&self, file: DirEntry) {
+    fn insert_file(&mut self, file: DirEntry) {
         let name = file.file_name().to_string_lossy().to_string();
         let path = file.path();
-        self.data.insert(name, path);
+        self.paths.insert(name, path);
     }
 
     async fn finish_subdirs(&mut self) {
@@ -124,7 +114,7 @@ impl FileDatabaseUpdater {
             match subdir {
                 Ok(Err(err)) => warn!("{err:?}"),
                 Err(err) => warn!("{err:?}"),
-                _ => {}
+                Ok(Ok(paths)) => self.paths.extend(paths),
             }
         }
     }

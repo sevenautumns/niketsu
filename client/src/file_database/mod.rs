@@ -1,10 +1,9 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use dashmap::DashMap;
 use log::warn;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -16,9 +15,9 @@ mod updater;
 
 #[derive(Debug)]
 pub struct FileDatabase {
-    update: Option<JoinHandle<()>>,
+    update: Option<JoinHandle<HashMap<String, PathBuf>>>,
     progress: Arc<UpdateProgress>,
-    data: Arc<DashMap<String, PathBuf>>,
+    data: HashMap<String, PathBuf>,
     paths: BTreeSet<PathBuf>,
     completed: Notify,
 }
@@ -71,11 +70,8 @@ impl FileDatabaseTrait for FileDatabase {
             warn!("update already in progress");
             return;
         }
-        let update = FileDatabaseUpdater::update_all(
-            self.paths.clone().into_iter(),
-            self.data.clone(),
-            self.progress.clone(),
-        );
+        let update =
+            FileDatabaseUpdater::update_all(self.paths.clone().into_iter(), self.progress.clone());
         self.update = Some(tokio::task::spawn(update));
     }
 
@@ -92,11 +88,11 @@ impl FileDatabaseTrait for FileDatabase {
     }
 
     fn find_file(&self, filename: &str) -> Option<PathBuf> {
-        self.data.get(filename).map(|p| p.value().clone())
+        self.data.get(filename).cloned()
     }
 
     fn all_files(&self) -> Vec<PathBuf> {
-        self.data.iter().map(|p| p.value().clone()).collect()
+        self.data.iter().map(|p| p.1.clone()).collect()
     }
 
     async fn update_completed(&mut self) {

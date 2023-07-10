@@ -5,12 +5,14 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
+use futures::StreamExt;
+use log::{debug, error};
 use strum::{AsRefStr, EnumString};
 
 use self::bindings::*;
-use self::event::{MpvEventPipe, PropertyValue};
+use self::event::{MpvEventPipe, MpvEventTrait, PropertyValue};
 use crate::client::LogResult;
-use crate::core::player::{MediaPlayer, MediaPlayerEvent, Video};
+use crate::core::player::{LoadVideo, MediaPlayer, MediaPlayerEvent, Video};
 
 mod bindings;
 mod error;
@@ -81,11 +83,9 @@ pub enum MpvCommand {
     ShowText,
 }
 
-impl TryFrom<MpvCommand> for CString {
-    type Error = anyhow::Error;
-
-    fn try_from(cmd: MpvCommand) -> Result<Self> {
-        Ok(CString::new(cmd.as_ref())?)
+impl From<MpvCommand> for CString {
+    fn from(cmd: MpvCommand) -> Self {
+        CString::new(cmd.as_ref()).expect("Can't express \"{cmd:?}\" as CString")
     }
 }
 
@@ -287,37 +287,48 @@ impl Mpv {
 
 #[async_trait]
 impl MediaPlayer for Mpv {
-    // TODO double check
     fn start(&mut self) {
         self.status.paused = false;
-        self.set_property(MpvProperty::Pause, false.into()).log()
+        if self.status.file.is_some() {
+            self.set_property(MpvProperty::Pause, false.into()).log()
+        }
     }
 
-    // TODO double check
     fn pause(&mut self) {
         self.status.paused = true;
-        self.set_property(MpvProperty::Pause, true.into()).log()
+        if self.status.file.is_some() {
+            self.set_property(MpvProperty::Pause, true.into()).log()
+        }
     }
 
-    // TODO double check
-    fn is_paused(&self) -> Result<bool> {
-        self.get_property_flag(MpvProperty::Pause)
+    fn is_paused(&self) -> Option<bool> {
+        self.status.file.as_ref()?;
+        let paused = self
+            .get_property_flag(MpvProperty::Pause)
+            .default_and_log(Default::default());
+        Some(paused)
     }
 
-    // TODO double check
     fn set_speed(&mut self, speed: f64) {
         self.status.speed = speed;
         self.set_property(MpvProperty::Speed, PropertyValue::Double(speed))
             .log()
     }
 
-    // TODO double check
     fn get_speed(&self) -> f64 {
-        self.get_property_f64(MpvProperty::Speed).unwrap_or(1.0)
+        self.get_property_f64(MpvProperty::Speed)
+            .default_and_log(1.0)
     }
 
-    // TODO double check
     fn set_position(&mut self, pos: Duration) {
+        if self.status.seeking {
+            debug!("Already seeking, ignoring set_position: {pos:?}");
+            return;
+        }
+        if self.status.file.is_none() {
+            debug!("No file is playing, ignoring set_position: {pos:?}");
+            return;
+        }
         self.status.seeking = true;
         self.set_property(
             MpvProperty::PlaybackTime,
@@ -326,7 +337,6 @@ impl MediaPlayer for Mpv {
         .log()
     }
 
-    // TODO double check
     fn get_position(&mut self) -> Duration {
         let duration = self
             .get_property_f64(MpvProperty::PlaybackTime)
@@ -334,19 +344,30 @@ impl MediaPlayer for Mpv {
         Duration::from_secs_f64(duration)
     }
 
-    // TODO double check
-    fn load_video(&mut self, video: Video) {
-        // let cmd = MpvCommand::Loadfile.try_into()?;
-        // let path = CString::new(video)?;
-        // let replace = CString::new("replace")?;
-        // let start = pos.as_secs_f64();
-        // let options = CString::new(format!("start={start},pause={paused}"))?;
+    fn load_video(&mut self, load: LoadVideo) {
+        let cmd = MpvCommand::Loadfile.into();
+        let Some(path) = load.video.path_str() else {
+            error!("Get gen path from: {:?}", load.video)  ;
+            return;
+        };
+        let Ok(path) = CString::new(path) else {
+            error!("Cannot get CString from: {path}");
+            return;
+        };
+        self.status.paused = load.paused;
+        self.status.speed = load.speed;
+        self.status.file = Some(load.video);
 
-        // self.send_command(&[&cmd, &path, &replace, &options])
+        let replace = CString::new("replace").expect("Cannot get CString from: replace");
+        let start = load.pos.as_secs_f64();
+        let options = format!("start={start},pause={}", load.paused);
+        let options = CString::new(options).expect("Cannot get CString from: {options}");
+        self.send_command(&[&cmd, &path, &replace, &options]).log()
     }
 
     fn unload_video(&mut self) {
-        todo!()
+        self.status.file = None;
+        self.pause()
     }
 
     fn playing_video(&self) -> Option<Video> {
@@ -354,6 +375,13 @@ impl MediaPlayer for Mpv {
     }
 
     async fn event(&mut self) -> MediaPlayerEvent {
-        todo!()
+        loop {
+            let Some(event) = self.event_pipe.next().await else {
+                continue;
+            };
+            if let Some(event) = event.process(self) {
+                return event;
+            }
+        }
     }
 }

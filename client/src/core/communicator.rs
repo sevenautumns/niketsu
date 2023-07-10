@@ -140,6 +140,9 @@ impl From<NiketsuPlaybackSpeed> for OutgoingMessage {
 #[derive(Debug, Clone)]
 pub struct NiketsuSeek {
     pub actor: String,
+    pub file: String,
+    pub paused: bool,
+    pub speed: f64,
     pub position: Duration,
 }
 

@@ -195,41 +195,29 @@ pub(super) struct SeekMessage {
     pub(super) desync: bool,
 }
 
-impl SeekMessage {
-    pub(super) fn new(msg: NiketsuSeek, filename: String, paused: bool) -> Self {
-        Self {
-            filename,
-            position: msg.position,
+impl From<NiketsuSeek> for NiketsuMessage {
+    fn from(value: NiketsuSeek) -> Self {
+        Self::Seek(SeekMessage {
+            filename: value.file,
+            position: value.position,
             username: Default::default(),
-            paused,
-            speed: Default::default(),
-            desync: Default::default(),
-        }
+            paused: value.paused,
+            speed: value.speed,
+            desync: false,
+        })
     }
+}
 
-    pub(super) fn into_incoming_message(self) -> Vec<IncomingMessage> {
-        vec![
-            NiketsuSelect {
-                actor: self.username.clone(),
-                filename: Some(self.filename),
-            }
-            .into(),
-            NiketsuSeek {
-                actor: self.username.clone(),
-                position: self.position,
-            }
-            .into(),
-            NiketsuPlaybackSpeed {
-                actor: self.username.clone(),
-
-                speed: self.speed,
-            }
-            .into(),
-            NiketsuPause {
-                actor: self.username,
-            }
-            .into(),
-        ]
+impl From<SeekMessage> for IncomingMessage {
+    fn from(value: SeekMessage) -> Self {
+        NiketsuSeek {
+            position: value.position,
+            paused: value.paused,
+            speed: value.speed,
+            actor: value.username,
+            file: value.filename,
+        }
+        .into()
     }
 }
 
@@ -369,5 +357,22 @@ impl Ord for UserStatusMessage {
 impl PartialOrd for UserStatusMessage {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.username.partial_cmp(&other.username)
+    }
+}
+
+impl From<OutgoingMessage> for NiketsuMessage {
+    fn from(value: OutgoingMessage) -> Self {
+        match value {
+            OutgoingMessage::Join(msg) => msg.into(),
+            OutgoingMessage::VideoStatus(msg) => msg.into(),
+            OutgoingMessage::Start(msg) => msg.into(),
+            OutgoingMessage::Pause(msg) => msg.into(),
+            OutgoingMessage::PlaybackSpeed(msg) => msg.into(),
+            OutgoingMessage::Seek(msg) => msg.into(),
+            OutgoingMessage::Select(msg) => msg.into(),
+            OutgoingMessage::UserMessage(msg) => msg.into(),
+            OutgoingMessage::Playlist(msg) => msg.into(),
+            OutgoingMessage::UserStatus(msg) => msg.into(),
+        }
     }
 }

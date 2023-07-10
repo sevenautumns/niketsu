@@ -17,6 +17,7 @@ pub mod config;
 pub mod core;
 pub mod file_database;
 pub mod file_system;
+pub mod iced_ui;
 pub mod iced_window;
 pub mod media_player;
 pub mod messages;
