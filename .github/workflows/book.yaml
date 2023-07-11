@@ -18,11 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - uses: cachix/install-nix-action@v20
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v4
+
+      - name: Run the Magic Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@v1
 
       - name: Build site
         working-directory: ./book
