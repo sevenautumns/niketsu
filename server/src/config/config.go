@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bufio"
 	"encoding/json"
 	"log"
+	"os"
 
 	"github.com/BurntSushi/toml"
 	"github.com/jessevdk/go-flags"
@@ -32,9 +34,25 @@ type Config struct {
 
 // Parses command arguments, environment variables and config file in case one is given.
 // Order of precedence is: config file < environment variables < command arguments
-func GetConfig() Config {
+func ParseConfig() Config {
 	generalConfig := parseCommandArgs()
+	return getConfig(generalConfig)
+}
 
+func parseCommandArgs() GeneralConfig {
+	var general GeneralConfig
+	parser := flags.NewParser(&general, flags.Default)
+	_, err := parser.Parse()
+	if err != nil {
+		writer := bufio.NewWriter(os.Stdout)
+		parser.WriteHelp(writer)
+		os.Exit(1)
+	}
+
+	return general
+}
+
+func getConfig(generalConfig GeneralConfig) Config {
 	config := Config{Rooms: make(map[string]RoomConfig, 0)}
 	if generalConfig.ConfigPath != "" {
 		readConfigFile(generalConfig.ConfigPath, &config)
@@ -45,14 +63,6 @@ func GetConfig() Config {
 	printConfig(config)
 
 	return config
-}
-
-func parseCommandArgs() GeneralConfig {
-	var general GeneralConfig
-	parser := flags.NewParser(&general, 0)
-	parser.Parse()
-
-	return general
 }
 
 func readConfigFile(path string, config *Config) {

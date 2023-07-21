@@ -2,8 +2,8 @@ package communication
 
 import (
 	"fmt"
+	"log"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,39 +11,36 @@ import (
 )
 
 // TODO handle clients with unstable latency
-// TODO keep status list up to date on room to reduce acquisition
+// TODO rate limiter
 const (
+	maxBufferedTasks                int           = 1000
+	maxBufferedMessages             int           = 1000
 	latencyWeighingFactor           float64       = 0.85
 	pingTickInterval                time.Duration = time.Second
 	pingDeleteInterval              time.Duration = 600 * time.Second
 	maxClientDifferenceMillisecodns uint64        = 1e3 // one second
-	//unstableLatencyThreshold  float64       = 2e3
 )
 
-type ClientWorker interface {
-	UUID() *uuid.UUID
-	SetUserStatus(status Status)
-	UserStatus() *Status
-	SetVideoState(videoStatus VideoStatus, arrivalTime time.Time)
-	Login()
-	LoggedIn() bool
-	SendMessage(payload []byte)
-	SendServerMessage(message string, isError bool)
-	SendSeek(desync bool)
-	SendPlaylist()
-	EstimatePosition() *uint64
-	DeleteWorkerFromRoom()
-	SetRoom(room RoomStateHandler)
-	Close()
-	Start()
+type Task struct {
+	payload     []byte
+	arrivalTime time.Time
 }
 
-type latency struct {
+type ClientWorker interface {
+	Start()
+	Close()
+	Shutdown()
+	UUID() uuid.UUID
+	SendMessage(payload []byte)
+	EstimatePosition() *uint64
+}
+
+type workerLatency struct {
 	roundTripTime float64
 	timestamps    map[uuid.UUID]time.Time
 }
 
-type videoState struct {
+type workerVideoState struct {
 	video     *string
 	position  *uint64
 	timestamp time.Time
@@ -52,136 +49,159 @@ type videoState struct {
 }
 
 type workerState struct {
-	uuid        *atomic.Pointer[uuid.UUID]
-	room        *atomic.Value
-	loggedIn    *atomic.Bool
-	stopRequest chan int
-	closeOnce   *sync.Once
+	uuid      uuid.UUID
+	loggedIn  bool
+	stopChan  chan int
+	closeOnce *sync.Once
+	taskChan  chan Task
+	writeChan chan []byte
 }
 
 type Worker struct {
 	roomHandler     ServerStateHandler
 	websocket       WebsocketReaderWriter
+	room            RoomStateHandler
 	state           workerState
-	userStatus      *atomic.Pointer[Status]
-	videoState      *videoState
+	userStatus      Status
+	videoState      *workerVideoState
 	videoStateMutex *sync.RWMutex
-	latency         *latency
+	latency         *workerLatency
 	latencyMutex    *sync.RWMutex
 }
 
-func NewWorker(roomHandler ServerStateHandler, webSocket WebsocketReaderWriter, userName string) ClientWorker {
+func NewWorker(roomHandler ServerStateHandler, websocket WebsocketReaderWriter, username string) ClientWorker {
 	var worker Worker
 	worker.roomHandler = roomHandler
-	worker.websocket = webSocket
+	worker.websocket = websocket
 
-	atomicUUID := atomic.Pointer[uuid.UUID]{}
-	newUUID := uuid.New()
-	atomicUUID.Store(&newUUID)
-	atomicBool := atomic.Bool{}
-	atomicBool.Store(false)
-	worker.state = workerState{uuid: &atomicUUID, room: &atomic.Value{}, loggedIn: &atomicBool, stopRequest: make(chan int), closeOnce: &sync.Once{}}
+	worker.state = workerState{
+		uuid: uuid.New(), loggedIn: false, stopChan: make(chan int),
+		closeOnce: &sync.Once{}, taskChan: make(chan Task, maxBufferedTasks),
+		writeChan: make(chan []byte, maxBufferedMessages),
+	}
 
-	atomicStatus := atomic.Pointer[Status]{}
-	atomicStatus.Store(&Status{Ready: false, Username: userName})
-	worker.userStatus = &atomicStatus
-
-	worker.videoState = &videoState{paused: true, speed: 1.0}
+	worker.room = nil
+	worker.userStatus = Status{Username: username}
+	worker.videoState = &workerVideoState{paused: true, speed: 1.0}
 	worker.videoStateMutex = &sync.RWMutex{}
-
-	worker.latency = &latency{roundTripTime: 0, timestamps: make(map[uuid.UUID]time.Time)}
+	worker.latency = &workerLatency{roundTripTime: 0, timestamps: make(map[uuid.UUID]time.Time)}
 	worker.latencyMutex = &sync.RWMutex{}
 
 	return &worker
 }
 
-func (worker *Worker) UUID() *uuid.UUID {
-	return worker.state.uuid.Load()
-}
-
-func (worker *Worker) SetUserStatus(status Status) {
-	worker.userStatus.Store(&status)
-}
-
-func (worker *Worker) UserStatus() *Status {
-	return worker.userStatus.Load()
-}
-
-func (worker *Worker) VideoState() *videoState {
-	worker.videoStateMutex.RLock()
-	defer worker.videoStateMutex.RUnlock()
-
-	return worker.videoState
-}
-
-func (worker *Worker) Login() {
-	worker.state.loggedIn.Store(true)
-}
-
-func (worker *Worker) LoggedIn() bool {
-	return worker.state.loggedIn.Load()
+func (worker *Worker) Shutdown() {
+	close(worker.state.stopChan)
 }
 
 func (worker *Worker) Close() {
 	worker.state.closeOnce.Do(func() {
-		close(worker.state.stopRequest)
+		close(worker.state.stopChan)
 
-		if worker.state.room != nil {
+		if worker.room != nil {
 			worker.closingCleanup()
 		}
 	})
 }
 
-func (worker *Worker) Start() {
-	defer worker.websocket.Close()
-
-	go worker.handleRequests()
-	go worker.generatePings()
-	<-worker.state.stopRequest
+func (worker *Worker) closingCleanup() {
+	worker.setRoomState()
+	worker.roomHandler.BroadcastStatusList()
 }
 
-func (worker *Worker) generatePings() {
-	pingTimer := worker.schedule(worker.sendPing, pingTickInterval)
-	pingDeleteTimer := worker.schedule(worker.deletePings, pingDeleteInterval)
+func (worker *Worker) setRoomState() {
+	if worker.room == nil {
+		return
+	}
+
+	worker.room.DeleteWorker(worker.UUID())
+	worker.room.SetPaused(true)
+	worker.deleteAndCloseEmptyRoom()
+}
+
+func (worker *Worker) deleteAndCloseEmptyRoom() {
+	if worker.room.ShouldBeClosed() {
+		err := worker.roomHandler.DeleteRoom(worker.room)
+		if err != nil {
+			logger.Warnw("Failed to delete room from handler")
+		}
+
+		err = worker.room.Close()
+		if err != nil {
+			logger.Warnw("Failed to close room")
+		}
+	}
+}
+
+func (worker *Worker) Start() {
+	defer worker.websocket.Close()
+	worker.init()
+
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go worker.handleReading(&wg)
+	go worker.handleWriting(&wg)
+	go worker.handleTasks(&wg)
+	go worker.handlePings(&wg)
+	wg.Wait()
+
+	worker.closeTaskChan()
+	worker.closeWriteChan()
+}
+
+func (worker *Worker) init() {
+	worker.state.stopChan = make(chan int)
+	worker.state.closeOnce = &sync.Once{}
+	worker.state.taskChan = make(chan Task, maxBufferedTasks)
+	worker.state.writeChan = make(chan []byte, maxBufferedMessages)
+}
+
+func (worker *Worker) handlePings(wg *sync.WaitGroup) {
+	var pingWG sync.WaitGroup
+	pingWG.Add(2)
+
+	pingTimer := worker.schedule(worker.sendPing, pingTickInterval, &pingWG)
+	pingDeleteTimer := worker.schedule(worker.deletePings, pingDeleteInterval, &pingWG)
 	defer pingTimer.Stop()
 	defer pingDeleteTimer.Stop()
 
-	<-worker.state.stopRequest
+	pingWG.Wait()
+	wg.Done()
 }
 
-func (worker *Worker) schedule(f func(), interval time.Duration) *time.Ticker {
+func (worker *Worker) schedule(f func(), interval time.Duration, wg *sync.WaitGroup) *time.Ticker {
 	ticker := time.NewTicker(interval)
 	go func() {
 		for {
 			select {
-			case <-ticker.C:
-				f()
-			case <-worker.state.stopRequest:
+			case <-worker.state.stopChan:
+				log.Print("Ping done")
+				wg.Done()
 				return
+			case <-ticker.C:
+				log.Print("sending ping")
+				f()
 			}
 		}
 	}()
+
 	return ticker
 }
 
 func (worker *Worker) sendPing() {
-	uuid := uuid.New()
-	payload, err := worker.generateNewPing(uuid)
+	workerUUID := uuid.New()
+	payload, err := worker.getNewPing(workerUUID)
 	if err != nil {
-		logger.Errorw("Unable to parse ping message", "error", err)
+		logger.Errorw("Unable to parse ping message")
 		return
 	}
-	worker.addPingEntry(uuid)
 
-	err = worker.websocket.WriteMessage(payload)
-	if err != nil {
-		logger.Errorw("Unable to send ping message", "error", err)
-		worker.Close()
-	}
+	worker.addPingEntry(workerUUID)
+	worker.queueMessage(payload)
 }
 
-func (worker *Worker) generateNewPing(uuid uuid.UUID) ([]byte, error) {
-	ping := Ping{Uuid: uuid.String()}
+func (worker *Worker) getNewPing(workerUUID uuid.UUID) ([]byte, error) {
+	ping := Ping{Uuid: workerUUID.String()}
 	payload, err := MarshalMessage(ping)
 	if err != nil {
 		return nil, err
@@ -190,76 +210,134 @@ func (worker *Worker) generateNewPing(uuid uuid.UUID) ([]byte, error) {
 	return payload, nil
 }
 
-func (worker *Worker) addPingEntry(uuid uuid.UUID) {
+func (worker *Worker) addPingEntry(workerUUID uuid.UUID) {
 	worker.latencyMutex.Lock()
 	defer worker.latencyMutex.Unlock()
 
-	worker.latency.timestamps[uuid] = time.Now()
+	worker.latency.timestamps[workerUUID] = time.Now()
 }
 
 func (worker *Worker) deletePings() {
 	worker.latencyMutex.Lock()
 	defer worker.latencyMutex.Unlock()
 
-	for uuid, timestamp := range worker.latency.timestamps {
+	for workerUUID, timestamp := range worker.latency.timestamps {
 		elapsedTime := time.Since(timestamp)
 		if elapsedTime > time.Minute {
-			delete(worker.latency.timestamps, uuid)
+			delete(worker.latency.timestamps, workerUUID)
 		}
 	}
 }
 
-func (worker *Worker) handleRequests() {
+func (worker *Worker) closeTaskChan() {
+	close(worker.state.taskChan)
+}
+
+func (worker *Worker) closeWriteChan() {
+	close(worker.state.writeChan)
+}
+
+func (worker *Worker) queueTask(task Task) {
+	worker.state.taskChan <- task
+}
+
+func (worker *Worker) queueMessage(message []byte) {
+	worker.state.writeChan <- message
+}
+
+func (worker *Worker) handleWriting(wg *sync.WaitGroup) {
+	defer log.Print("Writes done")
 	for {
 		select {
-		case <-worker.state.stopRequest:
+		case <-worker.state.stopChan:
+			wg.Done()
 			return
-		default:
-			worker.handleData()
+		case message, ok := <-worker.state.writeChan:
+			if !ok {
+				worker.Close()
+				wg.Done()
+				return
+			}
+
+			worker.write(message)
 		}
 	}
 }
 
-func (worker *Worker) handleData() {
-	data, err := worker.websocket.ReadMessage()
-	arrivalTime := time.Now()
-
+func (worker *Worker) write(message []byte) {
+	err := worker.websocket.WriteMessage(message)
 	if err != nil {
-		logger.Infow("Unable to read from client. Closing connection", "error", err, "worker", worker.state.uuid)
+		logger.Warnw("Unable to send message")
+		worker.Close()
+		return
+	}
+	logger.Debugw("Sent message to client", "message", string(message))
+}
+
+func (worker *Worker) handleReading(wg *sync.WaitGroup) {
+	defer log.Print("Reads done")
+	for {
+		select {
+		case <-worker.state.stopChan:
+			wg.Done()
+			return
+		default:
+			worker.read()
+		}
+	}
+}
+
+func (worker *Worker) read() {
+	payload, err := worker.websocket.ReadMessage()
+	logger.Debugw("Received message from client", "message", string(payload))
+
+	arrivalTime := time.Now()
+	if err != nil {
+		logger.Warnw("Unable to read from client. Closing connection", "worker", worker.state.uuid)
 		worker.Close()
 		return
 	}
 
-	go worker.handleMessage(data, arrivalTime)
+	worker.queueTask(Task{payload: payload, arrivalTime: arrivalTime})
 }
 
-func (worker *Worker) handleMessage(data []byte, arrivalTime time.Time) {
-	message, err := UnmarshalMessage(data)
+func (worker *Worker) handleTasks(wg *sync.WaitGroup) {
+	defer log.Print("Task done")
+	for {
+		select {
+		case <-worker.state.stopChan:
+			wg.Done()
+			return
+		case task, ok := <-worker.state.taskChan:
+			if !ok {
+				worker.Close()
+				wg.Done()
+				return
+			}
+			worker.work(task)
+		}
+	}
+}
+
+func (worker *Worker) work(task Task) {
+	log.Print(string(task.payload))
+	message, err := UnmarshalMessage(task.payload)
+	log.Print(message)
+	log.Print(err)
 	if err != nil {
-		logger.Errorw("Unable to unmarshal client message", "error", err)
-		return
-	}
-	if message == nil {
-		logger.Warnw("Unable to parse nil message")
+		logger.Errorw("Unable to unmarshal client message")
 		return
 	}
 
-	//logger.Debugw("Received message from client", "name", worker.GetUserStatus().Username, "type", message.Type(), "message", message)
-	//defer logger.Debugw("Time passed to handle message", "type", message.Type(), "time", time.Now().Sub(arrivalTime))
-
-	if worker.ignoreNotLoggedIn(message) {
+	if worker.isNotJoinAndNotLoggedIn(message) {
 		return
 	}
 
-	worker.handleMessageTypes(message, arrivalTime)
+	worker.handleMessageTypes(message, task.arrivalTime)
 }
 
-func (worker *Worker) ignoreNotLoggedIn(message Message) bool {
-	if !worker.LoggedIn() && message.Type() != JoinType {
-		return true
-	}
-
-	return false
+func (worker *Worker) isNotJoinAndNotLoggedIn(message Message) bool {
+	return !worker.state.loggedIn && message.Type() != JoinType
 }
 
 func (worker *Worker) handleMessageTypes(message Message, arrivalTime time.Time) {
@@ -293,159 +371,256 @@ func (worker *Worker) handleMessageTypes(message Message, arrivalTime time.Time)
 		worker.handlePause(*message)
 	case JoinType:
 		message := *message.(*Join)
-		worker.roomHandler.HandleJoin(message, worker)
+		worker.handleJoin(message)
 	case PlaybackSpeedType:
 		message := message.(*PlaybackSpeed)
 		worker.handlePlaybackSpeed(*message)
 	default:
 		serverMessage := fmt.Sprintf("Requested command %s not supported:", message.Type())
-		worker.SendServerMessage(serverMessage, true)
+		worker.sendServerMessage(serverMessage, true)
 	}
 }
 
-func (worker *Worker) Room() RoomStateHandler {
-	return worker.state.room.Load().(RoomStateHandler)
-}
-
-func (worker *Worker) SetRoom(room RoomStateHandler) {
-	worker.state.room.Store(room)
-}
-
-func (worker *Worker) closingCleanup() {
-	worker.setRoomState()
-	worker.roomHandler.BroadcastStatusList(worker)
-}
-
-func (worker *Worker) setRoomState() {
-	room := worker.Room()
-	if room == nil {
-		return
+func (worker *Worker) sendServerMessage(message string, isError bool) {
+	serverMessage := ServerMessage{Message: message, IsError: isError}
+	payload, err := MarshalMessage(serverMessage)
+	if err != nil {
+		logger.Errorw("Unable to parse server message")
 	}
 
-	uuid := worker.UUID()
-	room.DeleteWorker(*uuid)
+	worker.queueMessage(payload)
+}
 
-	if !room.IsEmpty() {
-		return
-	}
+func (worker *Worker) UUID() uuid.UUID {
+	return worker.state.uuid
+}
 
-	room.SetPaused(true)
-	if room.IsPlaylistEmpty() && room.IsPersistent() {
-		worker.roomHandler.DeleteRoom(room)
-	}
+func (worker *Worker) SetUserStatus(status Status) {
+	worker.userStatus = status
+}
+
+func (worker *Worker) VideoState() *workerVideoState {
+	worker.videoStateMutex.RLock()
+	defer worker.videoStateMutex.RUnlock()
+
+	return worker.videoState
 }
 
 func (worker *Worker) handlePing(ping Ping, arrivalTime time.Time) {
-	uuid, err := uuid.Parse(ping.Uuid)
+	workerUUID, err := uuid.Parse(ping.Uuid)
 	if err != nil {
-		logger.Errorw("Unable to parse uuid", "error", err)
+		logger.Errorw("Unable to parse uuid")
 		return
 	}
 
-	worker.setRoundTripTime(uuid, arrivalTime)
+	worker.setRoundTripTime(workerUUID, arrivalTime)
+	worker.detelePing(workerUUID)
 }
 
-func (worker *Worker) setRoundTripTime(uuid uuid.UUID, arrivalTime time.Time) {
+func (worker *Worker) setRoundTripTime(workerUUID uuid.UUID, arrivalTime time.Time) {
 	worker.latencyMutex.Lock()
 	defer worker.latencyMutex.Unlock()
 
-	timestamp, ok := worker.latency.timestamps[uuid]
+	timestamp, ok := worker.latency.timestamps[workerUUID]
 	if !ok {
-		logger.Warnw("Could not find ping for corresponding uuid", "uuid", uuid)
+		logger.Warnw("Could not find ping for corresponding uuid", "uuid", workerUUID)
 		return
 	}
 
 	newRoundTripTime := float64(arrivalTime.Sub(timestamp))
 	worker.latency.roundTripTime = worker.latency.roundTripTime*latencyWeighingFactor + newRoundTripTime*(1-latencyWeighingFactor)
+}
 
-	delete(worker.latency.timestamps, uuid)
+func (worker *Worker) detelePing(workerUUID uuid.UUID) {
+	worker.latencyMutex.Lock()
+	defer worker.latencyMutex.Unlock()
+
+	delete(worker.latency.timestamps, workerUUID)
 }
 
 func (worker *Worker) handleStatus(status Status) {
-	worker.SetUserStatus(status)
-	worker.roomHandler.BroadcastStatusList(worker)
+	if worker.isStatusNew(status) {
+		worker.SetUserStatus(status)
+		worker.room.SetWorkerStatus(worker.state.uuid, worker.userStatus)
+		worker.roomHandler.BroadcastStatusList()
+	}
 	worker.broadcastStartOnReady()
 }
 
-func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime time.Time) {
-	room := worker.Room()
-	roomState := room.RoomState()
+func (worker *Worker) isStatusNew(status Status) bool {
+	return status.Ready != worker.userStatus.Ready || status.Username != worker.userStatus.Username
+}
 
-	if videoStatus.Filename == nil || videoStatus.Position == nil {
-		worker.handleNilStatus(videoStatus, roomState)
+func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime time.Time) {
+	worker.setVideoState(videoStatus, arrivalTime)
+	roomState := worker.room.RoomState()
+
+	if *videoStatus.Filename != *roomState.video {
+		worker.sendSelect(roomState.video)
 		return
 	}
 
-	if worker.isValidVideoStatus(videoStatus, roomState) {
-		worker.SetVideoState(videoStatus, arrivalTime)
-		worker.handleTimeDifference()
+	if videoStatus.Speed != roomState.speed {
+		worker.sendSpeed(roomState.speed)
+	}
+
+	if videoStatus.Paused != roomState.paused {
+		worker.sendPausePlay(roomState.paused)
+	}
+
+	worker.handleTimeDifference()
+}
+
+func (worker *Worker) sendSelect(filename *string) {
+	sel := Select{Filename: filename, Username: worker.userStatus.Username}
+	payload, err := MarshalMessage(sel)
+	if err != nil {
+		logger.Warnw("Failed to marshal select message")
+		return
+	}
+
+	worker.queueMessage(payload)
+}
+
+func (worker *Worker) sendSpeed(speed float64) {
+	seek := PlaybackSpeed{Speed: speed, Username: worker.userStatus.Username}
+	payload, err := MarshalMessage(seek)
+	if err != nil {
+		logger.Warnw("Failed to marshal seek message")
+		return
+	}
+
+	worker.queueMessage(payload)
+}
+
+func (worker *Worker) sendPausePlay(paused bool) {
+	var message Message
+	if paused {
+		message = Pause{Username: worker.userStatus.Username}
 	} else {
-		worker.SendSeek(true)
-	}
-}
-
-func (worker *Worker) handleNilStatus(videoStatus VideoStatus, roomState *RoomState) {
-	if videoStatus.Filename != roomState.video || videoStatus.Position != roomState.position {
-		worker.SendSeek(false)
-	}
-}
-
-func (worker *Worker) isValidVideoStatus(videoStatus VideoStatus, roomState *RoomState) bool {
-	// video status is not compatible with server if position is not in accordance with the last seek or video
-	// is paused when it is not supposed to be
-	if *videoStatus.Position < roomState.lastSeek || videoStatus.Paused != roomState.paused {
-		return false
+		message = Start{Username: worker.userStatus.Username}
 	}
 
-	return true
+	payload, err := MarshalMessage(message)
+	if err != nil {
+		logger.Warnw("Failed to marshal pause/start message")
+		return
+	}
+
+	worker.queueMessage(payload)
 }
 
 func (worker *Worker) handleStart(start Start) {
-	room := worker.Room()
-	room.SetPaused(false)
+	worker.setPause(false)
+	worker.room.SetPaused(false)
 	worker.broadcastStart()
 }
 
+func (worker *Worker) setPause(pause bool) {
+	worker.videoStateMutex.Lock()
+	defer worker.videoStateMutex.Unlock()
+
+	worker.videoState.paused = pause
+}
+
 func (worker *Worker) handleSeek(seek Seek, arrivalTime time.Time) {
-	room := worker.Room()
-	room.SetPlaylistState(&seek.Filename, seek.Position, seek.Paused, seek.Position)
-	worker.SetVideoState(VideoStatus{Filename: &seek.Filename, Position: &seek.Position, Paused: seek.Paused}, arrivalTime)
+	worker.room.SetPlaylistState(&seek.Filename, seek.Position, seek.Paused, seek.Position, seek.Speed)
+	worker.setVideoState(VideoStatus{Filename: &seek.Filename, Position: &seek.Position,
+		Paused: seek.Paused, Speed: seek.Speed}, arrivalTime)
 	worker.broadcastSeek(seek.Filename, seek.Position, false)
 }
 
 func (worker *Worker) handleSelect(sel Select) {
-	room := worker.Room()
-	room.SetPlaylistState(sel.Filename, 0, true, 0)
+	worker.room.SetPlaylistState(sel.Filename, 0, true, 0, -1)
+	pos := uint64(0)
+	worker.setVideoState(VideoStatus{Filename: sel.Filename, Position: &pos,
+		Paused: true, Speed: -1}, time.Now())
 	worker.broadcastSelect(sel.Filename, false)
 	worker.broadcastStartOnReady()
 }
 
 func (worker *Worker) handlePlaylist(playlist Playlist) {
-	worker.HandlePlaylistUpdate(playlist.Playlist)
-	worker.broadcastPlaylist(playlist, true)
+	worker.handlePlaylistUpdate(playlist.Playlist)
+	worker.broadcastPlaylist(playlist)
 }
 
 func (worker *Worker) handlePause(pause Pause) {
-	room := worker.Room()
-	room.SetPaused(true)
+	worker.setPause(true)
+	worker.room.SetPaused(true)
 	worker.broadcastPause()
 }
 
 func (worker *Worker) handlePlaybackSpeed(speed PlaybackSpeed) {
-	room := worker.Room()
 	worker.setSpeed(speed.Speed)
-	room.SetSpeed(speed.Speed)
+	worker.room.SetSpeed(speed.Speed)
 	worker.broadcastPlaybackSpeed(speed.Speed)
 }
 
-func (worker *Worker) SetVideoState(videoStatus VideoStatus, arrivalTime time.Time) {
-	worker.videoStateMutex.Lock()
-	defer worker.videoStateMutex.Unlock()
+func (worker *Worker) handleJoin(join Join) {
+	logger.Debugw("Received login attempt", "message", join)
+	if !worker.roomHandler.IsPasswordCorrect(join.Password) {
+		logger.Warnw("Room access failed due to incorrect password")
+		worker.sendServerMessage("Password is incorrect. Please try again", true)
+		return
+	}
 
-	worker.videoState.video = videoStatus.Filename
-	worker.videoState.position = videoStatus.Position
-	worker.videoState.timestamp = arrivalTime.Add(time.Duration(-worker.latency.roundTripTime/2) * time.Nanosecond)
-	worker.videoState.paused = videoStatus.Paused
+	if !worker.state.loggedIn {
+		worker.state.loggedIn = true
+		worker.SetUserStatus(Status{Ready: false, Username: join.Username})
+	} else {
+		// in case of a room change, try to delete the previous room
+		worker.deleteAndCloseEmptyRoom()
+	}
+
+	err := worker.handleRoomJoin(join)
+	if err != nil {
+		logger.Warnw("Room change failed")
+		worker.sendServerMessage("Failed to access room. Please try again", true)
+		return
+	}
+}
+
+func (worker *Worker) handleRoomJoin(join Join) error {
+	if worker.room != nil {
+		worker.room.DeleteWorker(worker.state.uuid)
+	}
+
+	err := worker.updateRoomChangeState(join.Room)
+	if err != nil {
+		return err
+	}
+
+	worker.sendRoomChangeUpdates()
+	return nil
+}
+
+func (worker *Worker) updateRoomChangeState(roomName string) error {
+	room, err := worker.roomHandler.CreateOrFindRoom(roomName)
+	if err != nil {
+		return err
+	}
+
+	err = worker.roomHandler.AppendRoom(room)
+	if err != nil {
+		return err
+	}
+
+	room.AppendWorker(worker)
+	go room.Start()
+
+	roomState := room.RoomState()
+	worker.setVideoState(VideoStatus{Filename: roomState.video, Position: roomState.position,
+		Paused: roomState.paused, Speed: roomState.speed}, time.Now())
+	worker.room = room
+
+	return nil
+}
+
+func (worker *Worker) sendRoomChangeUpdates() {
+	worker.room.SetWorkerStatus(worker.state.uuid, worker.userStatus)
+	worker.roomHandler.BroadcastStatusList()
+	worker.sendPlaylist()
+	worker.sendSeek(true)
 }
 
 func (worker *Worker) setSpeed(speed float64) {
@@ -455,17 +630,28 @@ func (worker *Worker) setSpeed(speed float64) {
 	worker.videoState.speed = speed
 }
 
-func (worker *Worker) SendMessage(message []byte) {
-	err := worker.websocket.WriteMessage(message)
-	if err != nil {
-		logger.Errorw("Unable to send message", "error", err)
-		worker.Close()
+func (worker *Worker) roundTripTime() float64 {
+	worker.latencyMutex.RLock()
+	defer worker.latencyMutex.RUnlock()
+
+	return worker.latency.roundTripTime
+}
+
+func (worker *Worker) setVideoState(videoStatus VideoStatus, arrivalTime time.Time) {
+	worker.videoStateMutex.Lock()
+	defer worker.videoStateMutex.Unlock()
+
+	worker.videoState.video = videoStatus.Filename
+	worker.videoState.position = videoStatus.Position
+	worker.videoState.timestamp = arrivalTime.Add(time.Duration(-worker.roundTripTime()/2) * time.Nanosecond)
+	worker.videoState.paused = videoStatus.Paused
+	if videoStatus.Speed > 0 {
+		worker.videoState.speed = videoStatus.Speed
 	}
 }
 
-func (worker *Worker) SendSeek(desync bool) {
-	room := worker.Room()
-	roomState := room.RoomState()
+func (worker *Worker) sendSeek(desync bool) {
+	roomState := worker.room.RoomState()
 
 	// seeking nil videos is prohibited
 	// may need to be changed to allow synchronization even if playlist is empty
@@ -475,208 +661,183 @@ func (worker *Worker) SendSeek(desync bool) {
 
 	// add half rtt if video is playing
 	position := *roomState.position
-	if !worker.videoState.paused {
-		position += uint64(worker.latency.roundTripTime / float64(time.Millisecond) / 2)
+	if !worker.paused() {
+		position += uint64(worker.roundTripTime() / float64(time.Millisecond) / 2)
 	}
 
-	userStatus := worker.UserStatus()
-	seek := Seek{Filename: *roomState.video, Position: position, Speed: roomState.speed, Paused: roomState.paused, Desync: desync, Username: userStatus.Username}
+	seek := Seek{Filename: *roomState.video, Position: position,
+		Speed: roomState.speed, Paused: roomState.paused,
+		Desync: desync, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(seek)
 	if err != nil {
-		logger.Errorw("Capitalist failed to marshal seek", "error", err)
+		logger.Errorw("Capitalist failed to marshal seek")
 		return
 	}
 
-	worker.SendMessage(payload)
+	worker.queueMessage(payload)
 }
 
-func (worker *Worker) SendServerMessage(message string, isError bool) {
-	serverMessage := ServerMessage{Message: message, IsError: isError}
-	data, err := MarshalMessage(serverMessage)
-	if err != nil {
-		logger.Errorw("Unable to parse server message", "error", err)
-	}
+func (worker *Worker) paused() bool {
+	worker.videoStateMutex.RLock()
+	worker.videoStateMutex.RUnlock()
 
-	worker.SendMessage(data)
+	return worker.videoState.paused
 }
 
-func (worker *Worker) SendPlaylist() {
-	room := worker.Room()
-	roomState := room.RoomState()
-	userStatus := worker.UserStatus()
+func (worker *Worker) SendMessage(payload []byte) {
+	worker.queueMessage(payload)
+}
 
-	playlist := Playlist{Playlist: roomState.playlist, Username: userStatus.Username}
-	message, err := MarshalMessage(playlist)
+func (worker *Worker) sendPlaylist() {
+	roomState := worker.room.RoomState()
+
+	playlist := Playlist{Playlist: roomState.playlist, Username: worker.userStatus.Username}
+	payload, err := MarshalMessage(playlist)
 	if err != nil {
-		logger.Errorw("Unable to marshal playlist", "error", err)
+		logger.Errorw("Unable to marshal playlist")
 		return
 	}
 
-	worker.SendMessage(message)
+	worker.queueMessage(payload)
 }
 
 func (worker *Worker) EstimatePosition() *uint64 {
-	worker.videoStateMutex.RLock()
-	defer worker.videoStateMutex.RUnlock()
+	videoState := worker.VideoState()
 
-	if worker.videoState.position == nil {
+	if videoState.position == nil {
 		return nil
 	}
 
 	var estimatedPosition uint64
-	if worker.videoState.paused {
-		estimatedPosition = *worker.videoState.position
+	if videoState.paused {
+		estimatedPosition = *videoState.position
 	} else {
-		timeElapsed := uint64(float64(time.Since(worker.videoState.timestamp).Milliseconds()) * worker.videoState.speed)
-		estimatedPosition = *worker.videoState.position + timeElapsed
+		timeElapsed := uint64(float64(time.Since(videoState.timestamp).Milliseconds()) * videoState.speed)
+		estimatedPosition = *videoState.position + timeElapsed
 	}
 
 	return &estimatedPosition
 }
 
-func (worker *Worker) DeleteWorkerFromRoom() {
-	uuid := worker.UUID()
-	worker.Room().DeleteWorker(*uuid)
-}
-
 func (worker *Worker) broadcastStart() {
-	userStatus := worker.UserStatus()
-	start := Start{Username: userStatus.Username}
+	start := Start{Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(start)
 	if err != nil {
-		logger.Errorw("Unable to marshal start message", "error", err)
+		logger.Errorw("Unable to marshal start message")
 		return
 	}
 
-	room := worker.Room()
-	uuid := worker.UUID()
-	room.BroadcastExcept(payload, *uuid)
+	workerUUID := worker.UUID()
+	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
 func (worker *Worker) broadcastSeek(filename string, position uint64, desync bool) {
-	userStatus := worker.UserStatus()
-	room := worker.Room()
-	state := room.RoomState()
+	state := worker.room.RoomState()
 
-	seek := Seek{Filename: filename, Position: position, Speed: state.speed, Paused: state.paused, Desync: desync, Username: userStatus.Username}
+	seek := Seek{Filename: filename, Position: position,
+		Speed: state.speed, Paused: state.paused, Desync: desync,
+		Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(seek)
 	if err != nil {
-		logger.Errorw("Unable to marshal broadcast seek", "error", err)
+		logger.Errorw("Unable to marshal broadcast seek")
 		return
 	}
 
-	uuid := worker.UUID()
-	room.BroadcastExcept(payload, *uuid)
+	workerUUID := worker.UUID()
+	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
 func (worker *Worker) broadcastSelect(filename *string, all bool) {
-	userStatus := worker.UserStatus()
-	sel := Select{Filename: filename, Username: userStatus.Username}
+	sel := Select{Filename: filename, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(sel)
 	if err != nil {
-		logger.Errorw("Unable to marshal broadcast select", "error", err)
+		logger.Errorw("Unable to marshal broadcast select")
 		return
 	}
-	room := worker.Room()
 
 	if all {
-		room.BroadcastAll(payload)
+		worker.room.BroadcastAll(payload)
 	} else {
-		uuid := worker.UUID()
-		room.BroadcastExcept(payload, *uuid)
+		workerUUID := worker.UUID()
+		worker.room.BroadcastExcept(payload, workerUUID)
 	}
 }
 
 func (worker *Worker) broadcastUserMessage(message string) {
-	userStatus := worker.UserStatus()
-	userMessage := UserMessage{Message: message, Username: userStatus.Username}
+	userMessage := UserMessage{Message: message, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(userMessage)
 	if err != nil {
-		logger.Errorw("Unable to marshal broadcast user message", "error", err)
+		logger.Errorw("Unable to marshal broadcast user message")
 		return
 	}
 
-	room := worker.Room()
-	uuid := worker.UUID()
-	room.BroadcastExcept(payload, *uuid)
+	workerUUID := worker.UUID()
+	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
-func (worker *Worker) broadcastPlaylist(playlist Playlist, all bool) {
-	userStatus := worker.UserStatus()
-	pl := Playlist{Playlist: playlist.Playlist, Username: userStatus.Username}
+func (worker *Worker) broadcastPlaylist(playlist Playlist) {
+	log.Print(playlist.Playlist)
+	pl := Playlist{Playlist: playlist.Playlist, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(pl)
 	if err != nil {
-		logger.Errorw("Unable to marshal broadcast playlist", "error", err)
+		logger.Errorw("Unable to marshal broadcast playlist")
 		return
 	}
 
-	room := worker.Room()
-	if all {
-		room.BroadcastAll(payload)
-	} else {
-		uuid := worker.UUID()
-		room.BroadcastExcept(payload, *uuid)
-	}
+	worker.room.BroadcastAll(payload)
 }
 
 func (worker *Worker) broadcastPause() {
-	userStatus := worker.UserStatus()
-	pause := Pause{Username: userStatus.Username}
+	pause := Pause{Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(pause)
 	if err != nil {
-		logger.Errorw("Unable to marshal broadcast pause", "error", err)
+		logger.Errorw("Unable to marshal broadcast pause")
 		return
 	}
 
-	room := worker.Room()
-	uuid := worker.UUID()
-	room.BroadcastExcept(payload, *uuid)
+	workerUUID := worker.UUID()
+	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
 // set paused to false since video will start
 func (worker *Worker) broadcastStartOnReady() {
 	// cannot start nil video
-	room := worker.Room()
-	video := room.RoomState().video
-	if video == nil {
+	roomState := worker.room.RoomState()
+	if roomState == nil || roomState.video == nil {
 		return
 	}
 
-	if room.AllUsersReady() {
-		userStatus := worker.UserStatus()
-		start := Start{Username: userStatus.Username}
+	if worker.room.AllUsersReady() {
+		start := Start{Username: worker.userStatus.Username}
 		payload, err := MarshalMessage(start)
 		if err != nil {
-			logger.Errorw("Unable to marshal start message", "error", err)
+			logger.Errorw("Unable to marshal start message")
 			return
 		}
 
-		room.BroadcastAll(payload)
-		room.SetPaused(false)
+		worker.room.BroadcastAll(payload)
+		worker.room.SetPaused(false)
 	}
 }
 
 func (worker *Worker) broadcastPlaybackSpeed(speed float64) {
-	userStatus := worker.UserStatus()
-	playbackSpeed := PlaybackSpeed{Speed: speed, Username: userStatus.Username}
+	playbackSpeed := PlaybackSpeed{Speed: speed, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(playbackSpeed)
 	if err != nil {
-		logger.Errorw("Unable to marshal broadcast playbackspeed", "error", err)
+		logger.Errorw("Unable to marshal broadcast playbackspeed")
 		return
 	}
 
-	room := worker.Room()
-	uuid := worker.UUID()
-	room.BroadcastExcept(payload, *uuid)
+	workerUUID := worker.UUID()
+	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
-func (worker *Worker) HandlePlaylistUpdate(playlist []string) {
-	room := worker.Room()
-	state := room.RoomState()
+func (worker *Worker) handlePlaylistUpdate(playlist []string) {
+	state := worker.room.RoomState()
 
 	if worker.isPlaylistUpdateRequired(state.video, state.playlist, playlist) {
 		nextVideo := worker.findNext(playlist, state)
-		worker.setNextVideo(nextVideo, *state.video, room)
+		worker.setNextVideo(nextVideo, *state.video, worker.room)
 	}
 }
 
@@ -707,7 +868,7 @@ func (worker *Worker) findNext(newPlaylist []string, state *RoomState) string {
 
 func (worker *Worker) setNextVideo(nextVideo string, oldVideo string, room RoomStateHandler) {
 	if nextVideo != oldVideo {
-		room.SetPlaylistState(&nextVideo, 0, true, 0)
+		room.SetPlaylistState(&nextVideo, 0, true, 0, -1)
 		worker.broadcastSelect(&nextVideo, true)
 	}
 }
@@ -715,16 +876,20 @@ func (worker *Worker) setNextVideo(nextVideo string, oldVideo string, room RoomS
 // Evaluates the video states of all clients and broadcasts seek if difference between
 // fastest and slowest clients is too large. Can not seek before the last seek's position.
 func (worker *Worker) handleTimeDifference() {
-	room := worker.Room()
-	maxPosition := room.FastestClientPosition()
-	state := worker.VideoState()
-	room.SetPosition(*state.position)
+	minPosition := worker.room.SlowestEstimatedClientPosition()
+	if minPosition == nil {
+		return
+	}
 
-	if worker.isClientDifferenceTooLarge(maxPosition, state.position, state.speed) {
-		worker.SendSeek(true)
+	state := worker.VideoState()
+	if worker.isClientDifferenceTooLarge(minPosition, state.position, state.speed) {
+		worker.room.SetPosition(*minPosition)
+		worker.sendSeek(true)
+	} else {
+		worker.room.SetPosition(*state.position)
 	}
 }
 
-func (worker *Worker) isClientDifferenceTooLarge(maxPosition uint64, workerPosition *uint64, speed float64) bool {
-	return workerPosition == nil || maxPosition-*workerPosition > uint64(float64(maxClientDifferenceMillisecodns)*speed)
+func (worker *Worker) isClientDifferenceTooLarge(minPosition *uint64, workerPosition *uint64, speed float64) bool {
+	return workerPosition == nil || *workerPosition-*minPosition > uint64(float64(maxClientDifferenceMillisecodns)*speed)
 }

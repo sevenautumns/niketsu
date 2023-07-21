@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/sevenautumns/niketsu/server/src/config"
 	"github.com/stretchr/testify/require"
@@ -31,28 +30,26 @@ var (
 	validValue = []byte("value")
 )
 
-func TestValidNewBoltKeyValueStore(t *testing.T) {
-	boltKeyValueStore, err := NewBoltKeyValueStore(validDBPath, validTimeout)
+func TestValidNewDBManager(t *testing.T) {
+	_, err := NewDBManager(validDBPath, validTimeout)
 	require.NoError(t, err)
-	require.Equal(t, validDBPath, boltKeyValueStore.path)
-	require.Equal(t, time.Duration(validTimeout*uint64(time.Second)), boltKeyValueStore.timeout)
 }
 
-func TestInvalidNewBoltKeyValueStore(t *testing.T) {
-	_, err := NewBoltKeyValueStore(validDBPath, invalidTimeout)
+func TestInvalidNewDBManager(t *testing.T) {
+	_, err := NewDBManager(validDBPath, invalidTimeout)
 	require.Error(t, err)
 
 	// invalid paths are implicitly checked when calling Open()
-	_, err = NewBoltKeyValueStore(invalidDBPath, validTimeout)
+	_, err = NewDBManager(invalidDBPath, validTimeout)
 	require.NoError(t, err)
 }
 
 func TestValidOpen(t *testing.T) {
-	keyValueStore := createKeyValueStore(validDBPath, validTimeout)
-	dbManager := NewDBManager(keyValueStore)
+	dbManager, err := NewDBManager(validDBPath, validTimeout)
+	require.NoError(t, err)
 	require.NoFileExists(t, validDBPath)
 
-	err := dbManager.Open()
+	err = dbManager.Open()
 	require.NoError(t, err)
 	require.FileExists(t, validDBPath)
 
@@ -62,20 +59,15 @@ func TestValidOpen(t *testing.T) {
 }
 
 func TestInvalidOpen(t *testing.T) {
-	keyValueStore := createKeyValueStore(invalidDBPath, validTimeout)
-	dbManager := NewDBManager(keyValueStore)
-	err := dbManager.Open()
+	dbManager, err := NewDBManager(invalidDBPath, validTimeout)
+	require.NoError(t, err)
+	err = dbManager.Open()
 	require.Error(t, err)
 	require.NoFileExists(t, invalidDBPath)
 
 	t.Cleanup(func() {
 		os.Remove(validDBPath)
 	})
-}
-
-func createKeyValueStore(path string, timeout uint64) KeyValueStore {
-	keyValueStore, _ := NewBoltKeyValueStore(path, timeout)
-	return keyValueStore
 }
 
 func TestValidClose(t *testing.T) {
@@ -85,21 +77,21 @@ func TestValidClose(t *testing.T) {
 }
 
 func TestInvalidClose(t *testing.T) {
-	boltKeyValueStore, _ := NewBoltKeyValueStore(validDBPath, validTimeout)
-	dbManager := NewDBManager(boltKeyValueStore)
-	err := dbManager.Close()
+	dbManager, err := NewDBManager(validDBPath, validTimeout)
+	require.NoError(t, err)
+
+	err = dbManager.Close()
 	require.Error(t, err)
 }
 
 func createDBManager(t *testing.T, path string, timeout uint64) DBManager {
-	boltKeyValueStore, _ := NewBoltKeyValueStore(path, timeout)
-	dbManager := NewDBManager(boltKeyValueStore)
-	err := dbManager.Open()
+	dbManager, err := NewDBManager(path, timeout)
+	require.NoError(t, err)
+
+	err = dbManager.Open()
 	if err != nil {
 		t.Fail()
 	}
-
-	print(boltKeyValueStore.db)
 
 	t.Cleanup(func() {
 		os.Remove(path)
@@ -139,7 +131,7 @@ func TestDBNotOpen(t *testing.T) {
 
 // Since update and get are intertwined, we test both at once
 func TestUpdateAndGetValue(t *testing.T) {
-	dbManager := createDBManager(t, validBucket, validTimeout)
+	dbManager := createDBManager(t, validDBPath, validTimeout)
 	testUpdateAndGetValueValid(t, dbManager, validBucket, validKey)
 	testUpdateAndGetValueValid(t, dbManager, otherBucket, validKey)
 	testUpdateAndGetValueValid(t, dbManager, validBucket, otherKey)
@@ -159,7 +151,7 @@ func testGetValue(t *testing.T, dbManager DBManager, bucket string, key string, 
 }
 
 func TestFailedGet(t *testing.T) {
-	dbManager := createDBManager(t, validBucket, validTimeout)
+	dbManager := createDBManager(t, validDBPath, validTimeout)
 	err := dbManager.Update(validBucket, validKey, validValue)
 	if err != nil {
 		t.Fatal("Failed to update database")

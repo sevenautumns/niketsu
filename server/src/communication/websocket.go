@@ -38,6 +38,7 @@ type WebsocketHandler struct {
 	errChannel   chan error
 }
 
+// TODO read and write timeout in config
 func NewWebSocketHandler(config config.GeneralConfig, handler ServerStateHandler, readerWriter NewReaderWriter, clientWorker NewClientWorker) WebsocketHandler {
 	var websocketHandler WebsocketHandler
 	websocketHandler.host = config.Host
@@ -141,6 +142,7 @@ func (websocketHandler WebsocketHandler) serve(listener net.Listener) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
+	websocketHandler.handler.Shutdown(ctx)
 	return websocketHandler.server.Shutdown(ctx)
 }
 

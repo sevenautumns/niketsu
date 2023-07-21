@@ -2,6 +2,7 @@ package communication
 
 import (
 	"fmt"
+	"log"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,22 +29,25 @@ var (
 	testOtherCommand      string   = "testCommand2"
 	testOtherCommandValue bool     = false
 	pingMessage           string   = fmt.Sprintf(`{"uuid":"%s","type":"ping"}`, testUuid)
-	videoStatusMessage    string   = fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`, testFilename, testPosition, testPaused, testSpeed, testUsername)
-	statusListMessage     string   = fmt.Sprintf(`{"rooms":{"room1":[{"ready":%t,"username":"%s"},{"ready":%t,"username":"%s"}],"room2":[]},"username":"%s","type":"statusList"}`, testNotReady, testUsername, testReady, testUsername2, testUsername)
-	pauseMessage          string   = fmt.Sprintf(`{"username":"%s","type":"pause"}`, testUsername)
-	startMessage          string   = fmt.Sprintf(`{"username":"%s","type":"start"}`, testUsername)
-	seekMessage           string   = fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"%s","type":"seek"}`, testFilename, testPosition, testSpeed, testPaused, testDesync, testUsername)
-	selectMessage         string   = fmt.Sprintf(`{"filename":"%s","username":"%s","type":"select"}`, testFilename, testUsername)
-	userMessage           string   = fmt.Sprintf(`{"message":"%s","username":"%s","type":"userMessage"}`, testMessage, testUsername)
-	serverMessage         string   = fmt.Sprintf(`{"message":"%s","error":%t,"type":"serverMessage"}`, testMessage, testError)
-	playlistMessage       string   = fmt.Sprintf(`{"playlist":["%s","%s"],"username":"%s","type":"playlist"}`, testPlaylist[0], testPlaylist[1], testUsername)
-	statusMessage         string   = fmt.Sprintf(`{"ready":%t,"username":"%s","type":"status"}`, testReady, testUsername)
-	joinMessage           string   = fmt.Sprintf(`{"password":"%s","room":"%s","username":"%s","type":"join"}`, testPassword, testRoom, testUsername)
-	playbackSpeedMessage  string   = fmt.Sprintf(`{"speed":%g,"username":"%s","type":"playbackSpeed"}`, testSpeed, testUsername)
-	unknownMessage        string   = fmt.Sprintf(`{"username":"%s","%s":"%s"}`, testUsername, testCommand, testCommandValue)
-	unsupportedMessage    string   = fmt.Sprintf(`{"username":"%s","%s":%t,"type":"unsupported"}`, testUsername, testOtherCommand, testOtherCommandValue)
-	failedFormatMessage   string   = `this may not be: a json {}`
-	failedFormatMessage2  string   = `{"type":"wrong","failed":true}`
+	videoStatusMessage    string   = fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
+		testFilename, testPosition, testPaused, testSpeed, testUsername)
+	statusListMessage string = fmt.Sprintf(`{"rooms":{"room1":[{"ready":%t,"username":"%s"},{"ready":%t,"username":"%s"}],"room2":[]},"type":"statusList"}`,
+		testNotReady, testUsername, testReady, testUsername2)
+	pauseMessage string = fmt.Sprintf(`{"username":"%s","type":"pause"}`, testUsername)
+	startMessage string = fmt.Sprintf(`{"username":"%s","type":"start"}`, testUsername)
+	seekMessage  string = fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"%s","type":"seek"}`,
+		testFilename, testPosition, testSpeed, testPaused, testDesync, testUsername)
+	selectMessage        string = fmt.Sprintf(`{"filename":"%s","username":"%s","type":"select"}`, testFilename, testUsername)
+	userMessage          string = fmt.Sprintf(`{"message":"%s","username":"%s","type":"userMessage"}`, testMessage, testUsername)
+	serverMessage        string = fmt.Sprintf(`{"message":"%s","error":%t,"type":"serverMessage"}`, testMessage, testError)
+	playlistMessage      string = fmt.Sprintf(`{"playlist":["%s","%s"],"username":"%s","type":"playlist"}`, testPlaylist[0], testPlaylist[1], testUsername)
+	statusMessage        string = fmt.Sprintf(`{"ready":%t,"username":"%s","type":"status"}`, testReady, testUsername)
+	joinMessage          string = fmt.Sprintf(`{"password":"%s","room":"%s","username":"%s","type":"join"}`, testPassword, testRoom, testUsername)
+	playbackSpeedMessage string = fmt.Sprintf(`{"speed":%g,"username":"%s","type":"playbackSpeed"}`, testSpeed, testUsername)
+	unknownMessage       string = fmt.Sprintf(`{"username":"%s","%s":"%s"}`, testUsername, testCommand, testCommandValue)
+	unsupportedMessage   string = fmt.Sprintf(`{"username":"%s","%s":%t,"type":"unsupported"}`, testUsername, testOtherCommand, testOtherCommandValue)
+	failedFormatMessage  string = `this may not be: a json {}`
+	failedFormatMessage2 string = `{"type":"wrong","failed":true}`
 )
 
 func TestUnmarshal(t *testing.T) {
@@ -133,9 +137,13 @@ func TestMarshal(t *testing.T) {
 	testMessageContent(t, []byte(videoStatusMessage), videoStatus, err)
 
 	statusList, err := MarshalMessage(StatusList{
-		Rooms:    map[string][]Status{"room1": {{Username: testUsername, Ready: testNotReady}, {Username: testUsername2, Ready: testReady}}, "room2": {}},
-		Username: testUsername,
+		Rooms: map[string][]Status{
+			"room1": {{Username: testUsername, Ready: testNotReady},
+				{Username: testUsername2, Ready: testReady}},
+			"room2": {}},
 	})
+	log.Print(statusListMessage)
+	log.Print(string(statusList))
 	testMessageContent(t, []byte(statusListMessage), statusList, err)
 
 	pause, err := MarshalMessage(Pause{

@@ -96,8 +96,7 @@ type Status struct {
 func (s Status) Type() MessageType { return StatusType }
 
 type StatusList struct {
-	Rooms    map[string][]Status `json:"rooms"`
-	Username string              `json:"username"`
+	Rooms map[string][]Status `json:"rooms"`
 }
 
 func (sl StatusList) Type() MessageType { return StatusListType }

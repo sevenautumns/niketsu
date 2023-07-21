@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,6 +102,9 @@ func TestStop(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockServerStateHandler := NewMockServerStateHandler(ctrl)
+	mockServerStateHandler.EXPECT().
+		Shutdown(gomock.Any())
+
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
 	handler := NewWebSocketHandler(testConfigTCP, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	stopChannel := make(chan int, 1)
@@ -114,6 +118,9 @@ func TestSigKill(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockServerStateHandler := NewMockServerStateHandler(ctrl)
+	mockServerStateHandler.EXPECT().
+		Shutdown(gomock.Any())
+
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
 	handler := NewWebSocketHandler(testConfigTCP, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	stopChannel := make(chan int, 1)
@@ -127,6 +134,9 @@ func TestClose(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockServerStateHandler := NewMockServerStateHandler(ctrl)
+	mockServerStateHandler.EXPECT().
+		Shutdown(gomock.Any())
+
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
 	handler := NewWebSocketHandler(testConfigTCP, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	stopChannel := make(chan int, 1)
@@ -140,6 +150,9 @@ func TestListenTLS(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockServerStateHandler := NewMockServerStateHandler(ctrl)
+	mockServerStateHandler.EXPECT().
+		Shutdown(gomock.Any())
+
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
 	handler := NewWebSocketHandler(testConfigTLS, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	url := fmt.Sprintf("wss://%s:%d", host, portTLS)
@@ -151,6 +164,9 @@ func TestListenTCP(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockServerStateHandler := NewMockServerStateHandler(ctrl)
+	mockServerStateHandler.EXPECT().
+		Shutdown(gomock.Any())
+
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
 	handler := NewWebSocketHandler(testConfigTCP, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	url := fmt.Sprintf("ws://%s:%d", host, portTCP)
@@ -158,22 +174,25 @@ func TestListenTCP(t *testing.T) {
 }
 
 func testListen(t *testing.T, handler WebsocketHandler, url string) {
-	go listen(t, handler)
-	defer handler.Stop()
-
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go listen(t, handler, &wg)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	time.Sleep(2 * time.Second) // Wait for handler initialization
+	time.Sleep(time.Second) // Wait for handler initialization
 	conn, _, err := websocket.Dial(ctx, url, nil)
 	require.NoError(t, err)
 
 	testReadWrite(ctx, t, conn)
+	handler.Stop()
+	wg.Wait()
 }
 
-func listen(t *testing.T, handler WebsocketHandler) {
+func listen(t *testing.T, handler WebsocketHandler, wg *sync.WaitGroup) {
 	err := handler.Listen()
 	require.NoError(t, err)
+	wg.Done()
 }
 
 func testReadWrite(ctx context.Context, t *testing.T, conn *websocket.Conn) {

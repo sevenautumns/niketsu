@@ -1,12 +1,12 @@
 package communication
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/sevenautumns/niketsu/server/src/config"
 	"github.com/sevenautumns/niketsu/server/src/db"
@@ -14,14 +14,18 @@ import (
 )
 
 const (
-	generalDBPath   string = ".main/general.db"
+	generalDBPath   string = ".db/general.db"
 	generalDBBucket string = "general"
 )
 
 type ServerStateHandler interface {
-	DeleteRoom(room RoomStateHandler)
-	HandleJoin(join Join, worker ClientWorker)
-	BroadcastStatusList(worker ClientWorker)
+	Init(roomConfigs map[string]config.RoomConfig) error
+	Shutdown(ctx context.Context)
+	DeleteRoom(room RoomStateHandler) error
+	AppendRoom(room RoomStateHandler) error
+	CreateOrFindRoom(roomName string) (RoomStateHandler, error)
+	BroadcastStatusList()
+	IsPasswordCorrect(password string) bool
 }
 
 type Server struct {
@@ -38,14 +42,11 @@ type serverConfig struct {
 	dbWaitTimeout    uint64
 }
 
-// Creates server based on config.
-// May fail to initialize and return error if directory or database creation fail.
-// Call Init() before doing anything else to initialize the database, etc.
-func NewServer(config config.GeneralConfig) Server {
+func NewServer(config config.GeneralConfig) ServerStateHandler {
 	var server Server
 	server.config = &serverConfig{password: config.Password, dbPath: config.DBPath, dbUpdateInterval: config.DBUpdateInterval, dbWaitTimeout: config.DBWaitTimeout}
 
-	return server
+	return &server
 }
 
 func (server *Server) Init(roomConfigs map[string]config.RoomConfig) error {
@@ -55,7 +56,7 @@ func (server *Server) Init(roomConfigs map[string]config.RoomConfig) error {
 	}
 
 	path := filepath.Join(server.config.dbPath, generalDBPath)
-	err = CreateDir(path)
+	err = CreateDir(filepath.Dir(path))
 	if err != nil {
 		return errors.New(fmt.Sprintf("Failed to create directory of general db path %s\n%s", path, err))
 	}
@@ -72,11 +73,11 @@ func (server *Server) Init(roomConfigs map[string]config.RoomConfig) error {
 }
 
 func (server *Server) initNewRoomsDB(path string) error {
-	kevValueStore, err := db.NewBoltKeyValueStore(path, server.config.dbWaitTimeout)
+	db, err := db.NewDBManager(path, server.config.dbWaitTimeout)
 	if err != nil {
 		return err
 	}
-	server.roomsDB = db.NewDBManager(kevValueStore)
+	server.roomsDB = db
 
 	err = server.roomsDB.Open()
 	if err != nil {
@@ -127,14 +128,74 @@ func (server *Server) addRoomsFromConfig(rooms map[string]RoomStateHandler, room
 
 		server.writeRoom(newRoom)
 		rooms[name] = newRoom
-		newRoom.Start()
+		go newRoom.Start()
 	}
 
 	return rooms
 }
 
-func (server *Server) createOrFindRoom(roomName string) (RoomStateHandler, error) {
-	if server.rooms[roomName] == nil {
+func (server *Server) writeRoom(room RoomStateHandler) error {
+	//needs to be extended in case more options are added to room, e.g. a room config
+	config := config.RoomConfig{Persistent: room.IsPersistent()}
+	byteConfig, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+
+	err = server.roomsDB.Update(generalDBBucket, room.Name(), byteConfig)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (server *Server) Shutdown(ctx context.Context) {
+	server.roomsMutex.Lock()
+	defer server.roomsMutex.Unlock()
+
+	for _, room := range server.rooms {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			room.Shutdown(ctx)
+		}
+	}
+}
+
+func (server *Server) AppendRoom(room RoomStateHandler) error {
+	server.roomsMutex.Lock()
+	defer server.roomsMutex.Unlock()
+
+	_, ok := server.rooms[room.Name()]
+	if !ok {
+		server.rooms[room.Name()] = room
+		return server.writeRoom(room)
+	}
+
+	return nil
+}
+
+func (server *Server) DeleteRoom(room RoomStateHandler) error {
+	server.roomsMutex.Lock()
+	defer server.roomsMutex.Unlock()
+
+	delete(server.rooms, room.Name())
+	err := server.deleteRoomFromDB(room.Name())
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (server *Server) deleteRoomFromDB(roomName string) error {
+	return server.roomsDB.DeleteKey(generalDBBucket, roomName)
+}
+
+func (server *Server) CreateOrFindRoom(roomName string) (RoomStateHandler, error) {
+	room, ok := server.rooms[roomName]
+	if !ok {
 		tmpRoom, err := NewRoom(roomName, server.config.dbPath, server.config.dbUpdateInterval, server.config.dbWaitTimeout, false) //new rooms are never persistent
 		if err != nil {
 			return nil, err
@@ -142,126 +203,21 @@ func (server *Server) createOrFindRoom(roomName string) (RoomStateHandler, error
 
 		return tmpRoom, nil
 	} else {
-		return server.rooms[roomName], nil
+		return room, nil
 	}
 }
 
-func (server Server) HandleJoin(join Join, worker ClientWorker) {
-	logger.Debugw("Received login attempt", "message", join)
-	if server.passwordCheckFailed(join.Password) {
-		worker.SendServerMessage("Password is incorrect. Please try again", true)
+func (server Server) BroadcastStatusList() {
+	rooms := server.statusList()
+
+	statusList := StatusList{Rooms: rooms}
+	message, err := MarshalMessage(statusList)
+	if err != nil {
+		logger.Errorw("Unable to parse status list", "error", err)
 		return
 	}
 
-	var err error
-	if worker.LoggedIn() {
-		err = server.handleRoomChange(join, worker)
-	} else {
-		err = server.handleFirstLogin(join, worker)
-	}
-
-	if err != nil {
-		logger.Infow("Room change failed", "error", err)
-		worker.SendServerMessage("Failed to access room. Please try again", true)
-	}
-}
-
-func (server *Server) passwordCheckFailed(password string) bool {
-	return server.config.password != "" && password != server.config.password
-}
-
-func (server *Server) handleRoomChange(join Join, worker ClientWorker) error {
-	worker.DeleteWorkerFromRoom()
-	err := server.updateRoomChangeState(join.Room, worker)
-	if err != nil {
-		return err
-	}
-
-	server.sendRoomChangeUpdates(worker)
-	return nil
-}
-
-func (server *Server) handleFirstLogin(join Join, worker ClientWorker) error {
-	// it is important to first set the state and then login.
-	// Otherwise, messages from the client may be handle with an incorrect state
-	err := server.updateRoomChangeState(join.Room, worker)
-	if err != nil {
-		return err
-	}
-	worker.SetUserStatus(Status{Ready: false, Username: join.Username}) // update username based on join
-	worker.Login()
-	server.sendRoomChangeUpdates(worker)
-	return nil
-}
-
-func (server *Server) sendRoomChangeUpdates(worker ClientWorker) {
-	server.BroadcastStatusList(worker)
-	worker.SendPlaylist()
-	worker.SendSeek(true)
-}
-
-func (server *Server) updateRoomChangeState(roomName string, worker ClientWorker) error {
-	room, err := server.createOrFindRoom(roomName)
-	if err != nil {
-		return err
-	}
-
-	room.Start()
-	server.appendRoom(room)
-	server.writeRoom(room)
-	room.AppendWorker(worker)
-
-	roomState := room.RoomState()
-	worker.SetVideoState(VideoStatus{Filename: roomState.video, Position: roomState.position, Paused: roomState.paused}, time.Now())
-	worker.SetRoom(room)
-
-	return nil
-}
-
-func (server *Server) appendRoom(room RoomStateHandler) {
-	server.roomsMutex.Lock()
-	defer server.roomsMutex.Unlock()
-
-	server.rooms[room.Name()] = room
-}
-
-func (server *Server) writeRoom(room RoomStateHandler) {
-	server.roomsMutex.RLock()
-	defer server.roomsMutex.RUnlock()
-
-	//needs to be extended in case more options are added to room, e.g. a room config
-	config := config.RoomConfig{Persistent: room.IsPersistent()}
-	byteConfig, err := json.Marshal(config)
-	if err != nil {
-		logger.Warnw("Failed to marshal room config", "error", err)
-		return
-	}
-
-	err = server.roomsDB.Update(generalDBBucket, room.Name(), byteConfig)
-	if err != nil {
-		logger.Warnw("Update key/value transaction for room configurations failed", "error", err)
-	}
-}
-
-func (server Server) DeleteRoom(room RoomStateHandler) {
-	server.roomsMutex.Lock()
-	defer server.roomsMutex.Unlock()
-
-	roomName := room.Name()
-	delete(server.rooms, roomName)
-	err := server.deleteRoomFromDB(room)
-	if err != nil {
-		logger.Warnw("Failed to delete the room configuration from the general database", "room", roomName, "error", err)
-	}
-
-	err = room.Close()
-	if err != nil {
-		logger.Warnw("Failed to delete the database of room", "room", roomName, "error", err)
-	}
-}
-
-func (server *Server) deleteRoomFromDB(room RoomStateHandler) error {
-	return server.roomsDB.DeleteKey(generalDBBucket, room.Name())
+	server.broadcastAll(message)
 }
 
 func (server *Server) statusList() map[string][]Status {
@@ -276,21 +232,6 @@ func (server *Server) statusList() map[string][]Status {
 	return statusList
 }
 
-// StatusList is also sent to the client who sent the last VideoStatus
-func (server Server) BroadcastStatusList(worker ClientWorker) {
-	rooms := server.statusList()
-
-	userStatus := worker.UserStatus()
-	statusList := StatusList{Rooms: rooms, Username: userStatus.Username}
-	message, err := MarshalMessage(statusList)
-	if err != nil {
-		logger.Errorw("Unable to parse status list", "error", err)
-		return
-	}
-
-	server.broadcastAll(message)
-}
-
 func (server *Server) broadcastAll(message []byte) {
 	server.roomsMutex.RLock()
 	defer server.roomsMutex.RUnlock()
@@ -298,4 +239,8 @@ func (server *Server) broadcastAll(message []byte) {
 	for _, room := range server.rooms {
 		room.BroadcastAll(message)
 	}
+}
+
+func (server *Server) IsPasswordCorrect(password string) bool {
+	return server.config.password == "" || password == server.config.password
 }

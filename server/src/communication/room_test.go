@@ -26,11 +26,12 @@ var (
 	defaultLastSeek uint64      = 0
 	highLastSeek    uint64      = 10000
 	defaultPaused   bool        = false
-	notPaused       bool        = true
+	notPaused       bool        = false
+	paused          bool        = true
 	defaultSpeed    float64     = 1.0
 	highSpeed       float64     = 2.0
 	testPayload     []byte      = []byte("testMessage")
-	uuids           []uuid.UUID = []uuid.UUID{
+	roomUUIDS       []uuid.UUID = []uuid.UUID{
 		uuid.Must(uuid.Parse("123e4567-e89b-12d3-a456-426655440000")),
 		uuid.Must(uuid.Parse("123e4567-e89b-12d3-a456-426655440001")),
 		uuid.Must(uuid.Parse("123e4567-e89b-12d3-a456-426655440002")),
@@ -41,7 +42,6 @@ const (
 	roomName            string = "testRoom"
 	failedRoomName      string = "test/room"
 	dbPath              string = "."
-	failedDBPath        string = "some$ / malformed& \\ Path"
 	dbUpdateInterval    uint64 = 1
 	dbWaitTimeout       uint64 = 1
 	failedDBWaitTimeout uint64 = 0
@@ -94,11 +94,7 @@ func testCorrectState(t *testing.T, room *Room, err error) {
 }
 
 func TestFailedNewRoom(t *testing.T) {
-	room, err := NewRoom(roomName, failedDBPath, dbUpdateInterval, dbWaitTimeout, persistent)
-	require.Error(t, err)
-	require.Nil(t, room)
-
-	room, err = NewRoom(roomName, dbPath, dbUpdateInterval, failedDBWaitTimeout, persistent)
+	room, err := NewRoom(roomName, dbPath, dbUpdateInterval, failedDBWaitTimeout, persistent)
 	require.Error(t, err)
 	require.Nil(t, room)
 
@@ -108,7 +104,6 @@ func TestFailedNewRoom(t *testing.T) {
 
 	t.Cleanup(func() {
 		os.Remove(filepath.Join(dbPath, roomName+".db"))
-		os.Remove(filepath.Join(failedDBPath, roomName+".db"))
 		os.Remove(filepath.Join(dbPath, failedRoomName+".db"))
 	})
 }
@@ -116,7 +111,7 @@ func TestFailedNewRoom(t *testing.T) {
 func TestStartClose(t *testing.T) {
 	room, _ := NewRoom(roomName, dbPath, dbUpdateInterval, dbWaitTimeout, persistent)
 	go startRoom(t, room)
-	time.Sleep(2 * time.Second)
+	time.Sleep(50 * time.Millisecond)
 	room.Close()
 
 	t.Cleanup(func() {
@@ -261,6 +256,7 @@ func TestAppendWorker(t *testing.T) {
 	require.Len(t, room.workers, 6)
 }
 
+// TODO check for status as well
 func TestDeleteWorker(t *testing.T) {
 	testEmptyDeleteWorker(t)
 	testCorrectDeleteWorker(t)
@@ -268,13 +264,15 @@ func TestDeleteWorker(t *testing.T) {
 
 func testEmptyDeleteWorker(t *testing.T) {
 	room := &Room{
-		workers:      []ClientWorker{},
-		workersMutex: &sync.RWMutex{},
+		workers:            []ClientWorker{},
+		workersMutex:       &sync.RWMutex{},
+		workersStatus:      make(map[uuid.UUID]Status, 0),
+		workersStatusMutex: &sync.RWMutex{},
 	}
 	uuid := getUID(t)
-	require.Len(t, room.workers, 0)
 	room.DeleteWorker(uuid)
 	require.Len(t, room.workers, 0)
+	require.Len(t, room.workersStatus, 0)
 }
 
 func testCorrectDeleteWorker(t *testing.T) {
@@ -282,23 +280,36 @@ func testCorrectDeleteWorker(t *testing.T) {
 	defer ctrl.Finish()
 
 	room := &Room{
-		workers: []ClientWorker{getMockClientWithUUID(t, ctrl, uuids[0], 1, 0),
-			getMockClientWithUUID(t, ctrl, uuids[1], 3, 0),
-			getMockClientWithUUID(t, ctrl, uuids[2], 3, 0)},
+		workers: []ClientWorker{
+			getMockClientWithUUID(t, ctrl, roomUUIDS[0], 1, 0),
+			getMockClientWithUUID(t, ctrl, roomUUIDS[1], 3, 0),
+			getMockClientWithUUID(t, ctrl, roomUUIDS[2], 3, 0)},
 		workersMutex: &sync.RWMutex{},
+		workersStatus: map[uuid.UUID]Status{
+			roomUUIDS[0]: {},
+			roomUUIDS[1]: {},
+			roomUUIDS[2]: {},
+		},
+		workersStatusMutex: &sync.RWMutex{},
 	}
 	require.Len(t, room.workers, 3)
-	room.DeleteWorker(uuids[0])
+	require.Len(t, room.workersStatus, 3)
+
+	room.DeleteWorker(roomUUIDS[0])
 	require.Len(t, room.workers, 2)
+	require.Len(t, room.workersStatus, 2)
 
-	room.DeleteWorker(uuids[2])
+	room.DeleteWorker(roomUUIDS[2])
 	require.Len(t, room.workers, 1)
+	require.Len(t, room.workersStatus, 1)
 
-	room.DeleteWorker(uuids[0])
+	room.DeleteWorker(roomUUIDS[0])
 	require.Len(t, room.workers, 1)
+	require.Len(t, room.workersStatus, 1)
 
-	room.DeleteWorker(uuids[1])
+	room.DeleteWorker(roomUUIDS[1])
 	require.Len(t, room.workers, 0)
+	require.Len(t, room.workersStatus, 0)
 }
 
 func getUID(t *testing.T) uuid.UUID {
@@ -319,15 +330,20 @@ func TestDeleteAppendWorker(t *testing.T) {
 	defer ctrl.Finish()
 
 	room := &Room{
-		workers:      []ClientWorker{},
-		workersMutex: &sync.RWMutex{},
+		workers:            []ClientWorker{},
+		workersMutex:       &sync.RWMutex{},
+		workersStatus:      make(map[uuid.UUID]Status),
+		workersStatusMutex: &sync.RWMutex{},
 	}
 
-	mockWorker := getMockClientWithUUID(t, ctrl, uuids[0], 2, 0)
+	mockWorker := getMockClientWithUUID(t, ctrl, roomUUIDS[0], 2, 0)
 	room.AppendWorker(mockWorker)
+	room.workersStatus[roomUUIDS[0]] = Status{}
 	require.Len(t, room.workers, 1)
-	room.DeleteWorker(uuids[0])
+
+	room.DeleteWorker(roomUUIDS[0])
 	require.Len(t, room.workers, 0)
+	require.Len(t, room.workersStatus, 0)
 
 	t.Cleanup(func() {
 		os.Remove(filepath.Join(dbPath, roomName+".db"))
@@ -347,31 +363,31 @@ func testBroadcastExceptMultipleWorkers(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockWorker1 := getMockClientWithUUID(t, ctrl, uuids[0], 1, 0)
-	mockWorker2 := getMockClientWithUUID(t, ctrl, uuids[1], 1, 1)
+	mockWorker1 := getMockClientWithUUID(t, ctrl, roomUUIDS[0], 1, 0)
+	mockWorker2 := getMockClientWithUUID(t, ctrl, roomUUIDS[1], 1, 1)
 
 	room := &Room{
 		workers:      []ClientWorker{mockWorker1, mockWorker2},
 		workersMutex: &sync.RWMutex{},
 	}
-	room.BroadcastExcept(testPayload, uuids[0])
+	room.BroadcastExcept(testPayload, roomUUIDS[0])
 }
 
 func testBroadcastExceptOneWorker(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockWorker1 := getMockClientWithUUID(t, ctrl, uuids[0], 1, 0)
+	mockWorker1 := getMockClientWithUUID(t, ctrl, roomUUIDS[0], 1, 0)
 
 	room := &Room{
 		workers:      []ClientWorker{mockWorker1},
 		workersMutex: &sync.RWMutex{},
 	}
-	room.BroadcastExcept(testPayload, uuids[0])
+	room.BroadcastExcept(testPayload, roomUUIDS[0])
 
-	mockWorker1 = getMockClientWithUUID(t, ctrl, uuids[0], 1, 1)
+	mockWorker1 = getMockClientWithUUID(t, ctrl, roomUUIDS[0], 1, 1)
 	room.workers = []ClientWorker{mockWorker1}
 
-	room.BroadcastExcept(testPayload, uuids[1])
+	room.BroadcastExcept(testPayload, roomUUIDS[1])
 }
 
 func getMockClientWithUUID(t *testing.T, ctrl *gomock.Controller, newUUID uuid.UUID, maxTimesUUID int, maxTimesSendMessage int) ClientWorker {
@@ -379,7 +395,7 @@ func getMockClientWithUUID(t *testing.T, ctrl *gomock.Controller, newUUID uuid.U
 
 	m.EXPECT().
 		UUID().
-		Return(&newUUID).
+		Return(newUUID).
 		MaxTimes(maxTimesUUID)
 
 	m.EXPECT().
@@ -437,21 +453,30 @@ func testAllReady(t *testing.T) {
 }
 
 func testAllReadyMultipleUsers(t *testing.T, ctrl *gomock.Controller) {
-	mockWorker1 := getMockClientWithUserStatus(t, ctrl, true)
-	mockWorker2 := getMockClientWithUserStatus(t, ctrl, true)
+	mockWorker1 := NewMockClientWorker(ctrl)
+	mockWorker2 := NewMockClientWorker(ctrl)
+
 	room := &Room{
-		workers:      []ClientWorker{mockWorker1, mockWorker2},
-		workersMutex: &sync.RWMutex{},
+		workers: []ClientWorker{mockWorker1, mockWorker2},
+		workersStatus: map[uuid.UUID]Status{
+			roomUUIDS[0]: {Ready: true},
+			roomUUIDS[1]: {Ready: true},
+		},
+		workersStatusMutex: &sync.RWMutex{},
 	}
 	allReady := room.AllUsersReady()
 	require.Equal(t, true, allReady)
 }
 
 func testAllReadyOneUser(t *testing.T, ctrl *gomock.Controller) {
-	mockWorker1 := getMockClientWithUserStatus(t, ctrl, true)
+	mockWorker1 := NewMockClientWorker(ctrl)
 	room := &Room{
 		workers:      []ClientWorker{mockWorker1},
 		workersMutex: &sync.RWMutex{},
+		workersStatus: map[uuid.UUID]Status{
+			roomUUIDS[0]: {Ready: true},
+		},
+		workersStatusMutex: &sync.RWMutex{},
 	}
 	allReady := room.AllUsersReady()
 	require.Equal(t, true, allReady)
@@ -459,8 +484,9 @@ func testAllReadyOneUser(t *testing.T, ctrl *gomock.Controller) {
 
 func testAllReadyNoUsers(t *testing.T) {
 	room := &Room{
-		workers:      []ClientWorker{},
-		workersMutex: &sync.RWMutex{},
+		workers:            []ClientWorker{},
+		workersMutex:       &sync.RWMutex{},
+		workersStatusMutex: &sync.RWMutex{},
 	}
 	allReady := room.AllUsersReady()
 	require.Equal(t, true, allReady)
@@ -475,85 +501,83 @@ func testNotAllReady(t *testing.T) {
 }
 
 func testNotAllReadyMultipleUsers(t *testing.T, ctrl *gomock.Controller) {
-	mockWorker1 := getMockClientWithUserStatus(t, ctrl, false)
-	mockWorker2 := getMockClientWithUserStatus(t, ctrl, true)
+	mockWorker1 := NewMockClientWorker(ctrl)
+	mockWorker2 := NewMockClientWorker(ctrl)
 	room := &Room{
 		workers:      []ClientWorker{mockWorker1, mockWorker2},
 		workersMutex: &sync.RWMutex{},
+		workersStatus: map[uuid.UUID]Status{
+			roomUUIDS[0]: {Ready: false},
+			roomUUIDS[1]: {Ready: true},
+		},
+		workersStatusMutex: &sync.RWMutex{},
 	}
 	allReady := room.AllUsersReady()
 	require.Equal(t, false, allReady)
 }
 
 func testNotAllOneUser(t *testing.T, ctrl *gomock.Controller) {
-	mockWorker1 := getMockClientWithUserStatus(t, ctrl, false)
+	mockWorker1 := NewMockClientWorker(ctrl)
 	room := &Room{
 		workers:      []ClientWorker{mockWorker1},
 		workersMutex: &sync.RWMutex{},
+		workersStatus: map[uuid.UUID]Status{
+			roomUUIDS[0]: {Ready: false},
+		},
+		workersStatusMutex: &sync.RWMutex{},
 	}
 	allReady := room.AllUsersReady()
 	require.Equal(t, false, allReady)
 }
 
-func getMockClientWithUserStatus(t *testing.T, ctrl *gomock.Controller, ready bool) ClientWorker {
-	m := NewMockClientWorker(ctrl)
-
-	m.EXPECT().
-		UserStatus().
-		Return(&Status{Ready: ready}).
-		Times(1)
-
-	return m
-}
-
-func TestFastestClientPosition(t *testing.T) {
+func TestSlowestEstimatedClientPosition(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	testFastestClientPositionMultipleUsers(t, ctrl)
-	testFastestClientPositionOneUser(t, ctrl)
-	testFastestClientPositionOneUser(t, ctrl)
+	testSlowestEstimatedClientPositionMultipleUsers(t, ctrl)
+	testSlowestClientPositionOneUser(t, ctrl)
+	testSlowestClientPositionNoUsers(t, ctrl)
 }
 
-func testFastestClientPositionMultipleUsers(t *testing.T, ctrl *gomock.Controller) {
+func testSlowestEstimatedClientPositionMultipleUsers(t *testing.T, ctrl *gomock.Controller) {
 	mockWorker1 := getMockClientWithEstimatePosition(t, ctrl, defaultPosition)
 	mockWorker2 := getMockClientWithEstimatePosition(t, ctrl, highPosition)
 	room := &Room{
 		workers:      []ClientWorker{mockWorker1, mockWorker2},
 		workersMutex: &sync.RWMutex{},
 	}
-	fastestPosition := room.FastestClientPosition()
-	require.Equal(t, *highPosition, fastestPosition)
+	minPosition := room.SlowestEstimatedClientPosition()
+	require.Equal(t, *defaultPosition, *minPosition)
 
 	mockWorker1 = getMockClientWithEstimatePosition(t, ctrl, defaultPosition)
 	mockWorker2 = getMockClientWithEstimatePosition(t, ctrl, nil)
 	room.workers = []ClientWorker{mockWorker1, mockWorker2}
-	fastestPosition = room.FastestClientPosition()
-	require.Equal(t, *defaultPosition, fastestPosition)
+	minPosition = room.SlowestEstimatedClientPosition()
+	require.Equal(t, *defaultPosition, *minPosition)
 }
 
-func testFastestClientPositionOneUser(t *testing.T, ctrl *gomock.Controller) {
+func testSlowestClientPositionOneUser(t *testing.T, ctrl *gomock.Controller) {
 	mockWorker1 := getMockClientWithEstimatePosition(t, ctrl, highPosition)
 	room := &Room{
 		workers:      []ClientWorker{mockWorker1},
 		workersMutex: &sync.RWMutex{},
 	}
-	fastestPosition := room.FastestClientPosition()
-	require.Equal(t, *highPosition, fastestPosition)
+	minPosition := room.SlowestEstimatedClientPosition()
+	require.Equal(t, *highPosition, *minPosition)
 
 	mockWorker1 = getMockClientWithEstimatePosition(t, ctrl, nil)
 	room.workers = []ClientWorker{mockWorker1}
-	fastestPosition = room.FastestClientPosition()
-	require.Equal(t, *defaultPosition, fastestPosition)
+	minPosition = room.SlowestEstimatedClientPosition()
+	require.Nil(t, minPosition)
 }
 
-func testFastestClientPositionNoUsers(t *testing.T, ctrl *gomock.Controller) {
+func testSlowestClientPositionNoUsers(t *testing.T, ctrl *gomock.Controller) {
 	room := &Room{
 		workers:      []ClientWorker{},
 		workersMutex: &sync.RWMutex{},
 	}
-	fastestPosition := room.FastestClientPosition()
-	require.Equal(t, *defaultPosition, fastestPosition)
+	minPosition := room.SlowestEstimatedClientPosition()
+	require.Nil(t, minPosition)
 }
 
 func getMockClientWithEstimatePosition(t *testing.T, ctrl *gomock.Controller, position *uint64) ClientWorker {
@@ -572,17 +596,19 @@ func TestSetPlaylistState(t *testing.T) {
 		state:      &RoomState{},
 		stateMutex: &sync.RWMutex{},
 	}
-	room.SetPlaylistState(video, *defaultPosition, defaultPaused, defaultLastSeek)
+	room.SetPlaylistState(video, *defaultPosition, defaultPaused, defaultLastSeek, defaultSpeed)
 	require.Equal(t, video, room.state.video)
 	require.Equal(t, *defaultPosition, *room.state.position)
 	require.Equal(t, defaultLastSeek, room.state.lastSeek)
 	require.Equal(t, defaultPaused, room.state.paused)
+	require.Equal(t, defaultSpeed, room.state.speed)
 
-	room.SetPlaylistState(nil, *highPosition, notPaused, highLastSeek)
+	room.SetPlaylistState(nil, *highPosition, notPaused, highLastSeek, -defaultSpeed)
 	require.Empty(t, room.state.video)
 	require.Equal(t, *highPosition, *room.state.position)
 	require.Equal(t, highLastSeek, room.state.lastSeek)
 	require.Equal(t, notPaused, room.state.paused)
+	require.Equal(t, defaultSpeed, room.state.speed)
 }
 
 func TestSetPosition(t *testing.T) {
@@ -683,59 +709,42 @@ func TestWorkerStatus(t *testing.T) {
 	expectedStatus1 := Status{Username: testUsername, Ready: defaultPaused}
 	expectedStatus2 := Status{Username: testUsername2, Ready: notPaused}
 
-	gomock.InOrder(
-		mockWorker1.EXPECT().
-			UserStatus().
-			Return(&expectedStatus1).
-			Times(1),
-		mockWorker2.EXPECT().
-			UserStatus().
-			Return(&expectedStatus2).
-			Times(1),
-	)
-
 	room := &Room{
 		workersMutex: &sync.RWMutex{},
 		workers:      []ClientWorker{mockWorker1, mockWorker2},
+		workersStatus: map[uuid.UUID]Status{
+			roomUUIDS[0]: expectedStatus1,
+			roomUUIDS[1]: expectedStatus2,
+		},
+		workersStatusMutex: &sync.RWMutex{},
 	}
 
 	statusList := room.WorkerStatus()
-	expectedList := []Status{expectedStatus1, expectedStatus2}
-	require.Equal(t, expectedList, statusList)
+	require.Contains(t, statusList, expectedStatus1)
+	require.Contains(t, statusList, expectedStatus2)
 }
 
-func TestIsEmpty(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
+func TestShouldBeClosed(t *testing.T) {
 	room := &Room{
-		workersMutex: &sync.RWMutex{},
 		workers:      []ClientWorker{},
-	}
-
-	isEmpty := room.IsEmpty()
-	require.True(t, isEmpty)
-
-	mockWorker := NewMockClientWorker(ctrl)
-	room.workers = []ClientWorker{mockWorker}
-	isEmpty = room.IsEmpty()
-	require.False(t, isEmpty)
-}
-
-func TestIsPlaylistEmpty(t *testing.T) {
-	room := &Room{
-		stateMutex: &sync.RWMutex{},
+		workersMutex: &sync.RWMutex{},
 		state: &RoomState{
 			playlist: []string{},
 		},
+		stateMutex: &sync.RWMutex{},
 	}
 
-	isPlaylistEmpty := room.IsPlaylistEmpty()
-	require.True(t, isPlaylistEmpty)
+	shouldBeClosed := room.ShouldBeClosed()
+	require.True(t, shouldBeClosed)
 
-	room.state.playlist = playlist
-	isPlaylistEmpty = room.IsPlaylistEmpty()
-	require.False(t, isPlaylistEmpty)
+	room.state.playlist = []string{"testVideo"}
+	shouldNotBeClosed := room.ShouldBeClosed()
+	require.False(t, shouldNotBeClosed)
+
+	room.state.playlist = []string{}
+	room.persistent = true
+	shouldNotBeClosed = room.ShouldBeClosed()
+	require.False(t, shouldNotBeClosed)
 }
 
 func TestIsPersistent(t *testing.T) {
