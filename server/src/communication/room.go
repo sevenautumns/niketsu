@@ -27,14 +27,15 @@ type RoomStateHandler interface {
 	SlowestEstimatedClientPosition() *uint64
 	SetPosition(position uint64)
 	SetSpeed(speed float64)
-	SetPlaylistState(video *string, position uint64, paused bool, lastSeek uint64, speed float64)
 	SetPaused(paused bool)
-	RoomState() *RoomState
+	SetPlaylist(playlist []string)
+	SetPlaylistState(video *string, position uint64, paused bool, lastSeek uint64, speed float64)
+	RoomState() RoomState
 	Name() string
+	RoomConfig() RoomConfig
 	WorkerStatus() []Status
 	SetWorkerStatus(workerUUID uuid.UUID, status Status)
 	ShouldBeClosed() bool
-	IsPersistent() bool
 }
 
 type RoomState struct {
@@ -46,38 +47,39 @@ type RoomState struct {
 	speed    float64
 }
 
+type RoomConfig struct {
+	Name             string
+	Path             string
+	DBUpdateInterval uint64
+	DBWaitTimeout    uint64
+	Persistent       bool
+}
+
 type Room struct {
-	name               string
+	config             RoomConfig
 	workers            []ClientWorker
-	workersMutex       *sync.RWMutex
+	workersMutex       sync.RWMutex
 	workersStatus      map[uuid.UUID]Status
-	workersStatusMutex *sync.RWMutex
-	state              *RoomState
-	stateMutex         *sync.RWMutex
+	workersStatusMutex sync.RWMutex
+	state              RoomState
+	stateMutex         sync.RWMutex
 	db                 db.DBManager
-	dbUpdateInterval   time.Duration
 	dbChannel          chan (int)
-	persistent         bool
 }
 
 // Creates a new Room which handles requests from workers in a shared channel. The database is created in a file at path/name.db
 func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout uint64, persistent bool) (RoomStateHandler, error) {
 	var room Room
-	room.name = name
+	room.config = RoomConfig{name, path, dbUpdateInterval, dbWaitTimeout, persistent}
 	room.workers = make([]ClientWorker, 0)
-	room.workersMutex = &sync.RWMutex{}
 	room.workersStatus = make(map[uuid.UUID]Status, 0)
-	room.workersStatusMutex = &sync.RWMutex{}
 	err := room.initDB(path, dbWaitTimeout)
 	if err != nil {
 		return nil, err
 	}
-	room.stateMutex = &sync.RWMutex{}
-	room.state = &RoomState{lastSeek: 0, paused: true, speed: 1.0}
+	room.state = RoomState{lastSeek: 0, paused: true, speed: 1.0}
 	room.setStateFromDB()
-	room.dbUpdateInterval = time.Duration(dbUpdateInterval * uint64(time.Second))
 	room.dbChannel = make(chan int)
-	room.persistent = persistent
 
 	return &room, nil
 }
@@ -87,7 +89,7 @@ func (room *Room) initDB(path string, dbWaitTimeout uint64) error {
 	if err != nil {
 		return err
 	}
-	dbpath := filepath.Join(path, room.name+".db")
+	dbpath := filepath.Join(path, room.config.Name+".db")
 
 	db, err := db.NewDBManager(dbpath, dbWaitTimeout)
 	if err != nil {
@@ -105,7 +107,7 @@ func (room *Room) initDB(path string, dbWaitTimeout uint64) error {
 
 func (room *Room) Start() {
 	room.dbChannel = make(chan int)
-	ticker := time.NewTicker(room.dbUpdateInterval)
+	ticker := time.NewTicker(time.Duration(room.config.DBUpdateInterval * uint64(time.Second)))
 	defer ticker.Stop()
 
 	for {
@@ -122,14 +124,14 @@ func (room *Room) Start() {
 }
 
 func (room *Room) Close() error {
-	room.closeChan()
+	room.stop()
 
-	err := room.deleteDB()
+	err := room.cleanUpDB()
 	if err != nil {
 		return err
 	}
 
-	err = room.closeDB()
+	err = room.db.Close()
 	if err != nil {
 		return err
 	}
@@ -137,16 +139,16 @@ func (room *Room) Close() error {
 	return nil
 }
 
-func (room *Room) closeChan() {
+func (room *Room) stop() {
 	close(room.dbChannel)
 }
 
-func (room *Room) deleteDB() error {
-	return room.db.Delete()
-}
+func (room *Room) cleanUpDB() error {
+	if room.isPlaylistEmpty() {
+		return room.db.Delete()
+	}
 
-func (room *Room) closeDB() error {
-	return room.db.Close()
+	return nil
 }
 
 func (room *Room) Shutdown(ctx context.Context) {
@@ -269,13 +271,6 @@ func (room *Room) SetPosition(position uint64) {
 	}
 }
 
-func (room *Room) SetLastSeek(position uint64) {
-	room.stateMutex.Lock()
-	defer room.stateMutex.Unlock()
-
-	room.state.lastSeek = position
-}
-
 func (room *Room) SetSpeed(speed float64) {
 	room.stateMutex.Lock()
 	defer room.stateMutex.Unlock()
@@ -290,6 +285,13 @@ func (room *Room) SetPaused(paused bool) {
 	room.state.paused = paused
 }
 
+func (room *Room) SetPlaylist(playlist []string) {
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
+
+	room.state.playlist = playlist
+}
+
 func (room *Room) writePlaylist() error {
 	state := room.RoomState()
 	bytePlaylist, err := json.Marshal(state.playlist)
@@ -299,15 +301,16 @@ func (room *Room) writePlaylist() error {
 
 	video := ""
 	if state.video != nil {
-		video = *room.state.video
+		video = *state.video
 	}
 
 	position := uint64(0)
 	if state.position != nil {
-		position = *room.state.position
+		position = *state.position
 	}
 
-	err = room.db.UpdatePlaylist(room.name, bytePlaylist, video, position)
+	logger.Debugw("Writing playlist into db", "room", room.RoomConfig().Name, "playlist", state.playlist)
+	err = room.db.UpdatePlaylist(room.config.Name, bytePlaylist, video, position)
 	if err != nil {
 		return errors.New("Update key/value transaction for playlist failed")
 	}
@@ -373,18 +376,18 @@ func (room *Room) setPositionFromDB() {
 }
 
 func (room *Room) playlist() ([]byte, error) {
-	return room.db.GetValue(room.name, db.PlaylistKey)
+	return room.db.GetValue(room.config.Name, db.PlaylistKey)
 }
 
 func (room *Room) video() ([]byte, error) {
-	return room.db.GetValue(room.name, db.VideoKey)
+	return room.db.GetValue(room.config.Name, db.VideoKey)
 }
 
 func (room *Room) position() ([]byte, error) {
-	return room.db.GetValue(room.name, db.PositionKey)
+	return room.db.GetValue(room.config.Name, db.PositionKey)
 }
 
-func (room *Room) RoomState() *RoomState {
+func (room *Room) RoomState() RoomState {
 	room.stateMutex.RLock()
 	defer room.stateMutex.RUnlock()
 
@@ -392,7 +395,11 @@ func (room *Room) RoomState() *RoomState {
 }
 
 func (room *Room) Name() string {
-	return room.name
+	return room.config.Name
+}
+
+func (room *Room) RoomConfig() RoomConfig {
+	return room.config
 }
 
 func (room *Room) WorkerStatus() []Status {
@@ -415,7 +422,7 @@ func (room *Room) SetWorkerStatus(workerUUID uuid.UUID, status Status) {
 }
 
 func (room *Room) ShouldBeClosed() bool {
-	return room.isEmpty() && room.isPlaylistEmpty() && !room.persistent
+	return room.isEmpty() && room.isPlaylistEmpty() && !room.config.Persistent
 }
 
 func (room *Room) isEmpty() bool {
@@ -430,8 +437,4 @@ func (room *Room) isPlaylistEmpty() bool {
 	defer room.stateMutex.RUnlock()
 
 	return len(room.state.playlist) == 0
-}
-
-func (room *Room) IsPersistent() bool {
-	return room.persistent
 }

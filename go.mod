@@ -3,10 +3,9 @@ module github.com/sevenautumns/niketsu
 go 1.20
 
 require (
-	github.com/BurntSushi/toml v1.3.2
+	github.com/alecthomas/kong v0.8.0
 	github.com/golang/mock v1.6.0
 	github.com/google/uuid v1.3.0
-	github.com/jessevdk/go-flags v1.5.0
 	github.com/stretchr/testify v1.8.3
 	go.etcd.io/bbolt v1.3.7
 	go.uber.org/zap v1.24.0

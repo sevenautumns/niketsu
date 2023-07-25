@@ -2,7 +2,6 @@ package communication
 
 import (
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -52,7 +51,7 @@ type workerState struct {
 	uuid      uuid.UUID
 	loggedIn  bool
 	stopChan  chan int
-	closeOnce *sync.Once
+	closeOnce sync.Once
 	taskChan  chan Task
 	writeChan chan []byte
 }
@@ -63,10 +62,10 @@ type Worker struct {
 	room            RoomStateHandler
 	state           workerState
 	userStatus      Status
-	videoState      *workerVideoState
-	videoStateMutex *sync.RWMutex
-	latency         *workerLatency
-	latencyMutex    *sync.RWMutex
+	videoState      workerVideoState
+	videoStateMutex sync.RWMutex
+	latency         workerLatency
+	latencyMutex    sync.RWMutex
 }
 
 func NewWorker(roomHandler ServerStateHandler, websocket WebsocketReaderWriter, username string) ClientWorker {
@@ -76,16 +75,14 @@ func NewWorker(roomHandler ServerStateHandler, websocket WebsocketReaderWriter, 
 
 	worker.state = workerState{
 		uuid: uuid.New(), loggedIn: false, stopChan: make(chan int),
-		closeOnce: &sync.Once{}, taskChan: make(chan Task, maxBufferedTasks),
+		taskChan:  make(chan Task, maxBufferedTasks),
 		writeChan: make(chan []byte, maxBufferedMessages),
 	}
 
 	worker.room = nil
 	worker.userStatus = Status{Username: username}
-	worker.videoState = &workerVideoState{paused: true, speed: 1.0}
-	worker.videoStateMutex = &sync.RWMutex{}
-	worker.latency = &workerLatency{roundTripTime: 0, timestamps: make(map[uuid.UUID]time.Time)}
-	worker.latencyMutex = &sync.RWMutex{}
+	worker.videoState = workerVideoState{paused: true, speed: 1.0}
+	worker.latency = workerLatency{roundTripTime: 0, timestamps: make(map[uuid.UUID]time.Time)}
 
 	return &worker
 }
@@ -151,7 +148,7 @@ func (worker *Worker) Start() {
 
 func (worker *Worker) init() {
 	worker.state.stopChan = make(chan int)
-	worker.state.closeOnce = &sync.Once{}
+	worker.state.closeOnce = sync.Once{}
 	worker.state.taskChan = make(chan Task, maxBufferedTasks)
 	worker.state.writeChan = make(chan []byte, maxBufferedMessages)
 }
@@ -175,11 +172,9 @@ func (worker *Worker) schedule(f func(), interval time.Duration, wg *sync.WaitGr
 		for {
 			select {
 			case <-worker.state.stopChan:
-				log.Print("Ping done")
 				wg.Done()
 				return
 			case <-ticker.C:
-				log.Print("sending ping")
 				f()
 			}
 		}
@@ -246,7 +241,6 @@ func (worker *Worker) queueMessage(message []byte) {
 }
 
 func (worker *Worker) handleWriting(wg *sync.WaitGroup) {
-	defer log.Print("Writes done")
 	for {
 		select {
 		case <-worker.state.stopChan:
@@ -275,7 +269,6 @@ func (worker *Worker) write(message []byte) {
 }
 
 func (worker *Worker) handleReading(wg *sync.WaitGroup) {
-	defer log.Print("Reads done")
 	for {
 		select {
 		case <-worker.state.stopChan:
@@ -302,7 +295,6 @@ func (worker *Worker) read() {
 }
 
 func (worker *Worker) handleTasks(wg *sync.WaitGroup) {
-	defer log.Print("Task done")
 	for {
 		select {
 		case <-worker.state.stopChan:
@@ -320,10 +312,7 @@ func (worker *Worker) handleTasks(wg *sync.WaitGroup) {
 }
 
 func (worker *Worker) work(task Task) {
-	log.Print(string(task.payload))
 	message, err := UnmarshalMessage(task.payload)
-	log.Print(message)
-	log.Print(err)
 	if err != nil {
 		logger.Errorw("Unable to unmarshal client message")
 		return
@@ -399,7 +388,7 @@ func (worker *Worker) SetUserStatus(status Status) {
 	worker.userStatus = status
 }
 
-func (worker *Worker) VideoState() *workerVideoState {
+func (worker *Worker) VideoState() workerVideoState {
 	worker.videoStateMutex.RLock()
 	defer worker.videoStateMutex.RUnlock()
 
@@ -455,20 +444,28 @@ func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime tim
 	worker.setVideoState(videoStatus, arrivalTime)
 	roomState := worker.room.RoomState()
 
-	if *videoStatus.Filename != *roomState.video {
+	if worker.isVideoStateDifferent(videoStatus, roomState) {
 		worker.sendSelect(roomState.video)
 		return
 	}
 
 	if videoStatus.Speed != roomState.speed {
 		worker.sendSpeed(roomState.speed)
+		return
 	}
 
 	if videoStatus.Paused != roomState.paused {
 		worker.sendPausePlay(roomState.paused)
+		return
 	}
 
 	worker.handleTimeDifference()
+}
+
+func (worker *Worker) isVideoStateDifferent(videoStatus VideoStatus, roomState RoomState) bool {
+	return (videoStatus.Filename == nil && roomState.video != nil) ||
+		(videoStatus.Filename != nil && roomState.video != nil &&
+			*videoStatus.Filename != *roomState.video)
 }
 
 func (worker *Worker) sendSelect(filename *string) {
@@ -776,7 +773,6 @@ func (worker *Worker) broadcastUserMessage(message string) {
 }
 
 func (worker *Worker) broadcastPlaylist(playlist Playlist) {
-	log.Print(playlist.Playlist)
 	pl := Playlist{Playlist: playlist.Playlist, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(pl)
 	if err != nil {
@@ -803,7 +799,7 @@ func (worker *Worker) broadcastPause() {
 func (worker *Worker) broadcastStartOnReady() {
 	// cannot start nil video
 	roomState := worker.room.RoomState()
-	if roomState == nil || roomState.video == nil {
+	if roomState.video == nil {
 		return
 	}
 
@@ -839,13 +835,15 @@ func (worker *Worker) handlePlaylistUpdate(playlist []string) {
 		nextVideo := worker.findNext(playlist, state)
 		worker.setNextVideo(nextVideo, *state.video, worker.room)
 	}
+
+	worker.room.SetPlaylist(playlist)
 }
 
 func (worker *Worker) isPlaylistUpdateRequired(video *string, oldPlaylist []string, newPlaylist []string) bool {
 	return video != nil && len(newPlaylist) != 0 && len(newPlaylist) < len(oldPlaylist)
 }
 
-func (worker *Worker) findNext(newPlaylist []string, state *RoomState) string {
+func (worker *Worker) findNext(newPlaylist []string, state RoomState) string {
 	newPlaylistPosition := 0
 
 	for _, video := range state.playlist {

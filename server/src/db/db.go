@@ -2,12 +2,10 @@ package db
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"os"
 	"time"
 
-	"github.com/sevenautumns/niketsu/server/src/config"
 	"go.etcd.io/bbolt"
 )
 
@@ -17,6 +15,7 @@ const (
 	PositionKey = "position"
 )
 
+// TODO updateplaylist -> update abitrary map elements
 // Functionality for updating the states. Buckets and keys are only created
 // based on the Update() function.
 type DBManager interface {
@@ -28,7 +27,7 @@ type DBManager interface {
 	DeleteKey(bucket string, key string) error
 	DeleteBucket(bucket string) error
 	UpdatePlaylist(bucket string, playlist []byte, video string, position uint64) error
-	GetRoomConfigs(bucket string) (map[string]config.RoomConfig, error)
+	GetAll(bucket string) (map[string][]byte, error)
 }
 
 type BoltKeyValueStore struct {
@@ -59,6 +58,7 @@ func (keyValueStore *BoltKeyValueStore) Close() error {
 	if keyValueStore.db == nil {
 		return errors.New("Database not initialized. Can not call Close()")
 	}
+
 	return keyValueStore.db.Close()
 }
 
@@ -155,8 +155,8 @@ func (keyValueStore *BoltKeyValueStore) UpdatePlaylist(bucket string, playlist [
 	return err
 }
 
-func (keyValueStore *BoltKeyValueStore) GetRoomConfigs(bucket string) (map[string]config.RoomConfig, error) {
-	roomConfigs := make(map[string]config.RoomConfig, 0)
+func (keyValueStore *BoltKeyValueStore) GetAll(bucket string) (map[string][]byte, error) {
+	bucketValues := make(map[string][]byte, 0)
 	err := keyValueStore.db.Update(func(tx *bbolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte(bucket))
 		if err != nil {
@@ -164,12 +164,7 @@ func (keyValueStore *BoltKeyValueStore) GetRoomConfigs(bucket string) (map[strin
 		}
 
 		b.ForEach(func(k, v []byte) error {
-			var roomConfig config.RoomConfig
-			err := json.Unmarshal(v, &roomConfig)
-			if err != nil {
-				return err
-			}
-			roomConfigs[string(k[:])] = roomConfig
+			bucketValues[string(k[:])] = v
 
 			return nil
 		})
@@ -181,5 +176,5 @@ func (keyValueStore *BoltKeyValueStore) GetRoomConfigs(bucket string) (map[strin
 		return nil, err
 	}
 
-	return roomConfigs, nil
+	return bucketValues, nil
 }

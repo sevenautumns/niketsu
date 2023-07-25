@@ -6,22 +6,24 @@ import (
 	"github.com/sevenautumns/niketsu/server/src/logger"
 )
 
-var conf config.Config
+var cli config.CLI
 
 func init() {
-	conf = config.ParseConfig()
-	logger.NewGlobalLogger(conf.General.Debug)
+	cli = config.ParseCommandArgs()
+	config.PrintConfig(cli)
+	logger.NewGlobalLogger(cli.Debug)
 }
 
 func main() {
 	defer logger.Sync()
 
-	server := communication.NewServer(conf.General)
-	err := server.Init(conf.Rooms)
+	server := communication.NewServer(cli.Password, cli.DBPath, cli.DBUpdateInterval, cli.DBWaitTimeout)
+	err := server.Init()
 	if err != nil {
 		logger.Fatalw("Failed to initialize handler", "error", err)
 	}
-	handler := communication.NewWebSocketHandler(conf.General, server, communication.NewWsReaderWriter, communication.NewWorker)
+	handler := communication.NewWebSocketHandler(cli.Host, cli.Port, cli.Cert, cli.Key,
+		server, communication.NewWsReaderWriter, communication.NewWorker)
 	err = handler.Listen()
 	if err != nil {
 		logger.Fatalw("Shutting down server", "error", err)

@@ -111,20 +111,6 @@ func (mr *MockRoomStateHandlerMockRecorder) DeleteWorker(workerUUID interface{})
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteWorker", reflect.TypeOf((*MockRoomStateHandler)(nil).DeleteWorker), workerUUID)
 }
 
-// IsPersistent mocks base method.
-func (m *MockRoomStateHandler) IsPersistent() bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsPersistent")
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// IsPersistent indicates an expected call of IsPersistent.
-func (mr *MockRoomStateHandlerMockRecorder) IsPersistent() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsPersistent", reflect.TypeOf((*MockRoomStateHandler)(nil).IsPersistent))
-}
-
 // Name mocks base method.
 func (m *MockRoomStateHandler) Name() string {
 	m.ctrl.T.Helper()
@@ -139,11 +125,25 @@ func (mr *MockRoomStateHandlerMockRecorder) Name() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Name", reflect.TypeOf((*MockRoomStateHandler)(nil).Name))
 }
 
+// RoomConfig mocks base method.
+func (m *MockRoomStateHandler) RoomConfig() RoomConfig {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RoomConfig")
+	ret0, _ := ret[0].(RoomConfig)
+	return ret0
+}
+
+// RoomConfig indicates an expected call of RoomConfig.
+func (mr *MockRoomStateHandlerMockRecorder) RoomConfig() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RoomConfig", reflect.TypeOf((*MockRoomStateHandler)(nil).RoomConfig))
+}
+
 // RoomState mocks base method.
-func (m *MockRoomStateHandler) RoomState() *RoomState {
+func (m *MockRoomStateHandler) RoomState() RoomState {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RoomState")
-	ret0, _ := ret[0].(*RoomState)
+	ret0, _ := ret[0].(RoomState)
 	return ret0
 }
 
@@ -163,6 +163,18 @@ func (m *MockRoomStateHandler) SetPaused(paused bool) {
 func (mr *MockRoomStateHandlerMockRecorder) SetPaused(paused interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetPaused", reflect.TypeOf((*MockRoomStateHandler)(nil).SetPaused), paused)
+}
+
+// SetPlaylist mocks base method.
+func (m *MockRoomStateHandler) SetPlaylist(playlist []string) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetPlaylist", playlist)
+}
+
+// SetPlaylist indicates an expected call of SetPlaylist.
+func (mr *MockRoomStateHandlerMockRecorder) SetPlaylist(playlist interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetPlaylist", reflect.TypeOf((*MockRoomStateHandler)(nil).SetPlaylist), playlist)
 }
 
 // SetPlaylistState mocks base method.

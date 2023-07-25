@@ -2,7 +2,6 @@ package communication
 
 import (
 	"fmt"
-	"log"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -142,8 +141,6 @@ func TestMarshal(t *testing.T) {
 				{Username: testUsername2, Ready: testReady}},
 			"room2": {}},
 	})
-	log.Print(statusListMessage)
-	log.Print(string(statusList))
 	testMessageContent(t, []byte(statusListMessage), statusList, err)
 
 	pause, err := MarshalMessage(Pause{

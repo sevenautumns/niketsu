@@ -26,7 +26,7 @@ var (
 	simpleMessage     = []byte("test message")
 	simpleStatus      = Status{Username: username, Ready: notReady}
 	emptyStatus       = Status{}
-	simpleVideoState  = &workerVideoState{
+	simpleVideoState  = workerVideoState{
 		video:     &testWorkerVideo,
 		position:  &testWorkerPosition,
 		timestamp: closeDate,
@@ -36,7 +36,7 @@ var (
 	testWorkerVideo    string = "testVideo"
 	testWorkerVideo2   string = "testVideo2"
 	testWorkerPosition uint64 = 100
-	emptyVideoState           = &workerVideoState{}
+	emptyVideoState           = workerVideoState{}
 	simpleVideoStatus         = VideoStatus{
 		Filename: &testWorkerVideo,
 		Position: &testWorkerPosition,
@@ -70,7 +70,6 @@ func TestNewWorker(t *testing.T) {
 	mockRoomHandler := NewMockServerStateHandler(ctrl)
 	mockWebsocket := NewMockWebsocketReaderWriter(ctrl)
 	worker := NewWorker(mockRoomHandler, mockWebsocket, username)
-
 	require.NotNil(t, worker)
 	testCorrectWorkerState(t, worker.(*Worker))
 }
@@ -79,12 +78,10 @@ func testCorrectWorkerState(t *testing.T, worker *Worker) {
 	require.NotNil(t, worker.roomHandler)
 	require.NotNil(t, worker.websocket)
 
-	require.NotNil(t, worker.state)
 	require.NotNil(t, worker.state.uuid)
 	require.Nil(t, worker.room)
 	require.NotNil(t, worker.state.loggedIn)
 	require.Empty(t, worker.state.stopChan)
-	require.NotNil(t, worker.state.closeOnce)
 
 	require.NotNil(t, worker.userStatus)
 	userStatus := worker.userStatus
@@ -101,7 +98,6 @@ func testCorrectWorkerState(t *testing.T, worker *Worker) {
 	require.NotNil(t, worker.latency)
 	require.Empty(t, worker.latency.roundTripTime)
 	require.Empty(t, worker.latency.timestamps)
-	require.NotNil(t, worker.latencyMutex)
 }
 
 func TestWorkerStartClose(t *testing.T) {
@@ -113,15 +109,12 @@ func TestWorkerStartClose(t *testing.T) {
 		websocket: mockWebsocket,
 		state: workerState{
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 		},
-		latency:      &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
-		latencyMutex: &sync.RWMutex{},
+		latency: workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 }
 
 func setUpMockWebsocket(ctrl *gomock.Controller, readMessage []byte) *MockWebsocketReaderWriter {
@@ -132,7 +125,7 @@ func setUpMockWebsocket(ctrl *gomock.Controller, readMessage []byte) *MockWebsoc
 			time.Sleep(messageDelay)
 			return readMessage, nil
 		}).
-		AnyTimes()
+		MinTimes(1)
 
 	mockWebsocket.EXPECT().
 		WriteMessage(gomock.Any()).
@@ -143,13 +136,12 @@ func setUpMockWebsocket(ctrl *gomock.Controller, readMessage []byte) *MockWebsoc
 
 	mockWebsocket.EXPECT().
 		Close().
-		Return(nil).
-		Times(1)
+		Return(nil)
 
 	return mockWebsocket
 }
 
-func startCloseWorker(t *testing.T, worker ClientWorker) {
+func testStartCloseWorker(t *testing.T, worker ClientWorker) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go startWorker(t, worker, &wg)
@@ -169,58 +161,58 @@ func TestWorkerStartCloseWithRoom(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockWebsocket := setUpMockWebsocket(ctrl, nil)
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, false)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
-
 	worker := &Worker{
 		websocket:   mockWebsocket,
 		room:        mockRoom,
 		roomHandler: mockRoomHandler,
 		state: workerState{
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 		},
-		latency:      &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
-		latencyMutex: &sync.RWMutex{},
+		latency: workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 }
 
-func setUpMockRoom(ctrl *gomock.Controller, roomState RoomState, allUsersReady bool, shouldBeClosed bool) *MockRoomStateHandler {
+func setUpMockRoom(
+	ctrl *gomock.Controller, roomState RoomState,
+	useAllUsersReady bool, allUsersReady bool,
+	shouldBeClosed bool, useRoomState bool) *MockRoomStateHandler {
 	mockRoom := NewMockRoomStateHandler(ctrl)
 
-	mockRoom.EXPECT().
-		RoomState().
-		Return(&roomState).
-		AnyTimes()
+	if useRoomState {
+		mockRoom.EXPECT().
+			RoomState().
+			Return(roomState).
+			MinTimes(1)
+	}
 
-	mockRoom.EXPECT().
-		AllUsersReady().
-		Return(allUsersReady).
-		AnyTimes()
+	if useAllUsersReady {
+		mockRoom.EXPECT().
+			AllUsersReady().
+			Return(allUsersReady).
+			MinTimes(1)
+	}
 
 	mockRoom.EXPECT().
 		SetPaused(gomock.Any()).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoom.EXPECT().
-		DeleteWorker(gomock.Any()).
-		Times(1)
+		DeleteWorker(gomock.Any())
 
 	mockRoom.EXPECT().
 		ShouldBeClosed().
-		Return(shouldBeClosed).
-		Times(1)
+		Return(shouldBeClosed)
 
 	return mockRoom
 }
 
 func setUpMockRoomHandler(ctrl *gomock.Controller, expectedBroadcasts int, expectedDeleteRoom int) *MockServerStateHandler {
 	mockRoomHandler := NewMockServerStateHandler(ctrl)
-
 	mockRoomHandler.EXPECT().
 		BroadcastStatusList().
 		Times(expectedBroadcasts)
@@ -241,16 +233,13 @@ func TestCloseBeforeStart(t *testing.T) {
 		websocket: mockWebsocket,
 		state: workerState{
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 		},
-		latency:      &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
-		latencyMutex: &sync.RWMutex{},
+		latency: workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
-
 	worker.Close()
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 }
 
 func TestShutdown(t *testing.T) {
@@ -262,14 +251,11 @@ func TestShutdown(t *testing.T) {
 		websocket: mockWebsocket,
 		state: workerState{
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 		},
-		latency:      &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
-		latencyMutex: &sync.RWMutex{},
+		latency: workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
-
 	startShutdownWorker(t, worker)
 }
 
@@ -296,16 +282,13 @@ func TestHandlePing(t *testing.T) {
 		websocket: mockWebsocket,
 		state: workerState{
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		latency:      &workerLatency{timestamps: timestamps},
-		latencyMutex: &sync.RWMutex{},
+		latency: workerLatency{timestamps: timestamps},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 	require.NotEmpty(t, worker.latency.roundTripTime)
 }
 
@@ -314,13 +297,14 @@ func TestHandleStatus(t *testing.T) {
 	defer ctrl.Finish()
 
 	status := []byte(fmt.Sprintf(`{"ready":%t,"username":"%s","type":"status"}`, notReady, username))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, true, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 2, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, status)
-
 	mockRoom.EXPECT().
-		SetWorkerStatus(gomock.Eq(defaultUUID), gomock.Eq(Status{Ready: notReady, Username: username})).
-		AnyTimes()
+		SetWorkerStatus(
+			gomock.Eq(defaultUUID),
+			gomock.Eq(Status{Ready: notReady, Username: username})).
+		MinTimes(1)
 
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
@@ -329,17 +313,14 @@ func TestHandleStatus(t *testing.T) {
 		state: workerState{
 			uuid:      defaultUUID,
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
 		userStatus:   Status{Ready: true, Username: ""},
-		latencyMutex: &sync.RWMutex{},
-		latency:      &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		latencyMutex: sync.RWMutex{},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 	require.NotEmpty(t, worker.userStatus)
 	require.Equal(t, notReady, worker.userStatus.Ready)
 	require.Equal(t, username, worker.userStatus.Username)
@@ -351,11 +332,14 @@ func TestHandleVideoStatusEqualStates(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	videoStatus := []byte(fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-		testWorkerVideo, testWorkerPosition, notPaused, defaultSpeed, username))
-
-	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus)
-	startCloseWorker(t, worker)
+	videoStatus := []byte(
+		fmt.Sprintf(
+			`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
+			testWorkerVideo, testWorkerPosition, notPaused, defaultSpeed, username,
+		),
+	)
+	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus, true)
+	testStartCloseWorker(t, worker)
 
 	require.Equal(t, testWorkerVideo, *worker.videoState.video)
 	require.Equal(t, testWorkerPosition, *worker.videoState.position)
@@ -364,16 +348,19 @@ func TestHandleVideoStatusEqualStates(t *testing.T) {
 	require.NotEmpty(t, worker.videoState.timestamp)
 }
 
-func setUpWorkerForVideoStatus(t *testing.T, ctrl *gomock.Controller, videoStatus []byte) *Worker {
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
-	mockRoom.EXPECT().
-		SlowestEstimatedClientPosition().
-		Return(&testWorkerPosition).
-		AnyTimes()
+func setUpWorkerForVideoStatus(t *testing.T, ctrl *gomock.Controller, videoStatus []byte, useSyncing bool) *Worker {
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, true)
 
-	mockRoom.EXPECT().
-		SetPosition(gomock.Eq(testWorkerPosition)).
-		AnyTimes()
+	if useSyncing {
+		mockRoom.EXPECT().
+			SlowestEstimatedClientPosition().
+			Return(&testWorkerPosition).
+			MinTimes(1)
+
+		mockRoom.EXPECT().
+			SetPosition(gomock.Eq(testWorkerPosition)).
+			MinTimes(1)
+	}
 
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, videoStatus)
@@ -384,16 +371,13 @@ func setUpWorkerForVideoStatus(t *testing.T, ctrl *gomock.Controller, videoStatu
 		room:        mockRoom,
 		state: workerState{
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		videoState:      &workerVideoState{},
-		videoStateMutex: &sync.RWMutex{},
-		userStatus:      Status{Ready: true, Username: ""},
-		latencyMutex:    &sync.RWMutex{},
-		latency:         &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		videoState: workerVideoState{},
+		userStatus: Status{Ready: true, Username: ""},
+		latency:    workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
 
 	return worker
@@ -403,11 +387,13 @@ func TestHandleVideoStatusIncorrectFilename(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	videoStatus := []byte(fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-		testWorkerVideo2, testWorkerPosition, notPaused, defaultSpeed, username))
-
-	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus)
-	startCloseWorker(t, worker)
+	videoStatus := []byte(
+		fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
+			testWorkerVideo2, testWorkerPosition, notPaused, defaultSpeed, username,
+		),
+	)
+	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus, false)
+	testStartCloseWorker(t, worker)
 
 	require.Equal(t, testWorkerVideo2, *worker.videoState.video)
 	require.Equal(t, testWorkerPosition, *worker.videoState.position)
@@ -420,11 +406,13 @@ func TestHandleVideoStatusIncorrectSpeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	videoStatus := []byte(fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-		testWorkerVideo, testWorkerPosition, notPaused, 2.0, username))
-
-	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus)
-	startCloseWorker(t, worker)
+	videoStatus := []byte(
+		fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
+			testWorkerVideo, testWorkerPosition, notPaused, 2.0, username,
+		),
+	)
+	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus, false)
+	testStartCloseWorker(t, worker)
 
 	require.Equal(t, testWorkerVideo, *worker.videoState.video)
 	require.Equal(t, testWorkerPosition, *worker.videoState.position)
@@ -437,11 +425,13 @@ func TestHandleVideoStatusIncorrectPaused(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	videoStatus := []byte(fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-		testWorkerVideo, testWorkerPosition, true, defaultSpeed, username))
-
-	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus)
-	startCloseWorker(t, worker)
+	videoStatus := []byte(
+		fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
+			testWorkerVideo, testWorkerPosition, true, defaultSpeed, username,
+		),
+	)
+	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus, false)
+	testStartCloseWorker(t, worker)
 
 	require.Equal(t, testWorkerVideo, *worker.videoState.video)
 	require.Equal(t, testWorkerPosition, *worker.videoState.position)
@@ -455,16 +445,12 @@ func TestHandleStart(t *testing.T) {
 	defer ctrl.Finish()
 
 	status := []byte(fmt.Sprintf(`{"username":"%s","type":"start"}`, username))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, false)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, status)
 	mockRoom.EXPECT().
-		SetPaused(gomock.Eq(false)).
-		AnyTimes()
-
-	mockRoom.EXPECT().
 		BroadcastExcept(gomock.Eq(status), gomock.Eq(defaultUUID)).
-		AnyTimes()
+		MinTimes(1)
 
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
@@ -473,19 +459,15 @@ func TestHandleStart(t *testing.T) {
 		state: workerState{
 			uuid:      defaultUUID,
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		videoState:      simpleVideoState,
-		videoStateMutex: &sync.RWMutex{},
-		userStatus:      Status{Username: username},
-		latencyMutex:    &sync.RWMutex{},
-		latency:         &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		videoState:   simpleVideoState,
+		userStatus:   Status{Username: username},
+		latencyMutex: sync.RWMutex{},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 	require.Equal(t, false, worker.videoState.paused)
 }
 
@@ -493,23 +475,25 @@ func TestHandleSeek(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	seek := []byte(fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"","type":"seek"}`,
-		testWorkerVideo, testWorkerPosition, defaultSpeed, notPaused, false))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	seek := []byte(
+		fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"","type":"seek"}`,
+			testWorkerVideo, testWorkerPosition, defaultSpeed, notPaused, false,
+		),
+	)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, seek)
-
 	mockRoom.EXPECT().
 		SetPlaylistState(gomock.Any(), gomock.Eq(testWorkerPosition),
 			gomock.Eq(notPaused), gomock.Eq(testWorkerPosition), gomock.Eq(defaultSpeed)).
 		Do(func(filename *string, position uint64, paused bool, lastSeek uint64, speed float64) {
 			require.Equal(t, testWorkerVideo, *filename)
 		}).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoom.EXPECT().
 		BroadcastExcept(gomock.Eq(seek), gomock.Eq(defaultUUID)).
-		AnyTimes()
+		MinTimes(1)
 
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
@@ -518,18 +502,15 @@ func TestHandleSeek(t *testing.T) {
 		state: workerState{
 			uuid:      defaultUUID,
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		videoState:      emptyVideoState,
-		videoStateMutex: &sync.RWMutex{},
-		latencyMutex:    &sync.RWMutex{},
-		latency:         &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		videoState:   emptyVideoState,
+		latencyMutex: sync.RWMutex{},
 	}
+	testStartCloseWorker(t, worker)
 
-	startCloseWorker(t, worker)
 	require.Equal(t, notPaused, worker.videoState.paused)
 	require.Equal(t, testWorkerPosition, *worker.videoState.position)
 	require.Equal(t, defaultSpeed, worker.videoState.speed)
@@ -541,20 +522,19 @@ func TestHandleSelect(t *testing.T) {
 	defer ctrl.Finish()
 
 	sel := []byte(fmt.Sprintf(`{"filename":"%s","username":"","type":"select"}`, testWorkerVideo))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, true, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, sel)
-
 	mockRoom.EXPECT().
 		SetPlaylistState(gomock.Any(), gomock.Eq(uint64(0)), gomock.Eq(true), gomock.Eq(uint64(0)), gomock.Eq(float64(-1))).
 		Do(func(filename *string, position uint64, paused bool, lastSeek uint64, speed float64) {
 			require.Equal(t, testWorkerVideo, *filename)
 		}).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoom.EXPECT().
 		BroadcastExcept(gomock.Eq(sel), gomock.Eq(defaultUUID)).
-		AnyTimes()
+		MinTimes(1)
 
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
@@ -563,18 +543,15 @@ func TestHandleSelect(t *testing.T) {
 		state: workerState{
 			uuid:      defaultUUID,
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		videoState:      &workerVideoState{speed: 1},
-		videoStateMutex: &sync.RWMutex{},
-		latencyMutex:    &sync.RWMutex{},
-		latency:         &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		videoState: workerVideoState{speed: 1},
+		latency:    workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
+	testStartCloseWorker(t, worker)
 
-	startCloseWorker(t, worker)
 	require.Equal(t, paused, worker.videoState.paused)
 	require.Equal(t, uint64(0), *worker.videoState.position)
 	require.Equal(t, float64(1), worker.videoState.speed)
@@ -585,14 +562,17 @@ func TestHandleUserMessage(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	userMessage := []byte(fmt.Sprintf(`{"message":"%s","username":"%s","type":"userMessage"}`, testWorkerVideo, username))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	userMessage := []byte(
+		fmt.Sprintf(`{"message":"%s","username":"%s","type":"userMessage"}`,
+			testWorkerVideo, username,
+		),
+	)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, false)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, userMessage)
-
 	mockRoom.EXPECT().
 		BroadcastExcept(gomock.Eq(userMessage), gomock.Eq(defaultUUID)).
-		AnyTimes()
+		MinTimes(1)
 
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
@@ -601,19 +581,17 @@ func TestHandleUserMessage(t *testing.T) {
 		state: workerState{
 			uuid:      defaultUUID,
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		userStatus:   Status{Username: username},
-		latencyMutex: &sync.RWMutex{},
-		latency:      &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		userStatus: Status{Username: username},
+		latency:    workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 }
 
+// TODO test playlist change
 func TestHandlePlaylist(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -621,13 +599,16 @@ func TestHandlePlaylist(t *testing.T) {
 	jsonPlaylist, err := json.Marshal(simplePlaylist)
 	require.NoError(t, err)
 	playlist := []byte(fmt.Sprintf(`{"playlist":%s,"username":"","type":"playlist"}`, string(jsonPlaylist)))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, playlist)
-
 	mockRoom.EXPECT().
 		BroadcastAll(gomock.Eq(playlist)).
-		AnyTimes()
+		MinTimes(1)
+
+	mockRoom.EXPECT().
+		SetPlaylist(gomock.Eq(simplePlaylist)).
+		MinTimes(1)
 
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
@@ -635,36 +616,26 @@ func TestHandlePlaylist(t *testing.T) {
 		room:        mockRoom,
 		state: workerState{
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		latencyMutex: &sync.RWMutex{},
-		latency:      &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		latencyMutex: sync.RWMutex{},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 }
-
-//TODO test playlist change
 
 func TestHandlePause(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	pause := []byte(fmt.Sprintf(`{"username":"","type":"pause"}`))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, false)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, pause)
-
 	mockRoom.EXPECT().
 		BroadcastExcept(gomock.Eq(pause), gomock.Eq(defaultUUID)).
-		AnyTimes()
-
-	mockRoom.EXPECT().
-		SetPaused(gomock.Eq(true)).
-		AnyTimes()
+		MinTimes(1)
 
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
@@ -673,18 +644,14 @@ func TestHandlePause(t *testing.T) {
 		state: workerState{
 			uuid:      defaultUUID,
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		videoState:      &workerVideoState{},
-		videoStateMutex: &sync.RWMutex{},
-		latencyMutex:    &sync.RWMutex{},
-		latency:         &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		videoState: workerVideoState{},
+		latency:    workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 	require.True(t, worker.videoState.paused)
 }
 
@@ -692,15 +659,18 @@ func TestHandleFailedJoin(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	join := []byte(fmt.Sprintf(`{"password":"%s","room":"%s","username":"%s","type":"join"}`, "testPassword", "testRoom", username))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	join := []byte(
+		fmt.Sprintf(`{"password":"%s","room":"%s","username":"%s","type":"join"}`,
+			"testPassword", "testRoom", username,
+		),
+	)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, false)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, join)
-
 	mockRoomHandler.EXPECT().
 		IsPasswordCorrect(gomock.Eq("testPassword")).
 		Return(false).
-		AnyTimes()
+		MinTimes(1)
 
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
@@ -709,17 +679,13 @@ func TestHandleFailedJoin(t *testing.T) {
 		state: workerState{
 			uuid:      defaultUUID,
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 		},
-		videoState:      &workerVideoState{},
-		videoStateMutex: &sync.RWMutex{},
-		latencyMutex:    &sync.RWMutex{},
-		latency:         &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		videoState: workerVideoState{},
+		latency:    workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 	require.False(t, worker.state.loggedIn)
 }
 
@@ -727,53 +693,56 @@ func TestHandleJoin(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	join := []byte(fmt.Sprintf(`{"password":"%s","room":"%s","username":"%s","type":"join"}`, "testPassword", "testRoom", username))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	join := []byte(
+		fmt.Sprintf(`{"password":"%s","room":"%s","username":"%s","type":"join"}`,
+			"testPassword", "testRoom", username,
+		),
+	)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, join)
-
 	mockRoom.EXPECT().
 		DeleteWorker(gomock.Eq(defaultUUID)).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoom.EXPECT().
 		ShouldBeClosed().
 		Return(true).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoom.EXPECT().
 		Close().
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoom.EXPECT().
 		SetWorkerStatus(gomock.Eq(defaultUUID), gomock.Eq(Status{Ready: false, Username: username})).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoom.EXPECT().
 		Start().
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoomHandler.EXPECT().
 		CreateOrFindRoom(gomock.Eq("testRoom")).
 		Return(mockRoom, nil).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoomHandler.EXPECT().
 		IsPasswordCorrect(gomock.Eq("testPassword")).
 		Return(true).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoomHandler.EXPECT().
 		AppendRoom(gomock.Eq(mockRoom)).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoomHandler.EXPECT().
 		DeleteRoom(gomock.Eq(mockRoom)).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoomHandler.EXPECT().
 		BroadcastStatusList().
-		AnyTimes()
+		MinTimes(1)
 
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
@@ -782,21 +751,18 @@ func TestHandleJoin(t *testing.T) {
 		state: workerState{
 			uuid:      defaultUUID,
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 		},
-		videoState:      &workerVideoState{},
-		videoStateMutex: &sync.RWMutex{},
-		latencyMutex:    &sync.RWMutex{},
-		latency:         &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		videoState: workerVideoState{},
+		latency:    workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
 
 	mockRoom.EXPECT().
 		AppendWorker(worker).
-		AnyTimes()
+		MinTimes(1)
 
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 	require.True(t, worker.state.loggedIn)
 }
 
@@ -805,17 +771,17 @@ func TestHandlePlaybackSpeed(t *testing.T) {
 	defer ctrl.Finish()
 
 	playbackSpeed := []byte(fmt.Sprintf(`{"speed":%g,"username":"","type":"playbackSpeed"}`, defaultSpeed))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, false)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, playbackSpeed)
 
 	mockRoom.EXPECT().
 		BroadcastExcept(gomock.Eq(playbackSpeed), gomock.Eq(defaultUUID)).
-		AnyTimes()
+		MinTimes(1)
 
 	mockRoom.EXPECT().
 		SetSpeed(gomock.Eq(defaultSpeed)).
-		AnyTimes()
+		MinTimes(1)
 
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
@@ -824,18 +790,14 @@ func TestHandlePlaybackSpeed(t *testing.T) {
 		state: workerState{
 			uuid:      defaultUUID,
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		videoState:      &workerVideoState{},
-		videoStateMutex: &sync.RWMutex{},
-		latencyMutex:    &sync.RWMutex{},
-		latency:         &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		videoState: workerVideoState{},
+		latency:    workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 	require.Equal(t, defaultSpeed, worker.videoState.speed)
 }
 
@@ -843,11 +805,10 @@ func TestHandleUnknown(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	unknown := []byte(fmt.Sprintf(`{"someObject":"someText","type":"someType"}`))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false)
+	unknown := []byte(fmt.Sprintf(`{"someObject":"someText,"type":"someType"}`))
+	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, false)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, unknown)
-
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
 		websocket:   mockWebsocket,
@@ -855,16 +816,13 @@ func TestHandleUnknown(t *testing.T) {
 		state: workerState{
 			uuid:      defaultUUID,
 			stopChan:  make(chan int),
-			closeOnce: &sync.Once{},
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		latencyMutex: &sync.RWMutex{},
-		latency:      &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		latency: workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
-
-	startCloseWorker(t, worker)
+	testStartCloseWorker(t, worker)
 }
 
 func TestSendPing(t *testing.T) {
@@ -872,9 +830,8 @@ func TestSendPing(t *testing.T) {
 	defer ctrl.Finish()
 
 	worker := &Worker{
-		latencyMutex: &sync.RWMutex{},
-		latency:      &workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
-		state:        workerState{writeChan: make(chan []byte, 2)},
+		latency: workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
+		state:   workerState{writeChan: make(chan []byte, 2)},
 	}
 	require.Empty(t, worker.latency.timestamps)
 	worker.sendPing()
@@ -898,8 +855,7 @@ func TestDeletePings(t *testing.T) {
 
 func testDeletePingsSome(t *testing.T) {
 	worker := &Worker{
-		latencyMutex: &sync.RWMutex{},
-		latency: &workerLatency{timestamps: map[uuid.UUID]time.Time{
+		latency: workerLatency{timestamps: map[uuid.UUID]time.Time{
 			workerUUIDS[0]: closeDate,
 			workerUUIDS[1]: farDate,
 		}},
@@ -911,8 +867,7 @@ func testDeletePingsSome(t *testing.T) {
 
 func testDeletePingsAll(t *testing.T) {
 	worker := &Worker{
-		latencyMutex: &sync.RWMutex{},
-		latency: &workerLatency{timestamps: map[uuid.UUID]time.Time{
+		latency: workerLatency{timestamps: map[uuid.UUID]time.Time{
 			workerUUIDS[0]: farDate,
 			workerUUIDS[1]: farDate,
 		}},
@@ -923,8 +878,7 @@ func testDeletePingsAll(t *testing.T) {
 
 func testDeletePingsNone(t *testing.T) {
 	worker := &Worker{
-		latencyMutex: &sync.RWMutex{},
-		latency: &workerLatency{timestamps: map[uuid.UUID]time.Time{
+		latency: workerLatency{timestamps: map[uuid.UUID]time.Time{
 			workerUUIDS[0]: closeDate,
 			workerUUIDS[1]: closeDate,
 		}},
@@ -941,7 +895,6 @@ func testDeletePingsNone(t *testing.T) {
 
 func TestUUID(t *testing.T) {
 	worker := Worker{state: workerState{}}
-
 	worker.state.uuid = workerUUIDS[0]
 	workerUUID := worker.UUID()
 	require.Equal(t, workerUUIDS[0], workerUUID)
@@ -949,10 +902,8 @@ func TestUUID(t *testing.T) {
 
 func TestSetUserStatus(t *testing.T) {
 	worker := Worker{}
-
 	worker.SetUserStatus(simpleStatus)
-	status := worker.userStatus
-	require.Equal(t, simpleStatus, status)
+	require.Equal(t, simpleStatus, worker.userStatus)
 
 	worker.SetUserStatus(emptyStatus)
 	require.Equal(t, emptyStatus, worker.userStatus)
@@ -960,28 +911,10 @@ func TestSetUserStatus(t *testing.T) {
 
 func TestVideoState(t *testing.T) {
 	worker := Worker{
-		videoState:      simpleVideoState,
-		videoStateMutex: &sync.RWMutex{},
+		videoState: simpleVideoState,
 	}
-
-	worker.videoState = simpleVideoState
 	videoState := worker.VideoState()
 	require.Equal(t, simpleVideoState, videoState)
-}
-
-func TestSetVideoState(t *testing.T) {
-	worker := &Worker{videoState: &workerVideoState{},
-		latencyMutex:    &sync.RWMutex{},
-		latency:         &workerLatency{},
-		videoStateMutex: &sync.RWMutex{},
-	}
-
-	worker.setVideoState(simpleVideoStatus, sampleArrivalTime)
-	require.Equal(t, *simpleVideoStatus.Filename, *worker.videoState.video)
-	require.Equal(t, *simpleVideoStatus.Position, *worker.videoState.position)
-	require.Equal(t, simpleVideoStatus.Paused, worker.videoState.paused)
-	require.Equal(t, sampleArrivalTime, worker.videoState.timestamp)
-	require.Equal(t, simpleVideoStatus.Speed, worker.videoState.speed)
 }
 
 func TestSendSeek(t *testing.T) {
@@ -989,27 +922,26 @@ func TestSendSeek(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRoom := NewMockRoomStateHandler(ctrl)
-
 	mockRoom.EXPECT().
 		RoomState().
-		Return(&simpleRoomState).
-		AnyTimes()
+		Return(simpleRoomState).
+		MinTimes(1)
 
 	worker := &Worker{
 		room: mockRoom,
 		state: workerState{
 			writeChan: make(chan []byte, 10),
 		},
-		videoState:      &workerVideoState{},
-		videoStateMutex: &sync.RWMutex{},
-		latency:         &workerLatency{},
-		latencyMutex:    &sync.RWMutex{},
+		videoState: workerVideoState{},
+		latency:    workerLatency{},
 	}
-
 	worker.sendSeek(true)
 	message := <-worker.state.writeChan
-	expectedMessage := []byte(fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"","type":"seek"}`,
-		*simpleRoomState.video, *simpleRoomState.position, simpleRoomState.speed, simpleRoomState.paused, true))
+	expectedMessage := []byte(
+		fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"","type":"seek"}`,
+			*simpleRoomState.video, *simpleRoomState.position, simpleRoomState.speed, simpleRoomState.paused, true,
+		),
+	)
 
 	require.Equal(t, expectedMessage, message)
 }
@@ -1022,7 +954,6 @@ func TestSendMessage(t *testing.T) {
 			writeChan: make(chan []byte, 10),
 		},
 	}
-
 	message := []byte(`{"some":"message"}`)
 	worker.SendMessage(message)
 	receivedMessage := <-worker.state.writeChan
@@ -1035,18 +966,15 @@ func TestSendServerMessage(t *testing.T) {
 			writeChan: make(chan []byte, 10),
 		},
 	}
-
 	message := "testMessage"
 	worker.sendServerMessage(message, false)
 	receivedMessage := <-worker.state.writeChan
 	expectedMessage := []byte(fmt.Sprintf(`{"message":"%s","error":false,"type":"serverMessage"}`, message))
-
 	require.Equal(t, expectedMessage, receivedMessage)
 
 	worker.sendServerMessage(message, true)
 	receivedMessage = <-worker.state.writeChan
 	expectedMessage = []byte(fmt.Sprintf(`{"message":"%s","error":true,"type":"serverMessage"}`, message))
-
 	require.Equal(t, expectedMessage, receivedMessage)
 }
 
@@ -1055,11 +983,10 @@ func TestSendPlaylist(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRoom := NewMockRoomStateHandler(ctrl)
-
 	mockRoom.EXPECT().
 		RoomState().
-		Return(&simpleRoomState).
-		AnyTimes()
+		Return(simpleRoomState).
+		MinTimes(1)
 
 	worker := &Worker{
 		room: mockRoom,
@@ -1069,23 +996,19 @@ func TestSendPlaylist(t *testing.T) {
 		},
 		userStatus: Status{},
 	}
-
 	worker.sendPlaylist()
 	receivedMessage := <-worker.state.writeChan
 	jsonPlaylist, err := json.Marshal(simplePlaylist)
 	require.NoError(t, err)
 	expectedMessage := []byte(fmt.Sprintf(`{"playlist":%s,"username":"","type":"playlist"}`, string(jsonPlaylist)))
-
 	require.Equal(t, expectedMessage, receivedMessage)
 }
 
 func TestEstimatePosition(t *testing.T) {
 	timestamp := farDate
 	worker := &Worker{
-		videoState:      &workerVideoState{position: nil, timestamp: timestamp, paused: false, speed: defaultSpeed},
-		videoStateMutex: &sync.RWMutex{},
+		videoState: workerVideoState{position: nil, timestamp: timestamp, paused: false, speed: defaultSpeed},
 	}
-
 	estimatedPosition := worker.EstimatePosition()
 	require.Nil(t, estimatedPosition)
 

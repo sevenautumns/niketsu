@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sevenautumns/niketsu/server/src/config"
 	"github.com/sevenautumns/niketsu/server/src/logger"
 	"nhooyr.io/websocket"
 )
@@ -39,12 +38,12 @@ type WebsocketHandler struct {
 }
 
 // TODO read and write timeout in config
-func NewWebSocketHandler(config config.GeneralConfig, handler ServerStateHandler, readerWriter NewReaderWriter, clientWorker NewClientWorker) WebsocketHandler {
+func NewWebSocketHandler(host string, port uint16, cert string, key string, handler ServerStateHandler, readerWriter NewReaderWriter, clientWorker NewClientWorker) WebsocketHandler {
 	var websocketHandler WebsocketHandler
-	websocketHandler.host = config.Host
-	websocketHandler.port = config.Port
-	websocketHandler.cert = config.Cert
-	websocketHandler.key = config.Key
+	websocketHandler.host = host
+	websocketHandler.port = port
+	websocketHandler.cert = cert
+	websocketHandler.key = key
 	websocketHandler.handler = handler
 	websocketHandler.readerWriter = readerWriter
 	websocketHandler.clientWorker = clientWorker

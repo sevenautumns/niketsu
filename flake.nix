@@ -137,13 +137,14 @@
             name = "niketsu-server";
             version = VERSION;
             src = ./.;
+            SSL_CERT_FILE = "${./server/src/communication/testdata/certificate.crt}";
             buildInputs = with pkgs; [ stdenv go glibc.static ];
             ldflags =
               [ "-s" "-w" "-linkmode external" "-extldflags" "-static" ];
             postInstall = ''
               mv $out/bin/server $out/bin/niketsu-server
             '';
-            vendorHash = "sha256-HOVTtj32nqZGTYQMQdH5gDihPLM0FSB5MyRJcEfz24w=";
+            vendorHash = "sha256-uQJBgCGuMBpJJf0X0q/f4ghvqgfigFXn41WFhYXVb4k=";
           };
         };
         devShells.default = (pkgs.devshell.mkShell {

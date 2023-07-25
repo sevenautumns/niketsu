@@ -2,11 +2,9 @@ package db
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"os"
 	"testing"
 
-	"github.com/sevenautumns/niketsu/server/src/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,7 +77,6 @@ func TestValidClose(t *testing.T) {
 func TestInvalidClose(t *testing.T) {
 	dbManager, err := NewDBManager(validDBPath, validTimeout)
 	require.NoError(t, err)
-
 	err = dbManager.Close()
 	require.Error(t, err)
 }
@@ -96,7 +93,6 @@ func createDBManager(t *testing.T, path string, timeout uint64) DBManager {
 	t.Cleanup(func() {
 		os.Remove(path)
 	})
-
 	return dbManager
 }
 
@@ -125,7 +121,7 @@ func TestDBNotOpen(t *testing.T) {
 	err = db.UpdatePlaylist(validBucket, validValue, validVideo, validPosition)
 	require.Error(t, err)
 
-	_, err = db.GetRoomConfigs(validBucket)
+	_, err = db.GetAll(validBucket)
 	require.Error(t, err)
 }
 
@@ -140,7 +136,6 @@ func TestUpdateAndGetValue(t *testing.T) {
 func testUpdateAndGetValueValid(t *testing.T, dbManager DBManager, bucket string, key string) {
 	err := dbManager.Update(bucket, key, validValue)
 	require.NoError(t, err)
-
 	testGetValue(t, dbManager, bucket, key, validValue)
 }
 
@@ -212,7 +207,6 @@ func TestDeleteKey(t *testing.T) {
 func testValidDeleteKey(t *testing.T, dbManager DBManager, key string) {
 	err := dbManager.Update(validBucket, key, validValue)
 	require.NoError(t, err)
-
 	err = dbManager.DeleteKey(validBucket, key)
 	require.NoError(t, err)
 }
@@ -237,7 +231,6 @@ func TestDeleteBucket(t *testing.T) {
 func testValidDeleteBucket(t *testing.T, dbManager DBManager, bucket string) {
 	err := dbManager.Update(bucket, validKey, validValue)
 	require.NoError(t, err)
-
 	err = dbManager.DeleteBucket(bucket)
 	require.NoError(t, err)
 }
@@ -256,7 +249,6 @@ func TestUpdatePlaylist(t *testing.T) {
 func testValidUpdatePlaylist(t *testing.T, dbManager DBManager) {
 	err := dbManager.UpdatePlaylist(validBucket, validValue, validVideo, validPosition)
 	require.NoError(t, err)
-
 	testGetValue(t, dbManager, validBucket, PlaylistKey, validValue)
 	testGetValue(t, dbManager, validBucket, VideoKey, []byte(validVideo))
 	pos := make([]byte, 8)
@@ -269,48 +261,42 @@ func testInvalidUpdatePlaylist(t *testing.T, dbManager DBManager) {
 	require.Error(t, err)
 }
 
-func TestGetRoomConfigs(t *testing.T) {
+func TestGetAll(t *testing.T) {
 	dbManager := createDBManager(t, validDBPath, validTimeout)
-	testValidGetRoomConfigs(t, dbManager)
-	testInvalidGetRoomConfigs(t, dbManager)
+	testValidGetAll(t, dbManager)
+	testEmptyGetAll(t, dbManager)
 }
 
-func testValidGetRoomConfigs(t *testing.T, dbManager DBManager) {
-	testRoomConfigsEqual(t, dbManager, validBucket, map[string]config.RoomConfig{})
+func testValidGetAll(t *testing.T, dbManager DBManager) {
+	testRoomConfigsEqual(t, dbManager, validBucket, map[string][]byte{})
 
-	writeRoomConfig(t, dbManager, validBucket, validKey, true)
-	testRoomConfigsEqual(t, dbManager, validBucket, map[string]config.RoomConfig{
-		validKey: {Persistent: true},
+	writeRoomConfig(t, dbManager, validBucket, validKey, validValue)
+	testRoomConfigsEqual(t, dbManager, validBucket, map[string][]byte{
+		validKey: validValue,
 	})
 
-	writeRoomConfig(t, dbManager, validBucket, otherKey, true)
-	testRoomConfigsEqual(t, dbManager, validBucket, map[string]config.RoomConfig{
-		validKey: {Persistent: true},
-		otherKey: {Persistent: true},
+	writeRoomConfig(t, dbManager, validBucket, otherKey, validValue)
+	testRoomConfigsEqual(t, dbManager, validBucket, map[string][]byte{
+		validKey: validValue,
+		otherKey: validValue,
 	})
 }
 
-func testRoomConfigsEqual(t *testing.T, dbManager DBManager, bucket string, expectedRoomConfigs map[string]config.RoomConfig) {
-	roomConfigs, err := dbManager.GetRoomConfigs(validBucket)
+func testRoomConfigsEqual(t *testing.T, dbManager DBManager, bucket string, expectedRoomConfigs map[string][]byte) {
+	roomConfigs, err := dbManager.GetAll(validBucket)
 	require.NoError(t, err)
 	require.Equal(t, expectedRoomConfigs, roomConfigs)
 }
 
-func writeRoomConfig(t *testing.T, dbManager DBManager, bucket string, key string, persistent bool) {
-	config := config.RoomConfig{Persistent: persistent}
-	byteConfig, err := json.Marshal(config)
-	if err != nil {
-		t.Fatal("Failed to marshal config.")
-	}
-
-	err = dbManager.Update(bucket, key, byteConfig)
+func writeRoomConfig(t *testing.T, dbManager DBManager, bucket string, key string, values []byte) {
+	err := dbManager.Update(bucket, key, values)
 	if err != nil {
 		t.Fatal("Update key/value transaction for room configurations failed")
 	}
 }
 
-func testInvalidGetRoomConfigs(t *testing.T, dbManager DBManager) {
-	roomConfigs, err := dbManager.GetRoomConfigs(emptyBucket)
+func testEmptyGetAll(t *testing.T, dbManager DBManager) {
+	roomConfigs, err := dbManager.GetAll(emptyBucket)
 	require.Error(t, err)
 	require.Nil(t, roomConfigs)
 }

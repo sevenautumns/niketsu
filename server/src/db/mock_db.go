@@ -8,7 +8,6 @@ import (
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
-	config "github.com/sevenautumns/niketsu/server/src/config"
 )
 
 // MockDBManager is a mock of DBManager interface.
@@ -90,19 +89,19 @@ func (mr *MockDBManagerMockRecorder) DeleteKey(bucket, key interface{}) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteKey", reflect.TypeOf((*MockDBManager)(nil).DeleteKey), bucket, key)
 }
 
-// GetRoomConfigs mocks base method.
-func (m *MockDBManager) GetRoomConfigs(bucket string) (map[string]config.RoomConfig, error) {
+// GetAll mocks base method.
+func (m *MockDBManager) GetAll(bucket string) (map[string][]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetRoomConfigs", bucket)
-	ret0, _ := ret[0].(map[string]config.RoomConfig)
+	ret := m.ctrl.Call(m, "GetAll", bucket)
+	ret0, _ := ret[0].(map[string][]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetRoomConfigs indicates an expected call of GetRoomConfigs.
-func (mr *MockDBManagerMockRecorder) GetRoomConfigs(bucket interface{}) *gomock.Call {
+// GetAll indicates an expected call of GetAll.
+func (mr *MockDBManagerMockRecorder) GetAll(bucket interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRoomConfigs", reflect.TypeOf((*MockDBManager)(nil).GetRoomConfigs), bucket)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAll", reflect.TypeOf((*MockDBManager)(nil).GetAll), bucket)
 }
 
 // GetValue mocks base method.

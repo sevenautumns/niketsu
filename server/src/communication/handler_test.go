@@ -18,13 +18,12 @@ const (
 )
 
 var (
-	testConfig = config.GeneralConfig{
-		ConfigPath:       "someConfig.toml",
+	testConfig = config.CLI{
 		Host:             "localhost",
 		Port:             1111,
 		Cert:             "",
 		Key:              "",
-		Password:         "passowrd",
+		Password:         "password",
 		DBPath:           "somepath/db",
 		DBUpdateInterval: 1,
 		DBWaitTimeout:    1,
@@ -39,8 +38,7 @@ var (
 )
 
 func TestNewServer(t *testing.T) {
-	server := NewServer(testConfig)
-
+	server := NewServer(testConfig.Password, testConfig.DBPath, testConfig.DBUpdateInterval, testConfig.DBWaitTimeout)
 	require.NotNil(t, server)
 }
 
@@ -49,17 +47,13 @@ func TestServerInit(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockDBManager := db.NewMockDBManager(ctrl)
-
-	roomConfig := map[string]config.RoomConfig{"testRoom": {Persistent: true}}
-
 	server := &Server{
 		config:  testServerConfig,
 		roomsDB: mockDBManager,
 	}
-
-	err := server.Init(roomConfig)
+	err := server.Init()
 	require.NoError(t, err)
-	require.NotEmpty(t, server.rooms)
+	require.Empty(t, server.rooms)
 
 	t.Cleanup(func() {
 		os.RemoveAll(testDBPath)
@@ -71,7 +65,6 @@ func TestServerShutdown(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRoom := NewMockRoomStateHandler(ctrl)
-
 	mockRoom.EXPECT().
 		Shutdown(gomock.Any())
 
@@ -79,10 +72,8 @@ func TestServerShutdown(t *testing.T) {
 		rooms:      map[string]RoomStateHandler{"testRoom": mockRoom},
 		roomsMutex: &sync.RWMutex{},
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-
 	server.Shutdown(ctx)
 }
 
@@ -91,13 +82,11 @@ func TestTimeoutServerShutdown(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRoom := NewMockRoomStateHandler(ctrl)
-
 	mockRoom.EXPECT().
 		Shutdown(gomock.Any()).
 		Do(func(cxt context.Context) {
 			time.Sleep(50 * time.Millisecond)
-		}).
-		Times(1)
+		})
 
 	server := &Server{
 		rooms: map[string]RoomStateHandler{
@@ -106,10 +95,8 @@ func TestTimeoutServerShutdown(t *testing.T) {
 		},
 		roomsMutex: &sync.RWMutex{},
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-
 	server.Shutdown(ctx)
 }
 
@@ -121,10 +108,17 @@ func TestServerAppendRoom(t *testing.T) {
 	mockRoom.EXPECT().
 		Name().
 		Return("testRoom").
-		AnyTimes()
+		MinTimes(1)
+
 	mockRoom.EXPECT().
-		IsPersistent().
-		Return(true)
+		RoomConfig().
+		Return(RoomConfig{
+			Name:             "testRoom",
+			Path:             testDBPath,
+			DBUpdateInterval: 0,
+			DBWaitTimeout:    0,
+			Persistent:       true,
+		})
 
 	mockDBManager := db.NewMockDBManager(ctrl)
 	mockDBManager.EXPECT().
@@ -135,7 +129,6 @@ func TestServerAppendRoom(t *testing.T) {
 		roomsMutex: &sync.RWMutex{},
 		roomsDB:    mockDBManager,
 	}
-
 	err := server.AppendRoom(mockRoom)
 	require.Nil(t, err)
 	require.Len(t, server.rooms, 1)
@@ -149,17 +142,18 @@ func TestServerDeleteRoom(t *testing.T) {
 	mockRoom.EXPECT().
 		Name().
 		Return("testroom").
-		AnyTimes()
+		MinTimes(1)
 
 	mockDBManager := db.NewMockDBManager(ctrl)
-	mockDBManager.EXPECT().DeleteKey(gomock.Any(), gomock.Any()).Return(nil)
+	mockDBManager.EXPECT().
+		DeleteKey(gomock.Any(), gomock.Any()).
+		Return(nil)
 
 	server := &Server{
 		rooms:      map[string]RoomStateHandler{"testroom": mockRoom},
 		roomsMutex: &sync.RWMutex{},
 		roomsDB:    mockDBManager,
 	}
-
 	err := server.DeleteRoom(mockRoom)
 	require.Nil(t, err)
 	require.Len(t, server.rooms, 0)
@@ -170,13 +164,10 @@ func TestServerCreateOrFindRoom(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRoom := NewMockRoomStateHandler(ctrl)
-	mockRoom.EXPECT().Name().Return("testroom").AnyTimes()
-
 	server := &Server{
 		rooms:      map[string]RoomStateHandler{"testroom": mockRoom},
 		roomsMutex: &sync.RWMutex{},
 	}
-
 	room, err := server.CreateOrFindRoom("testroom")
 	require.Nil(t, err)
 	require.NotNil(t, room)
@@ -187,15 +178,22 @@ func TestServer_BroadcastStatusList(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRoom := NewMockRoomStateHandler(ctrl)
-	mockRoom.EXPECT().Name().Return("testroom").AnyTimes()
-	mockRoom.EXPECT().WorkerStatus().Return([]Status{})
-	mockRoom.EXPECT().BroadcastAll(gomock.Any())
+	mockRoom.EXPECT().
+		Name().
+		Return("testroom").
+		MinTimes(1)
+
+	mockRoom.EXPECT().
+		WorkerStatus().
+		Return([]Status{})
+
+	mockRoom.EXPECT().
+		BroadcastAll(gomock.Any())
 
 	server := &Server{
 		rooms:      map[string]RoomStateHandler{"testroom": mockRoom},
 		roomsMutex: &sync.RWMutex{},
 	}
-
 	server.BroadcastStatusList()
 }
 
@@ -205,7 +203,6 @@ func TestServer_IsPasswordCorrect(t *testing.T) {
 			password: "password",
 		},
 	}
-
 	require.True(t, server.IsPasswordCorrect("password"))
 	require.False(t, server.IsPasswordCorrect("wrongpassword"))
 }

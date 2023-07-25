@@ -9,7 +9,6 @@ import (
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
-	config "github.com/sevenautumns/niketsu/server/src/config"
 )
 
 // MockServerStateHandler is a mock of ServerStateHandler interface.
@@ -91,17 +90,17 @@ func (mr *MockServerStateHandlerMockRecorder) DeleteRoom(room interface{}) *gomo
 }
 
 // Init mocks base method.
-func (m *MockServerStateHandler) Init(roomConfigs map[string]config.RoomConfig) error {
+func (m *MockServerStateHandler) Init() error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Init", roomConfigs)
+	ret := m.ctrl.Call(m, "Init")
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Init indicates an expected call of Init.
-func (mr *MockServerStateHandlerMockRecorder) Init(roomConfigs interface{}) *gomock.Call {
+func (mr *MockServerStateHandlerMockRecorder) Init() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockServerStateHandler)(nil).Init), roomConfigs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockServerStateHandler)(nil).Init))
 }
 
 // IsPasswordCorrect mocks base method.

@@ -28,23 +28,23 @@ const (
 )
 
 var (
-	testConfigTCP = config.GeneralConfig{
+	testConfigTCP = config.CLI{
 		Host: host,
 		Port: portTCP,
 	}
-	testConfigTLS = config.GeneralConfig{
+	testConfigTLS = config.CLI{
 		Host: host,
 		Port: portTLS,
 		Cert: cert,
 		Key:  key,
 	}
-	testFailedCertificateConfig = config.GeneralConfig{
+	testFailedCertificateConfig = config.CLI{
 		Host: host,
 		Port: portTLS,
 		Cert: failedCert,
 		Key:  failedKey,
 	}
-	testFailedHostPortConfig = config.GeneralConfig{
+	testFailedHostPortConfig = config.CLI{
 		Host: failedHost,
 		Port: portTCP,
 	}
@@ -80,7 +80,9 @@ func TestFailedCertificate(t *testing.T) {
 	mockServerStateHandler := NewMockServerStateHandler(ctrl)
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
 
-	handler := NewWebSocketHandler(testFailedCertificateConfig, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
+	handler := NewWebSocketHandler(testFailedCertificateConfig.Host, testFailedCertificateConfig.Port,
+		testFailedCertificateConfig.Cert, testFailedCertificateConfig.Key,
+		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	err := handler.Listen()
 	require.Error(t, err)
 }
@@ -92,7 +94,9 @@ func TestFailedHostPort(t *testing.T) {
 
 	mockServerStateHandler := NewMockServerStateHandler(ctrl)
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
-	handler := NewWebSocketHandler(testFailedHostPortConfig, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
+	handler := NewWebSocketHandler(testFailedHostPortConfig.Host, testFailedHostPortConfig.Port,
+		testFailedHostPortConfig.Cert, testFailedHostPortConfig.Key,
+		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	err := handler.Listen()
 	require.Error(t, err)
 }
@@ -106,7 +110,8 @@ func TestStop(t *testing.T) {
 		Shutdown(gomock.Any())
 
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
-	handler := NewWebSocketHandler(testConfigTCP, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
+	handler := NewWebSocketHandler(testConfigTCP.Host, testConfigTCP.Port, testConfigTCP.Cert, testConfigTCP.Key,
+		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	stopChannel := make(chan int, 1)
 	go listenChannel(t, handler, stopChannel)
 	handler.Stop()
@@ -122,7 +127,8 @@ func TestSigKill(t *testing.T) {
 		Shutdown(gomock.Any())
 
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
-	handler := NewWebSocketHandler(testConfigTCP, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
+	handler := NewWebSocketHandler(testConfigTCP.Host, testConfigTCP.Port, testConfigTCP.Cert, testConfigTCP.Key,
+		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	stopChannel := make(chan int, 1)
 	go listenChannel(t, handler, stopChannel)
 	handler.SigKill()
@@ -138,7 +144,8 @@ func TestClose(t *testing.T) {
 		Shutdown(gomock.Any())
 
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
-	handler := NewWebSocketHandler(testConfigTCP, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
+	handler := NewWebSocketHandler(testConfigTCP.Host, testConfigTCP.Port, testConfigTCP.Cert, testConfigTCP.Key,
+		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	stopChannel := make(chan int, 1)
 	go listenChannel(t, handler, stopChannel)
 	handler.Close()
@@ -154,7 +161,8 @@ func TestListenTLS(t *testing.T) {
 		Shutdown(gomock.Any())
 
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
-	handler := NewWebSocketHandler(testConfigTLS, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
+	handler := NewWebSocketHandler(testConfigTLS.Host, testConfigTLS.Port, testConfigTLS.Cert, testConfigTLS.Key,
+		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	url := fmt.Sprintf("wss://%s:%d", host, portTLS)
 	testListen(t, handler, url)
 }
@@ -168,7 +176,8 @@ func TestListenTCP(t *testing.T) {
 		Shutdown(gomock.Any())
 
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
-	handler := NewWebSocketHandler(testConfigTCP, mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
+	handler := NewWebSocketHandler(testConfigTCP.Host, testConfigTCP.Port, testConfigTCP.Cert, testConfigTCP.Key,
+		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 	url := fmt.Sprintf("ws://%s:%d", host, portTCP)
 	testListen(t, handler, url)
 }
