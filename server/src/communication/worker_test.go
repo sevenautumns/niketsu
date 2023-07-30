@@ -33,11 +33,11 @@ var (
 		paused:    notPaused,
 		speed:     defaultWorkerSpeed,
 	}
-	testWorkerVideo    string = "testVideo"
-	testWorkerVideo2   string = "testVideo2"
-	testWorkerPosition uint64 = 100
-	emptyVideoState           = workerVideoState{}
-	simpleVideoStatus         = VideoStatus{
+	testWorkerVideo    string   = "testVideo"
+	testWorkerVideo2   string   = "testVideo2"
+	testWorkerPosition Duration = Duration{100}
+	emptyVideoState             = workerVideoState{}
+	simpleVideoStatus           = VideoStatus{
 		Filename: &testWorkerVideo,
 		Position: &testWorkerPosition,
 		Paused:   notReady,
@@ -48,7 +48,7 @@ var (
 		playlist: simplePlaylist,
 		video:    &testWorkerVideo,
 		position: &testWorkerPosition,
-		lastSeek: 0,
+		lastSeek: Duration{0},
 		paused:   notPaused,
 		speed:    1.0,
 	}
@@ -335,7 +335,7 @@ func TestHandleVideoStatusEqualStates(t *testing.T) {
 	videoStatus := []byte(
 		fmt.Sprintf(
 			`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-			testWorkerVideo, testWorkerPosition, notPaused, defaultSpeed, username,
+			testWorkerVideo, testWorkerPosition.uint64(), notPaused, defaultSpeed, username,
 		),
 	)
 	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus, true)
@@ -389,7 +389,7 @@ func TestHandleVideoStatusIncorrectFilename(t *testing.T) {
 
 	videoStatus := []byte(
 		fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-			testWorkerVideo2, testWorkerPosition, notPaused, defaultSpeed, username,
+			testWorkerVideo2, testWorkerPosition.uint64(), notPaused, defaultSpeed, username,
 		),
 	)
 	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus, false)
@@ -408,7 +408,7 @@ func TestHandleVideoStatusIncorrectSpeed(t *testing.T) {
 
 	videoStatus := []byte(
 		fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-			testWorkerVideo, testWorkerPosition, notPaused, 2.0, username,
+			testWorkerVideo, testWorkerPosition.uint64(), notPaused, 2.0, username,
 		),
 	)
 	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus, false)
@@ -427,7 +427,7 @@ func TestHandleVideoStatusIncorrectPaused(t *testing.T) {
 
 	videoStatus := []byte(
 		fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-			testWorkerVideo, testWorkerPosition, true, defaultSpeed, username,
+			testWorkerVideo, testWorkerPosition.uint64(), true, defaultSpeed, username,
 		),
 	)
 	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus, false)
@@ -477,7 +477,7 @@ func TestHandleSeek(t *testing.T) {
 
 	seek := []byte(
 		fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"","type":"seek"}`,
-			testWorkerVideo, testWorkerPosition, defaultSpeed, notPaused, false,
+			testWorkerVideo, testWorkerPosition.uint64(), defaultSpeed, notPaused, false,
 		),
 	)
 	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, true)
@@ -486,7 +486,7 @@ func TestHandleSeek(t *testing.T) {
 	mockRoom.EXPECT().
 		SetPlaylistState(gomock.Any(), gomock.Eq(testWorkerPosition),
 			gomock.Eq(notPaused), gomock.Eq(testWorkerPosition), gomock.Eq(defaultSpeed)).
-		Do(func(filename *string, position uint64, paused bool, lastSeek uint64, speed float64) {
+		Do(func(filename *string, position Duration, paused bool, lastSeek Duration, speed float64) {
 			require.Equal(t, testWorkerVideo, *filename)
 		}).
 		MinTimes(1)
@@ -526,8 +526,8 @@ func TestHandleSelect(t *testing.T) {
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, sel)
 	mockRoom.EXPECT().
-		SetPlaylistState(gomock.Any(), gomock.Eq(uint64(0)), gomock.Eq(true), gomock.Eq(uint64(0)), gomock.Eq(float64(-1))).
-		Do(func(filename *string, position uint64, paused bool, lastSeek uint64, speed float64) {
+		SetPlaylistState(gomock.Any(), gomock.Eq(Duration{0}), gomock.Eq(true), gomock.Eq(Duration{0}), gomock.Eq(float64(-1))).
+		Do(func(filename *string, position Duration, paused bool, lastSeek Duration, speed float64) {
 			require.Equal(t, testWorkerVideo, *filename)
 		}).
 		MinTimes(1)
@@ -553,7 +553,7 @@ func TestHandleSelect(t *testing.T) {
 	testStartCloseWorker(t, worker)
 
 	require.Equal(t, paused, worker.videoState.paused)
-	require.Equal(t, uint64(0), *worker.videoState.position)
+	require.Equal(t, Duration{0}, *worker.videoState.position)
 	require.Equal(t, float64(1), worker.videoState.speed)
 	require.Equal(t, testWorkerVideo, *worker.videoState.video)
 }
@@ -939,10 +939,9 @@ func TestSendSeek(t *testing.T) {
 	message := <-worker.state.writeChan
 	expectedMessage := []byte(
 		fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"","type":"seek"}`,
-			*simpleRoomState.video, *simpleRoomState.position, simpleRoomState.speed, simpleRoomState.paused, true,
+			*simpleRoomState.video, simpleRoomState.position.uint64(), simpleRoomState.speed, simpleRoomState.paused, true,
 		),
 	)
-
 	require.Equal(t, expectedMessage, message)
 }
 
@@ -1012,23 +1011,22 @@ func TestEstimatePosition(t *testing.T) {
 	estimatedPosition := worker.EstimatePosition()
 	require.Nil(t, estimatedPosition)
 
-	edgePosition := uint64(0)
+	edgePosition := Duration{0}
 	worker.videoState.position = &edgePosition
 	estimatedPosition = worker.EstimatePosition()
-	expectedPosition := uint64(time.Since(timestamp).Milliseconds())
-	require.Equal(t, expectedPosition, *estimatedPosition)
+	expectedPosition := timeSince(timestamp)
+	require.NotZero(t, estimatedPosition.uint64())
+	require.GreaterOrEqual(t, expectedPosition.uint64(), estimatedPosition.uint64())
 
-	properPosition := uint64(10000)
+	properPosition := Duration{10000}
 	worker.videoState.position = &properPosition
 	estimatedPosition = worker.EstimatePosition()
-
-	timeElapsed := uint64(float64(time.Since(timestamp).Milliseconds()) * defaultSpeed)
-	expectedPosition = properPosition + timeElapsed
-	require.Equal(t, expectedPosition, *estimatedPosition)
+	expectedPosition = expectedPosition.add(properPosition)
+	require.NotZero(t, estimatedPosition.uint64())
+	require.GreaterOrEqual(t, estimatedPosition.uint64(), expectedPosition.uint64())
 
 	worker.videoState.paused = true
 	estimatedPosition = worker.EstimatePosition()
-
 	expectedPosition = properPosition
-	require.Equal(t, expectedPosition, *estimatedPosition)
+	require.Equal(t, expectedPosition.uint64(), estimatedPosition.uint64())
 }

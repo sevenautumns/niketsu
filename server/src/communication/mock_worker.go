@@ -47,10 +47,10 @@ func (mr *MockClientWorkerMockRecorder) Close() *gomock.Call {
 }
 
 // EstimatePosition mocks base method.
-func (m *MockClientWorker) EstimatePosition() *uint64 {
+func (m *MockClientWorker) EstimatePosition() *Duration {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "EstimatePosition")
-	ret0, _ := ret[0].(*uint64)
+	ret0, _ := ret[0].(*Duration)
 	return ret0
 }
 

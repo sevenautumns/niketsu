@@ -24,12 +24,12 @@ type RoomStateHandler interface {
 	AllUsersReady() bool
 	BroadcastAll(message []byte)
 	BroadcastExcept(payload []byte, workerUUID uuid.UUID)
-	SlowestEstimatedClientPosition() *uint64
-	SetPosition(position uint64)
+	SlowestEstimatedClientPosition() *Duration
+	SetPosition(position Duration)
 	SetSpeed(speed float64)
 	SetPaused(paused bool)
 	SetPlaylist(playlist []string)
-	SetPlaylistState(video *string, position uint64, paused bool, lastSeek uint64, speed float64)
+	SetPlaylistState(video *string, position Duration, paused bool, lastSeek Duration, speed float64)
 	RoomState() RoomState
 	Name() string
 	RoomConfig() RoomConfig
@@ -41,8 +41,8 @@ type RoomStateHandler interface {
 type RoomState struct {
 	playlist []string
 	video    *string
-	position *uint64
-	lastSeek uint64
+	position *Duration
+	lastSeek Duration
 	paused   bool
 	speed    float64
 }
@@ -77,7 +77,7 @@ func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout ui
 	if err != nil {
 		return nil, err
 	}
-	room.state = RoomState{lastSeek: 0, paused: true, speed: 1.0}
+	room.state = RoomState{lastSeek: Duration{0}, paused: true, speed: 1.0}
 	room.setStateFromDB()
 	room.dbChannel = make(chan int)
 
@@ -227,18 +227,18 @@ func (room *Room) AllUsersReady() bool {
 	return ready
 }
 
-func (room *Room) SlowestEstimatedClientPosition() *uint64 {
+func (room *Room) SlowestEstimatedClientPosition() *Duration {
 	room.workersMutex.RLock()
 	defer room.workersMutex.RUnlock()
 
-	var minPosition *uint64
+	var minPosition *Duration
 	for _, worker := range room.workers {
 		estimatedPosition := worker.EstimatePosition()
 		if estimatedPosition == nil {
 			continue
 		}
 
-		if minPosition == nil || *estimatedPosition < *minPosition {
+		if minPosition == nil || estimatedPosition.smaller(*minPosition) {
 			minPosition = estimatedPosition
 		}
 	}
@@ -246,7 +246,7 @@ func (room *Room) SlowestEstimatedClientPosition() *uint64 {
 	return minPosition
 }
 
-func (room *Room) SetPlaylistState(video *string, position uint64, paused bool, lastSeek uint64, speed float64) {
+func (room *Room) SetPlaylistState(video *string, position Duration, paused bool, lastSeek Duration, speed float64) {
 	room.stateMutex.Lock()
 	defer room.stateMutex.Unlock()
 
@@ -259,12 +259,12 @@ func (room *Room) SetPlaylistState(video *string, position uint64, paused bool, 
 	}
 }
 
-func (room *Room) SetPosition(position uint64) {
+func (room *Room) SetPosition(position Duration) {
 	room.stateMutex.Lock()
 	defer room.stateMutex.Unlock()
 
 	lastSeek := room.state.lastSeek
-	if position > lastSeek {
+	if position.greater(lastSeek) {
 		room.state.position = &position
 	} else {
 		room.state.position = &lastSeek
@@ -306,7 +306,7 @@ func (room *Room) writePlaylist() error {
 
 	position := uint64(0)
 	if state.position != nil {
-		position = *state.position
+		position = state.position.uint64()
 	}
 
 	logger.Debugw("Writing playlist into db", "room", room.RoomConfig().Name, "playlist", state.playlist)
@@ -370,7 +370,8 @@ func (room *Room) setPositionFromDB() {
 			logger.Debugw("Failed to convert position. Setting position to default state (nil)", "error", err)
 			room.state.position = nil
 		} else {
-			room.state.position = &position
+			duration := durationFromUint64(position)
+			room.state.position = &duration
 		}
 	}
 }
