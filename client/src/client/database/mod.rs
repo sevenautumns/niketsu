@@ -1,25 +1,30 @@
 use std::ffi::OsString;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
 use async_recursion::async_recursion;
-use atomic_counter::{AtomicCounter, RelaxedCounter};
 use dashmap::DashMap;
 use futures::future::join_all;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use iced::widget::{row, Button, Container, ProgressBar, Text, Tooltip};
 use iced::{Element, Length, Renderer};
-use log::{debug, trace};
-use tokio::sync::mpsc::UnboundedSender as MpscSender;
+use log::trace;
+use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
 use tokio::sync::{Notify, RwLock, Semaphore};
 
-use crate::client::{ClientInner, PlayerMessage};
+use self::message::UpdateFinished;
+use crate::client::database::message::{Changed, DatabaseEvent};
+use crate::iced_window::running::message::{StartDbUpdate, StopDbUpdate, UserEvent};
+use crate::iced_window::MainMessage;
 use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
-use crate::window::MainMessage;
 use crate::TEXT_SIZE;
+
+pub mod message;
 
 #[derive(Debug, Clone)]
 pub struct File {
@@ -27,33 +32,51 @@ pub struct File {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone)]
-pub enum DatabaseMessage {
-    Changed,
-    UpdateFinished,
+#[derive(Debug)]
+pub struct FileDatabaseReceiver {
+    sender: Arc<FileDatabaseSender>,
+    event_rx: WatchReceiver<DatabaseEvent>,
+}
+
+impl FileDatabaseReceiver {
+    pub fn new(path: &[PathBuf]) -> Self {
+        let (event_tx, event_rx) = tokio::sync::watch::channel(Changed.into());
+        let sender = Arc::new(FileDatabaseSender::new(path, event_tx));
+        Self { sender, event_rx }
+    }
+
+    pub fn sender(&self) -> &Arc<FileDatabaseSender> {
+        &self.sender
+    }
+
+    pub async fn recv(&mut self) -> Result<DatabaseEvent> {
+        self.event_rx.changed().await?;
+        let event = *self.event_rx.borrow().deref();
+        Ok(event)
+    }
 }
 
 #[derive(Debug)]
-pub struct FileDatabase {
-    stop: RwLock<Notify>,
-    database: Arc<DashMap<OsString, File>>,
-    sender: MpscSender<PlayerMessage>,
-    search_paths: RwLock<Vec<PathBuf>>,
+pub struct FileDatabaseSender {
     semaphore: Semaphore,
-    queued_dirs: RelaxedCounter,
-    finished_dirs: RelaxedCounter,
+    stop: RwLock<Notify>,
+    database: DashMap<OsString, File>,
+    search_paths: RwLock<Vec<PathBuf>>,
+    queued_dirs: AtomicUsize,
+    finished_dirs: AtomicUsize,
+    event_tx: WatchSender<DatabaseEvent>,
 }
 
-impl FileDatabase {
-    pub fn new(path: &[PathBuf], sender: MpscSender<PlayerMessage>) -> Self {
+impl FileDatabaseSender {
+    pub fn new(path: &[PathBuf], event_tx: WatchSender<DatabaseEvent>) -> Self {
         Self {
             search_paths: RwLock::new(path.to_vec()),
             stop: Default::default(),
             database: Default::default(),
-            sender,
             semaphore: Semaphore::new(100),
-            queued_dirs: RelaxedCounter::new(0),
-            finished_dirs: RelaxedCounter::new(0),
+            queued_dirs: AtomicUsize::new(0),
+            finished_dirs: AtomicUsize::new(0),
+            event_tx,
         }
     }
 
@@ -80,8 +103,8 @@ impl FileDatabase {
     }
 
     pub fn get_status(&self) -> (usize, usize) {
-        let finished = self.finished_dirs.get();
-        let queued = self.queued_dirs.get();
+        let finished = self.finished_dirs.load(Ordering::Relaxed);
+        let queued = self.queued_dirs.load(Ordering::Relaxed);
         (finished, queued)
     }
 
@@ -113,8 +136,8 @@ impl FileDatabase {
         };
 
         let update_msg = match finished {
-            true => MainMessage::User(crate::window::UserMessage::StartDbUpdate),
-            false => MainMessage::User(crate::window::UserMessage::StopDbUpdate),
+            true => UserEvent::from(StartDbUpdate).into(),
+            false => UserEvent::from(StopDbUpdate).into(),
         };
         let update_btn = match finished {
             true => Button::new("Update"),
@@ -144,11 +167,9 @@ impl FileDatabase {
 
         *stop = Notify::new();
         self.database.clear();
-        self.sender
-            .send(PlayerMessage::Database(DatabaseMessage::Changed))
-            .ok();
-        self.queued_dirs.reset();
-        self.finished_dirs.reset();
+        self.queued_dirs.store(0, Ordering::Relaxed);
+        self.finished_dirs.store(0, Ordering::Relaxed);
+        self.event_tx.send(Changed.into()).ok();
         let paths = self.search_paths.read().await.clone();
         let stop = stop.downgrade();
 
@@ -162,14 +183,15 @@ impl FileDatabase {
             _ = stop.notified() => trace!("update stop requested")
         }
 
-        self.queued_dirs.reset();
-        self.finished_dirs.reset();
+        self.queued_dirs.store(0, Ordering::Relaxed);
+        self.finished_dirs.store(0, Ordering::Relaxed);
+        self.event_tx.send(UpdateFinished.into()).ok();
         drop(stop);
     }
 
     #[async_recursion]
     async fn update_inner(&self, path: PathBuf) -> Result<()> {
-        self.queued_dirs.inc();
+        self.queued_dirs.fetch_add(1, Ordering::Relaxed);
         let sem = self.semaphore.acquire().await;
         let mut files = vec![];
         let mut join_rec = FuturesUnordered::new();
@@ -230,27 +252,9 @@ impl FileDatabase {
         for f in files {
             self.database.insert(f.name.clone(), f);
         }
-        self.sender
-            .send(PlayerMessage::Database(DatabaseMessage::Changed))
-            .ok();
-        self.sender
-            .send(PlayerMessage::Database(DatabaseMessage::UpdateFinished))
-            .ok();
 
-        self.finished_dirs.inc();
-        Ok(())
-    }
-}
-
-impl ClientInner {
-    pub fn react_to_database(&mut self, event: DatabaseMessage) -> Result<()> {
-        match event {
-            DatabaseMessage::Changed => {
-                trace!("Database: changed");
-                self.mpv.may_reload(&self.db)?;
-            }
-            DatabaseMessage::UpdateFinished => debug!("Database: update finished"),
-        }
+        self.finished_dirs.fetch_add(1, Ordering::Relaxed);
+        self.event_tx.send(Changed.into())?;
         Ok(())
     }
 }

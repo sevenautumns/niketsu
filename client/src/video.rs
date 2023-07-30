@@ -1,11 +1,13 @@
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use url::Url;
 
+use crate::client::database::FileDatabaseSender;
+
 #[derive(Debug, Clone, Eq)]
 pub enum Video {
-    File { name: String, path: Option<PathBuf> },
+    File { name: String },
     Url(Url),
 }
 
@@ -28,10 +30,17 @@ impl Video {
         if let Ok(url) = Url::parse(&video) {
             Self::Url(url)
         } else {
-            Self::File {
-                name: video,
-                path: None,
-            }
+            Self::File { name: video }
+        }
+    }
+
+    pub fn to_path_str(&self, db: &Arc<FileDatabaseSender>) -> Option<String> {
+        match self {
+            Video::File { name } => match db.find_file(name) {
+                Ok(Some(file)) => Some(file.path.as_os_str().to_str()?.to_string()),
+                _ => None,
+            },
+            Video::Url(url) => Some(url.as_str().to_string()),
         }
     }
 
@@ -46,48 +55,7 @@ impl Video {
 #[derive(Debug, Clone)]
 pub struct PlayingFile {
     pub video: Video,
-    pub last_seek: Option<SeekEvent>,
-    pub heartbeat: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct SeekEvent {
-    pub when: Instant,
+    pub paused: bool,
+    pub speed: f64,
     pub pos: Duration,
 }
-
-impl SeekEvent {
-    pub fn pos(&self) -> Duration {
-        self.pos
-    }
-
-    pub fn new(pos: Duration) -> Self {
-        Self {
-            when: Instant::now(),
-            pos,
-        }
-    }
-}
-
-pub trait SeekEventExt {
-    fn pos(&self) -> Option<Duration>;
-}
-
-impl SeekEventExt for Option<SeekEvent> {
-    fn pos(&self) -> Option<Duration> {
-        self.as_ref().map(|s| s.pos())
-    }
-}
-
-// pub trait PlayingFileExt {
-//     fn paused(&self) -> bool;
-// }
-
-// impl PlayingFileExt for Option<PlayingFile> {
-//     fn paused(&self) -> bool {
-//         match self {
-//             Some(file) => file.paused,
-//             None => true,
-//         }
-//     }
-// }

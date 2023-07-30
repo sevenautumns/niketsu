@@ -154,6 +154,7 @@
             openssl
             rust-toolchain
             rust-analyzer
+            cargo-audit
             cargo-outdated
             cargo-udeps
             cargo-watch
@@ -209,6 +210,11 @@
               name = "outdated";
               command = "cargo-outdated outdated";
               help = pkgs.cargo-outdated.meta.description;
+            }
+            {
+              name = "audit";
+              command = "cargo-audit audit";
+              help = pkgs.cargo-audit.meta.description;
             }
           ];
         });

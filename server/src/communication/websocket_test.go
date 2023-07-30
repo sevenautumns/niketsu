@@ -118,23 +118,6 @@ func TestStop(t *testing.T) {
 	<-stopChannel
 }
 
-func TestSigKill(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockServerStateHandler := NewMockServerStateHandler(ctrl)
-	mockServerStateHandler.EXPECT().
-		Shutdown(gomock.Any())
-
-	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
-	handler := NewWebSocketHandler(testConfigTCP.Host, testConfigTCP.Port, testConfigTCP.Cert, testConfigTCP.Key,
-		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
-	stopChannel := make(chan int, 1)
-	go listenChannel(t, handler, stopChannel)
-	handler.SigKill()
-	<-stopChannel
-}
-
 func TestClose(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

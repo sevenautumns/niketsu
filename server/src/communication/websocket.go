@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/sevenautumns/niketsu/server/src/logger"
@@ -74,10 +73,6 @@ func (websocketHandler WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *htt
 
 func (websocketHandler WebsocketHandler) Stop() {
 	close(websocketHandler.stopChannel)
-}
-
-func (websocketHandler WebsocketHandler) SigKill() {
-	websocketHandler.stopSignal <- syscall.SIGINT
 }
 
 func (websocketHandler WebsocketHandler) Close() {

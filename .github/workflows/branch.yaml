@@ -13,9 +13,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v3
-      - uses: cachix/install-nix-action@v20
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Run latest-tag
         uses: EndBug/latest-tag@v1
         with:
@@ -34,9 +31,8 @@ jobs:
           ref: deploy
           ssh-key: ${{ secrets.DEPLOY }}
           persist-credentials: true
-      - uses: cachix/install-nix-action@v20
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v4
       - name: Run update
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"

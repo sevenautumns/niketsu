@@ -10,8 +10,9 @@ use iced::widget::{Column, Container, Scrollable, Text};
 use iced::{Element, Length, Renderer, Theme};
 
 use crate::client::LogResult;
+use crate::iced_window::running::message::{ScrollMessages, UserEvent};
+use crate::iced_window::MainMessage;
 use crate::styling::{ContainerBackground, ContainerBorder};
-use crate::window::MainMessage;
 
 pub struct MessagesReceiver {
     messages: FrozenVec<Box<ChatMessage>>,
@@ -58,7 +59,7 @@ impl MessagesReceiver {
         Container::new(
             Scrollable::new(Column::with_children(msgs))
                 .width(Length::Fill)
-                .on_scroll(|o| MainMessage::User(crate::window::UserMessage::ScrollMessages(o)))
+                .on_scroll(|o| UserEvent::from(ScrollMessages(o)).into())
                 .id(Id::new("messages")),
         )
         .style(ContainerBorder::basic())
