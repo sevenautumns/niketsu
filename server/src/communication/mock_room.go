@@ -178,7 +178,7 @@ func (mr *MockRoomStateHandlerMockRecorder) SetPlaylist(playlist interface{}) *g
 }
 
 // SetPlaylistState mocks base method.
-func (m *MockRoomStateHandler) SetPlaylistState(video *string, position uint64, paused bool, lastSeek uint64, speed float64) {
+func (m *MockRoomStateHandler) SetPlaylistState(video *string, position Duration, paused bool, lastSeek Duration, speed float64) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "SetPlaylistState", video, position, paused, lastSeek, speed)
 }
@@ -190,7 +190,7 @@ func (mr *MockRoomStateHandlerMockRecorder) SetPlaylistState(video, position, pa
 }
 
 // SetPosition mocks base method.
-func (m *MockRoomStateHandler) SetPosition(position uint64) {
+func (m *MockRoomStateHandler) SetPosition(position Duration) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "SetPosition", position)
 }
@@ -252,10 +252,10 @@ func (mr *MockRoomStateHandlerMockRecorder) Shutdown(ctx interface{}) *gomock.Ca
 }
 
 // SlowestEstimatedClientPosition mocks base method.
-func (m *MockRoomStateHandler) SlowestEstimatedClientPosition() *uint64 {
+func (m *MockRoomStateHandler) SlowestEstimatedClientPosition() *Duration {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SlowestEstimatedClientPosition")
-	ret0, _ := ret[0].(*uint64)
+	ret0, _ := ret[0].(*Duration)
 	return ret0
 }
 

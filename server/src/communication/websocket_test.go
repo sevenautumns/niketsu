@@ -18,6 +18,7 @@ import (
 const (
 	host       string = "localhost"
 	portTCP    uint16 = 7766
+	portTCP2   uint16 = 7755
 	portTLS    uint16 = 7777
 	cert       string = "testdata/certificate.crt"
 	key        string = "testdata/private.key"
@@ -46,7 +47,7 @@ var (
 	}
 	testFailedHostPortConfig = config.CLI{
 		Host: failedHost,
-		Port: portTCP,
+		Port: portTCP2,
 	}
 )
 
@@ -88,7 +89,6 @@ func TestFailedCertificate(t *testing.T) {
 }
 
 func TestFailedHostPort(t *testing.T) {
-	t.Parallel()
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -112,10 +112,12 @@ func TestStop(t *testing.T) {
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
 	handler := NewWebSocketHandler(testConfigTCP.Host, testConfigTCP.Port, testConfigTCP.Cert, testConfigTCP.Key,
 		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
-	stopChannel := make(chan int, 1)
-	go listenChannel(t, handler, stopChannel)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go listenChannel(t, handler, &wg)
 	handler.Stop()
-	<-stopChannel
+	wg.Wait()
 }
 
 func TestClose(t *testing.T) {
@@ -129,10 +131,12 @@ func TestClose(t *testing.T) {
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
 	handler := NewWebSocketHandler(testConfigTCP.Host, testConfigTCP.Port, testConfigTCP.Cert, testConfigTCP.Key,
 		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
-	stopChannel := make(chan int, 1)
-	go listenChannel(t, handler, stopChannel)
-	handler.Close()
-	<-stopChannel
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go listenChannel(t, handler, &wg)
+	handler.Stop()
+	wg.Wait()
 }
 
 func TestListenTLS(t *testing.T) {
@@ -205,8 +209,8 @@ func testReadWrite(ctx context.Context, t *testing.T, conn *websocket.Conn) {
 	conn.Close(websocket.StatusNormalClosure, "")
 }
 
-func listenChannel(t *testing.T, handler WebsocketHandler, stopChannel chan int) {
-	defer close(stopChannel)
+func listenChannel(t *testing.T, handler WebsocketHandler, wg *sync.WaitGroup) {
 	err := handler.Listen()
 	require.NoError(t, err)
+	wg.Done()
 }

@@ -35,11 +35,11 @@ type Ping struct {
 func (p Ping) Type() MessageType { return PingType }
 
 type VideoStatus struct {
-	Filename *string `json:"filename"`
-	Position *uint64 `json:"position"`
-	Paused   bool    `json:"paused"`
-	Speed    float64 `json:"speed"`
-	Username string  `json:"username"`
+	Filename *string   `json:"filename"`
+	Position *Duration `json:"position"`
+	Paused   bool      `json:"paused"`
+	Speed    float64   `json:"speed"`
+	Username string    `json:"username"`
 }
 
 func (vs VideoStatus) Type() MessageType { return VideoStatusType }
@@ -57,12 +57,12 @@ type Start struct {
 func (s Start) Type() MessageType { return StartType }
 
 type Seek struct {
-	Filename string  `json:"filename"`
-	Position uint64  `json:"position"`
-	Speed    float64 `json:"speed"`
-	Paused   bool    `json:"paused"`
-	Desync   bool    `json:"desync"`
-	Username string  `json:"username"`
+	Filename string   `json:"filename"`
+	Position Duration `json:"position"`
+	Speed    float64  `json:"speed"`
+	Paused   bool     `json:"paused"`
+	Desync   bool     `json:"desync"`
+	Username string   `json:"username"`
 }
 
 func (s Seek) Type() MessageType { return SeekType }

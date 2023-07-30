@@ -173,7 +173,7 @@ func TestServerCreateOrFindRoom(t *testing.T) {
 	require.NotNil(t, room)
 }
 
-func TestServer_BroadcastStatusList(t *testing.T) {
+func TestServerBroadcastStatusList(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -197,7 +197,7 @@ func TestServer_BroadcastStatusList(t *testing.T) {
 	server.BroadcastStatusList()
 }
 
-func TestServer_IsPasswordCorrect(t *testing.T) {
+func TestServerIsPasswordCorrect(t *testing.T) {
 	server := &Server{
 		config: &serverConfig{
 			password: "password",

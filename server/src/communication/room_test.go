@@ -20,10 +20,10 @@ var (
 	defaultPlaylist []string = make([]string, 0)
 	video           *string
 	video2          *string
-	defaultPosition *uint64
-	highPosition    *uint64
-	defaultLastSeek uint64      = 0
-	highLastSeek    uint64      = 10000
+	defaultPosition *Duration = &Duration{0}
+	highPosition    *Duration
+	defaultLastSeek Duration    = Duration{0}
+	highLastSeek    Duration    = durationFromUint64(10000)
 	defaultPaused   bool        = false
 	notPaused       bool        = false
 	paused          bool        = true
@@ -52,10 +52,8 @@ func init() {
 	video = &vid
 	vid2 := "testVideo2"
 	video2 = &vid2
-	pos := uint64(0)
-	defaultPosition = &pos
-	pos2 := uint64(1000000)
-	highPosition = &pos2
+	highPos := durationFromUint64(1000000)
+	highPosition = &highPos
 }
 
 func TestNewRoom(t *testing.T) {
@@ -80,7 +78,7 @@ func testCorrectState(t *testing.T, room *Room, err error) {
 	require.Empty(t, room.state.playlist)
 	require.Empty(t, room.state.video)
 	require.Empty(t, room.state.position)
-	require.Equal(t, uint64(0), room.state.lastSeek)
+	require.Equal(t, Duration{0}, room.state.lastSeek)
 	require.Equal(t, true, room.state.paused)
 	require.Equal(t, 1.0, room.state.speed)
 	require.NotNil(t, room.db)
@@ -166,7 +164,7 @@ func testCorrectDBState(t *testing.T, room *Room) {
 	var position uint64
 	binary.Read(bytes.NewBuffer(positionBytes[:]), binary.LittleEndian, &position)
 	require.NoError(t, err)
-	require.Equal(t, position, *room.state.position)
+	require.Equal(t, position, room.state.position.uint64())
 
 	videoBytes, err := room.video()
 	require.NoError(t, err)
@@ -545,7 +543,7 @@ func testSlowestClientPositionNoUsers(t *testing.T, ctrl *gomock.Controller) {
 	require.Nil(t, minPosition)
 }
 
-func getMockClientWithEstimatePosition(t *testing.T, ctrl *gomock.Controller, position *uint64) ClientWorker {
+func getMockClientWithEstimatePosition(t *testing.T, ctrl *gomock.Controller, position *Duration) ClientWorker {
 	m := NewMockClientWorker(ctrl)
 	m.EXPECT().
 		EstimatePosition().

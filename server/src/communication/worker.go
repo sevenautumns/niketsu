@@ -12,12 +12,15 @@ import (
 // TODO handle clients with unstable latency
 // TODO rate limiter
 const (
-	maxBufferedTasks                int           = 1000
-	maxBufferedMessages             int           = 1000
-	latencyWeighingFactor           float64       = 0.85
-	pingTickInterval                time.Duration = time.Second
-	pingDeleteInterval              time.Duration = 600 * time.Second
-	maxClientDifferenceMillisecodns uint64        = 1e3 // one second
+	maxBufferedTasks      int     = 1000
+	maxBufferedMessages   int     = 1000
+	latencyWeighingFactor float64 = 0.85
+)
+
+var (
+	pingTickInterval    Duration = Duration{time.Second}
+	pingDeleteInterval  Duration = Duration{600 * time.Second}
+	maxClientDifference Duration = Duration{time.Second}
 )
 
 type Task struct {
@@ -31,17 +34,17 @@ type ClientWorker interface {
 	Shutdown()
 	UUID() uuid.UUID
 	SendMessage(payload []byte)
-	EstimatePosition() *uint64
+	EstimatePosition() *Duration
 }
 
 type workerLatency struct {
-	roundTripTime float64
+	roundTripTime Duration
 	timestamps    map[uuid.UUID]time.Time
 }
 
 type workerVideoState struct {
 	video     *string
-	position  *uint64
+	position  *Duration
 	timestamp time.Time
 	paused    bool
 	speed     float64
@@ -82,7 +85,7 @@ func NewWorker(roomHandler ServerStateHandler, websocket WebsocketReaderWriter, 
 	worker.room = nil
 	worker.userStatus = Status{Username: username}
 	worker.videoState = workerVideoState{paused: true, speed: 1.0}
-	worker.latency = workerLatency{roundTripTime: 0, timestamps: make(map[uuid.UUID]time.Time)}
+	worker.latency = workerLatency{roundTripTime: Duration{0}, timestamps: make(map[uuid.UUID]time.Time)}
 
 	return &worker
 }
@@ -157,8 +160,8 @@ func (worker *Worker) handlePings(wg *sync.WaitGroup) {
 	var pingWG sync.WaitGroup
 	pingWG.Add(2)
 
-	pingTimer := worker.schedule(worker.sendPing, pingTickInterval, &pingWG)
-	pingDeleteTimer := worker.schedule(worker.deletePings, pingDeleteInterval, &pingWG)
+	pingTimer := worker.schedule(worker.sendPing, pingTickInterval.Duration, &pingWG)
+	pingDeleteTimer := worker.schedule(worker.deletePings, pingDeleteInterval.Duration, &pingWG)
 	defer pingTimer.Stop()
 	defer pingDeleteTimer.Stop()
 
@@ -416,8 +419,12 @@ func (worker *Worker) setRoundTripTime(workerUUID uuid.UUID, arrivalTime time.Ti
 		return
 	}
 
-	newRoundTripTime := float64(arrivalTime.Sub(timestamp))
-	worker.latency.roundTripTime = worker.latency.roundTripTime*latencyWeighingFactor + newRoundTripTime*(1-latencyWeighingFactor)
+	worker.latency.roundTripTime = worker.calculateNewRoundTripTime(arrivalTime, timestamp)
+}
+
+func (worker *Worker) calculateNewRoundTripTime(arrivalTime time.Time, timestamp time.Time) Duration {
+	newRoundTripTime := timeSub(arrivalTime, timestamp)
+	return worker.latency.roundTripTime.mult(latencyWeighingFactor).add(newRoundTripTime.mult(1 - latencyWeighingFactor))
 }
 
 func (worker *Worker) detelePing(workerUUID uuid.UUID) {
@@ -528,9 +535,8 @@ func (worker *Worker) handleSeek(seek Seek, arrivalTime time.Time) {
 }
 
 func (worker *Worker) handleSelect(sel Select) {
-	worker.room.SetPlaylistState(sel.Filename, 0, true, 0, -1)
-	pos := uint64(0)
-	worker.setVideoState(VideoStatus{Filename: sel.Filename, Position: &pos,
+	worker.room.SetPlaylistState(sel.Filename, Duration{0}, true, Duration{0}, -1)
+	worker.setVideoState(VideoStatus{Filename: sel.Filename, Position: &Duration{0},
 		Paused: true, Speed: -1}, time.Now())
 	worker.broadcastSelect(sel.Filename, false)
 	worker.broadcastStartOnReady()
@@ -627,7 +633,7 @@ func (worker *Worker) setSpeed(speed float64) {
 	worker.videoState.speed = speed
 }
 
-func (worker *Worker) roundTripTime() float64 {
+func (worker *Worker) roundTripTime() Duration {
 	worker.latencyMutex.RLock()
 	defer worker.latencyMutex.RUnlock()
 
@@ -639,8 +645,13 @@ func (worker *Worker) setVideoState(videoStatus VideoStatus, arrivalTime time.Ti
 	defer worker.videoStateMutex.Unlock()
 
 	worker.videoState.video = videoStatus.Filename
-	worker.videoState.position = videoStatus.Position
-	worker.videoState.timestamp = arrivalTime.Add(time.Duration(-worker.roundTripTime()/2) * time.Nanosecond)
+	if videoStatus.Position == nil {
+		videoStatus.Position = nil
+	} else {
+		worker.videoState.position = videoStatus.Position
+	}
+
+	worker.videoState.timestamp = timeAdd(arrivalTime, worker.roundTripTime().div(2).negate())
 	worker.videoState.paused = videoStatus.Paused
 	if videoStatus.Speed > 0 {
 		worker.videoState.speed = videoStatus.Speed
@@ -659,7 +670,7 @@ func (worker *Worker) sendSeek(desync bool) {
 	// add half rtt if video is playing
 	position := *roomState.position
 	if !worker.paused() {
-		position += uint64(worker.roundTripTime() / float64(time.Millisecond) / 2)
+		position.add(worker.roundTripTime().div(2))
 	}
 
 	seek := Seek{Filename: *roomState.video, Position: position,
@@ -698,19 +709,19 @@ func (worker *Worker) sendPlaylist() {
 	worker.queueMessage(payload)
 }
 
-func (worker *Worker) EstimatePosition() *uint64 {
+func (worker *Worker) EstimatePosition() *Duration {
 	videoState := worker.VideoState()
 
 	if videoState.position == nil {
 		return nil
 	}
 
-	var estimatedPosition uint64
+	var estimatedPosition Duration
 	if videoState.paused {
 		estimatedPosition = *videoState.position
 	} else {
-		timeElapsed := uint64(float64(time.Since(videoState.timestamp).Milliseconds()) * videoState.speed)
-		estimatedPosition = *videoState.position + timeElapsed
+		timeElapsed := timeSince(videoState.timestamp).mult(videoState.speed)
+		estimatedPosition = videoState.position.add(timeElapsed)
 	}
 
 	return &estimatedPosition
@@ -728,7 +739,7 @@ func (worker *Worker) broadcastStart() {
 	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
-func (worker *Worker) broadcastSeek(filename string, position uint64, desync bool) {
+func (worker *Worker) broadcastSeek(filename string, position Duration, desync bool) {
 	state := worker.room.RoomState()
 
 	seek := Seek{Filename: filename, Position: position,
@@ -866,7 +877,7 @@ func (worker *Worker) findNext(newPlaylist []string, state RoomState) string {
 
 func (worker *Worker) setNextVideo(nextVideo string, oldVideo string, room RoomStateHandler) {
 	if nextVideo != oldVideo {
-		room.SetPlaylistState(&nextVideo, 0, true, 0, -1)
+		room.SetPlaylistState(&nextVideo, Duration{0}, true, Duration{0}, -1)
 		worker.broadcastSelect(&nextVideo, true)
 	}
 }
@@ -880,7 +891,7 @@ func (worker *Worker) handleTimeDifference() {
 	}
 
 	state := worker.VideoState()
-	if worker.isClientDifferenceTooLarge(minPosition, state.position, state.speed) {
+	if worker.shouldSeek(minPosition, state.position, state.speed) {
 		worker.room.SetPosition(*minPosition)
 		worker.sendSeek(true)
 	} else {
@@ -888,6 +899,10 @@ func (worker *Worker) handleTimeDifference() {
 	}
 }
 
-func (worker *Worker) isClientDifferenceTooLarge(minPosition *uint64, workerPosition *uint64, speed float64) bool {
-	return workerPosition == nil || *workerPosition-*minPosition > uint64(float64(maxClientDifferenceMillisecodns)*speed)
+func (worker *Worker) shouldSeek(minPosition *Duration, workerPosition *Duration, speed float64) bool {
+	if workerPosition == nil {
+		return true
+	}
+
+	return (workerPosition.greater(*minPosition)) && (workerPosition.sub(*minPosition).greater(maxClientDifference.mult(speed)))
 }
