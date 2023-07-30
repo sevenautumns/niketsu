@@ -111,7 +111,7 @@ pub struct PlayerPositionChanged(pub Duration);
 
 impl CoreMessageTrait for PlayerPositionChanged {
     fn handle(self, client: &mut CoreRunner) -> Result<()> {
-        let Some(playing) = client.player.playing_file() else  {
+        let Some(playing) = client.player.playing_file() else {
             return Ok(());
         };
         client.ws.sender().send(NiketsuSeek {

@@ -96,8 +96,7 @@ type Status struct {
 func (s Status) Type() MessageType { return StatusType }
 
 type StatusList struct {
-	Rooms    map[string][]Status `json:"rooms"`
-	Username string              `json:"username"`
+	Rooms map[string][]Status `json:"rooms"`
 }
 
 func (sl StatusList) Type() MessageType { return StatusListType }
@@ -144,10 +143,9 @@ func UnmarshalMessage(data []byte) (Message, error) {
 		return nil, err
 	}
 
-	err = json.Unmarshal(data, &message)
-	if err != nil {
-		return nil, err
-	}
+	// Due to the Unknown message, we can deliberately parse all jsons.
+	// Hence, this will not fail
+	json.Unmarshal(data, &message)
 
 	return message, nil
 }
@@ -188,6 +186,8 @@ func getMessage(data []byte) (Message, error) {
 		message = &PlaybackSpeed{}
 	case UnsupportedType:
 		message = &Unsupported{}
+	case ServerMessageType:
+		message = &ServerMessage{}
 	default:
 		message = &Unknown{}
 	}
