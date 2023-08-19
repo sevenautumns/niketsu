@@ -111,6 +111,20 @@ func (mr *MockRoomStateHandlerMockRecorder) DeleteWorker(workerUUID interface{})
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteWorker", reflect.TypeOf((*MockRoomStateHandler)(nil).DeleteWorker), workerUUID)
 }
 
+// IsEmpty mocks base method.
+func (m *MockRoomStateHandler) IsEmpty() bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsEmpty")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsEmpty indicates an expected call of IsEmpty.
+func (mr *MockRoomStateHandlerMockRecorder) IsEmpty() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsEmpty", reflect.TypeOf((*MockRoomStateHandler)(nil).IsEmpty))
+}
+
 // Name mocks base method.
 func (m *MockRoomStateHandler) Name() string {
 	m.ctrl.T.Helper()

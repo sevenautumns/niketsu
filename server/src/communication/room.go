@@ -36,6 +36,7 @@ type RoomStateHandler interface {
 	WorkerStatus() []Status
 	SetWorkerStatus(workerUUID uuid.UUID, status Status)
 	ShouldBeClosed() bool
+	IsEmpty() bool
 }
 
 type RoomState struct {
@@ -238,7 +239,7 @@ func (room *Room) SlowestEstimatedClientPosition() *Duration {
 			continue
 		}
 
-		if minPosition == nil || estimatedPosition.smaller(*minPosition) {
+		if minPosition == nil || estimatedPosition.Smaller(*minPosition) {
 			minPosition = estimatedPosition
 		}
 	}
@@ -254,6 +255,7 @@ func (room *Room) SetPlaylistState(video *string, position Duration, paused bool
 	room.state.position = &position
 	room.state.paused = paused
 	room.state.lastSeek = lastSeek
+	logger.Debugw("################################################################LASTSEEK UPDATE ----------------", "LS", lastSeek)
 	if speed > 0 {
 		room.state.speed = speed
 	}
@@ -264,7 +266,7 @@ func (room *Room) SetPosition(position Duration) {
 	defer room.stateMutex.Unlock()
 
 	lastSeek := room.state.lastSeek
-	if position.greater(lastSeek) {
+	if position.Greater(lastSeek) {
 		room.state.position = &position
 	} else {
 		room.state.position = &lastSeek
@@ -306,7 +308,7 @@ func (room *Room) writePlaylist() error {
 
 	position := uint64(0)
 	if state.position != nil {
-		position = state.position.uint64()
+		position = state.position.Uint64()
 	}
 
 	logger.Debugw("Writing playlist into db", "room", room.RoomConfig().Name, "playlist", state.playlist)
@@ -370,7 +372,7 @@ func (room *Room) setPositionFromDB() {
 			logger.Debugw("Failed to convert position. Setting position to default state (nil)", "error", err)
 			room.state.position = nil
 		} else {
-			duration := durationFromUint64(position)
+			duration := DurationFromUint64(position)
 			room.state.position = &duration
 		}
 	}
@@ -423,10 +425,10 @@ func (room *Room) SetWorkerStatus(workerUUID uuid.UUID, status Status) {
 }
 
 func (room *Room) ShouldBeClosed() bool {
-	return room.isEmpty() && room.isPlaylistEmpty() && !room.config.Persistent
+	return room.IsEmpty() && room.isPlaylistEmpty() && !room.config.Persistent
 }
 
-func (room *Room) isEmpty() bool {
+func (room *Room) IsEmpty() bool {
 	room.workersMutex.Lock()
 	defer room.workersMutex.Unlock()
 

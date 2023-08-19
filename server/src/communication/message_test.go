@@ -29,13 +29,13 @@ var (
 	testOtherCommandValue bool     = false
 	pingMessage           string   = fmt.Sprintf(`{"uuid":"%s","type":"ping"}`, testUuid)
 	videoStatusMessage    string   = fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-		testFilename, testPosition.uint64(), testPaused, testSpeed, testUsername)
+		testFilename, testPosition.Uint64(), testPaused, testSpeed, testUsername)
 	statusListMessage string = fmt.Sprintf(`{"rooms":{"room1":[{"ready":%t,"username":"%s"},{"ready":%t,"username":"%s"}],"room2":[]},"type":"statusList"}`,
 		testNotReady, testUsername, testReady, testUsername2)
 	pauseMessage string = fmt.Sprintf(`{"username":"%s","type":"pause"}`, testUsername)
 	startMessage string = fmt.Sprintf(`{"username":"%s","type":"start"}`, testUsername)
 	seekMessage  string = fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"%s","type":"seek"}`,
-		testFilename, testPosition.uint64(), testSpeed, testPaused, testDesync, testUsername)
+		testFilename, testPosition.Uint64(), testSpeed, testPaused, testDesync, testUsername)
 	selectMessage        string = fmt.Sprintf(`{"filename":"%s","username":"%s","type":"select"}`, testFilename, testUsername)
 	userMessage          string = fmt.Sprintf(`{"message":"%s","username":"%s","type":"userMessage"}`, testMessage, testUsername)
 	serverMessage        string = fmt.Sprintf(`{"message":"%s","error":%t,"type":"serverMessage"}`, testMessage, testError)

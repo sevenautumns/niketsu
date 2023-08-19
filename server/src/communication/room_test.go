@@ -23,7 +23,7 @@ var (
 	defaultPosition *Duration = &Duration{0}
 	highPosition    *Duration
 	defaultLastSeek Duration    = Duration{0}
-	highLastSeek    Duration    = durationFromUint64(10000)
+	highLastSeek    Duration    = DurationFromUint64(10000)
 	defaultPaused   bool        = false
 	notPaused       bool        = false
 	paused          bool        = true
@@ -52,7 +52,7 @@ func init() {
 	video = &vid
 	vid2 := "testVideo2"
 	video2 = &vid2
-	highPos := durationFromUint64(1000000)
+	highPos := DurationFromUint64(1000000)
 	highPosition = &highPos
 }
 
@@ -164,7 +164,7 @@ func testCorrectDBState(t *testing.T, room *Room) {
 	var position uint64
 	binary.Read(bytes.NewBuffer(positionBytes[:]), binary.LittleEndian, &position)
 	require.NoError(t, err)
-	require.Equal(t, position, room.state.position.uint64())
+	require.Equal(t, position, room.state.position.Uint64())
 
 	videoBytes, err := room.video()
 	require.NoError(t, err)

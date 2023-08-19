@@ -6,12 +6,13 @@ import (
 	"time"
 )
 
+// Expect time in milliseconds
 type Duration struct {
 	time.Duration
 }
 
 func (d Duration) MarshalJSON() ([]byte, error) {
-	return json.Marshal(d.uint64())
+	return json.Marshal(d.Div(uint64(time.Millisecond)).Uint64())
 }
 
 func (d *Duration) UnmarshalJSON(b []byte) error {
@@ -21,10 +22,10 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	}
 	switch value := v.(type) {
 	case float64:
-		d.Duration = time.Duration(value)
+		d.Duration = time.Duration(float64(time.Millisecond) * value)
 		return nil
 	case int:
-		d.Duration = time.Duration(value)
+		d.Duration = time.Duration(int(time.Millisecond) * value)
 		return nil
 	case string:
 		var err error
@@ -32,60 +33,65 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 		if err != nil {
 			return err
 		}
+		d.MultInt(int(time.Millisecond))
 		return nil
 	default:
 		return errors.New("invalid duration")
 	}
 }
 
-func (d Duration) mult(factor float64) Duration {
+func (d Duration) MultFloat64(factor float64) Duration {
 	return Duration{time.Duration(float64(d.Duration) * factor)}
 }
 
-func (d Duration) add(duration Duration) Duration {
+func (d Duration) MultInt(factor int) Duration {
+	return Duration{time.Duration(int(d.Duration) * factor)}
+}
+
+func (d Duration) Add(duration Duration) Duration {
 	return Duration{d.Duration + duration.Duration}
 }
 
-func (d Duration) sub(duration Duration) Duration {
+func (d Duration) Sub(duration Duration) Duration {
 	return Duration{d.Duration - duration.Duration}
 }
 
-func (d Duration) div(value uint64) Duration {
+func (d Duration) Div(value uint64) Duration {
 	return Duration{d.Duration / time.Duration(value)}
 }
 
-func (d Duration) negate() Duration {
+func (d Duration) Negate() Duration {
 	return Duration{-d.Duration}
 }
 
-func (d Duration) greater(duration Duration) bool {
+func (d Duration) Greater(duration Duration) bool {
 	return d.Duration > duration.Duration
 }
 
-func (d Duration) smaller(duration Duration) bool {
+func (d Duration) Smaller(duration Duration) bool {
 	return d.Duration < duration.Duration
 }
 
-func (d Duration) equal(duration Duration) bool {
+func (d Duration) Equal(duration Duration) bool {
 	return d.Duration == duration.Duration
 }
 
-func (d Duration) uint64() uint64 {
+func (d Duration) Uint64() uint64 {
 	return uint64(d.Duration)
 }
 
-func durationFromUint64(i uint64) Duration {
+func DurationFromUint64(i uint64) Duration {
 	return Duration{time.Duration(i)}
 }
 
-func timeSince(t time.Time) Duration {
+func TimeSince(t time.Time) Duration {
 	return Duration{time.Since(t)}
 }
 
-func timeSub(t time.Time, otherT time.Time) Duration {
+func TimeSub(t time.Time, otherT time.Time) Duration {
 	return Duration{t.Sub(otherT)}
 }
 
-func timeAdd(t time.Time, duration Duration) time.Time {
+func TimeAdd(t time.Time, duration Duration) time.Time {
 	return t.Add(duration.Duration)
 }
