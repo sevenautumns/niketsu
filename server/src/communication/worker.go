@@ -115,7 +115,9 @@ func (worker *Worker) setRoomState() {
 	}
 
 	worker.room.DeleteWorker(worker.UUID())
-	worker.room.SetPaused(true)
+	if worker.room.IsEmpty() {
+		worker.room.SetPaused(true)
+	}
 	worker.deleteAndCloseEmptyRoom()
 }
 
@@ -423,8 +425,8 @@ func (worker *Worker) setRoundTripTime(workerUUID uuid.UUID, arrivalTime time.Ti
 }
 
 func (worker *Worker) calculateNewRoundTripTime(arrivalTime time.Time, timestamp time.Time) Duration {
-	newRoundTripTime := timeSub(arrivalTime, timestamp)
-	return worker.latency.roundTripTime.mult(latencyWeighingFactor).add(newRoundTripTime.mult(1 - latencyWeighingFactor))
+	newRoundTripTime := TimeSub(arrivalTime, timestamp)
+	return worker.latency.roundTripTime.MultFloat64(latencyWeighingFactor).Add(newRoundTripTime.MultFloat64(1 - latencyWeighingFactor))
 }
 
 func (worker *Worker) detelePing(workerUUID uuid.UUID) {
@@ -451,6 +453,7 @@ func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime tim
 	worker.setVideoState(videoStatus, arrivalTime)
 	roomState := worker.room.RoomState()
 
+	logger.Debugw("Received video status", "videostatus", videoStatus)
 	if worker.isVideoStateDifferent(videoStatus, roomState) {
 		worker.sendSelect(roomState.video)
 		return
@@ -462,7 +465,7 @@ func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime tim
 	}
 
 	if videoStatus.Paused != roomState.paused {
-		worker.sendPausePlay(roomState.paused)
+		worker.sendPausePlay(videoStatus.Paused)
 		return
 	}
 
@@ -487,10 +490,10 @@ func (worker *Worker) sendSelect(filename *string) {
 }
 
 func (worker *Worker) sendSpeed(speed float64) {
-	seek := PlaybackSpeed{Speed: speed, Username: worker.userStatus.Username}
-	payload, err := MarshalMessage(seek)
+	msg := PlaybackSpeed{Speed: speed, Username: worker.userStatus.Username}
+	payload, err := MarshalMessage(msg)
 	if err != nil {
-		logger.Warnw("Failed to marshal seek message")
+		logger.Warnw("Failed to marshal speed message")
 		return
 	}
 
@@ -500,9 +503,9 @@ func (worker *Worker) sendSpeed(speed float64) {
 func (worker *Worker) sendPausePlay(paused bool) {
 	var message Message
 	if paused {
-		message = Pause{Username: worker.userStatus.Username}
-	} else {
 		message = Start{Username: worker.userStatus.Username}
+	} else {
+		message = Pause{Username: worker.userStatus.Username}
 	}
 
 	payload, err := MarshalMessage(message)
@@ -651,7 +654,7 @@ func (worker *Worker) setVideoState(videoStatus VideoStatus, arrivalTime time.Ti
 		worker.videoState.position = videoStatus.Position
 	}
 
-	worker.videoState.timestamp = timeAdd(arrivalTime, worker.roundTripTime().div(2).negate())
+	worker.videoState.timestamp = TimeAdd(arrivalTime, worker.roundTripTime().Div(2).Negate())
 	worker.videoState.paused = videoStatus.Paused
 	if videoStatus.Speed > 0 {
 		worker.videoState.speed = videoStatus.Speed
@@ -660,7 +663,6 @@ func (worker *Worker) setVideoState(videoStatus VideoStatus, arrivalTime time.Ti
 
 func (worker *Worker) sendSeek(desync bool) {
 	roomState := worker.room.RoomState()
-
 	// seeking nil videos is prohibited
 	// may need to be changed to allow synchronization even if playlist is empty
 	if roomState.video == nil || roomState.position == nil {
@@ -670,7 +672,7 @@ func (worker *Worker) sendSeek(desync bool) {
 	// add half rtt if video is playing
 	position := *roomState.position
 	if !worker.paused() {
-		position.add(worker.roundTripTime().div(2))
+		position = position.Add(worker.roundTripTime().Div(2))
 	}
 
 	seek := Seek{Filename: *roomState.video, Position: position,
@@ -678,7 +680,7 @@ func (worker *Worker) sendSeek(desync bool) {
 		Desync: desync, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(seek)
 	if err != nil {
-		logger.Errorw("Capitalist failed to marshal seek")
+		logger.Errorw("Failed to marshal seek")
 		return
 	}
 
@@ -720,8 +722,8 @@ func (worker *Worker) EstimatePosition() *Duration {
 	if videoState.paused {
 		estimatedPosition = *videoState.position
 	} else {
-		timeElapsed := timeSince(videoState.timestamp).mult(videoState.speed)
-		estimatedPosition = videoState.position.add(timeElapsed)
+		timeElapsed := TimeSince(videoState.timestamp).MultFloat64(videoState.speed)
+		estimatedPosition = videoState.position.Add(timeElapsed)
 	}
 
 	return &estimatedPosition
@@ -904,5 +906,14 @@ func (worker *Worker) shouldSeek(minPosition *Duration, workerPosition *Duration
 		return true
 	}
 
-	return (workerPosition.greater(*minPosition)) && (workerPosition.sub(*minPosition).greater(maxClientDifference.mult(speed)))
+	if minPosition == nil {
+		return false
+	}
+
+	lastSeek := worker.room.RoomState().lastSeek
+	if minPosition.Smaller(lastSeek) {
+		return false
+	}
+
+	return (workerPosition.Greater(*minPosition)) && (workerPosition.Sub(*minPosition).Greater(maxClientDifference.MultFloat64(speed)))
 }

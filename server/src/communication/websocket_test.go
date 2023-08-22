@@ -17,8 +17,10 @@ import (
 
 const (
 	host       string = "localhost"
-	portTCP    uint16 = 7766
-	portTCP2   uint16 = 7755
+	portTCP    uint16 = 7760
+	portTCP2   uint16 = 7767
+	portTCP3   uint16 = 7768
+	portTCP4   uint16 = 7769
 	portTLS    uint16 = 7777
 	cert       string = "testdata/certificate.crt"
 	key        string = "testdata/private.key"
@@ -32,6 +34,14 @@ var (
 	testConfigTCP = config.CLI{
 		Host: host,
 		Port: portTCP,
+	}
+	testConfigTCP2 = config.CLI{
+		Host: host,
+		Port: portTCP2,
+	}
+	testConfigTCP3 = config.CLI{
+		Host: host,
+		Port: portTCP3,
 	}
 	testConfigTLS = config.CLI{
 		Host: host,
@@ -47,7 +57,7 @@ var (
 	}
 	testFailedHostPortConfig = config.CLI{
 		Host: failedHost,
-		Port: portTCP2,
+		Port: portTCP4,
 	}
 )
 
@@ -129,7 +139,7 @@ func TestClose(t *testing.T) {
 		Shutdown(gomock.Any())
 
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
-	handler := NewWebSocketHandler(testConfigTCP.Host, testConfigTCP.Port, testConfigTCP.Cert, testConfigTCP.Key,
+	handler := NewWebSocketHandler(testConfigTCP2.Host, testConfigTCP2.Port, testConfigTCP2.Cert, testConfigTCP2.Key,
 		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
 
 	var wg sync.WaitGroup
@@ -163,9 +173,9 @@ func TestListenTCP(t *testing.T) {
 		Shutdown(gomock.Any())
 
 	newMockClientWorker := newMockClientWorkerWrapper(ctrl)
-	handler := NewWebSocketHandler(testConfigTCP.Host, testConfigTCP.Port, testConfigTCP.Cert, testConfigTCP.Key,
+	handler := NewWebSocketHandler(testConfigTCP3.Host, testConfigTCP3.Port, testConfigTCP3.Cert, testConfigTCP3.Key,
 		mockServerStateHandler, NewWsReaderWriter, newMockClientWorker)
-	url := fmt.Sprintf("ws://%s:%d", host, portTCP)
+	url := fmt.Sprintf("ws://%s:%d", host, portTCP3)
 	testListen(t, handler, url)
 }
 
