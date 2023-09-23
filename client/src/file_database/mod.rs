@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use im::Vector;
+use itertools::Itertools;
 use log::warn;
 use rayon::prelude::IntoParallelRefIterator;
 use tokio::task::JoinHandle;
@@ -85,7 +86,7 @@ impl FileDatabaseTrait for FileDatabase {
     }
 
     fn stop_update(&mut self) {
-        if let Some(update) = &mut self.update {
+        if let Some(update) = self.update.take() {
             self.progress = Arc::default();
             update.abort();
         }
@@ -99,28 +100,29 @@ impl FileDatabaseTrait for FileDatabase {
         &self.store
     }
 
-    async fn event(&mut self) -> FileDatabaseEvent {
-        // TODO refactor
+    async fn event(&mut self) -> Option<FileDatabaseEvent> {
+        // TODO REFACTOR
         use crate::core::file_database::UpdateProgress as Prog;
-        let Some(updater) = self.update.as_mut() else {
-            tokio::time::sleep(Duration::from_secs(6000)).await;
-            return Prog { ratio: 1.0 }.into();
-        };
+        let updater = self.update.as_mut()?;
 
         let Some(last) = self.last_progress_event else {
             self.last_progress_event = Some(Instant::now());
-            return Prog {
-                ratio: self.progress.percent_complete(),
-            }
-            .into();
+            return Some(
+                Prog {
+                    ratio: self.progress.percent_complete(),
+                }
+                .into(),
+            );
         };
         let remaining_time = MAX_UPDATE_FREQUENCY.saturating_sub(last.elapsed());
         if remaining_time.is_zero() {
             self.last_progress_event = Some(Instant::now());
-            return Prog {
-                ratio: self.progress.percent_complete(),
-            }
-            .into();
+            return Some(
+                Prog {
+                    ratio: self.progress.percent_complete(),
+                }
+                .into(),
+            );
         }
         tokio::select! {
             update = updater => {
@@ -129,22 +131,218 @@ impl FileDatabaseTrait for FileDatabase {
                     Err(e) => warn!("Update error: {e:?}"),
                 };
                 self.update.take();
-                UpdateComplete.into()
+                Some(UpdateComplete.into())
             }
             _ = tokio::time::sleep(remaining_time) => {
                 self.last_progress_event = Some(Instant::now());
-                Prog {
+                Some(Prog {
                     ratio: self.progress.percent_complete(),
                 }
-                .into()
+                .into())
             }
         }
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+
+    use anyhow::Result;
+    use tempfile::{tempdir, TempDir};
+    use tokio::time::{sleep, Duration};
+
+    use super::*;
+
+    //TODO more test cases
+    #[test]
+    fn test_add_path() {
+        let mut file_db = FileDatabase {
+            update: Default::default(),
+            progress: Arc::new(UpdateProgress {
+                dirs_queued: AtomicUsize::new(0),
+                dirs_finished: AtomicUsize::new(0),
+            }),
+            store: Default::default(),
+            paths: Default::default(),
+            last_progress_event: Default::default(),
+        };
+        let test_path = PathBuf::from("test/path/");
+        file_db.add_path(test_path.clone());
+        let expected = BTreeSet::from([test_path.clone()]);
+        assert_eq!(expected, file_db.paths);
+
+        let another_test_path = PathBuf::from("another/test/path/");
+        file_db.add_path(another_test_path.clone());
+        let expected = BTreeSet::from([test_path.clone(), another_test_path.clone()]);
+        assert_eq!(expected, file_db.paths);
+    }
+
+    #[test]
+    fn test_del_path() {
+        let test_path = PathBuf::from("test/path/");
+        let mut file_db = FileDatabase {
+            update: Default::default(),
+            progress: Arc::new(UpdateProgress {
+                dirs_queued: AtomicUsize::new(0),
+                dirs_finished: AtomicUsize::new(0),
+            }),
+            store: Default::default(),
+            paths: BTreeSet::from([test_path.clone()]),
+            last_progress_event: Default::default(),
+        };
+        file_db.del_path(&Path::new("test/path"));
+        let expected: BTreeSet<PathBuf> = Default::default();
+        assert_eq!(expected, file_db.paths);
+    }
+
+    #[test]
+    fn test_clear_path() {
+        let mut file_db = FileDatabase {
+            update: Default::default(),
+            progress: Arc::new(UpdateProgress {
+                dirs_queued: AtomicUsize::new(0),
+                dirs_finished: AtomicUsize::new(0),
+            }),
+            store: Default::default(),
+            paths: BTreeSet::from([PathBuf::from("test/path/"), PathBuf::from("test/path2/")]),
+            last_progress_event: Default::default(),
+        };
+        file_db.clear_paths();
+        let expected: BTreeSet<PathBuf> = Default::default();
+        assert_eq!(expected, file_db.paths);
+    }
+
+    #[test]
+    fn test_get_paths() {
+        let paths: Vec<PathBuf> = vec!["test/path/".into(), "test/path2/".into()];
+        let file_db = FileDatabase {
+            update: Default::default(),
+            progress: Arc::new(UpdateProgress {
+                dirs_queued: AtomicUsize::new(0),
+                dirs_finished: AtomicUsize::new(0),
+            }),
+            store: Default::default(),
+            paths: paths.iter().cloned().collect(),
+            last_progress_event: Default::default(),
+        };
+        let actual = file_db.get_paths();
+        assert_eq!(paths, actual);
+    }
+
+    fn generate_test_dir(size: usize, fix: &str) -> Result<TempDir> {
+        let tempdir = tempdir()?;
+        let subdir = tempdir.path().join("TestFolder");
+        std::fs::create_dir(&subdir)?;
+        for i in 0..size {
+            File::create(tempdir.path().join(format!("File_{i}_{fix}")))?;
+            File::create(subdir.join(format!("{fix}_SubFile_{i}")))?;
+        }
+        Ok(tempdir)
+    }
+
+    #[tokio::test]
+    async fn test_start_update() -> Result<()> {
+        let dir = generate_test_dir(100, "fix")?;
+        let dir2 = generate_test_dir(200, "fix")?;
+        let dir3 = generate_test_dir(200, "suffix")?;
+        let mut file_db = FileDatabase {
+            update: Default::default(),
+            progress: Arc::new(UpdateProgress {
+                dirs_queued: AtomicUsize::new(0),
+                dirs_finished: AtomicUsize::new(0),
+            }),
+            store: Default::default(),
+            paths: BTreeSet::from([dir.into_path(), dir2.into_path(), dir3.into_path()]),
+            last_progress_event: Default::default(),
+        };
+        file_db.start_update();
+        let result = file_db.update.expect("failed to create join handle").await;
+        assert_eq!(result.expect("failed to get results").len(), 1000);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_stop_update() {
+        let mut file_db = FileDatabase {
+            update: Default::default(),
+            progress: Arc::new(UpdateProgress {
+                dirs_queued: AtomicUsize::new(0),
+                dirs_finished: AtomicUsize::new(0),
+            }),
+            store: Default::default(),
+            paths: Default::default(),
+            last_progress_event: Default::default(),
+        };
+        file_db.update = Some(tokio::spawn(async move {
+            sleep(Duration::from_secs(1)).await;
+            Vec::new()
+        }));
+        file_db.stop_update();
+        assert!(
+            file_db.update.is_none(),
+            "update handle should have stopped early"
+        );
+    }
+
+    // #[test]
+    // fn test_find_file() {
+    //     let mut file_db = FileDatabase {
+    //         update: Default::default(),
+    //         progress: Arc::new(UpdateProgress {
+    //             dirs_queued: AtomicUsize::new(0),
+    //             dirs_finished: AtomicUsize::new(0),
+    //         }),
+    //         store: Default::default(),
+    //         paths: Default::default(),
+    //         last_progress_event: Default::default(),
+    //     };
+    //     let mut file = file_db.find_file("some_file");
+    //     assert!(file.is_none(), "non-existent file is found?");
+
+    //     file_db.store = FileStore::from_iter(["test/path/file".into(), "test/path/file2".into()]);
+    //     file = file_db.find_file("file");
+    //     assert!(!file.is_none());
+    //     assert_eq!(file.unwrap(), PathBuf::from("test/path/file"));
+    // }
+
+    // #[test]
+    // fn test_all_files() {
+    //     let mut file_db = FileDatabase {
+    //         update: Default::default(),
+    //         progress: Arc::new(UpdateProgress {
+    //             dirs_queued: AtomicUsize::new(0),
+    //             dirs_finished: AtomicUsize::new(0),
+    //         }),
+    //         store: Default::default(),
+    //         paths: Default::default(),
+    //         last_progress_event: Default::default(),
+    //     };
+    //     let mut files = file_db.all_files();
+    //     assert_eq!(files.len(), 0);
+
+    //     file_db.store = FileStore::from_iter(["test/path/file".into(), "test/path/file2".into()]);
+    //     files = file_db.all_files();
+    //     assert_eq!(files.len(), 2);
+    //     assert_eq!(
+    //         files.iter().cloned().collect::<HashSet<_>>(),
+    //         HashSet::<(String, PathBuf)>::from([
+    //             ("file".into(), "test/path/file".into()),
+    //             ("file2".into(), "test/path/file2".into())
+    //         ])
+    //     );
+    // }
+}
+
+#[derive(Debug, Clone, Default, Eq)]
 pub struct FileStore {
     store: Vector<FileEntry>,
+}
+
+impl PartialEq for FileStore {
+    fn eq(&self, other: &Self) -> bool {
+        self.store.eq(&other.store)
+    }
 }
 
 impl FileStore {
@@ -196,7 +394,7 @@ impl<'a> IntoParallelRefIterator<'a> for FileStore {
 
 impl FromIterator<FileEntry> for FileStore {
     fn from_iter<T: IntoIterator<Item = FileEntry>>(iter: T) -> Self {
-        let mut store: Vector<_> = iter.into_iter().collect();
+        let mut store: Vector<_> = iter.into_iter().unique().collect();
         store.sort_by(|left, right| left.file_name().cmp(right.file_name()));
         Self { store }
     }

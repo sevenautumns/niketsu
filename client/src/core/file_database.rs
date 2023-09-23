@@ -22,7 +22,7 @@ pub trait FileDatabaseTrait: std::fmt::Debug + Send {
     fn stop_update(&mut self);
     fn find_file(&self, filename: &str) -> Option<FileEntry>;
     fn all_files(&self) -> &FileStore;
-    async fn event(&mut self) -> FileDatabaseEvent;
+    async fn event(&mut self) -> Option<FileDatabaseEvent>;
 }
 
 #[enum_dispatch(EventHandler)]
@@ -80,7 +80,7 @@ impl EventHandler for UpdateProgress {
 //     }
 // }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct FileEntry {
     inner: Arc<FileEntryInner>,
 }
@@ -111,6 +111,12 @@ pub struct FileEntryInner {
     path: PathBuf,
     name: ArcStr,
     modified: Option<SystemTime>,
+}
+
+impl std::hash::Hash for FileEntryInner {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(self.name.as_bytes())
+    }
 }
 
 impl FileEntryInner {

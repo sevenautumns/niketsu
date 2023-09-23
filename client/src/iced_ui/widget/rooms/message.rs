@@ -17,7 +17,7 @@ pub struct ClickRoom(pub String);
 impl RoomsWidgetMessage for ClickRoom {
     fn handle(self: Box<Self>, state: &mut RoomsWidgetState, model: &UiModel) {
         if state.is_double_click(self.0.clone()) {
-            model.room_change(RoomChange { room: self.0 })
+            model.change_room(RoomChange { room: self.0 })
         }
     }
 }

@@ -17,6 +17,14 @@ impl RoomList {
     pub fn iter(&self) -> Rooms<'_> {
         self.into_iter()
     }
+
+    pub fn len(&self) -> usize {
+        self.list.len()
+    }
+
+    pub fn get_room_name(&self, index: usize) -> Option<&RoomName> {
+        self.list.keys().nth(index)
+    }
 }
 
 impl<'a> IntoIterator for &'a RoomList {

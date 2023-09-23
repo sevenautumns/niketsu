@@ -20,7 +20,7 @@ pub struct DoubleClick {
 impl PlaylistWidgetMessage for DoubleClick {
     fn handle(self: Box<Self>, _state: &mut PlaylistWidgetState, model: &UiModel) {
         debug!("FileTable doubleclick: {:?}", self.video);
-        model.video_change(self.video)
+        model.change_video(self.video)
     }
 }
 
@@ -39,7 +39,7 @@ impl PlaylistWidgetMessage for Delete {
     fn handle(self: Box<Self>, state: &mut PlaylistWidgetState, model: &UiModel) {
         debug!("FileTable delete file: {:?}", self.video);
         state.delete_video(&self.video);
-        model.playlist_change(state.playlist.clone());
+        model.change_playlist(state.playlist.clone());
     }
 }
 
@@ -59,7 +59,7 @@ impl PlaylistWidgetMessage for Move {
     fn handle(self: Box<Self>, state: &mut PlaylistWidgetState, model: &UiModel) {
         debug!("FileTable move file: {:?}, {}", self.video, self.pos);
         state.move_video(&self.video, self.pos);
-        model.playlist_change(state.playlist.clone());
+        model.change_playlist(state.playlist.clone());
     }
 }
 

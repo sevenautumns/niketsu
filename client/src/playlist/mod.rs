@@ -82,6 +82,10 @@ impl Playlist {
         self.list.get(index)
     }
 
+    pub fn get_range(&self, from: usize, to: usize) -> impl Iterator<Item = &PlaylistVideo> {
+        self.list.iter().skip(from).take(to - from + 1)
+    }
+
     pub fn move_video(&mut self, video: &PlaylistVideo, index: usize) {
         let mut new_index = index;
         if let Some(old_index) = self.find(video) {
@@ -128,10 +132,11 @@ impl Playlist {
         }
     }
 
-    pub fn remove_by_video(&mut self, video: &PlaylistVideo) {
+    pub fn remove_by_video(&mut self, video: &PlaylistVideo) -> Option<PlaylistVideo> {
         if let Some(index) = self.find(video) {
-            self.list.remove(index);
-        };
+            return Some(self.list.remove(index));
+        }
+        None
     }
 
     pub fn append(&mut self, video: PlaylistVideo) {

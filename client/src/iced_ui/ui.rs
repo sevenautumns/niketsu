@@ -75,8 +75,8 @@ impl ViewModel {
         let media_dirs: Vec<_> = config.media_dirs.iter().map(PathBuf::from).collect();
         let username = config.username.clone();
         self.model.change_db_paths(media_dirs);
-        self.model.user_name_change(username);
-        self.model.server_change(ServerChange {
+        self.model.change_username(username);
+        self.model.change_server(ServerChange {
             addr: config.url.clone(),
             secure: config.secure,
             password: Some(config.password.clone()),

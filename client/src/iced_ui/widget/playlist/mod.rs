@@ -470,7 +470,7 @@ impl PlaylistWidgetState {
     }
 
     pub fn delete_video(&mut self, video: &PlaylistVideo) {
-        self.playlist.remove_by_video(video)
+        self.playlist.remove_by_video(video);
     }
 
     pub fn replace_playlist(&mut self, playlist: Playlist) {

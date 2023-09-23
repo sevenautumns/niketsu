@@ -116,6 +116,12 @@ pub struct RoomChange {
     pub room: String,
 }
 
+impl From<String> for RoomChange {
+    fn from(value: String) -> Self {
+        Self { room: value }
+    }
+}
+
 impl EventHandler for RoomChange {
     fn handle(self, model: &mut CoreModel) {
         debug!("Room Change Message");
@@ -260,7 +266,7 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn user_name_change(&self, name: String) {
+    pub fn change_username(&self, name: String) {
         let mut user = self.user.get_inner();
         user.name = name;
         self.user.set(user.clone());
@@ -326,7 +332,7 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn room_change(&self, request: RoomChange) {
+    pub fn change_room(&self, request: RoomChange) {
         let res = self
             .events
             .send(UserInterfaceEvent::RoomChange(request))
@@ -334,7 +340,7 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn server_change(&self, request: ServerChange) {
+    pub fn change_server(&self, request: ServerChange) {
         let res = self
             .events
             .send(UserInterfaceEvent::ServerChange(request))
@@ -342,7 +348,7 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn video_change(&self, video: PlaylistVideo) {
+    pub fn change_video(&self, video: PlaylistVideo) {
         self.playing_video.set(Some(video.clone()));
         let res = self
             .events
@@ -351,7 +357,7 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn playlist_change(&self, playlist: Playlist) {
+    pub fn change_playlist(&self, playlist: Playlist) {
         let res = self
             .events
             .send(UserInterfaceEvent::PlaylistChange(PlaylistChange {

@@ -47,11 +47,18 @@ impl PartialEq for UserStatus {
     }
 }
 
+impl PartialEq<String> for UserStatus {
+    fn eq(&self, name: &String) -> bool {
+        self.name.eq(name)
+    }
+}
+
 impl Ord for UserStatus {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.name.cmp(&other.name)
     }
 }
+
 impl PartialOrd for UserStatus {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.name.partial_cmp(&other.name)

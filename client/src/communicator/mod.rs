@@ -249,9 +249,6 @@ impl WebsocketCommunicator {
     async fn reconnect(&mut self) {
         if let ConnectionState::Connecting(connecting) = &mut self.state {
             self.state = connecting.await;
-            if let ConnectionState::Connected(_) = &self.state {
-                self.in_queue.push_back(NiketsuConnected.into());
-            }
             return;
         }
         let Some(endpoint) = self.endpoint.clone() else {

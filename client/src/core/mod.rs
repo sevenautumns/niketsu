@@ -57,7 +57,7 @@ impl Core {
                 beat = pacemaker.recv() => {
                     beat.handle(&mut self.model);
                 }
-                db = self.model.database.event() => {
+                Some(db) = self.model.database.event() => {
                     db.handle(&mut self.model);
                 }
             }
