@@ -1,3 +1,25 @@
 [workspace]
-members = ["client"]
+members = [
+  "client", 
+  "client/communicator",
+  "client/core",
+  "client/player/mpv",
+  "client/ui/iced",
+  "client/ui/ratatui",
+]
 resolver = "2"
+
+[workspace.dependencies]
+anyhow = "1"
+strum = { version = "0.25", features = ["derive"] }
+tokio = { version = "1.27", features = [ "full" ]}
+log = "0.4"
+serde = { version = "1.0", features = [ "derive" ] }
+url = "2.3"
+enum_dispatch = "0.3"
+arc-swap = "1.6"
+arcstr = { version = "1.1", features = ["serde"] }
+im = { version = "15.1", features = ["serde", "rayon"] }
+
+[patch.crates-io]
+cosmic-text = { git = "https://github.com/pop-os/cosmic-text", branch = "main" }

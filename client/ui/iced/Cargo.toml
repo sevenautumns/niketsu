@@ -1,0 +1,22 @@
+[package]
+name = "niketsu-iced"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+niketsu-core.path = "../../core"
+anyhow = "1"
+log = "0.4"
+arc-swap = "1.6"
+iced = { version = "0.10", features = ["tokio", "advanced"] }
+iced_futures = { version = "0.7" }
+tokio = { version = "1.27", features = [ "full" ]}
+futures = "0.3"
+serde = { version = "1.0", features = [ "derive" ] }
+serde_with = "3.0"
+directories = "5.0"
+toml = "0.8"
+palette = "0.7"
+once_cell = "1.17"
+async-trait = "0.1"
+dyn-clone = "1.0"

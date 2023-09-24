@@ -1,0 +1,21 @@
+[package]
+name = "niketsu-mpv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+niketsu-core.path = "../../core"
+anyhow.workspace = true
+strum.workspace = true
+log.workspace = true
+arc-swap.workspace = true
+enum_dispatch.workspace = true
+futures = "0.3"
+num-traits = "0.2"
+num-derive = "0.4"
+thiserror = "1.0"
+async-trait = "0.1"
+
+[build-dependencies]
+anyhow.workspace = true
+bindgen = "0.68"
