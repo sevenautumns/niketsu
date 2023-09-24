@@ -6,16 +6,14 @@ use std::time::Duration;
 
 use chrono::Local;
 use log::info;
-use niketsu::core::file_database::FileEntry;
-use niketsu::core::playlist::PlaylistVideo;
-use niketsu::core::ui::{
+use niketsu_core::file_database::{FileEntry, FileStore};
+use niketsu_core::playlist::{Playlist, PlaylistVideo};
+use niketsu_core::rooms::RoomList;
+use niketsu_core::ui::{
     MessageLevel, MessageSource, PlayerMessageInner, UserChange, UserInterfaceEvent,
     UserInterfaceTrait,
 };
-use niketsu::core::user::UserStatus;
-use niketsu::file_database::FileStore;
-use niketsu::playlist::Playlist;
-use niketsu::rooms::RoomList;
+use niketsu_core::user::UserStatus;
 
 pub struct CoreMock<T: UserInterfaceTrait> {
     ui: T,

@@ -209,17 +209,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-recursion"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fd55a5ba1179988837d24ab4c7cc8ed6efdeff578ede0416b4225a5fca35bd0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.37",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.73"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -666,7 +655,7 @@ dependencies = [
 [[package]]
 name = "cosmic-text"
 version = "0.9.0"
-source = "git+https://github.com/pop-os/cosmic-text?branch=main#30398c2f0cb79267d440870bc47967579e31a2ae"
+source = "git+https://github.com/pop-os/cosmic-text?branch=main#e2adc1e8da1fd8196224254e02f28f815e47d4e5"
 dependencies = [
  "fontdb",
  "libm",
@@ -699,16 +688,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b540bd8bc810d3885c6ea91e2018302f68baba2129ab3e88f32389ee9370880d"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "crossbeam-channel"
-version = "0.5.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a33c2bf77f2df06183c3aa30d1e96c0695a313d4f9c453cc3762a6db39f99200"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
 ]
 
 [[package]]
@@ -849,19 +828,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dashmap"
-version = "5.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
-dependencies = [
- "cfg-if",
- "hashbrown 0.14.0",
- "lock_api",
- "once_cell",
- "parking_lot_core 0.9.8",
-]
-
-[[package]]
 name = "data-encoding"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -939,15 +905,6 @@ name = "either"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
-
-[[package]]
-name = "elsa"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714f766f3556b44e7e4776ad133fcc3445a489517c25c704ace411bb14790194"
-dependencies = [
- "stable_deref_trait",
-]
 
 [[package]]
 name = "enum_dispatch"
@@ -1261,18 +1218,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "wasi",
-]
-
-[[package]]
-name = "getset"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e45727250e75cc04ff2846a66397da8ef2b3db8e40e0cef4df67950a07621eb9"
-dependencies = [
- "proc-macro-error",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -1723,9 +1668,9 @@ dependencies = [
 
 [[package]]
 name = "indoc"
-version = "2.0.3"
+version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c785eefb63ebd0e33416dfcb8d6da0bf27ce752843a45632a67bf10d4d4b5c4"
+checksum = "1e186cfbae8084e513daff4240b4797e342f988cecda4fb6c939150f96315fd8"
 
 [[package]]
 name = "instant"
@@ -2069,53 +2014,123 @@ name = "niketsu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arc-swap",
- "arcstr",
- "async-recursion",
- "async-trait",
- "async-tungstenite",
- "bindgen",
  "chrono",
  "clap",
  "clap_complete",
- "crossbeam-channel",
- "crossterm 0.27.0",
- "dashmap",
- "directories",
- "dyn-clone",
- "elsa",
- "enum_dispatch",
  "fake",
- "futures",
- "fuzzy-matcher",
- "getset",
- "iced",
- "iced_futures",
- "im",
- "itertools",
  "log",
- "num-derive",
- "num-traits",
- "once_cell",
- "ordered-float",
- "palette",
+ "niketsu-communicator",
+ "niketsu-core",
+ "niketsu-iced",
+ "niketsu-mpv",
+ "niketsu-ratatui",
  "pretty_env_logger",
- "ratatui",
- "rayon",
+ "strum",
+ "tokio",
+ "typed-builder",
+ "whoami",
+]
+
+[[package]]
+name = "niketsu-communicator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arcstr",
+ "async-trait",
+ "async-tungstenite",
+ "futures",
+ "im",
+ "log",
+ "niketsu-core",
+ "ordered-float",
  "serde",
  "serde_json",
  "serde_millis",
- "serde_with",
- "strum",
- "tempfile",
- "thiserror",
  "tokio",
  "tokio-native-tls",
+]
+
+[[package]]
+name = "niketsu-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "arcstr",
+ "async-trait",
+ "chrono",
+ "directories",
+ "enum_dispatch",
+ "futures",
+ "fuzzy-matcher",
+ "im",
+ "itertools",
+ "log",
+ "num-traits",
+ "once_cell",
+ "rayon",
+ "serde",
+ "serde_with",
+ "tempfile",
+ "tokio",
  "toml",
- "typed-builder",
- "unicode-width",
  "url",
  "whoami",
+]
+
+[[package]]
+name = "niketsu-iced"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "directories",
+ "dyn-clone",
+ "futures",
+ "iced",
+ "iced_futures",
+ "log",
+ "niketsu-core",
+ "once_cell",
+ "palette",
+ "serde",
+ "serde_with",
+ "tokio",
+ "toml",
+]
+
+[[package]]
+name = "niketsu-mpv"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "bindgen",
+ "enum_dispatch",
+ "futures",
+ "log",
+ "niketsu-core",
+ "num-derive",
+ "num-traits",
+ "strum",
+ "thiserror",
+]
+
+[[package]]
+name = "niketsu-ratatui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "crossterm 0.27.0",
+ "futures",
+ "log",
+ "niketsu-core",
+ "ratatui",
+ "tokio",
 ]
 
 [[package]]
@@ -2401,9 +2416,9 @@ dependencies = [
 
 [[package]]
 name = "ordered-float"
-version = "3.9.1"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a54938017eacd63036332b4ae5c8a49fc8c0c1d6d629893057e4f13609edd06"
+checksum = "1e6545eeefeb1f28cb310e67593effb917c30b927c367efa80528a4d05adb6a5"
 dependencies = [
  "num-traits",
 ]
@@ -2613,30 +2628,6 @@ checksum = "7f4c021e1093a56626774e81216a4ce732a735e5bad4868a03f3ed65ca0c3919"
 dependencies = [
  "once_cell",
  "toml_edit 0.19.15",
-]
-
-[[package]]
-name = "proc-macro-error"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
-dependencies = [
- "proc-macro-error-attr",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "version_check",
-]
-
-[[package]]
-name = "proc-macro-error-attr"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
-dependencies = [
- "proc-macro2",
- "quote",
- "version_check",
 ]
 
 [[package]]
@@ -3204,12 +3195,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "stable_deref_trait"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
-
-[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3356,9 +3341,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.28"
+version = "0.3.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17f6bb557fd245c28e6411aa56b6403c689ad95061f50e4be16c274e70a17e48"
+checksum = "426f806f4089c493dcac0d24c29c01e2c38baf8e30f1b716ee37e83d200b18fe"
 dependencies = [
  "deranged",
  "itoa",
@@ -3371,15 +3356,15 @@ dependencies = [
 
 [[package]]
 name = "time-core"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7300fbefb4dadc1af235a9cef3737cea692a9d97e1b9cbcd4ebdae6f8868e6fb"
+checksum = "ef927ca75afb808a4d64dd374f00a2adf8d0fcff8e7b184af886c3c87ec4a3f3"
 
 [[package]]
 name = "time-macros"
-version = "0.2.14"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a942f44339478ef67935ab2bbaec2fb0322496cf3cbe84b261e06ac3814c572"
+checksum = "4ad70d68dba9e1f8aceda7aa6711965dfec1cac869f311a51bd08b3a2ccbce20"
 dependencies = [
  "time-core",
 ]

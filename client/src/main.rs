@@ -1,19 +1,19 @@
 use anyhow::Result;
-use niketsu::communicator::WebsocketCommunicator;
-use niketsu::config::Config;
-use niketsu::core::build::CoreBuilder;
-use niketsu::file_database::FileDatabase;
-use niketsu::iced_ui::IcedUI;
-use niketsu::player::mpv::Mpv;
+use niketsu::builder::CoreBuilder;
+use niketsu_communicator::WebsocketCommunicator;
+use niketsu_core::config::Config;
+use niketsu_iced::config::Config as IcedConfig;
+use niketsu_iced::IcedUI;
+use niketsu_mpv::Mpv;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
 
     let config: Config = Config::load_or_default();
+    let iced_config: IcedConfig = IcedConfig::load_or_default();
 
-    let (view, ui_fn) = IcedUI::new(config.clone());
-    let database = FileDatabase::default();
+    let (view, ui_fn) = IcedUI::new(iced_config, config.clone());
     let player = Mpv::new().unwrap();
     let communicator = WebsocketCommunicator::default();
 
@@ -22,7 +22,6 @@ async fn main() -> Result<()> {
         .password(config.password)
         .room(config.room)
         .ui(Box::new(view))
-        .database(Box::new(database))
         .player(Box::new(player))
         .communicator(Box::new(communicator))
         .build();

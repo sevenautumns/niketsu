@@ -1,5 +1,5 @@
 use core_mock::CoreMock;
-use niketsu::ratatui_ui::RatatuiUI;
+use niketsu_ratatui::RatatuiUI;
 
 #[path = "../core_mock.rs"]
 mod core_mock;

@@ -1,0 +1,14 @@
+[package]
+name = "niketsu-ratatui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+niketsu-core.path = "../../core"
+anyhow.workspace = true
+log.workspace = true
+tokio.workspace = true
+futures = "0.3"
+async-trait = "0.1"
+ratatui = { version = "0.22.0", features = ["all-widgets"] }
+crossterm = {version = "0.27.0", features = ["event-stream"] }
