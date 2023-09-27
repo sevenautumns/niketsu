@@ -183,9 +183,8 @@
               value = LD_LIBRARY_PATH;
             }
             {
-              name = "SSL_CERT_FILE";
-              eval =
-                "$PRJ_ROOT/server/src/communication/testdata/certificate.crt";
+              name = "SSL_CERT_DIR";
+              eval = "$PRJ_ROOT/server/src/communication/testdata";
             }
             {
               name = "LIBRARY_PATH";
@@ -205,9 +204,18 @@
             }
           ];
           commands = [
+            {
+              name = "go-test";
+              category = "go";
+              command = ''
+                go test github.com/sevenautumns/niketsu/server/src/...
+              '';
+              help = "Run go test for the server";
+            }
             { package = "treefmt"; }
             {
               name = "udeps";
+              category = "rust";
               command = ''
                 PATH=${fenix.packages.${system}.latest.rustc}/bin:$PATH
                 cargo udeps $@
@@ -216,16 +224,19 @@
             }
             {
               name = "outdated";
+              category = "rust";
               command = "cargo-outdated outdated";
               help = pkgs.cargo-outdated.meta.description;
             }
             {
               name = "audit";
+              category = "rust";
               command = "cargo-audit audit";
               help = pkgs.cargo-audit.meta.description;
             }
             {
               name = "tarpaulin";
+              category = "rust";
               command = ''
                 PATH=${fenix.packages.${system}.latest.rustc}/bin:$PATH
                 cargo tarpaulin $@
