@@ -57,6 +57,7 @@
         LIBRARY_PATH = lib.makeLibraryPath libraries;
         PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig"
           (with pkgs; [ expat fontconfig freetype openssl ]);
+        LIBCLANG_PATH = lib.makeLibraryPath [ pkgs.llvmPackages.libclang.lib ];
         BINDGEN_EXTRA_LANG_ARGS = p:
           "${builtins.readFile "${p.stdenv.cc}/nix-support/libc-crt1-cflags"} ${
             builtins.readFile "${p.stdenv.cc}/nix-support/libc-cflags"
@@ -90,23 +91,24 @@
             cp -r * $out/
           '';
         };
-      in rec {
+      in
+      rec {
         packages = {
           default = packages.niketsu-client;
           niketsu-client = naersk-lib.buildPackage rec {
+            inherit LIBCLANG_PATH;
             name = "niketsu";
             version = VERSION;
             root = ./.;
             nativeBuildInputs = with pkgs; [ cmake pkg-config ] ++ libraries;
             buildInputs = with pkgs; [ yt-dlp ];
-            LIBCLANG_PATH =
-              lib.makeLibraryPath [ pkgs.llvmPackages.libclang.lib ];
             preConfigure = ''
               export BINDGEN_EXTRA_CLANG_ARGS='${BINDGEN_EXTRA_LANG_ARGS pkgs}'
               export C_INCLUDE_PATH=$C_INCLUDE_PATH:${pkgs.mpv}/include
             '';
           };
           niketsu-client-windows = naersk-lib.buildPackage rec {
+            inherit LIBCLANG_PATH;
             name = "niketsu";
             version = VERSION;
             root = ./.;
@@ -123,8 +125,6 @@
               export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C link-args=$(echo $NIX_LDFLAGS | tr ' ' '\n' | grep -- '^-L' | tr '\n' ' ')"
               export NIX_LDFLAGS=
             '';
-            LIBCLANG_PATH =
-              lib.makeLibraryPath [ pkgs.llvmPackages.libclang.lib ];
             preConfigure = ''
               export BINDGEN_EXTRA_CLANG_ARGS='${
                 BINDGEN_EXTRA_LANG_ARGS pkgs.pkgsCross.mingwW64
@@ -187,6 +187,10 @@
               eval = "$PRJ_ROOT/server/src/communication/testdata";
             }
             {
+              name = "LIBCLANG_PATH";
+              value = LIBCLANG_PATH;
+            }
+            {
               name = "LIBRARY_PATH";
               value = LIBRARY_PATH;
             }
@@ -246,12 +250,14 @@
           ];
         });
         checks = {
-          nixpkgs-fmt = pkgs.runCommand "nixpkgs-fmt" {
-            nativeBuildInputs = [ pkgs.nixpkgs-fmt ];
-          } "nixpkgs-fmt --check ${./.}; touch $out";
-          cargo-fmt = pkgs.runCommand "cargo-fmt" {
-            nativeBuildInputs = [ rust-toolchain ];
-          } "cd ${./.}; cargo fmt --check; touch $out";
+          nixpkgs-fmt = pkgs.runCommand "nixpkgs-fmt"
+            {
+              nativeBuildInputs = [ pkgs.nixpkgs-fmt ];
+            } "nixpkgs-fmt --check ${./.}; touch $out";
+          cargo-fmt = pkgs.runCommand "cargo-fmt"
+            {
+              nativeBuildInputs = [ rust-toolchain ];
+            } "cd ${./.}; cargo fmt --check; touch $out";
         };
       });
 }

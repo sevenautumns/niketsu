@@ -1,0 +1,47 @@
+on: ["push", "pull_request"]
+
+name: Coverage
+
+jobs:
+  rust-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Nix
+        uses: cachix/install-nix-action@v23
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Coverage
+        run: nix develop --command tarpaulin --out lcov --output-dir ./coverage
+      - name: Send coverage to Coveralls
+        uses: coverallsapp/github-action@v1
+        with:
+          parallel: true
+          flag-name: rust
+
+  go-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Nix
+        uses: cachix/install-nix-action@v23
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Coverage
+        run: nix develop --command go test -v ./... -coverprofile=coverage.out
+      - name: Send coverage
+        uses: shogo82148/actions-goveralls@v1
+        with:
+          path-to-profile: coverage.out
+          flag-name: go
+          parallel: true
+
+  finish:
+    needs: [ rust-coverage, go-coverage ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close parallel build
+        uses: coverallsapp/github-action@v1
+        with:
+          parallel-finished: true
+          carryforward: "rust,go"

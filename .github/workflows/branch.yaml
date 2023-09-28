@@ -32,7 +32,9 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY }}
           persist-credentials: true
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v4
+        uses: cachix/install-nix-action@v23
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Run update
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
