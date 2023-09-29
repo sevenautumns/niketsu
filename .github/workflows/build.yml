@@ -33,15 +33,19 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v4
+        uses: cachix/install-nix-action@v23
         with:
-          extra-conf: |
-            extra-platforms = aarch64-linux i686-linux
-      - name: Run the Magic Nix Cache
-        uses: DeterminateSystems/magic-nix-cache-action@v1
-      - uses: docker/setup-qemu-action@v2
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-platforms = aarch64-linux
+      - uses: cachix/cachix-action@v12
         with:
-          image: tonistiigi/binfmt:latest
+          name: niketsu
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: docker/setup-qemu-action@v3
+        if: ${{ matrix.target == 'aarch64-linux' }}
+        with:
           platforms: arm64
       - name: Run build
         run: nix build .#packages.${{ matrix.target }}.${{ matrix.package }}

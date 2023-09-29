@@ -14,6 +14,7 @@ Refer to https://sevenautumns.github.io/niketsu for news, downloads, and more do
 ![[Nightly Tag Card](https://github.com/sevenautumns/niketsu/actions/workflows/branch.yaml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/branch.yaml/badge.svg)
 [![Rust Report Card](https://rust-reportcard.xuri.me/badge/github.com/sevenautumns/niketsu)](https://rust-reportcard.xuri.me/report/github.com/sevenautumns/niketsu)
 [![Go Report Card](https://goreportcard.com/badge/github.com/sevenautumns/niketsu)](https://goreportcard.com/report/github.com/sevenautumns/niketsu)
+[![Coverage Status](https://coveralls.io/repos/github/sevenautumns/niketsu/badge.svg?branch=main)](https://coveralls.io/github/sevenautumns/niketsu?branch=main)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/sevenautumns/niketsu/blob/main/LICENSE)
 
 </div>
