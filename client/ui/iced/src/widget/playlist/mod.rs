@@ -419,6 +419,15 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         // TODO properly figure out if we captured something or not
         inner_status
     }
+
+    fn overlay<'b>(
+        &'b mut self,
+        state: &'b mut iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        renderer: &Renderer,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Renderer>> {
+        self.base.as_widget_mut().overlay(state, layout, renderer)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
