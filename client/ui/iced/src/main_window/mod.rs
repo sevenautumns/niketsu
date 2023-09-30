@@ -11,6 +11,7 @@ use super::widget::playlist::PlaylistWidget;
 use super::widget::rooms::RoomsWidget;
 use super::UiModel;
 use crate::styling::{ContainerBorder, ResultButton};
+use crate::widget::file_search::FileSearchWidget;
 
 pub(super) mod message;
 
@@ -36,7 +37,7 @@ impl MainView {}
 impl SubWindowTrait for MainView {
     type SubMessage = Box<dyn MainMessage>;
 
-    fn view(&self, view_model: &ViewModel) -> Element<Message> {
+    fn view<'a>(&'a self, view_model: &'a ViewModel) -> Element<Message> {
         let mut btn: Button<Message>;
         match view_model.user().ready {
             true => {
@@ -61,6 +62,9 @@ impl SubWindowTrait for MainView {
         Row::new()
             .push(
                 Column::new()
+                    .push(FileSearchWidget::new(
+                        view_model.get_file_search_widget_state(),
+                    ))
                     .push(MessagesWidget::new(view_model.get_messages_widget_state()))
                     .push(
                         Row::new()
