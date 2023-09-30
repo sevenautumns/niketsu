@@ -296,7 +296,117 @@ impl<'a> Iterator for PlaylistIter<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+    use crate::file_database::FileEntry;
+
+    #[test]
+    fn test_is_url() {
+        let file_video = PlaylistVideo::from("video.mp4");
+        let url_video = PlaylistVideo::from("https://www.example.com/video.mp4");
+
+        assert!(!file_video.is_url());
+        assert!(url_video.is_url());
+    }
+
+    #[test]
+    fn test_to_path_str_with_url() {
+        let db = FileStore::default();
+        let video_inner = PlaylistVideo::from("https://www.example.com/video.mp4");
+
+        let path_str = video_inner.to_path_str(&db);
+
+        assert_eq!(
+            path_str,
+            Some("https://www.example.com/video.mp4".to_string())
+        );
+    }
+
+    #[test]
+    fn test_as_str_with_file() {
+        let video_inner = PlaylistVideo::from("video.mp4");
+
+        let inner_str = video_inner.as_str();
+
+        assert_eq!(inner_str, "video.mp4");
+    }
+
+    #[test]
+    fn test_as_str_with_url() {
+        let video_inner = PlaylistVideo::from("https://www.example.com/video.mp4");
+
+        let inner_str = video_inner.as_str();
+
+        assert_eq!(inner_str, "https://www.example.com/video.mp4");
+    }
+
+    #[test]
+    fn test_playlist_video_inner_to_path_str() {
+        let file_store = FileStore::from_iter([FileEntry::new(
+            "video.mp4".to_string(),
+            PathBuf::from("/path/to/video.mp4"),
+            None,
+        )]);
+
+        let file_inner = PlaylistVideo::from("video.mp4");
+        let url_inner = PlaylistVideo::from("https://example.com/video.mp4");
+
+        assert_eq!(
+            file_inner.to_path_str(&file_store),
+            Some("/path/to/video.mp4".to_string())
+        );
+        assert_eq!(
+            url_inner.to_path_str(&file_store),
+            Some("https://example.com/video.mp4".to_string())
+        );
+    }
+
+    #[test]
+    fn test_playlist_video_inner_to_player_video() {
+        // Create a dummy FileStore for testing purposes
+        let file_store = FileStore::from_iter([FileEntry::new(
+            "video.mp4".to_string(),
+            PathBuf::from("/path/to/video.mp4"),
+            None,
+        )]);
+
+        let file_inner = PlaylistVideo::from("video.mp4");
+        let url_inner = PlaylistVideo::from("https://example.com/video.mp4");
+
+        let expected_file = PlayerVideo::File(FileEntry::new(
+            "video.mp4".to_string(),
+            PathBuf::from("/path/to/video.mp4"),
+            None,
+        ));
+        let expected_url = PlayerVideo::Url(Url::parse("https://example.com/video.mp4").unwrap());
+
+        assert_eq!(file_inner.to_player_video(&file_store), Some(expected_file));
+        assert_eq!(url_inner.to_player_video(&file_store), Some(expected_url));
+    }
+
+    #[test]
+    fn test_playlist_video_as_ref() {
+        // Create a PlaylistVideo variant for testing
+        let video = PlaylistVideo::from("video.mp4");
+
+        // Use the AsRef<str> trait to get a reference to the string representation
+        let video_ref: &str = video.as_ref();
+
+        // Ensure that the reference matches the expected string
+        assert_eq!(video_ref, "video.mp4");
+    }
+
+    #[test]
+    fn test_playlist_video_inner_to_path_str_none() {
+        // Create a dummy FileStore for testing purposes with no matching file
+        let file_store = FileStore::default();
+
+        let non_existing_file_inner = PlaylistVideo::from("non_existent.mp4");
+
+        // Ensure that to_path_str returns None for a non-existing file
+        assert_eq!(non_existing_file_inner.to_path_str(&file_store), None);
+    }
 
     #[test]
     fn test_initial_state() {
@@ -392,6 +502,17 @@ mod tests {
     }
 
     #[test]
+    fn test_add_video_with_url_arcstr() {
+        let mut playlist = Playlist::default();
+        let video_url = ArcStr::from("https://www.example.com/video1.mp4");
+
+        playlist.append(PlaylistVideo::from(&video_url));
+
+        assert_eq!(playlist.len(), 1);
+        assert_eq!(playlist.get(0), Some(&PlaylistVideo::from(&video_url)));
+    }
+
+    #[test]
     fn test_remove_from_playlist() {
         let mut playlist = Playlist::default();
         let video1 = PlaylistVideo::from("Video 1");
@@ -409,16 +530,62 @@ mod tests {
     #[test]
     fn test_remove_by_video() {
         let mut playlist = Playlist::default();
+        let video_url1 = "https://www.example.com/video1.mp4";
+        let video_url2 = "https://www.example.com/video2.mp4";
+
+        playlist.append(PlaylistVideo::from(video_url1));
+        playlist.append(PlaylistVideo::from(video_url2));
+
+        let removed = playlist.remove_by_video(&PlaylistVideo::from(video_url1));
+
+        assert_eq!(playlist.len(), 1);
+        assert_eq!(removed, Some(PlaylistVideo::from(video_url1)));
+        assert_eq!(playlist.get(0), Some(&PlaylistVideo::from(video_url2)));
+    }
+
+    #[test]
+    fn test_remove_by_video_none() {
+        let mut playlist = Playlist::default();
         let video1 = PlaylistVideo::from("Video 1");
         let video2 = PlaylistVideo::from("Video 2");
 
         playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        assert_eq!(playlist.len(), 2);
 
-        playlist.remove_by_video(&video1);
+        // Attempt to remove Video 2, which is not in the playlist.
+        let removed_video = playlist.remove_by_video(&video2);
+
+        // Verify that the playlist remains unchanged.
         assert_eq!(playlist.len(), 1);
-        assert_eq!(playlist.get(0), Some(&video2));
+        assert_eq!(playlist.get(0), Some(&video1));
+
+        // Verify that the remove_by_video method returns None.
+        assert_eq!(removed_video, None);
+    }
+
+    #[test]
+    fn test_get_range() {
+        let mut playlist = Playlist::default();
+
+        let video1 = PlaylistVideo::from("Video 1");
+        let video2 = PlaylistVideo::from("Video 2");
+        let video3 = PlaylistVideo::from("Video 3");
+        let video4 = PlaylistVideo::from("Video 4");
+        let video5 = PlaylistVideo::from("Video 5");
+
+        playlist.append(video1.clone());
+        playlist.append(video2.clone());
+        playlist.append(video3.clone());
+        playlist.append(video4.clone());
+        playlist.append(video5.clone());
+
+        // Get a range of videos from index 1 to 3 (inclusive).
+        let range_result: Vec<_> = playlist.get_range(1, 3).collect();
+
+        // Verify that the returned range contains the expected videos.
+        assert_eq!(range_result.len(), 3);
+        assert_eq!(range_result.get(0), Some(&&video2));
+        assert_eq!(range_result.get(1), Some(&&video3));
+        assert_eq!(range_result.get(2), Some(&&video4));
     }
 
     #[test]

@@ -22,6 +22,10 @@ impl RoomList {
         self.list.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+
     pub fn get_room_name(&self, index: usize) -> Option<&RoomName> {
         self.list.keys().nth(index)
     }
@@ -92,6 +96,45 @@ mod tests {
         room_list.list.insert(room_name.clone(), user_set.clone());
 
         assert!(room_list.contains_room(&room_name));
+    }
+
+    #[test]
+    fn test_len() {
+        let mut room_list = RoomList::default();
+
+        // Add some rooms for testing
+        room_list.list.insert("Room1".to_string(), BTreeSet::new());
+        room_list.list.insert("Room2".to_string(), BTreeSet::new());
+
+        assert_eq!(room_list.len(), 2);
+    }
+
+    #[test]
+    fn test_get_room_name() {
+        let mut room_list = RoomList::default();
+
+        // Add some rooms for testing
+        room_list.list.insert("RoomA".to_string(), BTreeSet::new());
+        room_list.list.insert("RoomB".to_string(), BTreeSet::new());
+
+        // Test getting room names at specific indices
+        assert_eq!(room_list.get_room_name(0), Some(&"RoomA".to_string()));
+        assert_eq!(room_list.get_room_name(1), Some(&"RoomB".to_string()));
+        assert_eq!(room_list.get_room_name(2), None); // Index out of bounds
+    }
+
+    #[test]
+    fn test_is_empty() {
+        let mut room_list = RoomList::default();
+
+        // Initially, the room list should be empty
+        assert!(room_list.is_empty());
+
+        // Add a room to make it non-empty
+        room_list.list.insert("RoomX".to_string(), BTreeSet::new());
+
+        // Now, it should not be empty
+        assert!(!room_list.is_empty());
     }
 
     #[test]
