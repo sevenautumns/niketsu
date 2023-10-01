@@ -1,4 +1,5 @@
 use enum_dispatch::enum_dispatch;
+use playlist::PlaylistHandlerTrait;
 
 use self::communicator::*;
 use self::file_database::*;
@@ -6,8 +7,8 @@ use self::heartbeat::Pacemaker;
 use self::player::*;
 use self::ui::*;
 use self::user::UserStatus;
-use crate::playlist::PlaylistHandler;
 
+pub mod builder;
 pub mod communicator;
 pub mod config;
 pub mod file_database;
@@ -29,8 +30,8 @@ pub struct CoreModel {
     pub communicator: Box<dyn CommunicatorTrait>,
     pub player: Box<dyn MediaPlayerTrait>,
     pub ui: Box<dyn UserInterfaceTrait>,
-    pub database: FileDatabase,
-    pub playlist: PlaylistHandler,
+    pub database: Box<dyn FileDatabaseTrait>,
+    pub playlist: Box<dyn PlaylistHandlerTrait>,
     // TODO put the following in their own struct?
     pub user: UserStatus,
     pub room: String,

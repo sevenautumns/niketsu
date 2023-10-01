@@ -9,6 +9,18 @@ use url::Url;
 use super::player::PlayerVideo;
 use crate::file_database::FileStore;
 
+pub mod handler;
+
+#[cfg_attr(test, mockall::automock)]
+pub trait PlaylistHandlerTrait: std::fmt::Debug + Send {
+    fn get_current_video(&self) -> Option<PlaylistVideo>;
+    fn advance_to_next(&mut self) -> Option<PlaylistVideo>;
+    fn select_playing(&mut self, video: &PlaylistVideo);
+    fn unload_playing(&mut self);
+    fn get_playlist(&self) -> Playlist;
+    fn replace(&mut self, playlist: Playlist);
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlaylistVideo {
     inner: Arc<PlaylistVideoInner>,
@@ -102,52 +114,8 @@ impl From<&ArcStr> for PlaylistVideoInner {
         }
     }
 }
-#[derive(Debug, Default)]
-pub struct PlaylistHandler {
-    playing: Option<usize>,
-    playlist: Playlist,
-}
 
-impl PlaylistHandler {
-    pub fn get_current_video(&self) -> Option<PlaylistVideo> {
-        self.playlist.list.get(self.playing?).cloned()
-    }
-
-    pub fn advance_to_next(&mut self) -> Option<PlaylistVideo> {
-        if let Some(playing) = self.playing.as_mut() {
-            *playing += 1
-        }
-        self.get_current_video()
-    }
-
-    pub fn select_playing(&mut self, video: &PlaylistVideo) {
-        if let Some(index) = self.playlist.find(video) {
-            self.playing = Some(index);
-        }
-    }
-
-    pub fn unload_playing(&mut self) {
-        self.playing = None
-    }
-
-    pub fn get_playlist(&self) -> Playlist {
-        self.playlist.clone()
-    }
-
-    pub fn replace(&mut self, playlist: Playlist) {
-        let playing = self.get_current_video();
-        self.playlist = playlist;
-        if let Some(playing) = playing {
-            self.playing = self.playlist.find(&playing);
-        }
-    }
-
-    pub fn append(&mut self, video: PlaylistVideo) {
-        self.playlist.append(video)
-    }
-}
-
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct Playlist {
     list: Vector<PlaylistVideo>,
 }
@@ -235,10 +203,14 @@ impl Playlist {
         None
     }
 
-    pub fn append(&mut self, video: PlaylistVideo) {
+    pub fn push(&mut self, video: PlaylistVideo) {
         if !self.contains(&video) {
             self.list.push_back(video);
         }
+    }
+
+    pub fn append(&mut self, videos: impl Iterator<Item = PlaylistVideo>) {
+        self.list.append(videos.collect())
     }
 
     pub fn insert(&mut self, index: usize, video: PlaylistVideo) {
@@ -247,8 +219,14 @@ impl Playlist {
         }
     }
 
-    pub fn remove_range<R: RangeBounds<usize>>(&mut self, range: R) {
-        self.list.slice(range);
+    pub fn append_at(&mut self, index: usize, videos: impl Iterator<Item = PlaylistVideo>) {
+        let rest = self.list.split_off(index);
+        self.list.append(videos.collect());
+        self.list.append(rest);
+    }
+
+    pub fn remove_range<R: RangeBounds<usize>>(&mut self, range: R) -> Vec<PlaylistVideo> {
+        self.list.slice(range).into_iter().collect_vec()
     }
 
     pub fn contains(&mut self, video: &PlaylistVideo) -> bool {
@@ -409,76 +387,6 @@ mod tests {
     }
 
     #[test]
-    fn test_initial_state() {
-        let mut handler = PlaylistHandler::default();
-        // Ensure no video is playing initially.
-        assert_eq!(handler.get_current_video(), None);
-        // Ensure advancing to the next video when no video is playing returns None.
-        assert_eq!(handler.advance_to_next(), None);
-    }
-
-    #[test]
-    fn test_append() {
-        let mut handler = PlaylistHandler::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        assert_eq!(handler.get_playlist().len(), 0);
-
-        // Append two videos and verify their presence.
-        handler.append(video1.clone());
-        handler.select_playing(&video1);
-        handler.append(video2.clone());
-        assert_eq!(handler.get_current_video(), Some(&video1).cloned());
-        assert_eq!(handler.get_playlist().len(), 2);
-        assert_eq!(handler.get_playlist().get(0), Some(&video1));
-        assert_eq!(handler.get_playlist().get(1), Some(&video2));
-    }
-
-    #[test]
-    fn test_select_playing() {
-        let mut handler = PlaylistHandler::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        handler.append(video1.clone());
-        handler.append(video2.clone());
-
-        // Select the first video to play and verify it's playing.
-        handler.select_playing(&video1);
-        assert_eq!(handler.get_current_video(), Some(video1.clone()));
-        // Advance to the next video and ensure it's Video 2.
-        assert_eq!(handler.advance_to_next(), Some(video2.clone()));
-        // Verify the current video is Video 2.
-        assert_eq!(handler.get_current_video(), Some(video2.clone()));
-    }
-
-    #[test]
-    fn test_replace_playlist() {
-        let mut handler = PlaylistHandler::default();
-        let video2 = PlaylistVideo::from("Video 2");
-
-        let new_playlist = Playlist::from_iter(["Video 2"]);
-        handler.replace(new_playlist.clone());
-        // Ensure the playlist is replaced and contains Video 2.
-        assert_eq!(handler.get_playlist().get(0), Some(&video2));
-    }
-
-    #[test]
-    fn test_unload_playing() {
-        let mut handler = PlaylistHandler::default();
-        let video1 = PlaylistVideo::from("Video 1");
-
-        handler.append(video1.clone());
-        assert_eq!(handler.get_current_video(), None);
-
-        handler.select_playing(&video1);
-        assert_eq!(handler.get_current_video(), Some(&video1).cloned());
-
-        // Unload the currently playing video and ensure it's None.
-        handler.unload_playing();
-        assert_eq!(handler.get_current_video(), None);
-    }
-
-    #[test]
     fn test_initial_playlist_state() {
         let playlist = Playlist::default();
         assert_eq!(playlist.len(), 0);
@@ -492,11 +400,11 @@ mod tests {
         let video1 = PlaylistVideo::from("Video 1");
         let video2 = PlaylistVideo::from("Video 2");
 
-        playlist.append(video1.clone());
+        playlist.push(video1.clone());
         assert_eq!(playlist.len(), 1);
         assert_eq!(playlist.get(0), Some(&video1));
 
-        playlist.append(video2.clone());
+        playlist.push(video2.clone());
         assert_eq!(playlist.len(), 2);
         assert_eq!(playlist.get(1), Some(&video2));
     }
@@ -506,7 +414,7 @@ mod tests {
         let mut playlist = Playlist::default();
         let video_url = ArcStr::from("https://www.example.com/video1.mp4");
 
-        playlist.append(PlaylistVideo::from(&video_url));
+        playlist.push(PlaylistVideo::from(&video_url));
 
         assert_eq!(playlist.len(), 1);
         assert_eq!(playlist.get(0), Some(&PlaylistVideo::from(&video_url)));
@@ -518,8 +426,8 @@ mod tests {
         let video1 = PlaylistVideo::from("Video 1");
         let video2 = PlaylistVideo::from("Video 2");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
         assert_eq!(playlist.len(), 2);
 
         playlist.remove(0);
@@ -533,8 +441,8 @@ mod tests {
         let video_url1 = "https://www.example.com/video1.mp4";
         let video_url2 = "https://www.example.com/video2.mp4";
 
-        playlist.append(PlaylistVideo::from(video_url1));
-        playlist.append(PlaylistVideo::from(video_url2));
+        playlist.push(PlaylistVideo::from(video_url1));
+        playlist.push(PlaylistVideo::from(video_url2));
 
         let removed = playlist.remove_by_video(&PlaylistVideo::from(video_url1));
 
@@ -549,7 +457,8 @@ mod tests {
         let video1 = PlaylistVideo::from("Video 1");
         let video2 = PlaylistVideo::from("Video 2");
 
-        playlist.append(video1.clone());
+        playlist.push(video1.clone());
+        assert_eq!(playlist.len(), 1);
 
         // Attempt to remove Video 2, which is not in the playlist.
         let removed_video = playlist.remove_by_video(&video2);
@@ -572,11 +481,11 @@ mod tests {
         let video4 = PlaylistVideo::from("Video 4");
         let video5 = PlaylistVideo::from("Video 5");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
-        playlist.append(video4.clone());
-        playlist.append(video5.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
+        playlist.push(video4.clone());
+        playlist.push(video5.clone());
 
         // Get a range of videos from index 1 to 3 (inclusive).
         let range_result: Vec<_> = playlist.get_range(1, 3).collect();
@@ -595,9 +504,9 @@ mod tests {
         let video2 = PlaylistVideo::from("Video 2");
         let video3 = PlaylistVideo::from("Video 3");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
 
         // Move video2 to the beginning
         playlist.move_video(&video2, 0);
@@ -615,11 +524,11 @@ mod tests {
         let video4 = PlaylistVideo::from("Video 4");
         let video5 = PlaylistVideo::from("Video 5");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
-        playlist.append(video4.clone());
-        playlist.append(video5.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
+        playlist.push(video4.clone());
+        playlist.push(video5.clone());
 
         // Move video2 to the beginning
         playlist.move_video(&video2, 3);
@@ -637,9 +546,9 @@ mod tests {
         let video2 = PlaylistVideo::from("Video 2");
         let video3 = PlaylistVideo::from("Video 3");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
 
         // Move Video 2 to the beginning.
         playlist.move_video(&video2, 0);
@@ -659,11 +568,11 @@ mod tests {
         let video4 = PlaylistVideo::from("Video 4");
         let video5 = PlaylistVideo::from("Video 5");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
-        playlist.append(video4.clone());
-        playlist.append(video5.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
+        playlist.push(video4.clone());
+        playlist.push(video5.clone());
 
         // Remove the range from index 1 to 3 (inclusive).
         playlist.remove_range(1..=3);
@@ -693,9 +602,9 @@ mod tests {
         let video2 = PlaylistVideo::from("Video 2");
         let video3 = PlaylistVideo::from("Video 3");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
 
         let mut iter = playlist.iter();
 
@@ -712,8 +621,8 @@ mod tests {
         let video1 = PlaylistVideo::from("Video 1");
         let video2 = PlaylistVideo::from("Video 2");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
 
         let cloned_playlist = playlist.clone();
 
@@ -727,37 +636,15 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_with_currently_playing() {
-        let mut handler = PlaylistHandler::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
-
-        handler.append(video1.clone());
-        handler.append(video2.clone());
-        handler.append(video3.clone());
-
-        // Select Video 2 to be playing.
-        handler.select_playing(&video2);
-
-        // Replace the playlist with a new one containing Video 2.
-        let new_playlist = Playlist::from_iter(["Video 2"]);
-        handler.replace(new_playlist.clone());
-
-        // Verify that the currently playing video is still Video 2.
-        assert_eq!(handler.get_current_video(), Some(video2.clone()));
-    }
-
-    #[test]
     fn test_move_video_new_index_greater_than_old_index() {
         let mut playlist = Playlist::default();
         let video1 = PlaylistVideo::from("Video 1");
         let video2 = PlaylistVideo::from("Video 2");
         let video3 = PlaylistVideo::from("Video 3");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
 
         // Move Video 2 to a new index greater than its old index.
         playlist.move_video(&video2, 2);
@@ -774,8 +661,8 @@ mod tests {
         let video2 = PlaylistVideo::from("Video 2");
         let video3 = PlaylistVideo::from("Video 3");
 
-        playlist.append(video1.clone());
-        playlist.append(video3.clone());
+        playlist.push(video1.clone());
+        playlist.push(video3.clone());
 
         // Insert Video 2 at index 1.
         playlist.insert(1, video2.clone());
@@ -813,11 +700,11 @@ mod tests {
         let video4 = PlaylistVideo::from("Video 4");
         let video5 = PlaylistVideo::from("Video 5");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
-        playlist.append(video4.clone());
-        playlist.append(video5.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
+        playlist.push(video4.clone());
+        playlist.push(video5.clone());
 
         // Verify the initial order of videos in the playlist.
         assert_eq!(playlist.get(0), Some(&video1));
@@ -896,11 +783,11 @@ mod tests {
         let video4 = PlaylistVideo::from("Video 4");
         let video5 = PlaylistVideo::from("Video 5");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
-        playlist.append(video4.clone());
-        playlist.append(video5.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
+        playlist.push(video4.clone());
+        playlist.push(video5.clone());
 
         // Verify the initial order of videos in the playlist.
         assert_eq!(playlist.get(0), Some(&video1));
@@ -947,8 +834,8 @@ mod tests {
         let video1 = PlaylistVideo::from("Video 1");
         let video2 = PlaylistVideo::from("Video 2");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
 
         // Verify the initial order of videos in the playlist.
         assert_eq!(playlist.get(0), Some(&video1));
@@ -970,11 +857,11 @@ mod tests {
         let video4 = PlaylistVideo::from("Video 4");
         let video5 = PlaylistVideo::from("Video 5");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
-        playlist.append(video4.clone());
-        playlist.append(video5.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
+        playlist.push(video4.clone());
+        playlist.push(video5.clone());
 
         // Verify the initial order of videos in the playlist.
         assert_eq!(playlist.get(0), Some(&video1));
@@ -1008,11 +895,11 @@ mod tests {
         let video4 = PlaylistVideo::from("Video 4");
         let video5 = PlaylistVideo::from("Video 5");
 
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video3.clone());
-        playlist.append(video4.clone());
-        playlist.append(video5.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video3.clone());
+        playlist.push(video4.clone());
+        playlist.push(video5.clone());
 
         // Verify the initial order of videos in the playlist.
         assert_eq!(playlist.get(0), Some(&video1));
@@ -1042,9 +929,9 @@ mod tests {
         let video2 = PlaylistVideo::from("Video 2");
 
         // Append Video 1 twice to create a duplicate.
-        playlist.append(video1.clone());
-        playlist.append(video2.clone());
-        playlist.append(video1.clone());
+        playlist.push(video1.clone());
+        playlist.push(video2.clone());
+        playlist.push(video1.clone());
 
         // Verify that the duplicate Video 1 is not in the playlist.
         assert_eq!(playlist.len(), 2);

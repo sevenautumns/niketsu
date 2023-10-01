@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use arcstr::ArcStr;
+use async_trait::async_trait;
 use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use im::Vector;
@@ -23,6 +24,20 @@ pub mod fuzzy;
 mod updater;
 
 const MAX_UPDATE_FREQUENCY: Duration = Duration::from_millis(100);
+
+#[cfg_attr(test, mockall::automock)]
+#[async_trait]
+pub trait FileDatabaseTrait: std::fmt::Debug + Send {
+    fn add_path(&mut self, path: PathBuf);
+    fn del_path(&mut self, path: &Path);
+    fn clear_paths(&mut self);
+    fn get_paths(&self) -> Vec<PathBuf>;
+    fn start_update(&mut self);
+    fn stop_update(&mut self);
+    fn find_file(&self, filename: &str) -> Option<FileEntry>;
+    fn all_files(&self) -> &FileStore;
+    async fn event(&mut self) -> Option<FileDatabaseEvent>;
+}
 
 #[enum_dispatch(EventHandler)]
 #[derive(Debug, Clone)]
@@ -172,24 +187,25 @@ impl UpdateProgressTracker {
     }
 }
 
-impl FileDatabase {
-    pub fn add_path(&mut self, path: PathBuf) {
+#[async_trait]
+impl FileDatabaseTrait for FileDatabase {
+    fn add_path(&mut self, path: PathBuf) {
         self.paths.insert(path);
     }
 
-    pub fn del_path(&mut self, path: &Path) {
+    fn del_path(&mut self, path: &Path) {
         self.paths.remove(path);
     }
 
-    pub fn clear_paths(&mut self) {
+    fn clear_paths(&mut self) {
         self.paths.clear();
     }
 
-    pub fn get_paths(&self) -> Vec<PathBuf> {
+    fn get_paths(&self) -> Vec<PathBuf> {
         self.paths.iter().cloned().collect()
     }
 
-    pub fn start_update(&mut self) {
+    fn start_update(&mut self) {
         if self.update.is_some() {
             warn!("update already in progress");
             return;
@@ -201,22 +217,22 @@ impl FileDatabase {
         self.update = Some(tokio::task::spawn(update));
     }
 
-    pub fn stop_update(&mut self) {
+    fn stop_update(&mut self) {
         if let Some(update) = self.update.take() {
             self.progress = Arc::default();
             update.abort();
         }
     }
 
-    pub fn find_file(&self, filename: &str) -> Option<FileEntry> {
+    fn find_file(&self, filename: &str) -> Option<FileEntry> {
         self.store.find_file(filename)
     }
 
-    pub fn all_files(&self) -> &FileStore {
+    fn all_files(&self) -> &FileStore {
         &self.store
     }
 
-    pub async fn event(&mut self) -> Option<FileDatabaseEvent> {
+    async fn event(&mut self) -> Option<FileDatabaseEvent> {
         // TODO REFACTOR
         use crate::file_database::UpdateProgress as Prog;
         let updater = self.update.as_mut()?;
