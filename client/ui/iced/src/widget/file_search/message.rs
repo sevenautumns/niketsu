@@ -78,7 +78,7 @@ impl Click {
             }
             if let Some(video) = state.results.get(state.cursor_index) {
                 let mut playlist = model.playlist.get_inner();
-                playlist.append((&video.entry.file_name_arc()).into());
+                playlist.push((&video.entry.file_name_arc()).into());
                 model.change_playlist(playlist)
             }
         }

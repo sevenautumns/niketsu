@@ -25,6 +25,10 @@ chrono = "0.4"
 whoami = "1.4"
 async-trait = "0.1"
 toml = "0.8"
+typed-builder = "0.16"
+fake = "2.8"
+ordered-float = "4"
 
 [dev-dependencies]
 tempfile = "3.6"
+mockall = "0.11"

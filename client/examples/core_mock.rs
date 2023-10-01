@@ -135,7 +135,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
 
     fn change_playlist(&mut self, i: usize) {
         self.playlist
-            .append(PlaylistVideo::from(format!("file{i}").as_str()));
+            .push(PlaylistVideo::from(format!("file{i}").as_str()));
     }
 
     fn change_room_list(&mut self, i: usize) {
