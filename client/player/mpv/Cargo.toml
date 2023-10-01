@@ -15,6 +15,7 @@ num-traits = "0.2"
 num-derive = "0.4"
 thiserror = "1.0"
 async-trait = "0.1"
+libc = "0.2"
 
 [build-dependencies]
 anyhow.workspace = true

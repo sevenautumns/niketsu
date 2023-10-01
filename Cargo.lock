@@ -2177,6 +2177,7 @@ dependencies = [
  "bindgen",
  "enum_dispatch",
  "futures",
+ "libc",
  "log",
  "niketsu-core",
  "num-derive",
