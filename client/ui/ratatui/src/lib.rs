@@ -10,13 +10,13 @@ use niketsu_core::ui::{
 use niketsu_core::util::{Observed, RingBuffer};
 use tokio::sync::mpsc::UnboundedReceiver as MpscReceiver;
 use tokio::sync::Notify;
-use tokio::task::JoinHandle;
+
 mod view;
+mod widget;
 
 #[derive(Debug)]
 pub struct RatatuiUI {
     model: UiModel,
-    handle: JoinHandle<()>,
     ui_events: MpscReceiver<UserInterfaceEvent>,
 }
 
@@ -36,12 +36,15 @@ impl RatatuiUI {
             notify,
         };
         let mut view = view::RatatuiView::new(model.clone());
-        let handle = tokio::task::spawn(async move {
-            view.start().await;
+        let _ = tokio::task::spawn(async move {
+            let res = view.run().await;
+            if let Err(err) = res {
+                println!("{err:?}");
+            }
+            std::process::exit(0);
         });
         RatatuiUI {
             model,
-            handle,
             ui_events: rx,
         }
     }
