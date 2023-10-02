@@ -37,6 +37,19 @@ impl<T> RingBuffer<T> {
         }
     }
 
+    pub fn pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            return None;
+        };
+        self.len -= 1;
+        self.head = (self.head + self.capacity - 1) % self.capacity;
+        self.buffer[self.head].take()
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::new(self.capacity);
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -159,5 +172,46 @@ mod tests {
 
         // Ensure that the buffer is empty
         assert_eq!(ring_buffer.buffer.len(), 0);
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut buffer = RingBuffer::new(3);
+
+        buffer.push(1);
+        buffer.push(2);
+        buffer.push(3);
+
+        assert_eq!(buffer.len(), 3);
+
+        buffer.clear();
+
+        assert_eq!(buffer.len(), 0);
+        assert_eq!(buffer.iter().count(), 0);
+    }
+
+    #[test]
+    fn test_pop() {
+        let mut buffer = RingBuffer::new(3);
+
+        buffer.push(1);
+        buffer.push(2);
+        buffer.push(3);
+
+        let popped_value = buffer.pop();
+        assert_eq!(popped_value, Some(3));
+        assert_eq!(buffer.len(), 2);
+
+        let popped_value = buffer.pop();
+        assert_eq!(popped_value, Some(2));
+        assert_eq!(buffer.len(), 1);
+
+        let popped_value = buffer.pop();
+        assert_eq!(popped_value, Some(1));
+        assert_eq!(buffer.len(), 0);
+
+        let popped_value = buffer.pop();
+        assert_eq!(popped_value, None);
+        assert_eq!(buffer.len(), 0);
     }
 }

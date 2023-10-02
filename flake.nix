@@ -163,6 +163,7 @@
             cargo-audit
             cargo-outdated
             cargo-udeps
+            cargo-nextest
             cargo-tarpaulin
             cargo-watch
             nixpkgs-fmt
@@ -237,6 +238,12 @@
               category = "rust";
               command = "cargo-audit audit";
               help = pkgs.cargo-audit.meta.description;
+            }
+            {
+              name = "nextest";
+              category = "rust";
+              command = "cargo-nextest nextest run";
+              help = pkgs.cargo-nextest.meta.description;
             }
             {
               name = "tarpaulin";
