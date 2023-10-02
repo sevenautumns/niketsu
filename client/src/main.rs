@@ -1,7 +1,9 @@
 use anyhow::Result;
-use niketsu::builder::CoreBuilder;
 use niketsu_communicator::WebsocketCommunicator;
+use niketsu_core::builder::CoreBuilder;
 use niketsu_core::config::Config;
+use niketsu_core::file_database::FileDatabase;
+use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_iced::config::Config as IcedConfig;
 use niketsu_iced::IcedUI;
 use niketsu_mpv::Mpv;
@@ -24,6 +26,8 @@ async fn main() -> Result<()> {
         .ui(Box::new(view))
         .player(Box::new(player))
         .communicator(Box::new(communicator))
+        .playlist(Box::<PlaylistHandler>::default())
+        .file_database(Box::<FileDatabase>::default())
         .build();
 
     tokio::task::spawn(async move { core.run().await });

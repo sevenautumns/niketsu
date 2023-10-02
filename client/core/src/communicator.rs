@@ -8,6 +8,7 @@ use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use im::Vector;
 use log::debug;
+use ordered_float::OrderedFloat;
 use url::Url;
 
 use super::playlist::PlaylistVideo;
@@ -18,6 +19,7 @@ use crate::playlist::Playlist;
 use crate::rooms::RoomList;
 use crate::user::UserStatus;
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait CommunicatorTrait: std::fmt::Debug + Send {
     fn connect(&mut self, connect: EndpointInfo);
@@ -25,7 +27,7 @@ pub trait CommunicatorTrait: std::fmt::Debug + Send {
     async fn receive(&mut self) -> IncomingMessage;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EndpointInfo {
     pub addr: String,
     pub secure: bool,
@@ -48,7 +50,7 @@ impl Display for EndpointInfo {
 
 impl EndpointInfo {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutgoingMessage {
     Join(NiketsuJoin),
     VideoStatus(NiketsuVideoStatus),
@@ -107,7 +109,7 @@ impl EventHandler for NiketsuConnected {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NiketsuJoin {
     pub password: String,
     pub room: String,
@@ -128,13 +130,26 @@ pub struct NiketsuVideoStatus {
     pub paused: bool,
 }
 
+impl PartialEq for NiketsuVideoStatus {
+    fn eq(&self, other: &Self) -> bool {
+        let speed_self = OrderedFloat(self.speed);
+        let speed_other = OrderedFloat(self.speed);
+        speed_self.eq(&speed_other)
+            && self.filename.eq(&other.filename)
+            && self.position.eq(&other.position)
+            && self.paused.eq(&other.paused)
+    }
+}
+
+impl Eq for NiketsuVideoStatus {}
+
 impl From<NiketsuVideoStatus> for OutgoingMessage {
     fn from(value: NiketsuVideoStatus) -> Self {
         Self::VideoStatus(value)
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NiketsuUserStatusList {
     pub rooms: BTreeMap<String, BTreeSet<NiketsuUserStatus>>,
 }
@@ -153,7 +168,7 @@ impl EventHandler for NiketsuUserStatusList {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NiketsuStart {
     pub actor: String,
 }
@@ -185,7 +200,7 @@ impl From<NiketsuStart> for OutgoingMessage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NiketsuPause {
     pub actor: String,
 }
@@ -223,6 +238,16 @@ pub struct NiketsuPlaybackSpeed {
     pub speed: f64,
 }
 
+impl PartialEq for NiketsuPlaybackSpeed {
+    fn eq(&self, other: &Self) -> bool {
+        let speed_self = OrderedFloat(self.speed);
+        let speed_other = OrderedFloat(self.speed);
+        speed_self.eq(&speed_other) && self.actor.eq(&other.actor)
+    }
+}
+
+impl Eq for NiketsuPlaybackSpeed {}
+
 impl From<NiketsuPlaybackSpeed> for PlayerMessage {
     fn from(value: NiketsuPlaybackSpeed) -> Self {
         let actor = value.actor;
@@ -259,6 +284,20 @@ pub struct NiketsuSeek {
     pub speed: f64,
     pub position: Duration,
 }
+
+impl PartialEq for NiketsuSeek {
+    fn eq(&self, other: &Self) -> bool {
+        let speed_self = OrderedFloat(self.speed);
+        let speed_other = OrderedFloat(self.speed);
+        speed_self.eq(&speed_other)
+            && self.actor.eq(&other.actor)
+            && self.position.eq(&other.position)
+            && self.paused.eq(&other.paused)
+            && self.file.eq(&other.file)
+    }
+}
+
+impl Eq for NiketsuSeek {}
 
 impl From<NiketsuSeek> for PlayerMessage {
     fn from(value: NiketsuSeek) -> Self {
@@ -308,7 +347,7 @@ impl From<NiketsuSeek> for OutgoingMessage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NiketsuSelect {
     pub actor: String,
     pub filename: Option<String>,
@@ -358,7 +397,7 @@ impl From<NiketsuSelect> for OutgoingMessage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NiketsuUserMessage {
     pub actor: String,
     pub message: String,
@@ -416,7 +455,7 @@ impl EventHandler for NiketsuServerMessage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NiketsuPlaylist {
     pub actor: String,
     pub playlist: Vector<ArcStr>,

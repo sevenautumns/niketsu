@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
+use ordered_float::OrderedFloat;
 use url::Url;
 
 use super::communicator::{
@@ -14,6 +15,7 @@ use super::{CoreModel, EventHandler};
 use crate::communicator::NiketsuSelect;
 use crate::file_database::FileStore;
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait MediaPlayerTrait: std::fmt::Debug + Send {
     fn start(&mut self);
@@ -82,6 +84,19 @@ pub struct LoadVideo {
     pub speed: f64,
     pub paused: bool,
 }
+
+impl PartialEq for LoadVideo {
+    fn eq(&self, other: &Self) -> bool {
+        let speed_self = OrderedFloat(self.speed);
+        let speed_other = OrderedFloat(self.speed);
+        speed_self.eq(&speed_other)
+            && self.video.eq(&other.video)
+            && self.pos.eq(&other.pos)
+            && self.paused.eq(&other.paused)
+    }
+}
+
+impl Eq for LoadVideo {}
 
 #[enum_dispatch(EventHandler)]
 #[derive(Debug, Clone)]

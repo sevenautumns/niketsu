@@ -36,6 +36,20 @@ impl<T> RingBuffer<T> {
             self.len += 1;
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get(&self, index: usize) -> Option<&T> {
+        let index = (self.head + index) % self.capacity;
+        self.buffer.get(index).and_then(|v| v.as_ref())
+    }
 }
 
 pub struct RingBufferIter<'a, T> {

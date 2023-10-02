@@ -18,6 +18,7 @@ use super::widget::playlist::PlaylistWidgetState;
 use super::widget::rooms::RoomsWidgetState;
 use super::{PreExistingTokioRuntime, UiModel};
 use crate::config::Config;
+use crate::widget::file_search::FileSearchWidgetState;
 
 #[derive(Debug)]
 pub struct ViewModel {
@@ -30,6 +31,7 @@ pub struct ViewModel {
     playlist_widget_state: PlaylistWidgetState,
     messages_widget_state: MessagesWidgetState,
     database_widget_state: DatabaseWidgetState,
+    file_search_widget_state: FileSearchWidgetState,
 }
 
 impl ViewModel {
@@ -45,6 +47,7 @@ impl ViewModel {
             playlist_widget_state: Default::default(),
             messages_widget_state: Default::default(),
             database_widget_state: Default::default(),
+            file_search_widget_state: Default::default(),
         }
     }
 
@@ -68,6 +71,9 @@ impl ViewModel {
             Message::PlaylistWidget(m) => m.handle(&mut self.playlist_widget_state, &self.model),
             Message::MessagesWidget(m) => m.handle(&mut self.messages_widget_state),
             Message::DatabaseWidget(m) => m.handle(&self.model),
+            Message::FileSearchWidget(m) => {
+                m.handle(&mut self.file_search_widget_state, &self.model)
+            }
             Message::ModelChanged => self.update_from_inner_model(),
         }
     }
@@ -127,6 +133,10 @@ impl ViewModel {
         &self.database_widget_state
     }
 
+    pub fn get_file_search_widget_state(&self) -> &FileSearchWidgetState {
+        &self.file_search_widget_state
+    }
+
     pub fn update_from_inner_model(&mut self) {
         self.model
             .room_list
@@ -160,7 +170,7 @@ pub struct View {
 pub trait SubWindowTrait {
     type SubMessage;
 
-    fn view(&self, model: &ViewModel) -> Element<Message>;
+    fn view<'a>(&'a self, model: &'a ViewModel) -> Element<Message>;
     fn update(&mut self, message: Self::SubMessage, model: &UiModel);
 }
 

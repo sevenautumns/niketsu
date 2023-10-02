@@ -1274,7 +1274,7 @@ impl RatatuiView {
             if updated_playlist.len() > position.saturating_sub(1) {
                 updated_playlist.insert(position.saturating_sub(1), filename.into());
             } else {
-                updated_playlist.append(filename.into());
+                updated_playlist.push(filename.into());
             }
             self.model.change_playlist(updated_playlist);
         }
