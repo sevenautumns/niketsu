@@ -11,6 +11,7 @@ use niketsu_core::util::{Observed, RingBuffer};
 use tokio::sync::mpsc::UnboundedReceiver as MpscReceiver;
 use tokio::sync::Notify;
 
+mod handler;
 mod view;
 mod widget;
 
@@ -20,8 +21,8 @@ pub struct RatatuiUI {
     ui_events: MpscReceiver<UserInterfaceEvent>,
 }
 
-impl RatatuiUI {
-    pub fn new() -> Self {
+impl Default for RatatuiUI {
+    fn default() -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let notify = Arc::new(Notify::new());
         let model = UiModel {
@@ -36,7 +37,7 @@ impl RatatuiUI {
             notify,
         };
         let mut view = view::RatatuiView::new(model.clone());
-        let _ = tokio::task::spawn(async move {
+        let _handle = tokio::task::spawn(async move {
             let res = view.run().await;
             if let Err(err) = res {
                 println!("{err:?}");

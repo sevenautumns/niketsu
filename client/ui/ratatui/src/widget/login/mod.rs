@@ -1,11 +1,10 @@
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
-use super::{OverlayWidget, TextAreaWrapper};
-
-pub(crate) mod handle;
+use super::{OverlayWidgetState, TextAreaWrapper};
 
 #[derive(Debug, Default, Clone)]
 enum State {
@@ -41,7 +40,7 @@ impl<'a> LoginWidget<'a> {
         }
     }
 
-    fn previous_state(&mut self) {
+    pub fn previous_state(&mut self) {
         match self.current_state {
             State::Address => self.current_state = State::Secure,
             State::Password => self.current_state = State::Address,
@@ -51,7 +50,7 @@ impl<'a> LoginWidget<'a> {
         }
     }
 
-    fn next_state(&mut self) {
+    pub fn next_state(&mut self) {
         match self.current_state {
             State::Address => self.current_state = State::Password,
             State::Password => self.current_state = State::Username,
@@ -61,15 +60,37 @@ impl<'a> LoginWidget<'a> {
         }
     }
 
-    fn collect_input(&self) -> (String, String, String, bool) {
+    pub fn collect_input(&self) -> (String, String, String, bool) {
         let address = self.address_field.lines().join("");
         let room = self.room_field.lines().join("");
         let password = self.password_field.lines().join("");
         (address, room, password, self.secure)
     }
+
+    pub fn input(&mut self, key: KeyEvent) {
+        match self.current_state {
+            State::Address => {
+                self.address_field.input(key);
+            }
+            State::Username => {
+                self.username_field.input(key);
+            }
+            State::Room => {
+                self.room_field.input(key);
+            }
+            State::Password => {
+                self.password_field.input(key);
+            }
+            State::Secure => {
+                if key.code == KeyCode::Char(' ') {
+                    self.secure = !self.secure;
+                }
+            }
+        }
+    }
 }
 
-impl<'a> OverlayWidget for LoginWidget<'a> {
+impl<'a> OverlayWidgetState for LoginWidget<'a> {
     fn area(&self, r: Rect) -> Rect {
         let vert_width = match r.height {
             0..=50 => 10,

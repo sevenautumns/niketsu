@@ -1,18 +1,102 @@
 use ratatui::prelude::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Widget};
+use ratatui::widgets::{Block, Borders, ListState, Widget};
 use ratatui_textarea::{CursorMove, Input, TextArea};
 
 pub(crate) mod chat;
+pub(crate) mod chat_input;
 pub(crate) mod command;
 pub(crate) mod database;
 pub(crate) mod fuzzy_search;
 pub(crate) mod login;
 pub(crate) mod options;
 pub(crate) mod playlist;
+pub(crate) mod room;
 
-pub trait OverlayWidget {
+pub trait OverlayWidgetState {
     fn area(&self, r: Rect) -> Rect;
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ListStateWrapper {
+    inner: ListState,
+}
+
+impl ListStateWrapper {
+    fn next(&mut self) {
+        let i = match self.inner.selected() {
+            Some(i) => i.saturating_sub(1),
+            None => 0,
+        };
+        self.inner.select(Some(i));
+    }
+
+    fn overflowing_next(&mut self, len: usize) {
+        let i = match self.inner.selected() {
+            Some(i) => {
+                if i == 0 {
+                    len.saturating_sub(1)
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.inner.select(Some(i));
+    }
+
+    fn jump_next(&mut self, offset: usize) {
+        if let Some(i) = self.selected() {
+            self.inner.select(Some(i.saturating_sub(offset)));
+        }
+    }
+
+    fn overflowing_previous(&mut self, len: usize) {
+        let i = match self.inner.selected() {
+            Some(i) => {
+                if i >= len.saturating_sub(1) {
+                    0
+                } else {
+                    i.saturating_add(1)
+                }
+            }
+            None => 0,
+        };
+        self.inner.select(Some(i));
+    }
+
+    fn limited_previous(&mut self, len: usize) {
+        let i = match self.inner.selected() {
+            Some(i) => {
+                if i >= len.saturating_sub(1) {
+                    len.saturating_sub(1)
+                } else {
+                    i.saturating_add(1)
+                }
+            }
+            None => 0,
+        };
+        self.inner.select(Some(i));
+    }
+
+    fn limited_jump_previous(&mut self, offset: usize, len: usize) {
+        if let Some(i) = self.selected() {
+            let jump_index = usize::min(i.saturating_add(offset), len.saturating_sub(1));
+            self.inner.select(Some(jump_index));
+        }
+    }
+
+    fn select(&mut self, index: Option<usize>) {
+        self.inner.select(index);
+    }
+
+    fn selected(&self) -> Option<usize> {
+        self.inner.selected()
+    }
+
+    fn inner(&self) -> ListState {
+        self.inner.clone()
+    }
 }
 
 pub struct TextAreaWrapper<'a> {
@@ -65,6 +149,18 @@ impl<'a> TextAreaWrapper<'a> {
         self.inner.set_cursor_style(cursor_style);
     }
 
+    fn set_default_stye(&mut self) {
+        self.inner.set_tab_length(2);
+        self.inner
+            .set_style(Style::default().fg(Color::Gray).add_modifier(Modifier::DIM));
+        self.inner.set_cursor_line_style(Style::default());
+        self.inner.set_cursor_style(Style::default());
+    }
+
+    fn set_block(&mut self, block: Block<'a>) {
+        self.inner.set_block(block);
+    }
+
     fn into_masked(self, title: &str) -> TextAreaWrapper<'_> {
         let lines = self.inner.lines();
         let masked_lines: String = lines
@@ -84,16 +180,8 @@ impl<'a> TextAreaWrapper<'a> {
         text_area
     }
 
-    fn set_default_stye(&mut self) {
-        self.inner.set_tab_length(2);
-        self.inner
-            .set_style(Style::default().fg(Color::Gray).add_modifier(Modifier::DIM));
-        self.inner.set_cursor_line_style(Style::default());
-        self.inner.set_cursor_style(Style::default());
-    }
-
-    fn set_block(&mut self, block: Block<'a>) {
-        self.inner.set_block(block);
+    fn get_input(&'a self) -> String {
+        self.inner.lines().join("")
     }
 
     fn lines(&'a self) -> &[String] {

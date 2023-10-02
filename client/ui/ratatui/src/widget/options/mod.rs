@@ -1,25 +1,30 @@
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, Paragraph, StatefulWidget, Widget};
 
-use super::OverlayWidget;
+use super::OverlayWidgetState;
+
+pub struct OptionsWidget;
 
 #[derive(Debug, Default, Clone)]
-pub struct OptionsWidget {
+pub struct OptionsWidgetState {
     percent_x: u8,
     percent_y: u8,
+    style: Style,
 }
 
-impl OptionsWidget {
+impl OptionsWidgetState {
     pub fn new() -> Self {
         Self {
             percent_x: 30,
             percent_y: 20,
+            style: Style::default(),
         }
     }
 }
 
-impl OverlayWidget for OptionsWidget {
+impl OverlayWidgetState for OptionsWidgetState {
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -45,8 +50,10 @@ impl OverlayWidget for OptionsWidget {
     }
 }
 
-impl Widget for OptionsWidget {
-    fn render(self, area: Rect, buf: &mut Buffer) {
+impl StatefulWidget for OptionsWidget {
+    type State = OptionsWidgetState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let options_block = Block::default().title("Options").borders(Borders::ALL);
 
         let options_overlay = Paragraph::new(vec![
@@ -54,6 +61,7 @@ impl Widget for OptionsWidget {
             Line::from(vec![Span::raw(" l Open login")]),
             Line::from(vec![Span::raw(" f Open fuzzy search")]),
         ])
+        .style(state.style)
         .block(options_block);
 
         options_overlay.render(area, buf);

@@ -1,20 +1,21 @@
-use niketsu_core::file_database::fuzzy::FuzzyResult;
-use niketsu_core::file_database::FileStore;
-use ratatui::prelude::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Style, Stylize};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Padding, Widget};
+use niketsu_core::file_database::fuzzy::{FuzzyResult, FuzzySearch};
+use niketsu_core::file_database::{FileEntry, FileStore};
+use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style, Stylize};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{
+    Block, Borders, List, ListItem, ListState, Padding, StatefulWidget, Widget,
+};
+use ratatui_textarea::Input;
 
-use super::{OverlayWidget, TextAreaWrapper};
-
-pub(crate) mod handle;
+use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
 
 #[derive(Debug, Default, Clone)]
 pub struct FuzzySearchWidget<'a> {
     file_database: FileStore,
     current_result: Option<Vec<FuzzyResult>>,
     input_field: TextAreaWrapper<'a>,
-    state: Option<ListState>,
+    state: ListStateWrapper,
     style: Style,
 }
 
@@ -22,6 +23,7 @@ impl<'a> FuzzySearchWidget<'a> {
     pub fn new() -> Self {
         let mut widget = Self::default();
         widget.setup_input_field();
+        widget.state.select(Some(0));
         widget
     }
 
@@ -33,11 +35,21 @@ impl<'a> FuzzySearchWidget<'a> {
     }
 
     pub fn get_input(&self) -> String {
-        self.input_field.lines().join("")
+        self.input_field.get_input()
     }
 
-    pub fn get_file_database(&self) -> FileStore {
-        self.file_database.clone()
+    pub fn get_state(&self) -> ListState {
+        self.state.inner().clone()
+    }
+
+    pub fn get_selected(&self) -> Option<FileEntry> {
+        match self.state.selected() {
+            Some(i) => self
+                .current_result
+                .clone()
+                .map(|result| result[i].clone().entry),
+            None => None,
+        }
     }
 
     pub fn set_file_database(&mut self, file_database: FileStore) {
@@ -45,22 +57,54 @@ impl<'a> FuzzySearchWidget<'a> {
     }
 
     pub fn set_result(&mut self, results: Vec<FuzzyResult>) {
+        if results.is_empty() {
+            self.state.select(None);
+        }
         self.current_result = Some(results);
-    }
-
-    pub fn reset_result(&mut self) {
-        self.current_result = None;
     }
 
     pub fn reset_all(&mut self) {
         self.current_result = None;
-        self.state = None;
+        self.state.select(Some(0));
         self.input_field = TextAreaWrapper::default();
         self.setup_input_field();
     }
+
+    pub fn next(&mut self) {
+        let len = self.len();
+        if len == 0 {
+            self.state.select(None);
+        } else {
+            self.state.overflowing_next(len);
+        }
+    }
+
+    pub fn previous(&mut self) {
+        let len = self.len();
+        if len == 0 {
+            self.state.select(None);
+        } else {
+            self.state.overflowing_previous(len);
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self.current_result.clone() {
+            Some(vec) => vec.len(),
+            None => 0,
+        }
+    }
+
+    pub fn fuzzy_search(&self, query: String) -> FuzzySearch {
+        self.file_database.fuzzy_search(query)
+    }
+
+    pub fn input(&mut self, event: impl Into<Input>) {
+        self.input_field.input(event);
+    }
 }
 
-impl<'a> OverlayWidget for FuzzySearchWidget<'a> {
+impl<'a> OverlayWidgetState for FuzzySearchWidget<'a> {
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -88,8 +132,10 @@ impl<'a> OverlayWidget for FuzzySearchWidget<'a> {
     }
 }
 
-impl<'a> Widget for FuzzySearchWidget<'a> {
-    fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer) {
+impl<'a> StatefulWidget for FuzzySearchWidget<'a> {
+    type State = ListState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let outer_block = Block::default()
             .title("Search")
             .borders(Borders::ALL)
@@ -123,17 +169,21 @@ impl<'a> Widget for FuzzySearchWidget<'a> {
             None => Vec::default(),
         };
 
-        let search_list = List::new(search_result).gray().block(
-            Block::default()
-                .style(self.style)
-                .title("Results")
-                .borders(Borders::TOP)
-                .padding(Padding::new(1, 1, 1, 1)),
-        );
+        let search_list = List::new(search_result)
+            .gray()
+            .block(
+                Block::default()
+                    .style(self.style)
+                    .title("Results")
+                    .borders(Borders::TOP)
+                    .padding(Padding::new(1, 1, 1, 1)),
+            )
+            .highlight_style(Style::default().fg(Color::Cyan))
+            .highlight_symbol("> ");
 
         let input_field = self.input_field.clone();
         outer_block.render(area, buf);
         input_field.widget().render(layout[0], buf);
-        search_list.render(layout[1], buf);
+        StatefulWidget::render(search_list, layout[1], buf, state);
     }
 }

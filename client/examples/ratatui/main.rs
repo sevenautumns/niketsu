@@ -6,7 +6,7 @@ mod core_mock;
 
 #[tokio::main]
 async fn main() {
-    let ratatui = RatatuiUI::new();
+    let ratatui = RatatuiUI::default();
     let core = CoreMock::new(ratatui);
     core.run().await;
 }
