@@ -11,6 +11,7 @@ log.workspace = true
 arc-swap.workspace = true
 tokio.workspace = true
 serde.workspace = true
+enum_dispatch.workspace = true
 serde_with = "3.0"
 iced = { version = "0.10", features = ["tokio", "advanced"] }
 iced_futures = { version = "0.7" }
@@ -20,4 +21,3 @@ toml = "0.8"
 palette = "0.7"
 once_cell = "1.17"
 async-trait = "0.1"
-dyn-clone = "1.0"

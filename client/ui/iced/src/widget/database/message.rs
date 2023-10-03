@@ -1,40 +1,43 @@
-use dyn_clone::DynClone;
+use enum_dispatch::enum_dispatch;
+use iced::Command;
 
-use crate::message::Message;
+use crate::message::{Message, MessageHandler};
+use crate::view::ViewModel;
 use crate::UiModel;
 
-pub trait DatabaseWidgetMessage: std::fmt::Debug + DynClone + std::marker::Send {
-    fn handle(self: Box<Self>, model: &UiModel);
+#[enum_dispatch]
+pub trait DatabaseWidgetMessageTrait {
+    fn handle(self, model: &UiModel);
 }
 
-dyn_clone::clone_trait_object!(DatabaseWidgetMessage);
+#[enum_dispatch(DatabaseWidgetMessageTrait)]
+#[derive(Debug, Clone)]
+pub enum DatabaseWidgetMessage {
+    StartDbUpdate,
+    StopDbUpdate,
+}
+
+impl MessageHandler for DatabaseWidgetMessage {
+    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+        DatabaseWidgetMessageTrait::handle(self, &model.model);
+        Command::none()
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct StartDbUpdate;
 
-impl DatabaseWidgetMessage for StartDbUpdate {
-    fn handle(self: Box<Self>, model: &UiModel) {
+impl DatabaseWidgetMessageTrait for StartDbUpdate {
+    fn handle(self, model: &UiModel) {
         model.start_db_update();
-    }
-}
-
-impl From<StartDbUpdate> for Message {
-    fn from(value: StartDbUpdate) -> Self {
-        Message::DatabaseWidget(Box::new(value))
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct StopDbUpdate;
 
-impl DatabaseWidgetMessage for StopDbUpdate {
-    fn handle(self: Box<Self>, model: &UiModel) {
+impl DatabaseWidgetMessageTrait for StopDbUpdate {
+    fn handle(self, model: &UiModel) {
         model.stop_db_update()
-    }
-}
-
-impl From<StopDbUpdate> for Message {
-    fn from(value: StopDbUpdate) -> Self {
-        Message::DatabaseWidget(Box::new(value))
     }
 }

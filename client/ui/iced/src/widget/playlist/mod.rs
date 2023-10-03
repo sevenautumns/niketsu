@@ -131,17 +131,19 @@ impl<'a> PlaylistWidget<'a> {
             // if let Some(i) = self.state.file_index(&file) {
             let interaction = FileInteraction::Pressing(Instant::now());
             shell.publish(
-                Interaction {
+                PlaylistWidgetMessage::from(Interaction {
                     video: Some(file.clone()),
                     interaction,
-                }
+                })
                 .into(),
             );
 
             if let Some(prev_file) = &self.state.selected {
                 if let FileInteraction::Released(when) = self.state.interaction {
                     if file.eq(prev_file) && when.elapsed() < MAX_DOUBLE_CLICK_INTERVAL {
-                        shell.publish(DoubleClick { video: file }.into());
+                        shell.publish(
+                            PlaylistWidgetMessage::from(DoubleClick { video: file }).into(),
+                        );
                     }
                 }
                 // }
@@ -163,10 +165,10 @@ impl<'a> PlaylistWidget<'a> {
                         .and_then(|f| f.to_str().map(|f| f.to_string()))
                 }) {
                     shell.publish(
-                        Move {
+                        PlaylistWidgetMessage::from(Move {
                             video: PlaylistVideo::from(name.as_str()),
                             pos: 0,
-                        }
+                        })
                         .into(),
                     );
                 }
@@ -177,28 +179,28 @@ impl<'a> PlaylistWidget<'a> {
                 if let Some((i, _)) = self.closest_index(layout, pos) {
                     if let Some(file) = &self.state.selected {
                         shell.publish(
-                            Move {
+                            PlaylistWidgetMessage::from(Move {
                                 video: file.clone(),
                                 pos: i,
-                            }
+                            })
                             .into(),
                         )
                     }
                 }
                 shell.publish(
-                    Interaction {
+                    PlaylistWidgetMessage::from(Interaction {
                         video: self.state.selected.clone(),
                         interaction: FileInteraction::Released(Instant::now()),
-                    }
+                    })
                     .into(),
                 )
             }
             FileInteraction::Released(_) => {
                 shell.publish(
-                    Interaction {
+                    PlaylistWidgetMessage::from(Interaction {
                         video: self.state.selected.clone(),
                         interaction: FileInteraction::None,
-                    }
+                    })
                     .into(),
                 );
             }
@@ -208,7 +210,7 @@ impl<'a> PlaylistWidget<'a> {
 
     fn deleted(&self, shell: &mut iced::advanced::Shell<'_, Message>) {
         if let Some(f) = &self.state.selected {
-            shell.publish(Delete { video: f.clone() }.into())
+            shell.publish(PlaylistWidgetMessage::from(Delete { video: f.clone() }).into())
         }
     }
 }
@@ -341,10 +343,10 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
                 if modifiers.contains(Modifiers::CTRL) && *key_code == KeyCode::V {
                     if let Some(clipboard) = clipboard.read() {
                         shell.publish(
-                            Move {
+                            PlaylistWidgetMessage::from(Move {
                                 video: PlaylistVideo::from(clipboard.as_str()),
                                 pos: 0,
-                            }
+                            })
                             .into(),
                         )
                     }
@@ -377,10 +379,10 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
                 iced::window::Event::FileHovered(_) => {
                     if !self.state.interaction.is_press_extern() {
                         shell.publish(
-                            Interaction {
+                            PlaylistWidgetMessage::from(Interaction {
                                 video: self.state.selected.clone(),
                                 interaction: FileInteraction::PressingExternal,
-                            }
+                            })
                             .into(),
                         )
                     }
@@ -390,10 +392,10 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
                     self.released(Some(file.clone()), inner_state, layout, shell)
                 }
                 iced::window::Event::FilesHoveredLeft => shell.publish(
-                    Interaction {
+                    PlaylistWidgetMessage::from(Interaction {
                         video: self.state.selected.clone(),
                         interaction: FileInteraction::None,
-                    }
+                    })
                     .into(),
                 ),
                 _ => {}

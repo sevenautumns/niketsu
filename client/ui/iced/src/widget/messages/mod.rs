@@ -2,17 +2,19 @@ use std::sync::Arc;
 
 use iced::event::Status;
 use iced::mouse::Cursor;
-use iced::widget::scrollable::{Id, RelativeOffset};
-use iced::widget::{Column, Container, Scrollable, Text};
+use iced::widget::scrollable::Id;
+use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
 use iced::{Element, Length, Rectangle, Renderer, Theme};
 use niketsu_core::ui::{MessageSource, PlayerMessage};
 
-use self::message::ScrollMessages;
+use self::message::{MessageInput, MessagesWidgetMessage, ScrollMessages, SendMessage};
 use crate::message::Message;
 use crate::styling::{ContainerBorder, MessageColor};
 use crate::RingBuffer;
 
 pub mod message;
+
+const SPACING: u16 = 5;
 
 pub struct MessagesWidget<'a> {
     base: Element<'a, Message>,
@@ -20,18 +22,38 @@ pub struct MessagesWidget<'a> {
 
 impl<'a> MessagesWidget<'a> {
     pub fn new(state: &MessagesWidgetState) -> Self {
+        let mut column = Column::new()
+            .spacing(SPACING)
+            .width(Length::Fill)
+            .width(Length::Fill);
+
         let msgs = state.messages.iter().map(|m| m.to_text()).collect();
-        let base = Container::new(
+        let messages = Container::new(
             Scrollable::new(Column::with_children(msgs))
                 .width(Length::Fill)
-                .on_scroll(|o| ScrollMessages(o.relative_offset()).into())
+                .on_scroll(|o| {
+                    MessagesWidgetMessage::from(ScrollMessages(o.relative_offset())).into()
+                })
                 .id(Id::new("messages")),
         )
         .style(ContainerBorder::basic())
         .padding(5.0)
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into();
+        .height(Length::Fill);
+        column = column.push(messages);
+
+        let message_input = Row::new()
+            .push(
+                TextInput::new("Message", &state.message)
+                    .width(Length::Fill)
+                    .on_input(|i| MessagesWidgetMessage::from(MessageInput(i)).into())
+                    .on_submit(MessagesWidgetMessage::from(SendMessage).into()),
+            )
+            .push(Button::new("Send").on_press(MessagesWidgetMessage::from(SendMessage).into()))
+            .spacing(SPACING);
+        column = column.push(message_input);
+
+        let base = column.into();
         Self { base }
     }
 }
@@ -142,15 +164,24 @@ impl<'a> From<MessagesWidget<'a>> for Element<'a, Message> {
 }
 
 /// TODO rename to ChatWidgetState
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MessagesWidgetState {
-    offset: RelativeOffset,
     messages: Arc<RingBuffer<PlayerMessage>>,
+    message: String,
 }
 
 impl MessagesWidgetState {
     pub fn replace_messages(&mut self, messages: Arc<RingBuffer<PlayerMessage>>) {
         self.messages = messages;
+    }
+}
+
+impl Default for MessagesWidgetState {
+    fn default() -> Self {
+        Self {
+            messages: Arc::default(),
+            message: String::new(),
+        }
     }
 }
 

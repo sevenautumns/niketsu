@@ -1,8 +1,8 @@
-use iced::widget::scrollable::{Id, RelativeOffset};
-use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
+use iced::widget::scrollable::Id;
+use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
 use iced::{Element, Length};
 
-use self::message::{MainMessage, MessageInput, ReadyButton, SendMessage};
+use self::message::{MainMessage, MainMessageTrait, ReadyButton};
 use super::message::Message;
 use super::view::{SubWindowTrait, ViewModel};
 use super::widget::database::DatabaseWidget;
@@ -18,24 +18,18 @@ pub(super) mod message;
 const SPACING: u16 = 5;
 
 #[derive(Debug)]
-pub struct MainView {
-    message: String,
-    messages_scroll: RelativeOffset,
-}
+pub struct MainView;
 
 impl Default for MainView {
     fn default() -> Self {
-        Self {
-            message: Default::default(),
-            messages_scroll: RelativeOffset::END,
-        }
+        Self
     }
 }
 
 impl MainView {}
 
 impl SubWindowTrait for MainView {
-    type SubMessage = Box<dyn MainMessage>;
+    type SubMessage = MainMessage;
 
     fn view<'a>(&'a self, view_model: &'a ViewModel) -> Element<Message> {
         let mut btn: Button<Message>;
@@ -57,7 +51,7 @@ impl SubWindowTrait for MainView {
                 .style(ResultButton::not_ready())
             }
         }
-        btn = btn.on_press(ReadyButton.into());
+        btn = btn.on_press(MainMessage::from(ReadyButton).into());
 
         Row::new()
             .push(
@@ -66,17 +60,6 @@ impl SubWindowTrait for MainView {
                         view_model.get_file_search_widget_state(),
                     ))
                     .push(MessagesWidget::new(view_model.get_messages_widget_state()))
-                    .push(
-                        Row::new()
-                            .push(
-                                TextInput::new("Message", &self.message)
-                                    .width(Length::Fill)
-                                    .on_input(|i| MessageInput(i).into())
-                                    .on_submit(SendMessage.into()),
-                            )
-                            .push(Button::new("Send").on_press(SendMessage.into()))
-                            .spacing(SPACING),
-                    )
                     .spacing(SPACING)
                     .width(Length::Fill)
                     .height(Length::Fill),
@@ -117,7 +100,7 @@ impl SubWindowTrait for MainView {
             .into()
     }
 
-    fn update(&mut self, message: Box<dyn MainMessage>, model: &UiModel) {
+    fn update(&mut self, message: MainMessage, model: &UiModel) {
         message.handle(self, model);
     }
 }

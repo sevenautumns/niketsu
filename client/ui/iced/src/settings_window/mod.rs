@@ -7,8 +7,8 @@ use niketsu_core::config::Config as CoreConfig;
 
 use self::message::{
     AddPath, BackgroundColorInput, DangerColorInput, DeletePath, PasswordInput, PathInput,
-    PrimaryColorInput, RoomInput, SecureCheckbox, SettingsMessage, SuccessColorInput,
-    TextColorInput, UrlInput, UsernameInput,
+    PrimaryColorInput, RoomInput, SecureCheckbox, SettingsMessage, SettingsMessageTrait,
+    SuccessColorInput, TextColorInput, UrlInput, UsernameInput,
 };
 use super::message::Message;
 use super::view::{SubWindowTrait, ViewModel};
@@ -17,6 +17,7 @@ use crate::config::{
     default_background, default_danger, default_primary, default_success, default_text, Config,
     RgbWrap,
 };
+use crate::message::CloseSettings;
 use crate::styling::{ColorButton, FileButton};
 use crate::TEXT_SIZE;
 
@@ -48,7 +49,7 @@ pub struct SettingsView {
 }
 
 impl SubWindowTrait for SettingsView {
-    type SubMessage = Box<dyn SettingsMessage>;
+    type SubMessage = SettingsMessage;
 
     fn view(&self, model: &ViewModel) -> Element<Message> {
         let text_size = *TEXT_SIZE.load_full();
@@ -59,14 +60,15 @@ impl SubWindowTrait for SettingsView {
             .enumerate()
             .map(|(i, d)| {
                 row!(
-                    TextInput::new("Filepath", d).on_input(move |p| PathInput(i, p).into()),
+                    TextInput::new("Filepath", d)
+                        .on_input(move |p| SettingsMessage::from(PathInput(i, p)).into()),
                     Button::new(
                         Container::new(Text::new("-"))
                             .center_x()
                             .width(Length::Fill)
                     )
                     .style(ColorButton::theme(model.config().theme().palette().danger))
-                    .on_press(DeletePath(i).into())
+                    .on_press(SettingsMessage::from(DeletePath(i)).into())
                     .width(text_size * 2.0),
                 )
                 .spacing(SPACING)
@@ -100,13 +102,14 @@ impl SubWindowTrait for SettingsView {
                             .push(
                                 Row::new()
                                     .push(
-                                        TextInput::new("Server Address", &self.url)
-                                            .on_input(|u| UrlInput(u).into()),
+                                        TextInput::new("Server Address", &self.url).on_input(|u| {
+                                            SettingsMessage::from(UrlInput(u)).into()
+                                        }),
                                     )
                                     .push(
                                         Container::new(
                                             Checkbox::new("Secure", self.secure, |b| {
-                                                SecureCheckbox(b).into()
+                                                SettingsMessage::from(SecureCheckbox(b)).into()
                                             })
                                             .spacing(SPACING),
                                         )
@@ -117,16 +120,16 @@ impl SubWindowTrait for SettingsView {
                             )
                             .push(
                                 TextInput::new("Password", &self.password)
-                                    .on_input(|u| PasswordInput(u).into())
+                                    .on_input(|u| SettingsMessage::from(PasswordInput(u)).into())
                                     .password(),
                             )
                             .push(
                                 TextInput::new("Username", &self.username)
-                                    .on_input(|u| UsernameInput(u).into()),
+                                    .on_input(|u| SettingsMessage::from(UsernameInput(u)).into()),
                             )
                             .push(
                                 TextInput::new("Room", &self.room)
-                                    .on_input(|u| RoomInput(u).into()),
+                                    .on_input(|u| SettingsMessage::from(RoomInput(u)).into()),
                             )
                             .spacing(SPACING)
                             .width(Length::Fill),
@@ -144,7 +147,7 @@ impl SubWindowTrait for SettingsView {
                                 .center_x()
                                 .width(Length::Fill),
                         )
-                        .on_press(AddPath.into())
+                        .on_press(SettingsMessage::from(AddPath).into())
                         .width(Length::Fill),
                     )
                     .spacing(SPACING),
@@ -166,7 +169,7 @@ impl SubWindowTrait for SettingsView {
                         .horizontal_alignment(iced::alignment::Horizontal::Center),
                 )
                 .width(Length::Fill)
-                .on_press(Message::CloseSettings),
+                .on_press(CloseSettings.into()),
             )
             .align_items(Alignment::Center)
             .width(Length::Fill)
@@ -186,7 +189,7 @@ impl SubWindowTrait for SettingsView {
         .into()
     }
 
-    fn update(&mut self, message: Box<dyn SettingsMessage>, _: &UiModel) {
+    fn update(&mut self, message: SettingsMessage, _: &UiModel) {
         message.handle(self);
     }
 }
@@ -214,7 +217,7 @@ impl SettingsView {
         }
     }
 
-    pub fn to_config(self) -> (Config, CoreConfig) {
+    pub fn into_config(self) -> (Config, CoreConfig) {
         let conf = Config {
             text_size: self.text_size,
             background_color: self.background_color,
@@ -252,23 +255,23 @@ impl SettingsView {
         Column::new()
             .push(
                 TextInput::new("Text Color", &self.text_color_input)
-                    .on_input(|c| TextColorInput(c).into()),
+                    .on_input(|c| SettingsMessage::from(TextColorInput(c)).into()),
             )
             .push(
                 TextInput::new("Background Color", &self.background_color_input)
-                    .on_input(|c| BackgroundColorInput(c).into()),
+                    .on_input(|c| SettingsMessage::from(BackgroundColorInput(c)).into()),
             )
             .push(
                 TextInput::new("Primary Color", &self.primary_color_input)
-                    .on_input(|c| PrimaryColorInput(c).into()),
+                    .on_input(|c| SettingsMessage::from(PrimaryColorInput(c)).into()),
             )
             .push(
                 TextInput::new("Success Color", &self.success_color_input)
-                    .on_input(|c| SuccessColorInput(c).into()),
+                    .on_input(|c| SettingsMessage::from(SuccessColorInput(c)).into()),
             )
             .push(
                 TextInput::new("Danger Color", &self.danger_color_input)
-                    .on_input(|c| DangerColorInput(c).into()),
+                    .on_input(|c| SettingsMessage::from(DangerColorInput(c)).into()),
             )
             .spacing(SPACING)
             .width(Length::Fill)
@@ -281,31 +284,47 @@ impl SettingsView {
             .push(
                 Button::new(" ")
                     .style(ColorButton::theme(self.text_color.into()))
-                    .on_press(TextColorInput(default_text().to_string()).into())
+                    .on_press(
+                        SettingsMessage::from(TextColorInput(default_text().to_string())).into(),
+                    )
                     .width(text_size * 2.0),
             )
             .push(
                 Button::new(" ")
                     .style(ColorButton::theme(self.background_color.into()))
-                    .on_press(BackgroundColorInput(default_background().to_string()).into())
+                    .on_press(
+                        SettingsMessage::from(BackgroundColorInput(
+                            default_background().to_string(),
+                        ))
+                        .into(),
+                    )
                     .width(text_size * 2.0),
             )
             .push(
                 Button::new(" ")
                     .style(ColorButton::theme(self.primary_color.into()))
-                    .on_press(PrimaryColorInput(default_primary().to_string()).into())
+                    .on_press(
+                        SettingsMessage::from(PrimaryColorInput(default_primary().to_string()))
+                            .into(),
+                    )
                     .width(text_size * 2.0),
             )
             .push(
                 Button::new(" ")
                     .style(ColorButton::theme(self.success_color.into()))
-                    .on_press(SuccessColorInput(default_success().to_string()).into())
+                    .on_press(
+                        SettingsMessage::from(SuccessColorInput(default_success().to_string()))
+                            .into(),
+                    )
                     .width(text_size * 2.0),
             )
             .push(
                 Button::new(" ")
                     .style(ColorButton::theme(self.danger_color.into()))
-                    .on_press(DangerColorInput(default_danger().to_string()).into())
+                    .on_press(
+                        SettingsMessage::from(DangerColorInput(default_danger().to_string()))
+                            .into(),
+                    )
                     .width(text_size * 2.0),
             )
             .spacing(SPACING)

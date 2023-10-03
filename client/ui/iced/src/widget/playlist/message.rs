@@ -1,32 +1,43 @@
-use dyn_clone::DynClone;
+use enum_dispatch::enum_dispatch;
+use iced::Command;
 use log::debug;
 use niketsu_core::playlist::PlaylistVideo;
 
 use super::{FileInteraction, PlaylistWidgetState};
-use crate::message::Message;
+use crate::message::{Message, MessageHandler};
+use crate::view::ViewModel;
 use crate::UiModel;
 
-pub trait PlaylistWidgetMessage: std::fmt::Debug + DynClone + std::marker::Send {
-    fn handle(self: Box<Self>, state: &mut PlaylistWidgetState, model: &UiModel);
+#[enum_dispatch]
+pub trait PlaylistWidgetMessageTrait {
+    fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel);
 }
 
-dyn_clone::clone_trait_object!(PlaylistWidgetMessage);
+#[enum_dispatch(PlaylistWidgetMessageTrait)]
+#[derive(Debug, Clone)]
+pub enum PlaylistWidgetMessage {
+    DoubleClick,
+    Delete,
+    Move,
+    Interaction,
+}
+
+impl MessageHandler for PlaylistWidgetMessage {
+    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+        PlaylistWidgetMessageTrait::handle(self, &mut model.playlist_widget_state, &model.model);
+        Command::none()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DoubleClick {
     pub video: PlaylistVideo,
 }
 
-impl PlaylistWidgetMessage for DoubleClick {
-    fn handle(self: Box<Self>, _state: &mut PlaylistWidgetState, model: &UiModel) {
+impl PlaylistWidgetMessageTrait for DoubleClick {
+    fn handle(self, _state: &mut PlaylistWidgetState, model: &UiModel) {
         debug!("FileTable doubleclick: {:?}", self.video);
         model.change_video(self.video)
-    }
-}
-
-impl From<DoubleClick> for Message {
-    fn from(value: DoubleClick) -> Self {
-        Message::PlaylistWidget(Box::new(value))
     }
 }
 
@@ -35,17 +46,11 @@ pub struct Delete {
     pub video: PlaylistVideo,
 }
 
-impl PlaylistWidgetMessage for Delete {
-    fn handle(self: Box<Self>, state: &mut PlaylistWidgetState, model: &UiModel) {
+impl PlaylistWidgetMessageTrait for Delete {
+    fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel) {
         debug!("FileTable delete file: {:?}", self.video);
         state.delete_video(&self.video);
         model.change_playlist(state.playlist.clone());
-    }
-}
-
-impl From<Delete> for Message {
-    fn from(value: Delete) -> Self {
-        Message::PlaylistWidget(Box::new(value))
     }
 }
 
@@ -55,17 +60,11 @@ pub struct Move {
     pub pos: usize,
 }
 
-impl PlaylistWidgetMessage for Move {
-    fn handle(self: Box<Self>, state: &mut PlaylistWidgetState, model: &UiModel) {
+impl PlaylistWidgetMessageTrait for Move {
+    fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel) {
         debug!("FileTable move file: {:?}, {}", self.video, self.pos);
         state.move_video(&self.video, self.pos);
         model.change_playlist(state.playlist.clone());
-    }
-}
-
-impl From<Move> for Message {
-    fn from(value: Move) -> Self {
-        Message::PlaylistWidget(Box::new(value))
     }
 }
 
@@ -75,18 +74,12 @@ pub struct Interaction {
     pub interaction: FileInteraction,
 }
 
-impl PlaylistWidgetMessage for Interaction {
-    fn handle(self: Box<Self>, state: &mut PlaylistWidgetState, _: &UiModel) {
+impl PlaylistWidgetMessageTrait for Interaction {
+    fn handle(self, state: &mut PlaylistWidgetState, _: &UiModel) {
         debug!(
             "FileTable file interaction: {:?}, {:?}",
             self.video, self.interaction
         );
         state.file_interaction(self.video.clone(), self.interaction.clone());
-    }
-}
-
-impl From<Interaction> for Message {
-    fn from(value: Interaction) -> Self {
-        Message::PlaylistWidget(Box::new(value))
     }
 }
