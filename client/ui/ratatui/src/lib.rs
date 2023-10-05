@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use niketsu_core::config::Config;
 use niketsu_core::file_database::FileStore;
 use niketsu_core::playlist::{Playlist, PlaylistVideo};
 use niketsu_core::rooms::RoomList;
@@ -17,12 +18,13 @@ mod widget;
 
 #[derive(Debug)]
 pub struct RatatuiUI {
+    config: Config,
     model: UiModel,
     ui_events: MpscReceiver<UserInterfaceEvent>,
 }
 
-impl Default for RatatuiUI {
-    fn default() -> Self {
+impl RatatuiUI {
+    pub fn new(config: Config) -> (Self, Box<dyn FnOnce() -> anyhow::Result<()>>) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let notify = Arc::new(Notify::new());
         let model = UiModel {
@@ -37,17 +39,15 @@ impl Default for RatatuiUI {
             notify,
         };
         let mut view = view::RatatuiView::new(model.clone());
-        let _handle = tokio::task::spawn(async move {
-            let res = view.run().await;
-            if let Err(err) = res {
-                println!("{err:?}");
-            }
-            std::process::exit(0);
-        });
-        RatatuiUI {
-            model,
-            ui_events: rx,
-        }
+        let handle = Box::new(move || futures::executor::block_on(view.run()));
+        (
+            RatatuiUI {
+                config,
+                model,
+                ui_events: rx,
+            },
+            handle,
+        )
     }
 }
 

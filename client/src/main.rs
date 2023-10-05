@@ -1,21 +1,39 @@
 use anyhow::Result;
+use clap::Parser;
+use niketsu::cli::Args;
 use niketsu_communicator::WebsocketCommunicator;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::FileDatabase;
 use niketsu_core::playlist::handler::PlaylistHandler;
+use niketsu_core::ui::UserInterfaceTrait;
 use niketsu_iced::config::Config as IcedConfig;
 use niketsu_iced::IcedUI;
 use niketsu_mpv::Mpv;
+use niketsu_ratatui::RatatuiUI;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
 
+    let args = Args::parse();
     let config: Config = Config::load_or_default();
     let iced_config: IcedConfig = IcedConfig::load_or_default();
 
-    let (view, ui_fn) = IcedUI::new(iced_config, config.clone());
+    let view: Box<dyn UserInterfaceTrait>;
+    let ui_fn;
+    match args.ui {
+        niketsu::cli::UI::Iced => {
+            let iced = IcedUI::new(iced_config, config.clone());
+            view = Box::new(iced.0);
+            ui_fn = iced.1;
+        }
+        niketsu::cli::UI::Ratatui => {
+            let ratatui = RatatuiUI::new(config.clone());
+            view = Box::new(ratatui.0);
+            ui_fn = ratatui.1;
+        }
+    }
     let player = Mpv::new().unwrap();
     let communicator = WebsocketCommunicator::default();
 
@@ -23,7 +41,7 @@ async fn main() -> Result<()> {
         .username(config.username)
         .password(config.password)
         .room(config.room)
-        .ui(Box::new(view))
+        .ui(view)
         .player(Box::new(player))
         .communicator(Box::new(communicator))
         .playlist(Box::<PlaylistHandler>::default())
