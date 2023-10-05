@@ -5,59 +5,60 @@ use ratatui::symbols::scrollbar;
 use ratatui::text::Line;
 use ratatui::widgets::block::Title;
 use ratatui::widgets::{
-    Block, Borders, List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    StatefulWidget,
+    Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
 };
 
 use super::ListStateWrapper;
 
-//TODO highlight selected
 //TODO negative offset support
+pub struct PlaylistWidget;
+
 #[derive(Debug, Default, Clone)]
-pub struct PlaylistWidget {
-    vertical_scroll_state: ScrollbarState,
+pub struct PlaylistWidgetState {
     playlist: Playlist,
-    state: ListStateWrapper,
+    playing_video: Option<Video>,
+    list_state: ListStateWrapper,
+    vertical_scroll_state: ScrollbarState,
     selection_offset: usize,
     clipboard: Option<Vec<Video>>,
     style: Style,
 }
 
-impl PlaylistWidget {
+impl PlaylistWidgetState {
     pub fn set_playlist(&mut self, playlist: Playlist) {
         self.playlist = playlist;
+    }
+
+    pub fn set_playing_video(&mut self, playing_video: Option<Video>) {
+        self.playing_video = playing_video;
     }
 
     pub fn set_style(&mut self, style: Style) {
         self.style = style;
     }
 
-    pub fn state(&self) -> ListState {
-        self.state.inner().clone()
-    }
-
     pub fn next(&mut self) {
         self.selection_offset = 0;
-        self.state.overflowing_next(self.playlist.len());
-        if let Some(i) = self.state.selected() {
+        self.list_state.overflowing_next(self.playlist.len());
+        if let Some(i) = self.list_state.selected() {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i as u16);
         }
     }
 
     pub fn previous(&mut self) {
         self.selection_offset = 0;
-        self.state.overflowing_previous(self.playlist.len());
-        if let Some(i) = self.state.selected() {
+        self.list_state.overflowing_previous(self.playlist.len());
+        if let Some(i) = self.list_state.selected() {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i as u16);
         }
     }
 
     pub fn jump_next(&mut self, offset: usize) {
-        self.state.jump_next(offset)
+        self.list_state.jump_next(offset)
     }
 
     pub fn jump_previous(&mut self, offset: usize) {
-        self.state
+        self.list_state
             .limited_jump_previous(offset, self.playlist.len());
     }
 
@@ -66,7 +67,7 @@ impl PlaylistWidget {
     }
 
     pub fn increase_selection_offset(&mut self) {
-        if let Some(i) = self.state.selected() {
+        if let Some(i) = self.list_state.selected() {
             if self.selection_offset.saturating_add(i) < self.playlist.len().saturating_sub(1) {
                 self.selection_offset += 1;
             }
@@ -74,18 +75,18 @@ impl PlaylistWidget {
     }
 
     pub fn get_current_video(&self) -> Option<&Video> {
-        match self.state.selected() {
+        match self.list_state.selected() {
             Some(index) => self.playlist.get(index),
             None => None,
         }
     }
 
     pub fn get_current_index(&self) -> Option<usize> {
-        self.state.selected()
+        self.list_state.selected()
     }
 
     pub fn yank_clipboard(&mut self) -> Option<(usize, usize)> {
-        match self.state.selected() {
+        match self.list_state.selected() {
             Some(index) => {
                 self.clipboard = Some(
                     self.playlist
@@ -105,37 +106,82 @@ impl PlaylistWidget {
 }
 
 impl StatefulWidget for PlaylistWidget {
-    type State = ListState;
+    type State = PlaylistWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let scroll_block = Block::default()
             .title(Title::from("Playlist"))
             .borders(Borders::ALL)
-            .style(self.style);
+            .style(state.style);
 
-        let playlist = self.playlist;
-        let playlist: Vec<ListItem> = match state.selected() {
+        //TODO refactor
+        let playlist = state.playlist.clone();
+        let playlist: Vec<ListItem> = match state.list_state.selected() {
             Some(index) => playlist
                 .iter()
                 .take(index)
-                .map(|t| ListItem::new(vec![Line::from(t.as_str().gray())]))
+                .map(|t| {
+                    if let Some(video) = state.playing_video.clone() {
+                        let video_text = format!("> {}", t.as_str());
+                        if t.eq(&video) {
+                            return ListItem::new(vec![Line::styled(
+                                video_text,
+                                Style::default().fg(Color::Yellow),
+                            )]);
+                        }
+                    }
+                    ListItem::new(vec![Line::from(t.as_str().gray())])
+                })
                 .chain(
                     playlist
                         .iter()
                         .skip(index)
-                        .take(self.selection_offset + 1)
-                        .map(|t| ListItem::new(vec![Line::from(t.as_str().cyan())])),
+                        .take(state.selection_offset + 1)
+                        .map(|t| {
+                            if let Some(video) = state.playing_video.clone() {
+                                let video_text = format!("> {}", t.as_str());
+                                if t.eq(&video) {
+                                    return ListItem::new(vec![Line::styled(
+                                        video_text,
+                                        Style::default().fg(Color::Yellow),
+                                    )]);
+                                }
+                            }
+                            ListItem::new(vec![Line::from(t.as_str().cyan())])
+                        }),
                 )
                 .chain(
                     playlist
                         .iter()
-                        .skip(index + self.selection_offset + 1)
-                        .map(|t| ListItem::new(vec![Line::from(t.as_str().gray())])),
+                        .skip(index + state.selection_offset + 1)
+                        .map(|t| {
+                            if let Some(video) = state.playing_video.clone() {
+                                let video_text = format!("> {}", t.as_str());
+                                if t.eq(&video) {
+                                    return ListItem::new(vec![Line::styled(
+                                        video_text,
+                                        Style::default().fg(Color::Yellow),
+                                    )]);
+                                }
+                            }
+                            ListItem::new(vec![Line::from(t.as_str().gray())])
+                        }),
                 )
                 .collect(),
             None => playlist
                 .iter()
-                .map(|t| ListItem::new(vec![Line::from(t.as_str())]))
+                .map(|t| {
+                    if let Some(video) = state.playing_video.clone() {
+                        let video_text = format!("> {}", t.as_str());
+                        if t.eq(&video) {
+                            return ListItem::new(vec![Line::styled(
+                                video_text,
+                                Style::default().fg(Color::Yellow),
+                            )]);
+                        }
+                    }
+                    ListItem::new(vec![Line::from(t.as_str().gray())])
+                })
                 .collect(),
         };
 
@@ -151,9 +197,9 @@ impl StatefulWidget for PlaylistWidget {
             .begin_symbol(None)
             .end_symbol(None);
 
-        StatefulWidget::render(list, area, buf, state);
+        StatefulWidget::render(list, area, buf, &mut state.list_state.inner());
 
-        let mut state = self.vertical_scroll_state;
+        let mut state = state.vertical_scroll_state;
         state = state.content_length(playlist.len() as u16);
         scrollbar.render(
             area.inner(&Margin {

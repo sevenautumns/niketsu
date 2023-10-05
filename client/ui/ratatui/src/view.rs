@@ -29,6 +29,7 @@ use crate::widget::command::CommandInputWidget;
 use crate::widget::database::{DatabaseWidget, DatabaseWidgetState};
 use crate::widget::fuzzy_search::FuzzySearchWidget;
 use crate::widget::options::{OptionsWidget, OptionsWidgetState};
+use crate::widget::playlist::PlaylistWidgetState;
 use crate::widget::room::{RoomsWidget, RoomsWidgetState};
 use crate::widget::OverlayWidgetState;
 
@@ -57,12 +58,12 @@ pub struct App {
     pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
     pub rooms_widget_state: RoomsWidgetState,
-    pub playlist_widget: PlaylistWidget,
+    pub playlist_widget_state: PlaylistWidgetState,
     pub command_input_widget: CommandInputWidget,
     pub chat_input_widget: ChatInputWidget,
     pub current_overlay_state: Option<OverlayState>,
     pub options_widget_state: OptionsWidgetState,
-    // pub help_widget: HelpWidget,
+    //TODO pub help_widget: HelpWidget,
     pub login_widget: LoginWidget,
     pub fuzzy_search_widget: FuzzySearchWidget,
     pub current_search: Option<FuzzySearch>,
@@ -80,7 +81,7 @@ impl App {
             },
             database_widget_state: DatabaseWidgetState::default(),
             rooms_widget_state: RoomsWidgetState::default(),
-            playlist_widget: PlaylistWidget::default(),
+            playlist_widget_state: PlaylistWidgetState::default(),
             command_input_widget: CommandInputWidget::default(),
             chat_input_widget: ChatInputWidget::new(),
             current_overlay_state: None,
@@ -358,7 +359,6 @@ impl RatatuiView {
     }
 
     fn handle_notify(&mut self) {
-        //TODO setters in widgets
         if self.model.file_database_status.changed() {
             let file_db_status = self.model.file_database_status.get_inner();
             self.app
@@ -376,7 +376,7 @@ impl RatatuiView {
 
         if self.model.playlist.changed() {
             let playlist = self.model.playlist.get_inner();
-            self.app.playlist_widget.set_playlist(playlist.clone());
+            self.app.playlist_widget_state.set_playlist(playlist);
         }
 
         if self.model.messages.changed() {
@@ -394,6 +394,13 @@ impl RatatuiView {
             let user = self.model.user.get_inner();
             self.app.rooms_widget_state.set_user(user.clone());
             self.app.chat_widget_state.set_user(user);
+        }
+
+        if self.model.playing_video.changed() {
+            let playing_video = self.model.playing_video.get_inner();
+            self.app
+                .playlist_widget_state
+                .set_playing_video(playing_video);
         }
     }
 
@@ -427,7 +434,7 @@ impl RatatuiView {
             .split(horizontal_chunks[1]);
 
         f.render_stateful_widget(
-            DatabaseWidget {},
+            DatabaseWidget,
             vertical_right_chunks[0],
             &mut app.database_widget_state,
         );
@@ -437,9 +444,9 @@ impl RatatuiView {
             &mut app.rooms_widget_state,
         );
         f.render_stateful_widget(
-            app.playlist_widget.clone(),
+            PlaylistWidget,
             vertical_right_chunks[2],
-            &mut app.playlist_widget.state(),
+            &mut app.playlist_widget_state,
         );
         f.render_stateful_widget(
             ChatWidget {},
