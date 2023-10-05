@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::Parser;
 use niketsu::cli::Args;
@@ -17,8 +19,12 @@ async fn main() -> Result<()> {
     pretty_env_logger::init();
 
     let args = Args::parse();
-    let config: Config = Config::load_or_default();
+    let mut config: Config = Config::load_or_default();
     let iced_config: IcedConfig = IcedConfig::load_or_default();
+
+    if let Some(auto_login) = args.auto_login {
+        config.auto_login = auto_login
+    }
 
     let view: Box<dyn UserInterfaceTrait>;
     let ui_fn;
@@ -36,6 +42,10 @@ async fn main() -> Result<()> {
     }
     let player = Mpv::new().unwrap();
     let communicator = WebsocketCommunicator::default();
+    let mut file_database = FileDatabase::default();
+    if !args.skip_database_refresh {
+        file_database = FileDatabase::new(config.media_dirs.iter().map(PathBuf::from).collect());
+    }
 
     let core = CoreBuilder::builder()
         .username(config.username)
@@ -44,8 +54,8 @@ async fn main() -> Result<()> {
         .ui(view)
         .player(Box::new(player))
         .communicator(Box::new(communicator))
+        .file_database(Box::new(file_database))
         .playlist(Box::<PlaylistHandler>::default())
-        .file_database(Box::<FileDatabase>::default())
         .build();
 
     tokio::task::spawn(async move { core.run().await });

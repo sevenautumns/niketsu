@@ -162,6 +162,17 @@ pub struct FileDatabase {
     last_progress_event: Option<Instant>,
 }
 
+impl FileDatabase {
+    pub fn new(paths: Vec<PathBuf>) -> Self {
+        let mut db = FileDatabase {
+            paths: paths.into_iter().collect(),
+            ..Default::default()
+        };
+        db.start_update();
+        db
+    }
+}
+
 #[derive(Debug, Default)]
 struct UpdateProgressTracker {
     dirs_queued: AtomicUsize,

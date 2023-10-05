@@ -37,10 +37,10 @@ pub struct ViewModel {
 impl ViewModel {
     pub fn new(flags: Flags) -> Self {
         let settings = SettingsView::new(flags.config.clone(), flags.core_config.clone());
-        Self {
+        let mut view = Self {
             model: flags.ui_model,
             config: flags.config,
-            core_config: flags.core_config,
+            core_config: flags.core_config.clone(),
             settings: Some(settings),
             main: Default::default(),
             rooms_widget_state: Default::default(),
@@ -48,7 +48,11 @@ impl ViewModel {
             messages_widget_state: Default::default(),
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
+        };
+        if flags.core_config.auto_login {
+            view.close_settings()
         }
+        view
     }
 
     pub fn view(&self) -> Element<'_, Message, Renderer<Theme>> {
