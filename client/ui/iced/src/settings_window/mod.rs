@@ -34,6 +34,7 @@ pub struct SettingsView {
     secure: bool,
     room: String,
     password: String,
+    auto_login: bool,
 
     text_size: f32,
     background_color: RgbWrap,
@@ -203,6 +204,7 @@ impl SettingsView {
             room: core_config.room,
             password: core_config.password,
             secure: core_config.secure,
+            auto_login: core_config.auto_login,
             text_size: config.text_size,
             background_color: config.background_color,
             background_color_input: config.background_color.to_string(),
@@ -233,6 +235,7 @@ impl SettingsView {
             room: self.room,
             password: self.password,
             secure: self.secure,
+            auto_login: self.auto_login,
         };
         (conf, core)
     }

@@ -22,10 +22,8 @@ pub struct Config {
     pub room: String,
     #[serde(default)]
     pub password: String,
-}
-
-pub const fn default_text_size() -> f32 {
-    14.0
+    #[serde(default)]
+    pub auto_login: bool,
 }
 
 impl Config {
