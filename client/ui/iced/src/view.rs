@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use iced::{Application, Command, Element, Renderer, Subscription, Theme};
-use log::warn;
 use niketsu_core::config::Config as CoreConfig;
 use niketsu_core::log;
 use niketsu_core::playlist::PlaylistVideo;
@@ -18,20 +17,21 @@ use super::widget::playlist::PlaylistWidgetState;
 use super::widget::rooms::RoomsWidgetState;
 use super::{PreExistingTokioRuntime, UiModel};
 use crate::config::Config;
+use crate::message::{MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;
 
 #[derive(Debug)]
 pub struct ViewModel {
-    model: UiModel,
-    config: Config,
-    core_config: CoreConfig,
-    main: MainView,
-    settings: Option<SettingsView>,
-    rooms_widget_state: RoomsWidgetState,
-    playlist_widget_state: PlaylistWidgetState,
-    messages_widget_state: MessagesWidgetState,
-    database_widget_state: DatabaseWidgetState,
-    file_search_widget_state: FileSearchWidgetState,
+    pub model: UiModel,
+    pub config: Config,
+    pub core_config: CoreConfig,
+    pub main: MainView,
+    pub settings: Option<SettingsView>,
+    pub rooms_widget_state: RoomsWidgetState,
+    pub playlist_widget_state: PlaylistWidgetState,
+    pub messages_widget_state: MessagesWidgetState,
+    pub database_widget_state: DatabaseWidgetState,
+    pub file_search_widget_state: FileSearchWidgetState,
 }
 
 impl ViewModel {
@@ -58,31 +58,15 @@ impl ViewModel {
         self.main.view(self)
     }
 
-    fn update(&mut self, message: Message) {
-        // TODO use boxes?
-        match message {
-            Message::Settings(message) => match &mut self.settings {
-                Some(settings) => settings.update(message, &self.model),
-                None => warn!("unhandled settings message: {message:?}"),
-            },
-            Message::Main(m) => self.main.update(m, &self.model),
-            Message::CloseSettings => self.close_settings(),
-            Message::RoomsWidget(m) => m.handle(&mut self.rooms_widget_state, &self.model),
-            Message::PlaylistWidget(m) => m.handle(&mut self.playlist_widget_state, &self.model),
-            Message::MessagesWidget(m) => m.handle(&mut self.messages_widget_state),
-            Message::DatabaseWidget(m) => m.handle(&self.model),
-            Message::FileSearchWidget(m) => {
-                m.handle(&mut self.file_search_widget_state, &self.model)
-            }
-            Message::ModelChanged => self.update_from_inner_model(),
-        }
+    fn update(&mut self, message: Message) -> Command<Message> {
+        message.handle(self)
     }
 
-    fn close_settings(&mut self) {
+    pub fn close_settings(&mut self) {
         let Some(settings) = self.settings.take() else {
             return;
         };
-        let (config, core): (Config, CoreConfig) = settings.to_config();
+        let (config, core): (Config, CoreConfig) = settings.into_config();
         let media_dirs: Vec<_> = core.media_dirs.iter().map(PathBuf::from).collect();
         let username = core.username.clone();
         self.model.change_db_paths(media_dirs);
@@ -195,8 +179,7 @@ impl Application for View {
     }
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
-        self.view_model.update(message);
-        Command::none()
+        self.view_model.update(message)
     }
 
     fn view(&self) -> Element<'_, Self::Message, Renderer<Self::Theme>> {
@@ -213,7 +196,7 @@ impl Application for View {
             self.view_model.model.notify.clone(),
             |notify| async {
                 notify.notified().await;
-                (Self::Message::ModelChanged, notify)
+                (ModelChanged.into(), notify)
             },
         )
     }

@@ -7,7 +7,7 @@ use iced::{Element, Length, Rectangle, Renderer, Theme};
 use niketsu_core::rooms::RoomList;
 use niketsu_core::user::UserStatus;
 
-use self::message::ClickRoom;
+use self::message::{ClickRoom, RoomsWidgetMessage};
 use crate::message::Message;
 use crate::styling::FileButton;
 
@@ -29,7 +29,7 @@ impl<'a> RoomsWidget<'a> {
             let selected = state.selected.eq(room.0);
             elements.push(
                 Button::new(Container::new(Text::new(room.0.clone())).padding(2))
-                    .on_press(ClickRoom(room.0.to_string()).into())
+                    .on_press(RoomsWidgetMessage::from(ClickRoom(room.0.to_string())).into())
                     .padding(0)
                     .width(Length::Fill)
                     .style(FileButton::theme(selected, true))

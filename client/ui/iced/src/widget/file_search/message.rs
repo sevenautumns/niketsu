@@ -1,63 +1,69 @@
 use std::time::Instant;
 
-use dyn_clone::DynClone;
+use enum_dispatch::enum_dispatch;
+use iced::Command;
 use niketsu_core::ui::UiModel;
 
 use super::FileSearchWidgetState;
-use crate::message::Message;
+use crate::message::{Message, MessageHandler};
+use crate::view::ViewModel;
 use crate::widget::playlist::MAX_DOUBLE_CLICK_INTERVAL;
 
-pub trait FileSearchWidgetMessage: std::fmt::Debug + DynClone + std::marker::Send {
-    fn handle(self: Box<Self>, state: &mut FileSearchWidgetState, model: &UiModel);
+#[enum_dispatch]
+pub trait FileSearchWidgetMessageTrait {
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel);
 }
 
-dyn_clone::clone_trait_object!(FileSearchWidgetMessage);
+#[enum_dispatch(FileSearchWidgetMessageTrait)]
+#[derive(Debug, Clone)]
+pub enum FileSearchWidgetMessage {
+    Input,
+    Activate,
+    Close,
+    Click,
+    Select,
+    Insert,
+    SearchFinished,
+}
+
+impl MessageHandler for FileSearchWidgetMessage {
+    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+        FileSearchWidgetMessageTrait::handle(
+            self,
+            &mut model.file_search_widget_state,
+            &model.model,
+        );
+        Command::none()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Input {
     pub query: String,
 }
 
-impl FileSearchWidgetMessage for Input {
-    fn handle(self: Box<Self>, state: &mut FileSearchWidgetState, model: &UiModel) {
+impl FileSearchWidgetMessageTrait for Input {
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) {
         state.query = self.query.clone();
         state.search = Some(model.file_database.get_inner_arc().fuzzy_search(self.query))
-    }
-}
-
-impl From<Input> for Message {
-    fn from(value: Input) -> Self {
-        Message::FileSearchWidget(Box::new(value))
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Activate;
 
-impl FileSearchWidgetMessage for Activate {
-    fn handle(self: Box<Self>, state: &mut FileSearchWidgetState, _: &UiModel) {
+impl FileSearchWidgetMessageTrait for Activate {
+    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) {
         state.active = true
-    }
-}
-
-impl From<Activate> for Message {
-    fn from(value: Activate) -> Self {
-        Message::FileSearchWidget(Box::new(value))
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Close;
 
-impl FileSearchWidgetMessage for Close {
-    fn handle(self: Box<Self>, state: &mut FileSearchWidgetState, _: &UiModel) {
+impl FileSearchWidgetMessageTrait for Close {
+    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) {
         state.active = false
-    }
-}
-
-impl From<Close> for Message {
-    fn from(value: Close) -> Self {
-        Message::FileSearchWidget(Box::new(value))
     }
 }
 
@@ -66,8 +72,47 @@ pub struct Click {
     pub index: usize,
 }
 
-impl Click {
-    fn double_click(self, state: &mut FileSearchWidgetState, model: &UiModel) {
+impl FileSearchWidgetMessageTrait for Click {
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) {
+        if state.cursor_index != self.index || state.last_click.is_none() {
+            Select::from(self).handle(state, model)
+        } else {
+            Insert::from(self).handle(state, model)
+        }
+    }
+}
+
+impl From<Click> for Insert {
+    fn from(value: Click) -> Self {
+        Insert { index: value.index }
+    }
+}
+
+impl From<Click> for Select {
+    fn from(value: Click) -> Self {
+        Select { index: value.index }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Select {
+    pub index: usize,
+}
+
+impl FileSearchWidgetMessageTrait for Select {
+    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) {
+        state.last_click = Some(Instant::now());
+        state.cursor_index = self.index;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Insert {
+    pub index: usize,
+}
+
+impl FileSearchWidgetMessageTrait for Insert {
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) {
         if let Some(last) = state.last_click {
             state.last_click = None;
             if MAX_DOUBLE_CLICK_INTERVAL
@@ -85,36 +130,17 @@ impl Click {
     }
 }
 
-impl FileSearchWidgetMessage for Click {
-    fn handle(self: Box<Self>, state: &mut FileSearchWidgetState, model: &UiModel) {
-        if state.cursor_index != self.index || state.last_click.is_none() {
-            state.last_click = Some(Instant::now());
-            state.cursor_index = self.index;
-        } else {
-            self.double_click(state, model)
-        }
-    }
-}
-
-impl From<Click> for Message {
-    fn from(value: Click) -> Self {
-        Message::FileSearchWidget(Box::new(value))
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct SearchFinished;
 
-impl FileSearchWidgetMessage for SearchFinished {
-    fn handle(self: Box<Self>, state: &mut FileSearchWidgetState, _: &UiModel) {
+impl FileSearchWidgetMessageTrait for SearchFinished {
+    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) {
         if let Some(results) = state.search.take().and_then(|mut s| s.poll()) {
-            state.results = results.into_iter().take(100).collect()
+            state.results = results.into_iter().take(100).collect();
+            state.cursor_index = state
+                .cursor_index
+                .checked_rem(state.results.len())
+                .unwrap_or_default();
         }
-    }
-}
-
-impl From<SearchFinished> for Message {
-    fn from(value: SearchFinished) -> Self {
-        Message::FileSearchWidget(Box::new(value))
     }
 }

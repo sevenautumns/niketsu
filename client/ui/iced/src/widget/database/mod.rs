@@ -4,7 +4,7 @@ use iced::widget::{Button, Container, ProgressBar, Row, Text, Tooltip};
 use iced::{Element, Event, Length, Rectangle, Renderer, Theme};
 use niketsu_core::file_database::FileStore;
 
-use self::message::{StartDbUpdate, StopDbUpdate};
+use self::message::{DatabaseWidgetMessage, StartDbUpdate, StopDbUpdate};
 use crate::message::Message;
 use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
 use crate::TEXT_SIZE;
@@ -39,8 +39,8 @@ impl<'a> DatabaseWidget<'a> {
         };
 
         let update_msg = match finished {
-            true => StartDbUpdate.into(),
-            false => StopDbUpdate.into(),
+            true => DatabaseWidgetMessage::from(StartDbUpdate).into(),
+            false => DatabaseWidgetMessage::from(StopDbUpdate).into(),
         };
         let update_btn = match finished {
             true => Button::new("Update"),

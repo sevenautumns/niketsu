@@ -6,7 +6,9 @@ use iced::{Element, Length, Renderer, Theme};
 use iced_futures::core::Widget;
 use niketsu_core::file_database::fuzzy::{FuzzyResult, FuzzySearch};
 
-use self::message::{Activate, Click, Close, Input, SearchFinished};
+use self::message::{
+    Activate, Click, Close, FileSearchWidgetMessage, Input, Insert, SearchFinished, Select,
+};
 use super::overlay::ElementOverlay;
 use crate::message::Message;
 use crate::styling::{FileButton, ResultButton};
@@ -26,7 +28,7 @@ impl<'a> FileSearchWidget<'a> {
                 .width(Length::Fill)
                 .horizontal_alignment(iced::alignment::Horizontal::Center),
         )
-        .on_press(Activate.into())
+        .on_press(FileSearchWidgetMessage::from(Activate).into())
         .width(Length::Fill)
         .style(ResultButton::ready());
 
@@ -39,22 +41,29 @@ impl<'a> FileSearchWidget<'a> {
                 Button::new(Container::new(row).padding(2))
                     .padding(0)
                     .width(Length::Fill)
-                    .on_press(Click { index }.into())
+                    .on_press(FileSearchWidgetMessage::from(Click { index }).into())
                     .style(FileButton::theme(pressed, true))
                     .into(),
             );
         }
         let results = Column::with_children(results).width(Length::Fill);
         let input = TextInput::new("Search Query", &state.query)
-            .on_input(|query| Input { query }.into())
+            .on_input(|query| FileSearchWidgetMessage::from(Input { query }).into())
+            .on_submit(
+                FileSearchWidgetMessage::from(Insert {
+                    index: state.cursor_index,
+                })
+                .into(),
+            )
             .width(Length::Fill);
         let close_button = Button::new("Close")
-            .on_press(Close.into())
+            .on_press(FileSearchWidgetMessage::from(Close).into())
             .style(ResultButton::not_ready());
         let top_row = Row::new().push(input).push(close_button).spacing(5);
         let mut base = Column::new().push(top_row).padding(5);
         if !results.children().is_empty() {
             base = base
+                // TODO scroll with selection
                 .push(Scrollable::new(results).id(Id::new("search")))
                 .spacing(5);
         }
@@ -157,16 +166,41 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
         viewport: &iced::Rectangle,
     ) -> iced::event::Status {
         if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-            key_code: iced::keyboard::KeyCode::Escape,
+            key_code,
             modifiers: _,
         }) = event
         {
-            shell.publish(Close.into());
+            match key_code {
+                iced::keyboard::KeyCode::Up => {
+                    let index = (self.state.cursor_index + self.state.results.len() - 1)
+                        .checked_rem(self.state.results.len())
+                        .unwrap_or_default();
+                    shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
+                }
+                iced::keyboard::KeyCode::Down => {
+                    let index = (self.state.cursor_index + 1)
+                        .checked_rem(self.state.results.len())
+                        .unwrap_or_default();
+                    shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
+                }
+                iced::keyboard::KeyCode::Enter => {
+                    shell.publish(
+                        FileSearchWidgetMessage::from(Insert {
+                            index: self.state.cursor_index,
+                        })
+                        .into(),
+                    );
+                }
+                iced::keyboard::KeyCode::Escape => {
+                    shell.publish(FileSearchWidgetMessage::from(Close).into());
+                }
+                _ => {}
+            }
         }
 
         if let Some(search) = &self.state.search {
             if search.is_finished() {
-                shell.publish(SearchFinished.into());
+                shell.publish(FileSearchWidgetMessage::from(SearchFinished).into());
             }
         }
 
