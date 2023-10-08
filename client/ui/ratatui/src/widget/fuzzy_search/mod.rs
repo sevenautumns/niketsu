@@ -11,15 +11,15 @@ use ratatui_textarea::Input;
 use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
 
 #[derive(Debug, Default, Clone)]
-pub struct FuzzySearchWidget<'a> {
+pub struct FuzzySearchWidget {
     file_database: FileStore,
     current_result: Option<Vec<FuzzyResult>>,
-    input_field: TextAreaWrapper<'a>,
+    input_field: TextAreaWrapper,
     state: ListStateWrapper,
     style: Style,
 }
 
-impl<'a> FuzzySearchWidget<'a> {
+impl FuzzySearchWidget {
     pub fn new() -> Self {
         let mut widget = Self::default();
         widget.setup_input_field();
@@ -104,7 +104,7 @@ impl<'a> FuzzySearchWidget<'a> {
     }
 }
 
-impl<'a> OverlayWidgetState for FuzzySearchWidget<'a> {
+impl OverlayWidgetState for FuzzySearchWidget {
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -132,7 +132,7 @@ impl<'a> OverlayWidgetState for FuzzySearchWidget<'a> {
     }
 }
 
-impl<'a> StatefulWidget for FuzzySearchWidget<'a> {
+impl StatefulWidget for FuzzySearchWidget {
     type State = ListState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {

@@ -6,18 +6,18 @@ use ratatui_textarea::Input;
 use super::TextAreaWrapper;
 
 #[derive(Debug, Default, Clone)]
-pub struct CommandInputWidget<'a> {
-    state: CommandInputWidgetState<'a>,
+pub struct CommandInputWidget {
+    state: CommandInputWidgetState,
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct CommandInputWidgetState<'a> {
-    input_field: TextAreaWrapper<'a>,
+pub struct CommandInputWidgetState {
+    input_field: TextAreaWrapper,
     active: bool,
     style: Style,
 }
 
-impl<'a> CommandInputWidget<'a> {
+impl CommandInputWidget {
     pub fn set_active(&mut self, active: bool) {
         self.state.active = active;
         self.state
@@ -42,7 +42,7 @@ impl<'a> CommandInputWidget<'a> {
     }
 }
 
-impl<'a> Widget for CommandInputWidget<'a> {
+impl Widget for CommandInputWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let prefix = match self.state.active {
             true => ":".to_string(),

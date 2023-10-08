@@ -10,9 +10,10 @@ use crossterm::terminal::{
 };
 use futures::future::OptionFuture;
 use futures::StreamExt;
+use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::playlist::PlaylistVideo;
-use niketsu_core::ui::{RoomChange, ServerChange, UiModel};
+use niketsu_core::ui::{RoomChange, ServerChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
@@ -31,8 +32,8 @@ use crate::widget::options::{OptionsWidget, OptionsWidgetState};
 use crate::widget::room::{RoomsWidget, RoomsWidgetState};
 use crate::widget::OverlayWidgetState;
 
-pub struct RatatuiView<'a> {
-    pub app: App<'a>,
+pub struct RatatuiView {
+    pub app: App,
     pub model: UiModel,
 }
 
@@ -51,25 +52,25 @@ pub enum Mode {
 }
 
 #[derive(Debug, Default)]
-pub struct App<'a> {
+pub struct App {
     current_state: State,
     pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
     pub rooms_widget_state: RoomsWidgetState,
     pub playlist_widget: PlaylistWidget,
-    pub command_input_widget: CommandInputWidget<'a>,
-    pub chat_input_widget: ChatInputWidget<'a>,
+    pub command_input_widget: CommandInputWidget,
+    pub chat_input_widget: ChatInputWidget,
     pub current_overlay_state: Option<OverlayState>,
     pub options_widget_state: OptionsWidgetState,
     // pub help_widget: HelpWidget,
-    pub login_widget: LoginWidget<'a>,
-    pub fuzzy_search_widget: FuzzySearchWidget<'a>,
+    pub login_widget: LoginWidget,
+    pub fuzzy_search_widget: FuzzySearchWidget,
     pub current_search: Option<FuzzySearch>,
     mode: Mode,
 }
 
-impl<'a> App<'a> {
-    fn new() -> App<'a> {
+impl App {
+    fn new() -> App {
         App {
             current_state: State::from(Chat {}),
             chat_widget_state: {
@@ -113,10 +114,16 @@ impl<'a> App<'a> {
     }
 }
 
-impl<'a> RatatuiView<'a> {
-    pub fn new(model: UiModel) -> Self {
+impl RatatuiView {
+    pub fn create(config: Config) -> (UserInterface, Box<dyn FnOnce() -> anyhow::Result<()>>) {
+        let ui = UserInterface::default();
         let app = App::new();
-        Self { app, model }
+        let mut view = Self {
+            app,
+            model: ui.model().clone(),
+        };
+        let handle = Box::new(move || futures::executor::block_on(view.run()));
+        (ui, handle)
     }
 
     pub async fn run(&mut self) -> Result<()> {

@@ -6,17 +6,17 @@ use ratatui_textarea::Input;
 use super::TextAreaWrapper;
 
 #[derive(Debug, Default, Clone)]
-pub struct ChatInputWidget<'a> {
-    state: ChatInputWidgetState<'a>,
+pub struct ChatInputWidget {
+    state: ChatInputWidgetState,
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct ChatInputWidgetState<'a> {
-    input_field: TextAreaWrapper<'a>,
+pub struct ChatInputWidgetState {
+    input_field: TextAreaWrapper,
     style: Style,
 }
 
-impl<'a> ChatInputWidget<'a> {
+impl ChatInputWidget {
     pub fn new() -> Self {
         let mut widget = Self::default();
         widget.setup_input_field();
@@ -48,7 +48,7 @@ impl<'a> ChatInputWidget<'a> {
 }
 
 //TODO wrap cursor
-impl<'a> Widget for ChatInputWidget<'a> {
+impl Widget for ChatInputWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut input_block = self.state.input_field.clone();
         input_block.set_block(

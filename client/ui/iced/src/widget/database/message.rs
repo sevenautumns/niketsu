@@ -1,9 +1,9 @@
 use enum_dispatch::enum_dispatch;
 use iced::Command;
+use niketsu_core::ui::UiModel;
 
 use crate::message::{Message, MessageHandler};
 use crate::view::ViewModel;
-use crate::UiModel;
 
 #[enum_dispatch]
 pub trait DatabaseWidgetMessageTrait {

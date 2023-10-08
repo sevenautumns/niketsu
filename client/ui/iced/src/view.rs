@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use iced::{Application, Command, Element, Renderer, Subscription, Theme};
+use iced::{Application, Command, Element, Renderer, Settings, Subscription, Theme};
 use niketsu_core::config::Config as CoreConfig;
 use niketsu_core::log;
 use niketsu_core::playlist::PlaylistVideo;
-use niketsu_core::ui::{RoomChange, ServerChange};
+use niketsu_core::ui::{RoomChange, ServerChange, UiModel, UserInterface};
 use niketsu_core::user::UserStatus;
 use tokio::sync::Notify;
 
@@ -15,7 +15,7 @@ use super::widget::database::DatabaseWidgetState;
 use super::widget::messages::MessagesWidgetState;
 use super::widget::playlist::PlaylistWidgetState;
 use super::widget::rooms::RoomsWidgetState;
-use super::{PreExistingTokioRuntime, UiModel};
+use super::PreExistingTokioRuntime;
 use crate::config::Config;
 use crate::message::{MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;
@@ -153,6 +153,23 @@ pub struct Flags {
 
 pub struct View {
     view_model: ViewModel,
+}
+
+impl View {
+    pub fn create(
+        config: Config,
+        core_config: CoreConfig,
+    ) -> (UserInterface, Box<dyn FnOnce() -> anyhow::Result<()>>) {
+        let ui = UserInterface::default();
+        let flags = Flags {
+            config,
+            core_config,
+            ui_model: ui.model().clone(),
+        };
+        let settings = Settings::with_flags(flags);
+        let view = Box::new(move || View::run(settings).map_err(anyhow::Error::from));
+        (ui, view)
+    }
 }
 
 pub trait SubWindowTrait {

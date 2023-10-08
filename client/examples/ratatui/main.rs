@@ -9,7 +9,7 @@ mod core_mock;
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::default();
-    let (ratatui, run) = RatatuiUI::new(config);
+    let (ratatui, run) = RatatuiUI::create(config);
     let core = CoreMock::new(ratatui);
     tokio::task::spawn(core.run());
     run()

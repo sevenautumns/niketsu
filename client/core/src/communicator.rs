@@ -77,6 +77,7 @@ pub enum IncomingMessage {
     UserMessage(NiketsuUserMessage),
     ServerMessage(NiketsuServerMessage),
     Playlist(NiketsuPlaylist),
+    UserStatus(NiketsuUserStatus),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -494,6 +495,28 @@ impl From<NiketsuPlaylist> for OutgoingMessage {
 pub struct NiketsuUserStatus {
     pub ready: bool,
     pub username: String,
+}
+
+impl EventHandler for NiketsuUserStatus {
+    fn handle(self, model: &mut CoreModel) {
+        debug!("Username changed by Server");
+        model.user.name = self.username.clone();
+        model.ui.username_change(self.username.clone());
+        model.ui.player_message(PlayerMessage::from(self));
+    }
+}
+
+impl From<NiketsuUserStatus> for PlayerMessage {
+    fn from(value: NiketsuUserStatus) -> Self {
+        let name = value.username;
+        PlayerMessageInner {
+            message: format!("Username changed to {name}"),
+            source: MessageSource::Server,
+            level: MessageLevel::Warn,
+            timestamp: Local::now(),
+        }
+        .into()
+    }
 }
 
 impl From<NiketsuUserStatus> for OutgoingMessage {

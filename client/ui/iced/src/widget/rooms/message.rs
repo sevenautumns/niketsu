@@ -1,11 +1,10 @@
 use enum_dispatch::enum_dispatch;
 use iced::Command;
-use niketsu_core::ui::RoomChange;
+use niketsu_core::ui::{RoomChange, UiModel};
 
 use super::RoomsWidgetState;
 use crate::message::{Message, MessageHandler};
 use crate::view::ViewModel;
-use crate::UiModel;
 
 #[enum_dispatch]
 pub trait RoomsWidgetMessageTrait {
