@@ -11,10 +11,9 @@ use log::debug;
 use ordered_float::OrderedFloat;
 use url::Url;
 
-use super::playlist::PlaylistVideo;
+use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
-use crate::player::MediaPlayerTraitExt;
 use crate::playlist::Playlist;
 use crate::rooms::RoomList;
 use crate::user::UserStatus;
@@ -129,6 +128,7 @@ pub struct NiketsuVideoStatus {
     pub position: Option<Duration>,
     pub speed: f64,
     pub paused: bool,
+    pub file_loaded: bool,
 }
 
 impl PartialEq for NiketsuVideoStatus {
@@ -277,28 +277,12 @@ impl From<NiketsuPlaybackSpeed> for OutgoingMessage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NiketsuSeek {
     pub actor: String,
     pub file: String,
-    pub paused: bool,
-    pub speed: f64,
     pub position: Duration,
 }
-
-impl PartialEq for NiketsuSeek {
-    fn eq(&self, other: &Self) -> bool {
-        let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(self.speed);
-        speed_self.eq(&speed_other)
-            && self.actor.eq(&other.actor)
-            && self.position.eq(&other.position)
-            && self.paused.eq(&other.paused)
-            && self.file.eq(&other.file)
-    }
-}
-
-impl Eq for NiketsuSeek {}
 
 impl From<NiketsuSeek> for PlayerMessage {
     fn from(value: NiketsuSeek) -> Self {
@@ -317,25 +301,21 @@ impl From<NiketsuSeek> for PlayerMessage {
 impl EventHandler for NiketsuSeek {
     fn handle(self, model: &mut CoreModel) {
         debug!("Received Seek: {self:?}");
-        let playlist_video = PlaylistVideo::from(self.file.as_str());
+        let playlist_video = Video::from(self.file.as_str());
         model.playlist.select_playing(&playlist_video);
         // TODO make this more readable
         if model
             .player
             .playing_video()
-            .is_some_and(|v| v.name_str().eq(playlist_video.as_str()))
+            .is_some_and(|v| v.as_str().eq(playlist_video.as_str()))
         {
             model.player.set_position(self.position);
-            model.player.set_speed(self.speed);
-            if self.paused {
-                model.player.pause();
-            } else {
-                model.player.start();
-            }
         } else {
-            model
-                .player
-                .load_playlist_video(&playlist_video, model.database.all_files());
+            model.player.load_video(
+                playlist_video.clone(),
+                self.position,
+                model.database.all_files(),
+            );
             model.ui.video_change(Some(playlist_video));
         }
         model.ui.player_message(PlayerMessage::from(self));
@@ -351,6 +331,7 @@ impl From<NiketsuSeek> for OutgoingMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NiketsuSelect {
     pub actor: String,
+    pub position: Duration,
     pub filename: Option<String>,
 }
 
@@ -371,18 +352,12 @@ impl From<NiketsuSelect> for PlayerMessage {
 impl EventHandler for NiketsuSelect {
     fn handle(self, model: &mut CoreModel) {
         debug!("Received Select: {self:?}");
-        let playlist_video = self
-            .filename
-            .as_ref()
-            .map(|f| PlaylistVideo::from(f.as_str()));
-        if let Some(playlist_video) = &playlist_video {
-            model.playlist.select_playing(playlist_video);
-            let loaded = model
+        let playlist_video = self.filename.as_ref().map(|f| Video::from(f.as_str()));
+        if let Some(playlist_video) = playlist_video.clone() {
+            model.playlist.select_playing(&playlist_video);
+            model
                 .player
-                .load_playlist_video(playlist_video, model.database.all_files());
-            if !loaded {
-                model.player.unload_video();
-            };
+                .load_video(playlist_video, self.position, model.database.all_files());
         } else {
             model.playlist.unload_playing();
             model.player.unload_video();

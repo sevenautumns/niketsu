@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
-use niketsu_core::playlist::PlaylistVideo;
+use niketsu_core::playlist::Video;
 use ratatui::style::Style;
 
 use super::chat_input::ChatInput;
@@ -54,7 +54,7 @@ impl EventHandler for Playlist {
                 _ => {}
             },
             Event::Paste(data) => {
-                view.add(&PlaylistVideo::from(data.as_str()));
+                view.add(&Video::from(data.as_str()));
             }
             _ => {}
         }

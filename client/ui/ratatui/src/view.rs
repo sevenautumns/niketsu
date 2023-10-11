@@ -12,7 +12,7 @@ use futures::future::OptionFuture;
 use futures::StreamExt;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
-use niketsu_core::playlist::PlaylistVideo;
+use niketsu_core::playlist::Video;
 use niketsu_core::ui::{RoomChange, ServerChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
@@ -246,24 +246,24 @@ impl RatatuiView {
             ["toggle-ready"] | ["tr"] => self.model.user_ready_toggle(),
             ["start-update"] => self.model.start_db_update(),
             ["stop-update"] => self.model.stop_db_update(),
-            ["delete", filename] | ["d", filename] => self.remove(&PlaylistVideo::from(*filename)),
+            ["delete", filename] | ["d", filename] => self.remove(&Video::from(*filename)),
 
             ["move", filename, position] | ["mv", filename, position] => {
                 self.handle_move(filename, position)
             }
-            ["add", filename] => self.add(&PlaylistVideo::from(*filename)),
+            ["add", filename] => self.add(&Video::from(*filename)),
             _ => {}
         }
     }
 
-    pub fn add(&self, video: &PlaylistVideo) {
+    pub fn add(&self, video: &Video) {
         let mut updated_playlist = self.model.playlist.get_inner();
         updated_playlist.insert(0, video.clone());
         self.model.playlist.set(updated_playlist.clone());
         self.model.change_playlist(updated_playlist);
     }
 
-    fn remove(&self, video: &PlaylistVideo) {
+    fn remove(&self, video: &Video) {
         let mut updated_playlist = self.model.playlist.get_inner();
         if updated_playlist.remove_by_video(video).is_some() {
             self.model.playlist.set(updated_playlist.clone());
@@ -278,20 +278,20 @@ impl RatatuiView {
         self.model.change_playlist(updated_playlist);
     }
 
-    pub fn append_at(&self, index: usize, videos: Vec<PlaylistVideo>) {
+    pub fn append_at(&self, index: usize, videos: Vec<Video>) {
         let mut updated_playlist = self.model.playlist.get_inner();
         updated_playlist.append_at(index, videos.into_iter());
         self.model.playlist.set(updated_playlist.clone());
         self.model.change_playlist(updated_playlist);
     }
 
-    fn move_to(&mut self, video: &PlaylistVideo, index: usize) {
+    fn move_to(&mut self, video: &Video, index: usize) {
         let mut updated_playlist = self.model.playlist.get_inner();
         updated_playlist.move_video(video, index);
         self.model.change_playlist(updated_playlist);
     }
 
-    pub fn select(&mut self, video: PlaylistVideo) {
+    pub fn select(&mut self, video: Video) {
         self.model.change_video(video)
     }
 
@@ -325,7 +325,7 @@ impl RatatuiView {
             _ => return,
         };
 
-        self.move_to(&PlaylistVideo::from(filename), position);
+        self.move_to(&Video::from(filename), position);
     }
 
     fn handle_normal_event(&mut self, event: &Event) -> LoopControl {

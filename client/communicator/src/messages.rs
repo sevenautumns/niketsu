@@ -77,6 +77,7 @@ pub(super) struct VideoStatusMessage {
     pub(super) position: Option<Duration>,
     pub(super) speed: f64,
     pub(super) paused: bool,
+    pub(super) file_loaded: bool,
 }
 
 impl PartialEq for VideoStatusMessage {
@@ -99,6 +100,7 @@ impl From<NiketsuVideoStatus> for NiketsuMessage {
             position: value.position,
             speed: value.speed,
             paused: value.paused,
+            file_loaded: value.file_loaded,
         })
     }
 }
@@ -206,7 +208,7 @@ impl From<PlaybackSpeedMessage> for IncomingMessage {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct SeekMessage {
     pub(super) filename: String,
@@ -214,26 +216,9 @@ pub(super) struct SeekMessage {
     pub(super) position: Duration,
     #[serde(skip_serializing)]
     pub(super) username: String,
-    pub(super) paused: bool,
-    pub(super) speed: f64,
     #[serde(skip_serializing)]
     pub(super) desync: bool,
 }
-
-impl PartialEq for SeekMessage {
-    fn eq(&self, other: &Self) -> bool {
-        let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(self.speed);
-        self.filename.eq(&other.filename)
-            && self.position.eq(&other.position)
-            && self.username.eq(&other.username)
-            && self.paused.eq(&other.paused)
-            && speed_self.eq(&speed_other)
-            && self.desync.eq(&other.desync)
-    }
-}
-
-impl Eq for SeekMessage {}
 
 impl From<NiketsuSeek> for NiketsuMessage {
     fn from(value: NiketsuSeek) -> Self {
@@ -241,8 +226,6 @@ impl From<NiketsuSeek> for NiketsuMessage {
             filename: value.file,
             position: value.position,
             username: Default::default(),
-            paused: value.paused,
-            speed: value.speed,
             desync: false,
         })
     }
@@ -252,8 +235,6 @@ impl From<SeekMessage> for IncomingMessage {
     fn from(value: SeekMessage) -> Self {
         NiketsuSeek {
             position: value.position,
-            paused: value.paused,
-            speed: value.speed,
             actor: value.username,
             file: value.filename,
         }
@@ -265,6 +246,8 @@ impl From<SeekMessage> for IncomingMessage {
 #[serde(rename_all = "camelCase")]
 pub(super) struct SelectMessage {
     pub(super) filename: Option<String>,
+    #[serde(with = "serde_millis")]
+    pub(super) position: Duration,
     #[serde(skip_serializing)]
     pub(super) username: String,
 }
@@ -274,6 +257,7 @@ impl From<NiketsuSelect> for NiketsuMessage {
         Self::Select(SelectMessage {
             filename: value.filename,
             username: Default::default(),
+            position: value.position,
         })
     }
 }
@@ -283,6 +267,7 @@ impl From<SelectMessage> for IncomingMessage {
         NiketsuSelect {
             actor: value.username,
             filename: value.filename,
+            position: value.position,
         }
         .into()
     }
@@ -450,10 +435,11 @@ mod tests {
             position: Some(Duration::from_secs(60)),
             speed: 1.0,
             paused: false,
+            file_loaded: true,
         });
 
         let json_str = serde_json::to_string(&video_status_message).unwrap();
-        let expected_json = r#"{"type":"videoStatus","filename":"video.mp4","position":60000,"speed":1.0,"paused":false}"#;
+        let expected_json = r#"{"type":"videoStatus","filename":"video.mp4","position":60000,"speed":1.0,"paused":false,"fileLoaded":true}"#;
 
         assert_eq!(json_str, expected_json);
     }
@@ -523,14 +509,11 @@ mod tests {
             filename: String::from("video.mp4"),
             position: Duration::from_secs(120),
             username: String::from("user1"),
-            paused: true,
-            speed: 2.0,
             desync: false,
         });
 
         let json_str = serde_json::to_string(&seek_message).unwrap();
-        let expected_json =
-            r#"{"type":"seek","filename":"video.mp4","position":120000,"paused":true,"speed":2.0}"#;
+        let expected_json = r#"{"type":"seek","filename":"video.mp4","position":120000}"#;
 
         assert_eq!(json_str, expected_json);
     }
@@ -540,10 +523,11 @@ mod tests {
         let select_message = NiketsuMessage::Select(SelectMessage {
             filename: Some(String::from("video.mp4")),
             username: String::from("user1"),
+            position: Duration::from_secs(60),
         });
 
         let json_str = serde_json::to_string(&select_message).unwrap();
-        let expected_json = r#"{"type":"select","filename":"video.mp4"}"#;
+        let expected_json = r#"{"type":"select","filename":"video.mp4","position":60000}"#;
 
         assert_eq!(json_str, expected_json);
     }
@@ -629,12 +613,13 @@ mod tests {
 
     #[test]
     fn test_video_status_message_deserialization() {
-        let json_str = r#"{"type":"videoStatus","filename":"video.mp4","position":60000,"speed":1,"paused":false}"#;
+        let json_str = r#"{"type":"videoStatus","filename":"video.mp4","position":60000,"speed":1,"paused":false, "fileLoaded":true}"#;
         let expected_video_status_message = NiketsuMessage::VideoStatus(VideoStatusMessage {
             filename: Some(String::from("video.mp4")),
             position: Some(Duration::from_secs(60)),
             speed: 1.0,
             paused: false,
+            file_loaded: true,
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();
@@ -705,13 +690,11 @@ mod tests {
 
     #[test]
     fn test_seek_message_deserialization() {
-        let json_str = r#"{"type":"seek","filename":"video.mp4","position":120000,"username":"user1","paused":true,"speed":2,"desync":false}"#;
+        let json_str = r#"{"type":"seek","filename":"video.mp4","position":120000,"username":"user1","desync":false}"#;
         let expected_seek_message = NiketsuMessage::Seek(SeekMessage {
             filename: String::from("video.mp4"),
             position: Duration::from_secs(120),
             username: String::from("user1"),
-            paused: true,
-            speed: 2.0,
             desync: false,
         });
 
@@ -722,10 +705,12 @@ mod tests {
 
     #[test]
     fn test_select_message_deserialization() {
-        let json_str = r#"{"type":"select","filename":"video.mp4","username":"user1"}"#;
+        let json_str =
+            r#"{"type":"select","filename":"video.mp4","position":60000,"username":"user1"}"#;
         let expected_select_message = NiketsuMessage::Select(SelectMessage {
             filename: Some(String::from("video.mp4")),
             username: String::from("user1"),
+            position: Duration::from_secs(60),
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();

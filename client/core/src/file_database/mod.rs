@@ -63,10 +63,11 @@ impl From<UpdateComplete> for PlayerMessage {
 
 impl EventHandler for UpdateComplete {
     fn handle(self, model: &mut CoreModel) {
-        let database = model.database.all_files().clone();
+        let database = model.database.all_files();
         model.ui.file_database_status(1.0);
-        model.ui.file_database(database);
-        model.ui.player_message(PlayerMessage::from(self))
+        model.ui.file_database(database.clone());
+        model.ui.player_message(PlayerMessage::from(self));
+        model.player.maybe_reload_video(database)
     }
 }
 
@@ -287,6 +288,72 @@ impl FileDatabaseTrait for FileDatabase {
     }
 }
 
+#[derive(Debug, Clone, Default, Eq)]
+pub struct FileStore {
+    store: Vector<FileEntry>,
+}
+
+impl PartialEq for FileStore {
+    fn eq(&self, other: &Self) -> bool {
+        self.store.eq(&other.store)
+    }
+}
+
+impl FileStore {
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn find_file(&self, filename: &str) -> Option<FileEntry> {
+        let index = self
+            .store
+            .binary_search_by(|f| f.file_name().cmp(filename))
+            .ok()?;
+        self.store.get(index).cloned()
+    }
+
+    pub fn iter(&self) -> im::vector::Iter<'_, FileEntry> {
+        self.into_iter()
+    }
+
+    pub fn fuzzy_search(&self, query: String) -> FuzzySearch {
+        FuzzySearch::new(query, self.clone())
+    }
+}
+
+impl<'a> IntoIterator for &'a FileStore {
+    type Item = &'a FileEntry;
+
+    type IntoIter = im::vector::Iter<'a, FileEntry>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.store.iter()
+    }
+}
+
+impl<'a> IntoParallelRefIterator<'a> for FileStore {
+    type Iter = im::vector::rayon::ParIter<'a, FileEntry>;
+
+    type Item = &'a FileEntry;
+
+    fn par_iter(&'a self) -> Self::Iter {
+        self.store.par_iter()
+    }
+}
+
+impl FromIterator<FileEntry> for FileStore {
+    fn from_iter<T: IntoIterator<Item = FileEntry>>(iter: T) -> Self {
+        let mut store: Vector<_> = iter.into_iter().unique().collect();
+        store.sort_by(|left, right| left.file_name().cmp(right.file_name()));
+        Self { store }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::File;
@@ -475,70 +542,4 @@ mod tests {
     //         ])
     //     );
     // }
-}
-
-#[derive(Debug, Clone, Default, Eq)]
-pub struct FileStore {
-    store: Vector<FileEntry>,
-}
-
-impl PartialEq for FileStore {
-    fn eq(&self, other: &Self) -> bool {
-        self.store.eq(&other.store)
-    }
-}
-
-impl FileStore {
-    pub fn len(&self) -> usize {
-        self.store.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn find_file(&self, filename: &str) -> Option<FileEntry> {
-        let index = self
-            .store
-            .binary_search_by(|f| f.file_name().cmp(filename))
-            .ok()?;
-        self.store.get(index).cloned()
-    }
-
-    pub fn iter(&self) -> im::vector::Iter<'_, FileEntry> {
-        self.into_iter()
-    }
-
-    pub fn fuzzy_search(&self, query: String) -> FuzzySearch {
-        FuzzySearch::new(query, self.clone())
-    }
-}
-
-impl<'a> IntoIterator for &'a FileStore {
-    type Item = &'a FileEntry;
-
-    type IntoIter = im::vector::Iter<'a, FileEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.store.iter()
-    }
-}
-
-impl<'a> IntoParallelRefIterator<'a> for FileStore {
-    type Iter = im::vector::rayon::ParIter<'a, FileEntry>;
-
-    type Item = &'a FileEntry;
-
-    fn par_iter(&'a self) -> Self::Iter {
-        self.store.par_iter()
-    }
-}
-
-impl FromIterator<FileEntry> for FileStore {
-    fn from_iter<T: IntoIterator<Item = FileEntry>>(iter: T) -> Self {
-        let mut store: Vector<_> = iter.into_iter().unique().collect();
-        store.sort_by(|left, right| left.file_name().cmp(right.file_name()));
-        Self { store }
-    }
 }

@@ -1,5 +1,5 @@
 use super::PlaylistHandlerTrait;
-use crate::playlist::{Playlist, PlaylistVideo};
+use crate::playlist::{Playlist, Video};
 
 #[derive(Debug, Default)]
 pub struct PlaylistHandler {
@@ -8,18 +8,18 @@ pub struct PlaylistHandler {
 }
 
 impl PlaylistHandlerTrait for PlaylistHandler {
-    fn get_current_video(&self) -> Option<PlaylistVideo> {
+    fn get_current_video(&self) -> Option<Video> {
         self.playlist.list.get(self.playing?).cloned()
     }
 
-    fn advance_to_next(&mut self) -> Option<PlaylistVideo> {
+    fn advance_to_next(&mut self) -> Option<Video> {
         if let Some(playing) = self.playing.as_mut() {
             *playing += 1
         }
         self.get_current_video()
     }
 
-    fn select_playing(&mut self, video: &PlaylistVideo) {
+    fn select_playing(&mut self, video: &Video) {
         if let Some(index) = self.playlist.find(video) {
             self.playing = Some(index);
         }
@@ -59,8 +59,8 @@ mod tests {
     #[test]
     fn test_select_playing() {
         let mut handler = PlaylistHandler::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
         let mut playlist = Playlist::default();
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -78,7 +78,7 @@ mod tests {
     #[test]
     fn test_replace_playlist() {
         let mut handler = PlaylistHandler::default();
-        let video2 = PlaylistVideo::from("Video 2");
+        let video2 = Video::from("Video 2");
 
         let new_playlist = Playlist::from_iter(["Video 2"]);
         handler.replace(new_playlist.clone());
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn test_unload_playing() {
         let mut handler = PlaylistHandler::default();
-        let video1 = PlaylistVideo::from("Video 1");
+        let video1 = Video::from("Video 1");
         let mut playlist = Playlist::default();
         playlist.push(video1.clone());
 
@@ -107,9 +107,9 @@ mod tests {
     #[test]
     fn test_replace_with_currently_playing() {
         let mut handler = PlaylistHandler::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
 
         let mut playlist = Playlist::default();
         playlist.push(video1);

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use iced::{Application, Command, Element, Renderer, Settings, Subscription, Theme};
 use niketsu_core::config::Config as CoreConfig;
 use niketsu_core::log;
-use niketsu_core::playlist::PlaylistVideo;
+use niketsu_core::playlist::Video;
 use niketsu_core::ui::{RoomChange, ServerChange, UiModel, UserInterface};
 use niketsu_core::user::UserStatus;
 use tokio::sync::Notify;
@@ -97,7 +97,7 @@ impl ViewModel {
         self.model.user.get_inner()
     }
 
-    pub fn playing_video(&self) -> Option<PlaylistVideo> {
+    pub fn playing_video(&self) -> Option<Video> {
         self.model.playing_video.get_inner()
     }
 

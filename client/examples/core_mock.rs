@@ -7,7 +7,7 @@ use std::time::Duration;
 use chrono::Local;
 use log::info;
 use niketsu_core::file_database::{FileEntry, FileStore};
-use niketsu_core::playlist::{Playlist, PlaylistVideo};
+use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::rooms::RoomList;
 use niketsu_core::ui::{
     MessageLevel, MessageSource, PlayerMessageInner, UserChange, UserInterfaceEvent,
@@ -134,8 +134,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
     }
 
     fn change_playlist(&mut self, i: usize) {
-        self.playlist
-            .push(PlaylistVideo::from(format!("file{i}").as_str()));
+        self.playlist.push(Video::from(format!("file{i}").as_str()));
     }
 
     fn change_room_list(&mut self, i: usize) {

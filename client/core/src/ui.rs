@@ -1,6 +1,7 @@
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
@@ -12,14 +13,13 @@ use tokio::sync::Notify;
 use super::communicator::{
     EndpointInfo, NiketsuJoin, NiketsuPlaylist, NiketsuSelect, NiketsuUserMessage,
 };
-use super::playlist::PlaylistVideo;
+use super::playlist::Video;
 use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
 use crate::file_database::FileStore;
 use crate::playlist::Playlist;
 use crate::rooms::RoomList;
 use crate::util::{Observed, RingBuffer};
-use crate::MediaPlayerTraitExt;
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -27,7 +27,7 @@ pub trait UserInterfaceTrait: std::fmt::Debug + Send {
     fn file_database_status(&mut self, update_status: f32);
     fn file_database(&mut self, db: FileStore);
     fn playlist(&mut self, playlist: Playlist);
-    fn video_change(&mut self, video: Option<PlaylistVideo>);
+    fn video_change(&mut self, video: Option<Video>);
     fn room_list(&mut self, room_list: RoomList);
     fn user_update(&mut self, user: UserChange);
     fn player_message(&mut self, msg: PlayerMessage);
@@ -68,7 +68,7 @@ impl EventHandler for PlaylistChange {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoChange {
-    pub video: PlaylistVideo,
+    pub video: Video,
 }
 
 impl EventHandler for VideoChange {
@@ -76,14 +76,20 @@ impl EventHandler for VideoChange {
         debug!("Video Change Message");
         let actor = model.user.name.clone();
         let filename = Some(self.video.as_str().to_string());
+        let position = Duration::ZERO;
         model.playlist.select_playing(&self.video);
-        model
-            .communicator
-            .send(NiketsuSelect { actor, filename }.into());
+        model.communicator.send(
+            NiketsuSelect {
+                actor,
+                filename,
+                position,
+            }
+            .into(),
+        );
 
         model
             .player
-            .load_playlist_video(&self.video, model.database.all_files());
+            .load_video(self.video, Duration::ZERO, model.database.all_files());
     }
 }
 
@@ -288,7 +294,7 @@ impl UserInterfaceTrait for UserInterface {
         self.model.playlist.set(playlist);
     }
 
-    fn video_change(&mut self, video: Option<PlaylistVideo>) {
+    fn video_change(&mut self, video: Option<Video>) {
         self.model.playing_video.set(video);
     }
 
@@ -324,7 +330,7 @@ pub struct UiModel {
     pub file_database: Observed<FileStore>,
     pub file_database_status: Observed<f32>,
     pub playlist: Observed<Playlist>,
-    pub playing_video: Observed<Option<PlaylistVideo>>,
+    pub playing_video: Observed<Option<Video>>,
     pub room_list: Observed<RoomList>,
     pub user: Observed<UserStatus>,
     pub messages: Observed<RingBuffer<PlayerMessage>>,
@@ -429,7 +435,7 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn change_video(&self, video: PlaylistVideo) {
+    pub fn change_video(&self, video: Video) {
         self.playing_video.set(Some(video.clone()));
         let res = self
             .events
@@ -454,14 +460,14 @@ mod tests {
     use std::time::Duration;
 
     use arcstr::ArcStr;
-    use mockall::predicate::eq;
+    use mockall::predicate::{always, eq};
     use tokio::sync::Notify;
 
     use super::*;
     use crate::builder::CoreBuilder;
     use crate::communicator::{MockCommunicatorTrait, NiketsuUserStatus, OutgoingMessage};
     use crate::file_database::{FileEntry, MockFileDatabaseTrait};
-    use crate::player::{LoadVideo, MockMediaPlayerTrait, PlayerVideo};
+    use crate::player::MockMediaPlayerTrait;
     use crate::playlist::MockPlaylistHandlerTrait;
     use crate::util::Observed;
 
@@ -514,19 +520,15 @@ mod tests {
         let mut playlist_handler = MockPlaylistHandlerTrait::default();
 
         let user = String::from("max");
-        let video = PlaylistVideo::from("video1");
+        let video = Video::from("video1");
         let file = FileEntry::new("video1".into(), "/video1".into(), None);
         let file_store = FileStore::from_iter([file.clone()]);
+        let pos = Duration::ZERO;
         let message = OutgoingMessage::from(NiketsuSelect {
             actor: user.clone(),
             filename: Some("video1".to_string()),
+            position: Duration::ZERO,
         });
-        let load = LoadVideo {
-            video: PlayerVideo::File(file),
-            pos: Duration::ZERO,
-            speed: 1.1,
-            paused: true,
-        };
 
         file_database.expect_all_files().return_const(file_store);
         player.expect_get_speed().return_const(1.1);
@@ -537,7 +539,7 @@ mod tests {
             .return_const(());
         player
             .expect_load_video()
-            .with(eq(load))
+            .with(eq(video.clone()), eq(pos), always())
             .once()
             .return_const(());
         communicator
@@ -1016,7 +1018,7 @@ mod tests {
             notify: notify.clone(),
         };
 
-        let video = PlaylistVideo::from("video1");
+        let video = Video::from("video1");
         let request = VideoChange {
             video: video.clone(),
         };

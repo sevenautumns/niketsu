@@ -6,90 +6,82 @@ use im::Vector;
 use itertools::Itertools;
 use url::Url;
 
-use super::player::PlayerVideo;
 use crate::file_database::FileStore;
 
 pub mod handler;
 
 #[cfg_attr(test, mockall::automock)]
 pub trait PlaylistHandlerTrait: std::fmt::Debug + Send {
-    fn get_current_video(&self) -> Option<PlaylistVideo>;
-    fn advance_to_next(&mut self) -> Option<PlaylistVideo>;
-    fn select_playing(&mut self, video: &PlaylistVideo);
+    fn get_current_video(&self) -> Option<Video>;
+    fn advance_to_next(&mut self) -> Option<Video>;
+    fn select_playing(&mut self, video: &Video);
     fn unload_playing(&mut self);
     fn get_playlist(&self) -> Playlist;
     fn replace(&mut self, playlist: Playlist);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlaylistVideo {
-    inner: Arc<PlaylistVideoInner>,
+pub struct Video {
+    inner: Arc<VideoInner>,
 }
 
-impl Deref for PlaylistVideo {
-    type Target = PlaylistVideoInner;
+impl Deref for Video {
+    type Target = VideoInner;
 
     fn deref(&self) -> &Self::Target {
         self.inner.deref()
     }
 }
 
-impl From<PlaylistVideoInner> for PlaylistVideo {
-    fn from(value: PlaylistVideoInner) -> Self {
+impl From<VideoInner> for Video {
+    fn from(value: VideoInner) -> Self {
         let inner = Arc::new(value);
         Self { inner }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlaylistVideoInner {
+pub enum VideoInner {
     File(ArcStr),
     Url(Url),
 }
 
-impl PlaylistVideoInner {
+impl VideoInner {
     pub fn is_url(&self) -> bool {
         matches!(self, Self::Url(_))
     }
 
     pub fn to_path_str(&self, db: &FileStore) -> Option<String> {
         match self {
-            PlaylistVideoInner::File(name) => match db.find_file(name) {
+            VideoInner::File(name) => match db.find_file(name) {
                 Some(entry) => Some(entry.path().as_os_str().to_str()?.to_string()),
                 _ => None,
             },
-            PlaylistVideoInner::Url(url) => Some(url.as_str().to_string()),
+            VideoInner::Url(url) => Some(url.as_str().to_string()),
         }
     }
 
     pub fn as_str(&self) -> &str {
         match self {
-            PlaylistVideoInner::File(name) => name,
-            PlaylistVideoInner::Url(url) => url.as_str(),
-        }
-    }
-
-    pub fn to_player_video(&self, db: &FileStore) -> Option<PlayerVideo> {
-        match self {
-            PlaylistVideoInner::Url(url) => Some(PlayerVideo::Url(url.clone())),
-            PlaylistVideoInner::File(name) => db.find_file(name).map(PlayerVideo::File),
+            VideoInner::File(name) => name,
+            VideoInner::Url(url) => url.as_str(),
         }
     }
 }
 
-impl AsRef<str> for PlaylistVideo {
+impl AsRef<str> for Video {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
 }
 
-impl From<&str> for PlaylistVideo {
+impl From<&str> for Video {
     fn from(value: &str) -> Self {
-        PlaylistVideoInner::from(value).into()
+        VideoInner::from(value).into()
     }
 }
 
-impl From<&str> for PlaylistVideoInner {
+impl From<&str> for VideoInner {
     fn from(value: &str) -> Self {
         if let Ok(url) = Url::parse(value) {
             Self::Url(url)
@@ -99,13 +91,13 @@ impl From<&str> for PlaylistVideoInner {
     }
 }
 
-impl From<&ArcStr> for PlaylistVideo {
+impl From<&ArcStr> for Video {
     fn from(value: &ArcStr) -> Self {
-        PlaylistVideoInner::from(value).into()
+        VideoInner::from(value).into()
     }
 }
 
-impl From<&ArcStr> for PlaylistVideoInner {
+impl From<&ArcStr> for VideoInner {
     fn from(value: &ArcStr) -> Self {
         if let Ok(url) = Url::parse(value) {
             Self::Url(url)
@@ -117,7 +109,7 @@ impl From<&ArcStr> for PlaylistVideoInner {
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct Playlist {
-    list: Vector<PlaylistVideo>,
+    list: Vector<Video>,
 }
 
 impl Playlist {
@@ -125,7 +117,7 @@ impl Playlist {
         self.into_iter()
     }
 
-    pub fn find(&self, video: &PlaylistVideo) -> Option<usize> {
+    pub fn find(&self, video: &Video) -> Option<usize> {
         self.list
             .iter()
             .enumerate()
@@ -142,15 +134,15 @@ impl Playlist {
         self.list.is_empty()
     }
 
-    pub fn get(&self, index: usize) -> Option<&PlaylistVideo> {
+    pub fn get(&self, index: usize) -> Option<&Video> {
         self.list.get(index)
     }
 
-    pub fn get_range(&self, from: usize, to: usize) -> impl Iterator<Item = &PlaylistVideo> {
+    pub fn get_range(&self, from: usize, to: usize) -> impl Iterator<Item = &Video> {
         self.list.iter().skip(from).take(to - from + 1)
     }
 
-    pub fn move_video(&mut self, video: &PlaylistVideo, index: usize) {
+    pub fn move_video(&mut self, video: &Video, index: usize) {
         let mut new_index = index;
         if let Some(old_index) = self.find(video) {
             let video = self.list.remove(old_index);
@@ -196,60 +188,60 @@ impl Playlist {
         }
     }
 
-    pub fn remove_by_video(&mut self, video: &PlaylistVideo) -> Option<PlaylistVideo> {
+    pub fn remove_by_video(&mut self, video: &Video) -> Option<Video> {
         if let Some(index) = self.find(video) {
             return Some(self.list.remove(index));
         }
         None
     }
 
-    pub fn push(&mut self, video: PlaylistVideo) {
+    pub fn push(&mut self, video: Video) {
         if !self.contains(&video) {
             self.list.push_back(video);
         }
     }
 
-    pub fn append(&mut self, videos: impl Iterator<Item = PlaylistVideo>) {
+    pub fn append(&mut self, videos: impl Iterator<Item = Video>) {
         self.list.append(videos.collect())
     }
 
-    pub fn insert(&mut self, index: usize, video: PlaylistVideo) {
+    pub fn insert(&mut self, index: usize, video: Video) {
         if !self.contains(&video) {
             self.list.insert(index, video)
         }
     }
 
-    pub fn append_at(&mut self, index: usize, videos: impl Iterator<Item = PlaylistVideo>) {
+    pub fn append_at(&mut self, index: usize, videos: impl Iterator<Item = Video>) {
         let rest = self.list.split_off(index);
         self.list.append(videos.collect());
         self.list.append(rest);
     }
 
-    pub fn remove_range<R: RangeBounds<usize>>(&mut self, range: R) -> Vec<PlaylistVideo> {
+    pub fn remove_range<R: RangeBounds<usize>>(&mut self, range: R) -> Vec<Video> {
         self.list.slice(range).into_iter().collect_vec()
     }
 
-    pub fn contains(&mut self, video: &PlaylistVideo) -> bool {
+    pub fn contains(&mut self, video: &Video) -> bool {
         self.list.contains(video)
     }
 }
 
 impl<'a> FromIterator<&'a str> for Playlist {
     fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
-        let list = iter.into_iter().map(PlaylistVideo::from).collect();
+        let list = iter.into_iter().map(Video::from).collect();
         Self { list }
     }
 }
 
 impl<'a> FromIterator<&'a ArcStr> for Playlist {
     fn from_iter<T: IntoIterator<Item = &'a ArcStr>>(iter: T) -> Self {
-        let list = iter.into_iter().map(PlaylistVideo::from).collect();
+        let list = iter.into_iter().map(Video::from).collect();
         Self { list }
     }
 }
 
 impl<'a> IntoIterator for &'a Playlist {
-    type Item = &'a PlaylistVideo;
+    type Item = &'a Video;
 
     type IntoIter = PlaylistIter<'a>;
 
@@ -261,11 +253,11 @@ impl<'a> IntoIterator for &'a Playlist {
 }
 
 pub struct PlaylistIter<'a> {
-    iter: im::vector::Iter<'a, PlaylistVideo>,
+    iter: im::vector::Iter<'a, Video>,
 }
 
 impl<'a> Iterator for PlaylistIter<'a> {
-    type Item = &'a PlaylistVideo;
+    type Item = &'a Video;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()
@@ -281,8 +273,8 @@ mod tests {
 
     #[test]
     fn test_is_url() {
-        let file_video = PlaylistVideo::from("video.mp4");
-        let url_video = PlaylistVideo::from("https://www.example.com/video.mp4");
+        let file_video = Video::from("video.mp4");
+        let url_video = Video::from("https://www.example.com/video.mp4");
 
         assert!(!file_video.is_url());
         assert!(url_video.is_url());
@@ -291,7 +283,7 @@ mod tests {
     #[test]
     fn test_to_path_str_with_url() {
         let db = FileStore::default();
-        let video_inner = PlaylistVideo::from("https://www.example.com/video.mp4");
+        let video_inner = Video::from("https://www.example.com/video.mp4");
 
         let path_str = video_inner.to_path_str(&db);
 
@@ -303,7 +295,7 @@ mod tests {
 
     #[test]
     fn test_as_str_with_file() {
-        let video_inner = PlaylistVideo::from("video.mp4");
+        let video_inner = Video::from("video.mp4");
 
         let inner_str = video_inner.as_str();
 
@@ -312,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_as_str_with_url() {
-        let video_inner = PlaylistVideo::from("https://www.example.com/video.mp4");
+        let video_inner = Video::from("https://www.example.com/video.mp4");
 
         let inner_str = video_inner.as_str();
 
@@ -327,8 +319,8 @@ mod tests {
             None,
         )]);
 
-        let file_inner = PlaylistVideo::from("video.mp4");
-        let url_inner = PlaylistVideo::from("https://example.com/video.mp4");
+        let file_inner = Video::from("video.mp4");
+        let url_inner = Video::from("https://example.com/video.mp4");
 
         assert_eq!(
             file_inner.to_path_str(&file_store),
@@ -341,32 +333,9 @@ mod tests {
     }
 
     #[test]
-    fn test_playlist_video_inner_to_player_video() {
-        // Create a dummy FileStore for testing purposes
-        let file_store = FileStore::from_iter([FileEntry::new(
-            "video.mp4".to_string(),
-            PathBuf::from("/path/to/video.mp4"),
-            None,
-        )]);
-
-        let file_inner = PlaylistVideo::from("video.mp4");
-        let url_inner = PlaylistVideo::from("https://example.com/video.mp4");
-
-        let expected_file = PlayerVideo::File(FileEntry::new(
-            "video.mp4".to_string(),
-            PathBuf::from("/path/to/video.mp4"),
-            None,
-        ));
-        let expected_url = PlayerVideo::Url(Url::parse("https://example.com/video.mp4").unwrap());
-
-        assert_eq!(file_inner.to_player_video(&file_store), Some(expected_file));
-        assert_eq!(url_inner.to_player_video(&file_store), Some(expected_url));
-    }
-
-    #[test]
     fn test_playlist_video_as_ref() {
         // Create a PlaylistVideo variant for testing
-        let video = PlaylistVideo::from("video.mp4");
+        let video = Video::from("video.mp4");
 
         // Use the AsRef<str> trait to get a reference to the string representation
         let video_ref: &str = video.as_ref();
@@ -380,7 +349,7 @@ mod tests {
         // Create a dummy FileStore for testing purposes with no matching file
         let file_store = FileStore::default();
 
-        let non_existing_file_inner = PlaylistVideo::from("non_existent.mp4");
+        let non_existing_file_inner = Video::from("non_existent.mp4");
 
         // Ensure that to_path_str returns None for a non-existing file
         assert_eq!(non_existing_file_inner.to_path_str(&file_store), None);
@@ -397,8 +366,8 @@ mod tests {
     #[test]
     fn test_append_to_playlist() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
 
         playlist.push(video1.clone());
         assert_eq!(playlist.len(), 1);
@@ -414,17 +383,17 @@ mod tests {
         let mut playlist = Playlist::default();
         let video_url = ArcStr::from("https://www.example.com/video1.mp4");
 
-        playlist.push(PlaylistVideo::from(&video_url));
+        playlist.push(Video::from(&video_url));
 
         assert_eq!(playlist.len(), 1);
-        assert_eq!(playlist.get(0), Some(&PlaylistVideo::from(&video_url)));
+        assert_eq!(playlist.get(0), Some(&Video::from(&video_url)));
     }
 
     #[test]
     fn test_remove_from_playlist() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -441,21 +410,21 @@ mod tests {
         let video_url1 = "https://www.example.com/video1.mp4";
         let video_url2 = "https://www.example.com/video2.mp4";
 
-        playlist.push(PlaylistVideo::from(video_url1));
-        playlist.push(PlaylistVideo::from(video_url2));
+        playlist.push(Video::from(video_url1));
+        playlist.push(Video::from(video_url2));
 
-        let removed = playlist.remove_by_video(&PlaylistVideo::from(video_url1));
+        let removed = playlist.remove_by_video(&Video::from(video_url1));
 
         assert_eq!(playlist.len(), 1);
-        assert_eq!(removed, Some(PlaylistVideo::from(video_url1)));
-        assert_eq!(playlist.get(0), Some(&PlaylistVideo::from(video_url2)));
+        assert_eq!(removed, Some(Video::from(video_url1)));
+        assert_eq!(playlist.get(0), Some(&Video::from(video_url2)));
     }
 
     #[test]
     fn test_remove_by_video_none() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
 
         playlist.push(video1.clone());
         assert_eq!(playlist.len(), 1);
@@ -475,11 +444,11 @@ mod tests {
     fn test_get_range() {
         let mut playlist = Playlist::default();
 
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
-        let video4 = PlaylistVideo::from("Video 4");
-        let video5 = PlaylistVideo::from("Video 5");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
+        let video4 = Video::from("Video 4");
+        let video5 = Video::from("Video 5");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -500,9 +469,9 @@ mod tests {
     #[test]
     fn test_move_video_within_playlist() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -518,11 +487,11 @@ mod tests {
     #[test]
     fn test_move_video_within_playlist_back() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
-        let video4 = PlaylistVideo::from("Video 4");
-        let video5 = PlaylistVideo::from("Video 5");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
+        let video4 = Video::from("Video 4");
+        let video5 = Video::from("Video 5");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -542,9 +511,9 @@ mod tests {
     #[test]
     fn test_move_video() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -562,11 +531,11 @@ mod tests {
     #[test]
     fn test_remove_range() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
-        let video4 = PlaylistVideo::from("Video 4");
-        let video5 = PlaylistVideo::from("Video 5");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
+        let video4 = Video::from("Video 4");
+        let video5 = Video::from("Video 5");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -590,7 +559,7 @@ mod tests {
         empty_playlist.remove(0);
 
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
+        let video1 = Video::from("Video 1");
         // Moving in an empty playlist should not panic.
         playlist.move_video(&video1, 0);
     }
@@ -598,9 +567,9 @@ mod tests {
     #[test]
     fn test_iteration() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -618,8 +587,8 @@ mod tests {
     #[test]
     fn test_cloning() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -638,9 +607,9 @@ mod tests {
     #[test]
     fn test_move_video_new_index_greater_than_old_index() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -657,9 +626,9 @@ mod tests {
     #[test]
     fn test_insert_into_playlist() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
 
         playlist.push(video1.clone());
         playlist.push(video3.clone());
@@ -684,9 +653,9 @@ mod tests {
 
         // Verify that the playlist contains the expected videos.
         assert_eq!(playlist.len(), 3);
-        assert_eq!(playlist.get(0), Some(&PlaylistVideo::from(&arcstr1)));
-        assert_eq!(playlist.get(1), Some(&PlaylistVideo::from(&arcstr2)));
-        assert_eq!(playlist.get(2), Some(&PlaylistVideo::from(&arcstr3)));
+        assert_eq!(playlist.get(0), Some(&Video::from(&arcstr1)));
+        assert_eq!(playlist.get(1), Some(&Video::from(&arcstr2)));
+        assert_eq!(playlist.get(2), Some(&Video::from(&arcstr3)));
     }
 
     #[test]
@@ -694,11 +663,11 @@ mod tests {
         let mut playlist = Playlist::default();
 
         // Initialize the playlist with 5 elements.
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
-        let video4 = PlaylistVideo::from("Video 4");
-        let video5 = PlaylistVideo::from("Video 5");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
+        let video4 = Video::from("Video 4");
+        let video5 = Video::from("Video 5");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -777,11 +746,11 @@ mod tests {
         let mut playlist = Playlist::default();
 
         // Initialize the playlist with 5 elements.
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
-        let video4 = PlaylistVideo::from("Video 4");
-        let video5 = PlaylistVideo::from("Video 5");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
+        let video4 = Video::from("Video 4");
+        let video5 = Video::from("Video 5");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -831,8 +800,8 @@ mod tests {
     fn test_move_all() {
         let mut playlist = Playlist::default();
 
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -851,11 +820,11 @@ mod tests {
         let mut playlist = Playlist::default();
 
         // Initialize the playlist with 5 elements.
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
-        let video4 = PlaylistVideo::from("Video 4");
-        let video5 = PlaylistVideo::from("Video 5");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
+        let video4 = Video::from("Video 4");
+        let video5 = Video::from("Video 5");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -889,11 +858,11 @@ mod tests {
         let mut playlist = Playlist::default();
 
         // Initialize the playlist with 5 elements.
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
-        let video3 = PlaylistVideo::from("Video 3");
-        let video4 = PlaylistVideo::from("Video 4");
-        let video5 = PlaylistVideo::from("Video 5");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
+        let video3 = Video::from("Video 3");
+        let video4 = Video::from("Video 4");
+        let video5 = Video::from("Video 5");
 
         playlist.push(video1.clone());
         playlist.push(video2.clone());
@@ -925,8 +894,8 @@ mod tests {
     #[test]
     fn test_no_duplicate_elements() {
         let mut playlist = Playlist::default();
-        let video1 = PlaylistVideo::from("Video 1");
-        let video2 = PlaylistVideo::from("Video 2");
+        let video1 = Video::from("Video 1");
+        let video2 = Video::from("Video 2");
 
         // Append Video 1 twice to create a duplicate.
         playlist.push(video1.clone());
