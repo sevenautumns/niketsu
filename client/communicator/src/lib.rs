@@ -126,7 +126,7 @@ impl Connected {
                         }
                     },
                     Err(e) => {
-                        error!("{e:?}");
+                        error!("Into Text failed: {e:?}");
                         continue;
                     }
                 }
@@ -274,6 +274,7 @@ impl WebsocketCommunicator {
 #[async_trait]
 impl CommunicatorTrait for WebsocketCommunicator {
     fn connect(&mut self, endpoint: EndpointInfo) {
+        self.endpoint = Some(endpoint.clone());
         self.state = Connecting::connect(endpoint).into();
     }
 
