@@ -43,11 +43,12 @@ type workerLatency struct {
 }
 
 type workerVideoState struct {
-	video     *string
-	position  *Duration
-	timestamp time.Time
-	paused    bool
-	speed     float64
+	video      *string
+	position   *Duration
+	timestamp  time.Time
+	paused     bool
+	speed      float64
+	fileLoaded bool
 }
 
 type workerState struct {
@@ -531,17 +532,17 @@ func (worker *Worker) setPause(pause bool) {
 }
 
 func (worker *Worker) handleSeek(seek Seek, arrivalTime time.Time) {
-	worker.room.SetPlaylistState(&seek.Filename, seek.Position, seek.Paused, seek.Position, seek.Speed)
-	worker.setVideoState(VideoStatus{Filename: &seek.Filename, Position: &seek.Position,
-		Paused: seek.Paused, Speed: seek.Speed}, arrivalTime)
+	worker.room.SetPlaylistState(&seek.Filename, seek.Position, nil, &seek.Position, nil)
+	worker.setVideoState(VideoStatus{Filename: &seek.Filename, Position: &seek.Position}, arrivalTime)
 	worker.broadcastSeek(seek.Filename, seek.Position, false)
 }
 
 func (worker *Worker) handleSelect(sel Select) {
-	worker.room.SetPlaylistState(sel.Filename, Duration{0}, true, Duration{0}, -1)
-	worker.setVideoState(VideoStatus{Filename: sel.Filename, Position: &Duration{0},
+	paused := true
+	worker.room.SetPlaylistState(sel.Filename, sel.Position, &paused, &sel.Position, nil)
+	worker.setVideoState(VideoStatus{Filename: sel.Filename, Position: &sel.Position,
 		Paused: true, Speed: -1}, time.Now())
-	worker.broadcastSelect(sel.Filename, false)
+	worker.broadcastSelect(sel.Filename, sel.Position, false)
 	worker.broadcastStartOnReady()
 }
 
@@ -648,9 +649,7 @@ func (worker *Worker) setVideoState(videoStatus VideoStatus, arrivalTime time.Ti
 	defer worker.videoStateMutex.Unlock()
 
 	worker.videoState.video = videoStatus.Filename
-	if videoStatus.Position == nil {
-		videoStatus.Position = nil
-	} else {
+	if videoStatus.Position != nil {
 		worker.videoState.position = videoStatus.Position
 	}
 
@@ -659,6 +658,8 @@ func (worker *Worker) setVideoState(videoStatus VideoStatus, arrivalTime time.Ti
 	if videoStatus.Speed > 0 {
 		worker.videoState.speed = videoStatus.Speed
 	}
+
+	worker.videoState.fileLoaded = videoStatus.FileLoaded
 }
 
 func (worker *Worker) sendSeek(desync bool) {
@@ -675,9 +676,7 @@ func (worker *Worker) sendSeek(desync bool) {
 		position = position.Add(worker.roundTripTime().Div(2))
 	}
 
-	seek := Seek{Filename: *roomState.video, Position: position,
-		Speed: roomState.speed, Paused: roomState.paused,
-		Desync: desync, Username: worker.userStatus.Username}
+	seek := Seek{Filename: *roomState.video, Position: position, Desync: desync, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(seek)
 	if err != nil {
 		logger.Errorw("Failed to marshal seek")
@@ -742,11 +741,7 @@ func (worker *Worker) broadcastStart() {
 }
 
 func (worker *Worker) broadcastSeek(filename string, position Duration, desync bool) {
-	state := worker.room.RoomState()
-
-	seek := Seek{Filename: filename, Position: position,
-		Speed: state.speed, Paused: state.paused, Desync: desync,
-		Username: worker.userStatus.Username}
+	seek := Seek{Filename: filename, Position: position, Desync: desync, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(seek)
 	if err != nil {
 		logger.Errorw("Unable to marshal broadcast seek")
@@ -757,8 +752,8 @@ func (worker *Worker) broadcastSeek(filename string, position Duration, desync b
 	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
-func (worker *Worker) broadcastSelect(filename *string, all bool) {
-	sel := Select{Filename: filename, Username: worker.userStatus.Username}
+func (worker *Worker) broadcastSelect(filename *string, position Duration, all bool) {
+	sel := Select{Filename: filename, Position: position, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(sel)
 	if err != nil {
 		logger.Errorw("Unable to marshal broadcast select")
@@ -808,9 +803,8 @@ func (worker *Worker) broadcastPause() {
 	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
-// set paused to false since video will start
+// consider fileLoaded in case some client is not ready
 func (worker *Worker) broadcastStartOnReady() {
-	// cannot start nil video
 	roomState := worker.room.RoomState()
 	if roomState.video == nil {
 		return
@@ -879,8 +873,9 @@ func (worker *Worker) findNext(newPlaylist []string, state RoomState) string {
 
 func (worker *Worker) setNextVideo(nextVideo string, oldVideo string, room RoomStateHandler) {
 	if nextVideo != oldVideo {
-		room.SetPlaylistState(&nextVideo, Duration{0}, true, Duration{0}, -1)
-		worker.broadcastSelect(&nextVideo, true)
+		paused := true
+		room.SetPlaylistState(&nextVideo, Duration{0}, &paused, &Duration{0}, nil)
+		worker.broadcastSelect(&nextVideo, Duration{0}, true)
 	}
 }
 

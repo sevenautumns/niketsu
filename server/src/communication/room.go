@@ -29,7 +29,7 @@ type RoomStateHandler interface {
 	SetSpeed(speed float64)
 	SetPaused(paused bool)
 	SetPlaylist(playlist []string)
-	SetPlaylistState(video *string, position Duration, paused bool, lastSeek Duration, speed float64)
+	SetPlaylistState(video *string, position Duration, paused *bool, lastSeek *Duration, speed *float64)
 	RoomState() RoomState
 	Name() string
 	RoomConfig() RoomConfig
@@ -247,17 +247,21 @@ func (room *Room) SlowestEstimatedClientPosition() *Duration {
 	return minPosition
 }
 
-func (room *Room) SetPlaylistState(video *string, position Duration, paused bool, lastSeek Duration, speed float64) {
+func (room *Room) SetPlaylistState(video *string, position Duration, paused *bool, lastSeek *Duration, speed *float64) {
 	room.stateMutex.Lock()
 	defer room.stateMutex.Unlock()
 
 	room.state.video = video
 	room.state.position = &position
-	room.state.paused = paused
-	room.state.lastSeek = lastSeek
-	logger.Debugw("################################################################LASTSEEK UPDATE ----------------", "LS", lastSeek)
-	if speed > 0 {
-		room.state.speed = speed
+	if lastSeek != nil {
+		room.state.lastSeek = *lastSeek
+	}
+	if paused != nil {
+		room.state.paused = *paused
+	}
+
+	if speed != nil && *speed > 0 {
+		room.state.speed = *speed
 	}
 }
 

@@ -557,14 +557,15 @@ func TestSetPlaylistState(t *testing.T) {
 	room := &Room{
 		state: RoomState{},
 	}
-	room.SetPlaylistState(video, *defaultPosition, defaultPaused, defaultLastSeek, defaultSpeed)
+	room.SetPlaylistState(video, *defaultPosition, &defaultPaused, &defaultLastSeek, &defaultSpeed)
 	require.Equal(t, video, room.state.video)
 	require.Equal(t, *defaultPosition, *room.state.position)
 	require.Equal(t, defaultLastSeek, room.state.lastSeek)
 	require.Equal(t, defaultPaused, room.state.paused)
 	require.Equal(t, defaultSpeed, room.state.speed)
 
-	room.SetPlaylistState(nil, *highPosition, notPaused, highLastSeek, -defaultSpeed)
+	negativeSpeed := -defaultSpeed
+	room.SetPlaylistState(nil, *highPosition, &notPaused, &highLastSeek, &negativeSpeed)
 	require.Empty(t, room.state.video)
 	require.Equal(t, *highPosition, *room.state.position)
 	require.Equal(t, highLastSeek, room.state.lastSeek)

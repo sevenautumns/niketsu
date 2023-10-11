@@ -188,7 +188,7 @@ func setUpMockRoom(
 		mockRoom.EXPECT().
 			RoomState().
 			Return(roomState).
-			MinTimes(1)
+			MinTimes(0)
 	}
 
 	if useAllUsersReady {
@@ -483,17 +483,21 @@ func TestHandleSeek(t *testing.T) {
 	defer ctrl.Finish()
 
 	seek := []byte(
-		fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"","type":"seek"}`,
-			testWorkerVideo, testWorkerPosition.Uint64(), defaultSpeed, notPaused, false,
+		fmt.Sprintf(`{"filename":"%s","position":%d,"desync":%t,"username":"","type":"seek"}`,
+			testWorkerVideo, testWorkerPosition.Uint64(), false,
 		),
 	)
 	mockRoom := setUpMockRoom(ctrl, simpleRoomState, false, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, seek)
+	var boolNil *bool
+	boolNil = nil
+	var floatNil *float64
+	floatNil = nil
 	mockRoom.EXPECT().
 		SetPlaylistState(gomock.Any(), gomock.Eq(testWorkerPositionMillisecond),
-			gomock.Eq(notPaused), gomock.Eq(testWorkerPositionMillisecond), gomock.Eq(defaultSpeed)).
-		Do(func(filename *string, position Duration, paused bool, lastSeek Duration, speed float64) {
+			gomock.Eq(boolNil), gomock.Eq(&testWorkerPositionMillisecond), gomock.Eq(floatNil)).
+		Do(func(filename *string, position Duration, paused *bool, lastSeek *Duration, speed *float64) {
 			require.Equal(t, testWorkerVideo, *filename)
 		}).
 		MinTimes(1)
@@ -513,14 +517,14 @@ func TestHandleSeek(t *testing.T) {
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
-		videoState:   emptyVideoState,
+		videoState:   workerVideoState{speed: 1},
 		latencyMutex: sync.RWMutex{},
 	}
 	testStartCloseWorker(t, worker)
 
 	require.Equal(t, notPaused, worker.videoState.paused)
 	require.Equal(t, testWorkerPositionMillisecond, *worker.videoState.position)
-	require.Equal(t, defaultSpeed, worker.videoState.speed)
+	require.Equal(t, float64(1), worker.videoState.speed)
 	require.Equal(t, testWorkerVideo, *worker.videoState.video)
 }
 
@@ -528,13 +532,16 @@ func TestHandleSelect(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	sel := []byte(fmt.Sprintf(`{"filename":"%s","username":"","type":"select"}`, testWorkerVideo))
+	sel := []byte(fmt.Sprintf(`{"filename":"%s","position":%d,"username":"","type":"select"}`, testWorkerVideo, testWorkerPosition.Uint64()))
 	mockRoom := setUpMockRoom(ctrl, simpleRoomState, true, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, sel)
+	truePointer := true
+	var floatPointer *float64
+	floatPointer = nil
 	mockRoom.EXPECT().
-		SetPlaylistState(gomock.Any(), gomock.Eq(Duration{0}), gomock.Eq(true), gomock.Eq(Duration{0}), gomock.Eq(float64(-1))).
-		Do(func(filename *string, position Duration, paused bool, lastSeek Duration, speed float64) {
+		SetPlaylistState(gomock.Any(), gomock.Eq(testWorkerPositionMillisecond), gomock.Eq(&truePointer), gomock.Eq(&testWorkerPositionMillisecond), gomock.Eq(floatPointer)).
+		Do(func(filename *string, position Duration, paused *bool, lastSeek *Duration, speed *float64) {
 			require.Equal(t, testWorkerVideo, *filename)
 		}).
 		MinTimes(1)
@@ -560,7 +567,7 @@ func TestHandleSelect(t *testing.T) {
 	testStartCloseWorker(t, worker)
 
 	require.Equal(t, paused, worker.videoState.paused)
-	require.Equal(t, Duration{0}, *worker.videoState.position)
+	require.Equal(t, testWorkerPositionMillisecond, *worker.videoState.position)
 	require.Equal(t, float64(1), worker.videoState.speed)
 	require.Equal(t, testWorkerVideo, *worker.videoState.video)
 }
@@ -945,8 +952,8 @@ func TestSendSeek(t *testing.T) {
 	worker.sendSeek(true)
 	message := <-worker.state.writeChan
 	expectedMessage := []byte(
-		fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"","type":"seek"}`,
-			*simpleRoomState.video, testWorkerPosition.Uint64(), simpleRoomState.speed, simpleRoomState.paused, true,
+		fmt.Sprintf(`{"filename":"%s","position":%d,"desync":%t,"username":"","type":"seek"}`,
+			*simpleRoomState.video, testWorkerPosition.Uint64(), true,
 		),
 	)
 	require.Equal(t, expectedMessage, message)
