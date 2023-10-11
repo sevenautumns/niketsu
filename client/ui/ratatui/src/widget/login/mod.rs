@@ -17,17 +17,17 @@ enum State {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct LoginWidget<'a> {
+pub struct LoginWidget {
     current_state: State,
-    address_field: TextAreaWrapper<'a>,
-    password_field: TextAreaWrapper<'a>,
-    username_field: TextAreaWrapper<'a>,
-    room_field: TextAreaWrapper<'a>,
+    address_field: TextAreaWrapper,
+    password_field: TextAreaWrapper,
+    username_field: TextAreaWrapper,
+    room_field: TextAreaWrapper,
     secure: bool,
     style: Style,
 }
 
-impl<'a> LoginWidget<'a> {
+impl LoginWidget {
     pub fn new() -> Self {
         Self {
             current_state: State::default(),
@@ -90,7 +90,7 @@ impl<'a> LoginWidget<'a> {
     }
 }
 
-impl<'a> OverlayWidgetState for LoginWidget<'a> {
+impl OverlayWidgetState for LoginWidget {
     fn area(&self, r: Rect) -> Rect {
         let vert_width = match r.height {
             0..=50 => 10,
@@ -124,7 +124,7 @@ impl<'a> OverlayWidgetState for LoginWidget<'a> {
     }
 }
 
-impl<'a> Widget for LoginWidget<'a> {
+impl Widget for LoginWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let outer_block = Block::default().title("Login").borders(Borders::ALL).gray();
 

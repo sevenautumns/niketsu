@@ -1,6 +1,7 @@
 use iced::widget::scrollable::Id;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
 use iced::{Element, Length};
+use niketsu_core::ui::UiModel;
 
 use self::message::{MainMessage, MainMessageTrait, ReadyButton};
 use super::message::Message;
@@ -9,7 +10,6 @@ use super::widget::database::DatabaseWidget;
 use super::widget::messages::MessagesWidget;
 use super::widget::playlist::PlaylistWidget;
 use super::widget::rooms::RoomsWidget;
-use super::UiModel;
 use crate::styling::{ContainerBorder, ResultButton};
 use crate::widget::file_search::FileSearchWidget;
 

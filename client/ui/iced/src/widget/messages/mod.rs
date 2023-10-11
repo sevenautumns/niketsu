@@ -164,7 +164,7 @@ impl<'a> From<MessagesWidget<'a>> for Element<'a, Message> {
 }
 
 /// TODO rename to ChatWidgetState
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MessagesWidgetState {
     messages: Arc<RingBuffer<PlayerMessage>>,
     message: String,
@@ -173,15 +173,6 @@ pub struct MessagesWidgetState {
 impl MessagesWidgetState {
     pub fn replace_messages(&mut self, messages: Arc<RingBuffer<PlayerMessage>>) {
         self.messages = messages;
-    }
-}
-
-impl Default for MessagesWidgetState {
-    fn default() -> Self {
-        Self {
-            messages: Arc::default(),
-            message: String::new(),
-        }
     }
 }
 

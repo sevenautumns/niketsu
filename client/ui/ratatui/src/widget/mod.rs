@@ -99,17 +99,17 @@ impl ListStateWrapper {
     }
 }
 
-pub struct TextAreaWrapper<'a> {
-    inner: TextArea<'a>,
+pub struct TextAreaWrapper {
+    inner: TextArea<'static>,
 }
 
-impl<'a> std::fmt::Debug for TextAreaWrapper<'a> {
+impl std::fmt::Debug for TextAreaWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.lines().join("").as_str())
     }
 }
 
-impl<'a> Default for TextAreaWrapper<'a> {
+impl Default for TextAreaWrapper {
     fn default() -> Self {
         let mut wrapper = Self {
             inner: TextArea::default(),
@@ -119,7 +119,7 @@ impl<'a> Default for TextAreaWrapper<'a> {
     }
 }
 
-impl<'a> Clone for TextAreaWrapper<'a> {
+impl Clone for TextAreaWrapper {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -127,7 +127,7 @@ impl<'a> Clone for TextAreaWrapper<'a> {
     }
 }
 
-impl<'a> From<String> for TextAreaWrapper<'a> {
+impl From<String> for TextAreaWrapper {
     fn from(value: String) -> Self {
         TextAreaWrapper {
             inner: TextArea::new(vec![value]),
@@ -135,12 +135,14 @@ impl<'a> From<String> for TextAreaWrapper<'a> {
     }
 }
 
-impl<'a> TextAreaWrapper<'a> {
-    fn new(title: &'a str) -> Self {
+impl TextAreaWrapper {
+    fn new(title: &str) -> Self {
         let mut text_area = Self::default();
-        text_area
-            .inner
-            .set_block(Block::default().borders(Borders::ALL).title(title));
+        text_area.inner.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title.to_string()),
+        );
         text_area
     }
 
@@ -157,11 +159,11 @@ impl<'a> TextAreaWrapper<'a> {
         self.inner.set_cursor_style(Style::default());
     }
 
-    fn set_block(&mut self, block: Block<'a>) {
+    fn set_block(&mut self, block: Block<'static>) {
         self.inner.set_block(block);
     }
 
-    fn into_masked(self, title: &str) -> TextAreaWrapper<'_> {
+    fn into_masked(self, title: &str) -> TextAreaWrapper {
         let lines = self.inner.lines();
         let masked_lines: String = lines
             .iter()
@@ -169,9 +171,11 @@ impl<'a> TextAreaWrapper<'a> {
             .collect::<Vec<String>>()
             .join("");
         let mut text_area = TextAreaWrapper::from(masked_lines);
-        text_area
-            .inner
-            .set_block(Block::default().borders(Borders::ALL).title(title));
+        text_area.inner.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title.to_string()),
+        );
         text_area.set_default_stye();
         let cursor = self.inner.cursor();
         text_area
@@ -180,15 +184,15 @@ impl<'a> TextAreaWrapper<'a> {
         text_area
     }
 
-    fn get_input(&'a self) -> String {
+    fn get_input(&self) -> String {
         self.inner.lines().join("")
     }
 
-    fn lines(&'a self) -> &[String] {
+    fn lines(&self) -> &[String] {
         self.inner.lines()
     }
 
-    fn widget(&'a self) -> impl Widget + 'a {
+    fn widget(&self) -> impl Widget + '_ {
         self.inner.widget()
     }
 

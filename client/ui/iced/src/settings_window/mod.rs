@@ -4,6 +4,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length, Theme};
 use niketsu_core::config::Config as CoreConfig;
+use niketsu_core::ui::UiModel;
 
 use self::message::{
     AddPath, BackgroundColorInput, DangerColorInput, DeletePath, PasswordInput, PathInput,
@@ -12,7 +13,6 @@ use self::message::{
 };
 use super::message::Message;
 use super::view::{SubWindowTrait, ViewModel};
-use super::UiModel;
 use crate::config::{
     default_background, default_danger, default_primary, default_success, default_text, Config,
     RgbWrap,

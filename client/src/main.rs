@@ -30,12 +30,12 @@ async fn main() -> Result<()> {
     let ui_fn;
     match args.ui {
         niketsu::cli::UI::Iced => {
-            let iced = IcedUI::new(iced_config, config.clone());
+            let iced = IcedUI::create(iced_config, config.clone());
             view = Box::new(iced.0);
             ui_fn = iced.1;
         }
         niketsu::cli::UI::Ratatui => {
-            let ratatui = RatatuiUI::new(config.clone());
+            let ratatui = RatatuiUI::create(config.clone());
             view = Box::new(ratatui.0);
             ui_fn = ratatui.1;
         }
