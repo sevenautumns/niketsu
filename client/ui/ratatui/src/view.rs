@@ -252,14 +252,14 @@ impl RatatuiView {
             ["move", filename, position] | ["mv", filename, position] => {
                 self.handle_move(filename, position)
             }
-            ["add", filename] => self.add(&Video::from(*filename)),
+            ["add", filename] => self.insert(0, &Video::from(*filename)),
             _ => {}
         }
     }
 
-    pub fn add(&self, video: &Video) {
+    pub fn insert(&self, index: usize, video: &Video) {
         let mut updated_playlist = self.model.playlist.get_inner();
-        updated_playlist.insert(0, video.clone());
+        updated_playlist.insert(index, video.clone());
         self.model.playlist.set(updated_playlist.clone());
         self.model.change_playlist(updated_playlist);
     }

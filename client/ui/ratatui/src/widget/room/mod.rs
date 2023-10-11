@@ -12,6 +12,7 @@ use ratatui::widgets::{
 use super::ListStateWrapper;
 
 //TODO roomswitch
+//TODO update user status
 #[derive(Debug, Default, Clone)]
 pub struct RoomsWidget;
 
@@ -81,7 +82,7 @@ impl StatefulWidget for RoomsWidget {
                         };
                         let mut user_line = match u.ready {
                             true => Line::from(format!("  {} (ready)", name)),
-                            false => Line::from(format!("  {} (ready)", name)),
+                            false => Line::from(format!("  {} (not ready)", name)),
                         };
                         user_line.patch_style(Style::default().fg(Color::Gray));
                         user_line
@@ -108,7 +109,7 @@ impl StatefulWidget for RoomsWidget {
             .begin_symbol(None)
             .end_symbol(None);
 
-        StatefulWidget::render(rooms_list, area, buf, &mut state.list_state.inner());
+        StatefulWidget::render(rooms_list, area, buf, state.list_state.inner());
 
         let mut state = state.vertical_scroll_state;
         state = state.content_length(rooms.len() as u16);

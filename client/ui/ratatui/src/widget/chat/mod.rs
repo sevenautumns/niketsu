@@ -112,7 +112,7 @@ impl StatefulWidget for ChatWidget {
             .block(messages_block)
             .highlight_style(Style::default().fg(Color::Cyan));
 
-        StatefulWidget::render(messages_list, area, buf, &mut state.list_state.inner());
+        StatefulWidget::render(messages_list, area, buf, state.list_state.inner());
 
         let scrollbar = Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)

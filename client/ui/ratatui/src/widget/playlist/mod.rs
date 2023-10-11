@@ -11,6 +11,8 @@ use ratatui::widgets::{
 use super::ListStateWrapper;
 
 //TODO negative offset support
+//TODO wrap length
+//TODO fix list state
 pub struct PlaylistWidget;
 
 #[derive(Debug, Default, Clone)]
@@ -197,7 +199,7 @@ impl StatefulWidget for PlaylistWidget {
             .begin_symbol(None)
             .end_symbol(None);
 
-        StatefulWidget::render(list, area, buf, &mut state.list_state.inner());
+        StatefulWidget::render(list, area, buf, state.list_state.inner());
 
         let mut state = state.vertical_scroll_state;
         state = state.content_length(playlist.len() as u16);

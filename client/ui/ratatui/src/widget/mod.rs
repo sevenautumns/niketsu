@@ -94,7 +94,11 @@ impl ListStateWrapper {
         self.inner.selected()
     }
 
-    fn inner(&self) -> ListState {
+    fn inner(&mut self) -> &mut ListState {
+        &mut self.inner
+    }
+
+    fn clone_inner(&self) -> ListState {
         self.inner.clone()
     }
 }

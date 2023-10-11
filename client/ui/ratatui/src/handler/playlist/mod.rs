@@ -54,7 +54,7 @@ impl EventHandler for Playlist {
                 _ => {}
             },
             Event::Paste(data) => {
-                view.add(&Video::from(data.as_str()));
+                view.insert(0, &Video::from(data.as_str()));
             }
             _ => {}
         }
