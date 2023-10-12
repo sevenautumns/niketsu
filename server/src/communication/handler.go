@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"path/filepath"
 	"sync"
 
 	"github.com/sevenautumns/niketsu/server/src/db"
 	"github.com/sevenautumns/niketsu/server/src/logger"
 )
+
+var usernamePrefix = []string{"BitWarden", "Jolly", "Funky", "Spacy", "Mean", "Machine", "ByteCode", "PixelPerfect", "CryptoBro", "CryptoJunky", "Chroot", "BitBard", "DebugCowboy", "Buggy", "Magician", "BinaryBaron", "Fluid"}
 
 const (
 	generalDBPath   string = ".db/general.db"
@@ -24,6 +27,7 @@ type ServerStateHandler interface {
 	AppendRoom(room RoomStateHandler) error
 	CreateOrFindRoom(roomName string) (RoomStateHandler, error)
 	BroadcastStatusList()
+	RenameUserIfUnavailable(username string) string
 	IsPasswordCorrect(password string) bool
 }
 
@@ -222,4 +226,36 @@ func (server *Server) broadcastAll(message []byte) {
 
 func (server *Server) IsPasswordCorrect(password string) bool {
 	return server.config.password == "" || password == server.config.password
+}
+
+func (server *Server) RenameUserIfUnavailable(username string) string {
+	rooms := server.statusList()
+	usernameMap := make(map[string]bool, 0)
+
+	for _, roomStatus := range rooms {
+		for _, status := range roomStatus {
+			usernameMap[status.Username] = true
+		}
+	}
+
+	if !usernameMap[username] {
+		return username
+	}
+
+	return server.chooseNewUsername(username, usernameMap)
+}
+
+func (server *Server) chooseNewUsername(username string, usernameMap map[string]bool) string {
+	if !usernameMap[username] {
+		return username
+	}
+
+	for {
+		randomPrefix := usernamePrefix[rand.Intn(len(usernamePrefix))]
+		newUsername := fmt.Sprintf("%s%s", randomPrefix, username)
+
+		if !usernameMap[newUsername] {
+			return newUsername
+		}
+	}
 }

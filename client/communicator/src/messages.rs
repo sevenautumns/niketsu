@@ -40,6 +40,7 @@ impl TryFrom<NiketsuMessage> for IncomingMessage {
             NiketsuMessage::UserMessage(m) => Ok(m.into()),
             NiketsuMessage::ServerMessage(m) => Ok(m.into()),
             NiketsuMessage::Playlist(m) => Ok(m.into()),
+            NiketsuMessage::Status(m) => Ok(m.into()),
             value => Err(value),
         }
     }
@@ -365,6 +366,16 @@ impl From<UserStatusMessage> for NiketsuUserStatus {
             ready: value.ready,
             username: value.username,
         }
+    }
+}
+
+impl From<UserStatusMessage> for IncomingMessage {
+    fn from(value: UserStatusMessage) -> Self {
+        NiketsuUserStatus {
+            ready: value.ready,
+            username: value.username,
+        }
+        .into()
     }
 }
 

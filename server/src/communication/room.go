@@ -78,7 +78,7 @@ func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout ui
 	if err != nil {
 		return nil, err
 	}
-	room.state = RoomState{lastSeek: Duration{0}, paused: true, speed: 1.0}
+	room.state = RoomState{playlist: make([]string, 0), video: nil, position: &Duration{0}, lastSeek: Duration{0}, paused: true, speed: 1.0}
 	room.setStateFromDB()
 	room.dbChannel = make(chan int)
 

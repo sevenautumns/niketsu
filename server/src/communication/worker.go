@@ -440,11 +440,21 @@ func (worker *Worker) detelePing(workerUUID uuid.UUID) {
 // TODO change username if no longer available
 func (worker *Worker) handleStatus(status Status) {
 	if worker.isStatusNew(status) {
-		worker.SetUserStatus(status)
+		worker.handleUsername(status)
 		worker.room.SetWorkerStatus(worker.state.uuid, worker.userStatus)
 		worker.roomHandler.BroadcastStatusList()
 	}
+
 	worker.broadcastStartOnReady()
+}
+
+func (worker *Worker) handleUsername(status Status) {
+	newUsername := worker.roomHandler.RenameUserIfUnavailable(status.Username)
+	if newUsername != status.Username {
+		status.Username = newUsername
+		worker.sendUsername(newUsername)
+	}
+	worker.SetUserStatus(status)
 }
 
 func (worker *Worker) isStatusNew(status Status) bool {
@@ -573,8 +583,8 @@ func (worker *Worker) handleJoin(join Join) {
 	}
 
 	if !worker.state.loggedIn {
-		worker.state.loggedIn = true
-		worker.SetUserStatus(Status{Ready: false, Username: join.Username})
+		status := Status{Username: join.Username}
+		worker.handleUsername(status)
 	} else {
 		// in case of a room change, try to delete the previous room
 		worker.deleteAndCloseEmptyRoom()
@@ -582,10 +592,22 @@ func (worker *Worker) handleJoin(join Join) {
 
 	err := worker.handleRoomJoin(join)
 	if err != nil {
-		logger.Warnw("Room change failed")
 		worker.sendServerMessage("Failed to access room. Please try again", true)
 		return
 	}
+	worker.state.loggedIn = true
+}
+
+func (worker *Worker) sendUsername(username string) {
+	userStatus := Status{Username: username}
+	payload, err := MarshalMessage(userStatus)
+	if err != nil {
+		logger.Warnw("Failed to marshal username message")
+		return
+	}
+
+	worker.queueMessage(payload)
+
 }
 
 func (worker *Worker) handleRoomJoin(join Join) error {
@@ -629,7 +651,9 @@ func (worker *Worker) sendRoomChangeUpdates() {
 	worker.roomHandler.BroadcastStatusList()
 	worker.sendPlaylist()
 	roomState := worker.room.RoomState()
-	worker.sendSelect(roomState.video, *roomState.position)
+	if roomState.video != nil && roomState.position != nil {
+		worker.sendSelect(roomState.video, *roomState.position)
+	}
 }
 
 func (worker *Worker) setSpeed(speed float64) {
