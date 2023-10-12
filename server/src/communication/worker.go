@@ -437,6 +437,7 @@ func (worker *Worker) detelePing(workerUUID uuid.UUID) {
 	delete(worker.latency.timestamps, workerUUID)
 }
 
+// TODO change username if no longer available
 func (worker *Worker) handleStatus(status Status) {
 	if worker.isStatusNew(status) {
 		worker.SetUserStatus(status)
@@ -456,7 +457,7 @@ func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime tim
 
 	logger.Debugw("Received video status", "videostatus", videoStatus)
 	if worker.isVideoStateDifferent(videoStatus, roomState) {
-		worker.sendSelect(roomState.video)
+		worker.sendSelect(roomState.video, *roomState.position)
 		return
 	}
 
@@ -479,8 +480,8 @@ func (worker *Worker) isVideoStateDifferent(videoStatus VideoStatus, roomState R
 			*videoStatus.Filename != *roomState.video)
 }
 
-func (worker *Worker) sendSelect(filename *string) {
-	sel := Select{Filename: filename, Username: worker.userStatus.Username}
+func (worker *Worker) sendSelect(filename *string, position Duration) {
+	sel := Select{Filename: filename, Position: position, Username: worker.userStatus.Username}
 	payload, err := MarshalMessage(sel)
 	if err != nil {
 		logger.Warnw("Failed to marshal select message")
@@ -627,7 +628,8 @@ func (worker *Worker) sendRoomChangeUpdates() {
 	worker.room.SetWorkerStatus(worker.state.uuid, worker.userStatus)
 	worker.roomHandler.BroadcastStatusList()
 	worker.sendPlaylist()
-	worker.sendSeek(true)
+	roomState := worker.room.RoomState()
+	worker.sendSelect(roomState.video, *roomState.position)
 }
 
 func (worker *Worker) setSpeed(speed float64) {
@@ -803,7 +805,7 @@ func (worker *Worker) broadcastPause() {
 	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
-// consider fileLoaded in case some client is not ready
+// TODO consider fileLoaded in case some client is not ready
 func (worker *Worker) broadcastStartOnReady() {
 	roomState := worker.room.RoomState()
 	if roomState.video == nil {
