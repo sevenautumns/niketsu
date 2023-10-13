@@ -312,6 +312,11 @@ func TestHandleStatus(t *testing.T) {
 			gomock.Eq(Status{Ready: notReady, Username: username})).
 		MinTimes(1)
 
+	mockRoomHandler.EXPECT().
+		RenameUserIfUnavailable(gomock.Eq(username)).
+		Return(username).
+		MinTimes(1)
+
 	worker := &Worker{
 		roomHandler: mockRoomHandler,
 		websocket:   mockWebsocket,
@@ -756,6 +761,11 @@ func TestHandleJoin(t *testing.T) {
 
 	mockRoomHandler.EXPECT().
 		BroadcastStatusList().
+		MinTimes(1)
+
+	mockRoomHandler.EXPECT().
+		RenameUserIfUnavailable(gomock.Eq(username)).
+		Return(username).
 		MinTimes(1)
 
 	worker := &Worker{
