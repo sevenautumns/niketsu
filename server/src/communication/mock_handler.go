@@ -117,6 +117,20 @@ func (mr *MockServerStateHandlerMockRecorder) IsPasswordCorrect(password interfa
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsPasswordCorrect", reflect.TypeOf((*MockServerStateHandler)(nil).IsPasswordCorrect), password)
 }
 
+// RenameUserIfUnavailable mocks base method.
+func (m *MockServerStateHandler) RenameUserIfUnavailable(username string) string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RenameUserIfUnavailable", username)
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// RenameUserIfUnavailable indicates an expected call of RenameUserIfUnavailable.
+func (mr *MockServerStateHandlerMockRecorder) RenameUserIfUnavailable(username interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenameUserIfUnavailable", reflect.TypeOf((*MockServerStateHandler)(nil).RenameUserIfUnavailable), username)
+}
+
 // Shutdown mocks base method.
 func (m *MockServerStateHandler) Shutdown(ctx context.Context) {
 	m.ctrl.T.Helper()

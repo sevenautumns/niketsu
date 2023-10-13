@@ -6,9 +6,11 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
-use log::{debug, error};
+use log::debug;
+use niketsu_core::file_database::FileStore;
 use niketsu_core::log;
-use niketsu_core::player::{LoadVideo, MediaPlayerEvent, MediaPlayerTrait, PlayerVideo};
+use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait};
+use niketsu_core::playlist::Video;
 use strum::{AsRefStr, EnumString};
 
 use self::bindings::*;
@@ -94,7 +96,9 @@ pub struct MpvStatus {
     paused: bool,
     seeking: bool,
     speed: f64,
-    file: Option<PlayerVideo>,
+    file: Option<Video>,
+    file_loaded: bool,
+    load_position: Duration,
 }
 
 impl Default for MpvStatus {
@@ -104,6 +108,8 @@ impl Default for MpvStatus {
             seeking: false,
             speed: 1.0,
             file: None,
+            file_loaded: false,
+            load_position: Duration::ZERO,
         }
     }
 }
@@ -279,6 +285,21 @@ impl Mpv {
     fn eof_reached(&self) -> Result<bool> {
         self.get_property_flag(MpvProperty::EofReached)
     }
+
+    fn replace_video(&mut self, path: CString) {
+        let cmd: CString = MpvCommand::Loadfile.into();
+
+        // TODO is this seeking good? apparently we would get a seek otherwise
+        self.status.seeking = true;
+
+        let replace = CString::new("replace").expect("Got invalid UTF-8");
+        let start = self.status.load_position.as_secs_f64();
+        let options = format!("start={start}");
+        let options = CString::new(options).expect("Got invalid UTF-8");
+        let res = self.send_command(&[&cmd, &path, &replace, &options]);
+        self.status.file_loaded = true;
+        log!(res)
+    }
 }
 
 #[async_trait]
@@ -342,29 +363,19 @@ impl MediaPlayerTrait for Mpv {
             .map(Duration::from_secs_f64)
     }
 
-    fn load_video(&mut self, load: LoadVideo) {
-        let cmd: CString = MpvCommand::Loadfile.into();
-        let Some(path) = load.video.path_str() else {
-            error!("Get path from: {:?}", load.video);
-            return;
-        };
-        let path = CString::new(path).expect("Got invalid UTF-8");
-        self.status.paused = load.paused;
-        self.status.speed = load.speed;
-        self.status.file = Some(load.video);
-        // TODO is this seeking good? apparently we would get a seek otherwise
-        self.status.seeking = true;
+    fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore) {
+        self.status.paused = true;
+        self.status.file_loaded = false;
+        self.status.file = Some(load.clone());
+        self.status.load_position = pos;
 
-        let replace = CString::new("replace").expect("Got invalid UTF-8");
-        let start = load.pos.as_secs_f64();
-        let options = format!("start={start}");
-        let options = CString::new(options).expect("Got invalid UTF-8");
-        let res = self.send_command(&[&cmd, &path, &replace, &options]);
-        log!(res)
+        self.maybe_reload_video(db);
     }
 
+    // TODO allow for an unload which sets status.file to None
+    // keep one which does not touch status.file
     fn unload_video(&mut self) {
-        self.status.file = None;
+        self.status.file_loaded = false;
 
         let cmd: CString = MpvCommand::Loadfile.into();
         let path = CString::new("null://").expect("Got invalid UTF-8");
@@ -373,8 +384,27 @@ impl MediaPlayerTrait for Mpv {
         log!(res)
     }
 
-    fn playing_video(&self) -> Option<PlayerVideo> {
+    fn playing_video(&self) -> Option<Video> {
         self.status.file.clone()
+    }
+
+    fn maybe_reload_video(&mut self, db: &FileStore) {
+        let Some(load) = &self.status.file else {
+            self.unload_video();
+            return;
+        };
+        let Some(path) = load.to_path_str(db) else {
+            debug!("Get path from: {:?}", load);
+            self.unload_video();
+            return;
+        };
+
+        let path = CString::new(path).expect("Got invalid UTF-8");
+        self.replace_video(path);
+    }
+
+    fn video_loaded(&self) -> bool {
+        self.status.file_loaded
     }
 
     async fn event(&mut self) -> MediaPlayerEvent {

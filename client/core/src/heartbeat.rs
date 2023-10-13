@@ -31,19 +31,18 @@ pub struct Heartbeat;
 
 impl EventHandler for Heartbeat {
     fn handle(self, model: &mut CoreModel) {
-        let filename = model
-            .player
-            .playing_video()
-            .map(|v| v.name_str().to_string());
+        let filename = model.player.playing_video().map(|v| v.as_str().to_string());
         let position = model.player.get_position();
         let speed = model.player.get_speed();
         let paused = model.player.is_paused().unwrap_or(true);
+        let file_loaded = model.player.video_loaded();
         model.communicator.send(
             NiketsuVideoStatus {
                 filename,
                 position,
                 speed,
                 paused,
+                file_loaded,
             }
             .into(),
         );
@@ -52,15 +51,16 @@ impl EventHandler for Heartbeat {
 
 #[cfg(test)]
 mod tests {
+    use arcstr::ArcStr;
     use mockall::predicate::eq;
     use tokio::time::timeout;
 
     use super::*;
     use crate::builder::CoreBuilder;
     use crate::communicator::{MockCommunicatorTrait, OutgoingMessage};
-    use crate::file_database::{FileEntry, MockFileDatabaseTrait};
-    use crate::player::{MockMediaPlayerTrait, PlayerVideo};
-    use crate::playlist::MockPlaylistHandlerTrait;
+    use crate::file_database::MockFileDatabaseTrait;
+    use crate::player::MockMediaPlayerTrait;
+    use crate::playlist::{MockPlaylistHandlerTrait, Video, VideoInner};
     use crate::ui::MockUserInterfaceTrait;
 
     #[tokio::test]
@@ -85,24 +85,25 @@ mod tests {
         let file_database = MockFileDatabaseTrait::default();
         let playlist_handler = MockPlaylistHandlerTrait::default();
 
-        let video = String::from("video2");
-        let video_file = FileEntry::new(video.clone(), "/video2".into(), None);
+        let video = ArcStr::from("video2");
         let position = Some(Duration::from_secs(15));
         let speed = 1.5;
         let paused = true;
         let message = OutgoingMessage::from(NiketsuVideoStatus {
-            filename: Some(video.clone()),
+            filename: Some(video.to_string()),
             position,
             speed,
             paused,
+            file_loaded: true,
         });
 
         player
             .expect_playing_video()
-            .return_const(PlayerVideo::File(video_file));
+            .return_const::<Video>(VideoInner::File(video).into());
         player.expect_get_position().return_const(position);
         player.expect_get_speed().return_const(speed);
         player.expect_is_paused().return_const(paused);
+        player.expect_video_loaded().return_const(true);
         communicator
             .expect_send()
             .with(eq(message))

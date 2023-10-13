@@ -3,14 +3,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
-use ordered_float::OrderedFloat;
-use url::Url;
 
 use super::communicator::{
     NiketsuPause, NiketsuPlaybackSpeed, NiketsuSeek, NiketsuStart, OutgoingMessage,
 };
-use super::file_database::FileEntry;
-use super::playlist::PlaylistVideo;
+use super::playlist::Video;
 use super::{CoreModel, EventHandler};
 use crate::communicator::NiketsuSelect;
 use crate::file_database::FileStore;
@@ -25,78 +22,15 @@ pub trait MediaPlayerTrait: std::fmt::Debug + Send {
     fn get_speed(&self) -> f64;
     fn set_position(&mut self, pos: Duration);
     fn get_position(&mut self) -> Option<Duration>;
-    fn load_video(&mut self, load: LoadVideo);
+    // TODO separate FileStore from MediaPlayer
+    // for this we need to move the file_loaded out of the player
+    fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore);
     fn unload_video(&mut self);
-    fn playing_video(&self) -> Option<PlayerVideo>;
+    fn maybe_reload_video(&mut self, db: &FileStore);
+    fn playing_video(&self) -> Option<Video>;
+    fn video_loaded(&self) -> bool;
     async fn event(&mut self) -> MediaPlayerEvent;
 }
-
-pub trait MediaPlayerTraitExt {
-    fn load_playlist_video(&mut self, video: &PlaylistVideo, db: &FileStore) -> bool;
-}
-
-impl<T: ?Sized + MediaPlayerTrait> MediaPlayerTraitExt for T {
-    fn load_playlist_video(&mut self, video: &PlaylistVideo, db: &FileStore) -> bool {
-        let Some(player_video) = video.to_player_video(db) else {
-            return false;
-        };
-        let load_video = player_video.into_load_video(self);
-        self.load_video(load_video);
-        true
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlayerVideo {
-    Url(Url),
-    File(FileEntry),
-}
-
-impl PlayerVideo {
-    pub fn path_str(&self) -> Option<&str> {
-        match self {
-            PlayerVideo::Url(url) => Some(url.as_str()),
-            PlayerVideo::File(entry) => entry.path().to_str(),
-        }
-    }
-
-    pub fn name_str(&self) -> &str {
-        match self {
-            PlayerVideo::Url(url) => url.as_str(),
-            PlayerVideo::File(entry) => entry.file_name(),
-        }
-    }
-
-    pub fn into_load_video<T: ?Sized + MediaPlayerTrait>(self, player: &T) -> LoadVideo {
-        LoadVideo {
-            video: self,
-            pos: Duration::ZERO,
-            speed: player.get_speed(),
-            paused: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct LoadVideo {
-    pub video: PlayerVideo,
-    pub pos: Duration,
-    pub speed: f64,
-    pub paused: bool,
-}
-
-impl PartialEq for LoadVideo {
-    fn eq(&self, other: &Self) -> bool {
-        let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(self.speed);
-        speed_self.eq(&speed_other)
-            && self.video.eq(&other.video)
-            && self.pos.eq(&other.pos)
-            && self.paused.eq(&other.paused)
-    }
-}
-
-impl Eq for LoadVideo {}
 
 #[enum_dispatch(EventHandler)]
 #[derive(Debug, Clone)]
@@ -161,11 +95,7 @@ impl EventHandler for PlayerPositionChange {
         let Some(playing) = model.player.playing_video() else {
             return;
         };
-        let file = playing.name_str().to_string();
-        let Some(paused) = model.player.is_paused() else {
-            return;
-        };
-        let speed = model.player.get_speed();
+        let file = playing.as_str().to_string();
         let actor = model.user.name.clone();
         let position = self.pos;
 
@@ -173,8 +103,6 @@ impl EventHandler for PlayerPositionChange {
             NiketsuSeek {
                 actor,
                 file,
-                paused,
-                speed,
                 position,
             }
             .into(),
@@ -212,21 +140,24 @@ impl EventHandler for PlayerFileEnd {
         let mut filename = None;
         if let Some(next) = model.playlist.advance_to_next() {
             filename = Some(next.as_str().to_string());
-            if !model
+            model
                 .player
-                .load_playlist_video(&next, model.database.all_files())
-            {
-                model.player.unload_video();
-            }
+                .load_video(next.clone(), Duration::ZERO, model.database.all_files());
             model.ui.video_change(Some(next));
         } else {
             model.player.unload_video();
             model.ui.video_change(None);
         }
         let actor = model.user.name.clone();
-        model
-            .communicator
-            .send(NiketsuSelect { actor, filename }.into());
+        let position = model.player.get_position().unwrap_or_default();
+        model.communicator.send(
+            NiketsuSelect {
+                actor,
+                filename,
+                position,
+            }
+            .into(),
+        );
     }
 }
 

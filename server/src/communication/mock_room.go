@@ -192,7 +192,7 @@ func (mr *MockRoomStateHandlerMockRecorder) SetPlaylist(playlist interface{}) *g
 }
 
 // SetPlaylistState mocks base method.
-func (m *MockRoomStateHandler) SetPlaylistState(video *string, position Duration, paused bool, lastSeek Duration, speed float64) {
+func (m *MockRoomStateHandler) SetPlaylistState(video *string, position Duration, paused *bool, lastSeek *Duration, speed *float64) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "SetPlaylistState", video, position, paused, lastSeek, speed)
 }

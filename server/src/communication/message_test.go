@@ -13,6 +13,7 @@ var (
 	testPosition          Duration = Duration{0}
 	testPaused            bool     = false
 	testSpeed             float64  = 1.0
+	testFileLoaded        bool     = true
 	testReady             bool     = true
 	testNotReady          bool     = false
 	testUsername          string   = "testUser"
@@ -28,15 +29,15 @@ var (
 	testOtherCommand      string   = "testCommand2"
 	testOtherCommandValue bool     = false
 	pingMessage           string   = fmt.Sprintf(`{"uuid":"%s","type":"ping"}`, testUuid)
-	videoStatusMessage    string   = fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-		testFilename, testPosition.Uint64(), testPaused, testSpeed, testUsername)
+	videoStatusMessage    string   = fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"fileLoaded":%t,"username":"%s","type":"videoStatus"}`,
+		testFilename, testPosition.Uint64(), testPaused, testSpeed, testFileLoaded, testUsername)
 	statusListMessage string = fmt.Sprintf(`{"rooms":{"room1":[{"ready":%t,"username":"%s"},{"ready":%t,"username":"%s"}],"room2":[]},"type":"statusList"}`,
 		testNotReady, testUsername, testReady, testUsername2)
 	pauseMessage string = fmt.Sprintf(`{"username":"%s","type":"pause"}`, testUsername)
 	startMessage string = fmt.Sprintf(`{"username":"%s","type":"start"}`, testUsername)
-	seekMessage  string = fmt.Sprintf(`{"filename":"%s","position":%d,"speed":%g,"paused":%t,"desync":%t,"username":"%s","type":"seek"}`,
-		testFilename, testPosition.Uint64(), testSpeed, testPaused, testDesync, testUsername)
-	selectMessage        string = fmt.Sprintf(`{"filename":"%s","username":"%s","type":"select"}`, testFilename, testUsername)
+	seekMessage  string = fmt.Sprintf(`{"filename":"%s","position":%d,"desync":%t,"username":"%s","type":"seek"}`,
+		testFilename, testPosition.Uint64(), testDesync, testUsername)
+	selectMessage        string = fmt.Sprintf(`{"filename":"%s","position":%d,"username":"%s","type":"select"}`, testFilename, testPosition.Uint64(), testUsername)
 	userMessage          string = fmt.Sprintf(`{"message":"%s","username":"%s","type":"userMessage"}`, testMessage, testUsername)
 	serverMessage        string = fmt.Sprintf(`{"message":"%s","error":%t,"type":"serverMessage"}`, testMessage, testError)
 	playlistMessage      string = fmt.Sprintf(`{"playlist":["%s","%s"],"username":"%s","type":"playlist"}`, testPlaylist[0], testPlaylist[1], testUsername)
@@ -127,11 +128,12 @@ func TestMarshal(t *testing.T) {
 	testMessageContent(t, []byte(pingMessage), ping, err)
 
 	videoStatus, err := MarshalMessage(VideoStatus{
-		Filename: &testFilename,
-		Position: &testPosition,
-		Paused:   testPaused,
-		Speed:    testSpeed,
-		Username: testUsername,
+		Filename:   &testFilename,
+		Position:   &testPosition,
+		Paused:     testPaused,
+		Speed:      testSpeed,
+		FileLoaded: testFileLoaded,
+		Username:   testUsername,
 	})
 	testMessageContent(t, []byte(videoStatusMessage), videoStatus, err)
 
@@ -156,8 +158,6 @@ func TestMarshal(t *testing.T) {
 	seek, err := MarshalMessage(Seek{
 		Filename: testFilename,
 		Position: testPosition,
-		Speed:    testSpeed,
-		Paused:   testPaused,
 		Desync:   testDesync,
 		Username: testUsername,
 	})

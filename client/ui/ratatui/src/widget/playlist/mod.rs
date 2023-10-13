@@ -1,4 +1,4 @@
-use niketsu_core::playlist::{Playlist, PlaylistVideo};
+use niketsu_core::playlist::{Playlist, Video};
 use ratatui::prelude::{Buffer, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols::scrollbar;
@@ -19,7 +19,7 @@ pub struct PlaylistWidget {
     playlist: Playlist,
     state: ListStateWrapper,
     selection_offset: usize,
-    clipboard: Option<Vec<PlaylistVideo>>,
+    clipboard: Option<Vec<Video>>,
     style: Style,
 }
 
@@ -73,7 +73,7 @@ impl PlaylistWidget {
         };
     }
 
-    pub fn get_current_video(&self) -> Option<&PlaylistVideo> {
+    pub fn get_current_video(&self) -> Option<&Video> {
         match self.state.selected() {
             Some(index) => self.playlist.get(index),
             None => None,
@@ -99,7 +99,7 @@ impl PlaylistWidget {
         }
     }
 
-    pub fn get_clipboard(&self) -> Option<Vec<PlaylistVideo>> {
+    pub fn get_clipboard(&self) -> Option<Vec<Video>> {
         self.clipboard.clone()
     }
 }

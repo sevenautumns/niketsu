@@ -25,7 +25,7 @@ pub struct PlaylistWidget<'a> {
 }
 
 impl<'a> PlaylistWidget<'a> {
-    pub fn new(state: PlaylistWidgetState, playing: Option<PlaylistVideo>) -> Self {
+    pub fn new(state: PlaylistWidgetState, playing: Option<Video>) -> Self {
         // TODO Add context menu
 
         let mut file_btns = vec![];
@@ -110,7 +110,7 @@ impl<'a> PlaylistWidget<'a> {
         &self,
         layout: iced::advanced::Layout<'_>,
         cursor_position: Point,
-    ) -> Option<PlaylistVideo> {
+    ) -> Option<Video> {
         let files = self.state.playlist.iter().zip(layout.children());
         for (file, lay) in files {
             if lay.bounds().contains(cursor_position) {
@@ -166,7 +166,7 @@ impl<'a> PlaylistWidget<'a> {
                 }) {
                     shell.publish(
                         PlaylistWidgetMessage::from(Move {
-                            video: PlaylistVideo::from(name.as_str()),
+                            video: Video::from(name.as_str()),
                             pos: 0,
                         })
                         .into(),
@@ -344,7 +344,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
                     if let Some(clipboard) = clipboard.read() {
                         shell.publish(
                             PlaylistWidgetMessage::from(Move {
-                                video: PlaylistVideo::from(clipboard.as_str()),
+                                video: Video::from(clipboard.as_str()),
                                 pos: 0,
                             })
                             .into(),
@@ -441,7 +441,7 @@ struct InnerState {
 pub struct PlaylistWidgetState {
     playlist: Playlist,
     file_store: FileStore,
-    selected: Option<PlaylistVideo>,
+    selected: Option<Video>,
     interaction: FileInteraction,
 }
 
@@ -470,16 +470,16 @@ impl FileInteraction {
 }
 
 impl PlaylistWidgetState {
-    pub fn move_video(&mut self, video: &PlaylistVideo, index: usize) {
+    pub fn move_video(&mut self, video: &Video, index: usize) {
         self.playlist.move_video(video, index);
     }
 
-    pub fn file_interaction(&mut self, video: Option<PlaylistVideo>, interaction: FileInteraction) {
+    pub fn file_interaction(&mut self, video: Option<Video>, interaction: FileInteraction) {
         self.selected = video;
         self.interaction = interaction;
     }
 
-    pub fn delete_video(&mut self, video: &PlaylistVideo) {
+    pub fn delete_video(&mut self, video: &Video) {
         self.playlist.remove_by_video(video);
     }
 
@@ -498,7 +498,7 @@ impl PlaylistWidgetState {
         self.file_store = store
     }
 
-    pub fn video_index(&self, video: &PlaylistVideo) -> Option<usize> {
+    pub fn video_index(&self, video: &Video) -> Option<usize> {
         for (i, v) in self.playlist.iter().enumerate() {
             if v.eq(video) {
                 return Some(i);

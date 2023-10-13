@@ -1,7 +1,7 @@
 use enum_dispatch::enum_dispatch;
 use iced::Command;
 use log::debug;
-use niketsu_core::playlist::PlaylistVideo;
+use niketsu_core::playlist::Video;
 use niketsu_core::ui::UiModel;
 
 use super::{FileInteraction, PlaylistWidgetState};
@@ -31,7 +31,7 @@ impl MessageHandler for PlaylistWidgetMessage {
 
 #[derive(Debug, Clone)]
 pub struct DoubleClick {
-    pub video: PlaylistVideo,
+    pub video: Video,
 }
 
 impl PlaylistWidgetMessageTrait for DoubleClick {
@@ -43,7 +43,7 @@ impl PlaylistWidgetMessageTrait for DoubleClick {
 
 #[derive(Debug, Clone)]
 pub struct Delete {
-    pub video: PlaylistVideo,
+    pub video: Video,
 }
 
 impl PlaylistWidgetMessageTrait for Delete {
@@ -56,7 +56,7 @@ impl PlaylistWidgetMessageTrait for Delete {
 
 #[derive(Debug, Clone)]
 pub struct Move {
-    pub video: PlaylistVideo,
+    pub video: Video,
     pub pos: usize,
 }
 
@@ -70,7 +70,7 @@ impl PlaylistWidgetMessageTrait for Move {
 
 #[derive(Debug, Clone)]
 pub struct Interaction {
-    pub video: Option<PlaylistVideo>,
+    pub video: Option<Video>,
     pub interaction: FileInteraction,
 }
 

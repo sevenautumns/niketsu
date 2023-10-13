@@ -35,11 +35,12 @@ type Ping struct {
 func (p Ping) Type() MessageType { return PingType }
 
 type VideoStatus struct {
-	Filename *string   `json:"filename"`
-	Position *Duration `json:"position"`
-	Paused   bool      `json:"paused"`
-	Speed    float64   `json:"speed"`
-	Username string    `json:"username"`
+	Filename   *string   `json:"filename"`
+	Position   *Duration `json:"position"`
+	Paused     bool      `json:"paused"`
+	Speed      float64   `json:"speed"`
+	FileLoaded bool      `json:"fileLoaded"`
+	Username   string    `json:"username"`
 }
 
 func (vs VideoStatus) Type() MessageType { return VideoStatusType }
@@ -59,8 +60,6 @@ func (s Start) Type() MessageType { return StartType }
 type Seek struct {
 	Filename string   `json:"filename"`
 	Position Duration `json:"position"`
-	Speed    float64  `json:"speed"`
-	Paused   bool     `json:"paused"`
 	Desync   bool     `json:"desync"`
 	Username string   `json:"username"`
 }
@@ -68,8 +67,9 @@ type Seek struct {
 func (s Seek) Type() MessageType { return SeekType }
 
 type Select struct {
-	Filename *string `json:"filename"`
-	Username string  `json:"username"`
+	Filename *string  `json:"filename"`
+	Position Duration `json:"position"`
+	Username string   `json:"username"`
 }
 
 func (s Select) Type() MessageType { return SelectType }
