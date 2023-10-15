@@ -17,7 +17,12 @@ impl EventHandler for FuzzySearch {
                     }
                     KeyCode::Enter => {
                         if let Some(video) = view.app.fuzzy_search_widget.get_selected() {
-                            view.add(&video.file_name().into());
+                            if let Some(index) = view.app.playlist_widget_state.get_current_index()
+                            {
+                                view.insert(index + 1, &video.file_name().into());
+                            } else {
+                                view.insert(0, &video.file_name().into());
+                            }
                         }
                     }
                     KeyCode::Up => view.app.fuzzy_search_widget.next(),

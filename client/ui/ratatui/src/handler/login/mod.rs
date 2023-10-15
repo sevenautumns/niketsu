@@ -21,10 +21,11 @@ impl EventHandler for Login {
                         let input = view.app.login_widget.collect_input();
                         view.model.change_server(ServerChange {
                             addr: input.0,
-                            secure: input.3,
-                            password: Some(input.1),
-                            room: RoomChange { room: input.2 },
+                            secure: input.1,
+                            password: Some(input.2),
+                            room: RoomChange { room: input.3 },
                         });
+                        view.model.change_username(input.4);
                     }
                     _ => view.app.login_widget.input(*key),
                 }

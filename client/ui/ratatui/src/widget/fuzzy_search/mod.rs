@@ -10,6 +10,7 @@ use ratatui_textarea::Input;
 
 use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
 
+//TODO add item where cursor is
 #[derive(Debug, Default, Clone)]
 pub struct FuzzySearchWidget {
     file_database: FileStore,
@@ -39,7 +40,7 @@ impl FuzzySearchWidget {
     }
 
     pub fn get_state(&self) -> ListState {
-        self.state.inner().clone()
+        self.state.clone_inner()
     }
 
     pub fn get_selected(&self) -> Option<FileEntry> {
@@ -153,16 +154,19 @@ impl StatefulWidget for FuzzySearchWidget {
                 .map(|s| {
                     let mut text = Vec::new();
                     let name = s.entry.file_name();
-                    let mut last = 0;
-                    for &pos in s.hits.iter() {
-                        text.push(Span::raw(name[last..pos].to_string()));
-                        text.push(Span::styled(
-                            name[pos..pos + 1].to_string(),
-                            self.style.yellow(),
-                        ));
-                        last = pos + 1;
+                    let hits = s.hits;
+                    let mut hits_index = 0;
+                    for (index, char) in name.char_indices() {
+                        if index < hits.len() && index == hits[hits_index] {
+                            text.push(Span::styled(
+                                char.to_string(),
+                                Style::default().fg(Color::Yellow),
+                            ));
+                            hits_index += 1;
+                        } else {
+                            text.push(Span::raw(char.to_string()));
+                        }
                     }
-                    text.push(Span::raw(name[last..].to_string()));
                     ListItem::new(Line::from(text))
                 })
                 .collect(),

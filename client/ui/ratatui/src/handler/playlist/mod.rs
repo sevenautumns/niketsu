@@ -20,33 +20,33 @@ impl EventHandler for Playlist {
                     view.hover_highlight();
                 }
                 KeyCode::Enter => {
-                    if let Some(video) = view.app.playlist_widget.get_current_video() {
+                    if let Some(video) = view.app.playlist_widget_state.get_current_video() {
                         view.select(video.clone())
                     }
                 }
-                KeyCode::PageUp => view.app.playlist_widget.jump_next(5),
-                KeyCode::PageDown => view.app.playlist_widget.jump_previous(5),
+                KeyCode::PageUp => view.app.playlist_widget_state.jump_next(5),
+                KeyCode::PageDown => view.app.playlist_widget_state.jump_previous(5),
                 KeyCode::Up => {
-                    view.app.playlist_widget.next();
+                    view.app.playlist_widget_state.next();
                 }
                 KeyCode::Down => {
-                    view.app.playlist_widget.previous();
+                    view.app.playlist_widget_state.previous();
                 }
                 KeyCode::Char('d') => {
-                    if let Some(index) = view.app.playlist_widget.yank_clipboard() {
+                    if let Some(index) = view.app.playlist_widget_state.yank_clipboard() {
                         view.remove_range(index);
-                        view.app.playlist_widget.reset_offset();
+                        view.app.playlist_widget_state.reset_offset();
                     }
                 }
                 KeyCode::Char('x') => {
-                    view.app.playlist_widget.increase_selection_offset();
+                    view.app.playlist_widget_state.increase_selection_offset();
                 }
                 KeyCode::Char('y') => {
-                    view.app.playlist_widget.yank_clipboard();
+                    view.app.playlist_widget_state.yank_clipboard();
                 }
                 KeyCode::Char('p') => {
-                    if let Some(index) = view.app.playlist_widget.get_current_index() {
-                        if let Some(clipboard) = view.app.playlist_widget.get_clipboard() {
+                    if let Some(index) = view.app.playlist_widget_state.get_current_index() {
+                        if let Some(clipboard) = view.app.playlist_widget_state.get_clipboard() {
                             view.append_at(index, clipboard);
                         }
                     }
@@ -54,7 +54,7 @@ impl EventHandler for Playlist {
                 _ => {}
             },
             Event::Paste(data) => {
-                view.add(&Video::from(data.as_str()));
+                view.insert(0, &Video::from(data.as_str()));
             }
             _ => {}
         }
@@ -71,6 +71,6 @@ impl MainEventHandler for Playlist {
     }
 
     fn set_style(&self, view: &mut RatatuiView, style: Style) {
-        view.app.playlist_widget.set_style(style);
+        view.app.playlist_widget_state.set_style(style);
     }
 }

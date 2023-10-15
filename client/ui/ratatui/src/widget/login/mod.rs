@@ -60,11 +60,12 @@ impl LoginWidget {
         }
     }
 
-    pub fn collect_input(&self) -> (String, String, String, bool) {
-        let address = self.address_field.lines().join("");
-        let room = self.room_field.lines().join("");
-        let password = self.password_field.lines().join("");
-        (address, room, password, self.secure)
+    pub fn collect_input(&self) -> (String, bool, String, String, String) {
+        let address = self.address_field.get_input();
+        let room = self.room_field.get_input();
+        let password = self.password_field.get_input();
+        let username = self.username_field.get_input();
+        (address, self.secure, password, room, username)
     }
 
     pub fn input(&mut self, key: KeyEvent) {

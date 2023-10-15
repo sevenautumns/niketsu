@@ -923,18 +923,17 @@ func (worker *Worker) handleTimeDifference() {
 }
 
 func (worker *Worker) shouldSeek(minPosition *Duration, workerPosition *Duration, speed float64) bool {
-	if workerPosition == nil {
+	lastSeek := worker.room.RoomState().lastSeek
+	if workerPosition == nil || workerPosition.Smaller(lastSeek) {
 		return true
 	}
 
-	if minPosition == nil {
+	if minPosition == nil || minPosition.Smaller(lastSeek) {
 		return false
 	}
 
-	lastSeek := worker.room.RoomState().lastSeek
-	if minPosition.Smaller(lastSeek) {
-		return false
-	}
+	clientDifference := workerPosition.Sub(*minPosition)
+	adjustedMaxClientDifference := maxClientDifference.MultFloat64(speed)
 
-	return (workerPosition.Greater(*minPosition)) && (workerPosition.Sub(*minPosition).Greater(maxClientDifference.MultFloat64(speed)))
+	return workerPosition.Greater(*minPosition) && clientDifference.Greater(adjustedMaxClientDifference)
 }
