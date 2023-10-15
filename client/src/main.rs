@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 use niketsu::cli::Args;
+use niketsu::log::setup_logger;
 use niketsu_communicator::WebsocketCommunicator;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::config::Config;
@@ -16,9 +17,9 @@ use niketsu_ratatui::RatatuiUI;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    pretty_env_logger::init();
-
     let args = Args::parse();
+    setup_logger(args.log_level_terminal.into())?;
+
     let mut config: Config = Config::load_or_default();
     let iced_config: IcedConfig = IcedConfig::load_or_default();
 

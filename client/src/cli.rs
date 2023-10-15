@@ -13,11 +13,27 @@ pub struct Args {
     /// Auto-login from config
     #[arg(short, long)]
     pub auto_login: Option<bool>,
+    /// Set the terminal log level (Incompatible with ratatui)
+    #[arg(short, long, default_value_t = LogLevel::Off)]
+    pub log_level_terminal: LogLevel,
 }
 
 #[derive(ValueEnum, Debug, Default, Display, Clone, Copy, PartialEq)]
+#[strum(serialize_all = "snake_case")]
 pub enum UI {
     #[default]
     Iced,
     Ratatui,
+}
+
+#[derive(ValueEnum, Debug, Default, Display, Clone, Copy, PartialEq)]
+#[strum(serialize_all = "snake_case")]
+pub enum LogLevel {
+    #[default]
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
 }

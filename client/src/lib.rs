@@ -2,3 +2,4 @@
 #![warn(clippy::too_many_lines)]
 
 pub mod cli;
+pub mod log;
