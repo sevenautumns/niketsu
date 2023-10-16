@@ -1,4 +1,5 @@
 use std::io::{self, Stdout};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use crossterm::event::{
@@ -28,6 +29,7 @@ use crate::widget::chat_input::ChatInputWidget;
 use crate::widget::command::CommandInputWidget;
 use crate::widget::database::{DatabaseWidget, DatabaseWidgetState};
 use crate::widget::fuzzy_search::FuzzySearchWidget;
+use crate::widget::media::MediaDirWidget;
 use crate::widget::options::{OptionsWidget, OptionsWidgetState};
 use crate::widget::playlist::PlaylistWidgetState;
 use crate::widget::room::{RoomsWidget, RoomsWidgetState};
@@ -36,6 +38,7 @@ use crate::widget::OverlayWidgetState;
 pub struct RatatuiView {
     pub app: App,
     pub model: UiModel,
+    pub config: Config,
 }
 
 enum LoopControl {
@@ -65,13 +68,14 @@ pub struct App {
     pub options_widget_state: OptionsWidgetState,
     //TODO pub help_widget: HelpWidget,
     pub login_widget: LoginWidget,
+    pub media_widget: MediaDirWidget,
     pub fuzzy_search_widget: FuzzySearchWidget,
     pub current_search: Option<FuzzySearch>,
     mode: Mode,
 }
 
 impl App {
-    fn new() -> App {
+    fn new(config: Config) -> App {
         App {
             current_state: State::from(Chat {}),
             chat_widget_state: {
@@ -86,8 +90,9 @@ impl App {
             chat_input_widget: ChatInputWidget::new(),
             current_overlay_state: None,
             options_widget_state: OptionsWidgetState::new(),
-            login_widget: LoginWidget::new(),
+            login_widget: LoginWidget::new(config.clone()),
             fuzzy_search_widget: FuzzySearchWidget::new(),
+            media_widget: MediaDirWidget::new(config.media_dirs),
             current_search: None,
             mode: Mode::Normal,
         }
@@ -118,10 +123,11 @@ impl App {
 impl RatatuiView {
     pub fn create(config: Config) -> (UserInterface, Box<dyn FnOnce() -> anyhow::Result<()>>) {
         let ui = UserInterface::default();
-        let app = App::new();
+        let app = App::new(config.clone());
         let mut view = Self {
             app,
             model: ui.model().clone(),
+            config,
         };
         let handle = Box::new(move || futures::executor::block_on(view.run()));
         (ui, handle)
@@ -294,6 +300,31 @@ impl RatatuiView {
 
     pub fn select(&mut self, video: Video) {
         self.model.change_video(video)
+    }
+
+    pub fn change_media_dirs(&mut self, paths: Vec<PathBuf>) {
+        self.model.change_db_paths(paths)
+    }
+
+    pub fn save_config(
+        &mut self,
+        address: String,
+        secure: bool,
+        password: String,
+        room: String,
+        username: String,
+    ) {
+        self.config.url = address;
+        self.config.secure = secure;
+        self.config.password = password;
+        self.config.room = room;
+        self.config.username = username;
+        _ = self.config.save();
+    }
+
+    pub fn save_media_dir(&mut self, paths: Vec<String>) {
+        self.config.media_dirs = paths;
+        _ = self.config.save();
     }
 
     fn handle_server_change(
@@ -480,6 +511,15 @@ impl RatatuiView {
                             app.fuzzy_search_widget.clone(),
                             area,
                             &mut app.fuzzy_search_widget.get_state(),
+                        );
+                    }
+                    OverlayState::MediaDir(_media_dir) => {
+                        let area = app.media_widget.area(size);
+                        f.render_widget(Clear, area);
+                        f.render_stateful_widget(
+                            app.media_widget.clone(),
+                            area,
+                            &mut app.media_widget.get_state(),
                         );
                     }
                 }
