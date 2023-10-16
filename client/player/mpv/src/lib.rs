@@ -389,6 +389,9 @@ impl MediaPlayerTrait for Mpv {
     }
 
     fn maybe_reload_video(&mut self, db: &FileStore) {
+        if self.status.file_loaded {
+            return;
+        }
         let Some(load) = &self.status.file else {
             self.unload_video();
             return;
