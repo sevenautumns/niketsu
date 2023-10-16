@@ -14,9 +14,11 @@ niketsu-ratatui.path = "ui/ratatui"
 anyhow.workspace = true
 tokio.workspace = true
 strum.workspace = true
-pretty_env_logger = "0.5"
+directories.workspace = true
+log.workspace = true
 whoami = "1.4"
 clap = { version = "4.4.2", features = ["derive"] }
+simplelog = { version = "0.12", features = ["paris"] }
 
 [build-dependencies]
 anyhow.workspace = true
