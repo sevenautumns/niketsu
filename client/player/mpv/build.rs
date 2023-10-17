@@ -1,4 +1,3 @@
-use std::env;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -6,7 +5,7 @@ use bindgen::callbacks::{DeriveInfo, ParseCallbacks};
 use bindgen::EnumVariation;
 
 fn main() -> Result<()> {
-    let outdir = env::var_os("OUT_DIR").context("No outdir found")?;
+    let outdir = std::env::var_os("OUT_DIR").context("No outdir found")?;
 
     let bindings = bindgen::Builder::default()
         .header_contents("mpv.h", "#include <mpv/client.h>")
@@ -22,7 +21,7 @@ fn main() -> Result<()> {
         .write_to_file(PathBuf::from(&outdir).join("libmpv.rs"))
         .context("Error writing bindgen")?;
 
-    if env::var("CARGO_CFG_TARGET_FAMILY").unwrap().eq("unix") {
+    if std::env::var("CARGO_CFG_TARGET_FAMILY").unwrap().eq("unix") {
         link_arg_linux();
     } else {
         link_arg_windows();
@@ -32,7 +31,7 @@ fn main() -> Result<()> {
 }
 
 fn link_arg_windows() {
-    let source = env::var("MPV_SOURCE").expect("env var `MPV_SOURCE` not set");
+    let source = std::env::var("MPV_SOURCE").expect("env var `MPV_SOURCE` not set");
     println!("cargo:rustc-link-search={source}");
     println!("cargo:rustc-link-lib=mpv");
 }
