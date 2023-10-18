@@ -7,6 +7,7 @@ use self::chat_input::ChatInput;
 use self::database::Database;
 use self::fuzzy_search::FuzzySearch;
 use self::login::Login;
+use self::media::MediaDir;
 use self::options::Options;
 use self::playlist::Playlist;
 use self::room::Rooms;
@@ -19,6 +20,7 @@ pub(crate) mod database;
 pub(crate) mod fuzzy_search;
 pub(crate) mod help;
 pub(crate) mod login;
+pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
 pub(crate) mod room;
@@ -56,6 +58,7 @@ pub enum OverlayState {
     Login(Login),
     FuzzySearch(FuzzySearch),
     Option(Options),
+    MediaDir(MediaDir),
     // Help,
 }
 

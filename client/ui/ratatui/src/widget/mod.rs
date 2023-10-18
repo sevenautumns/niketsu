@@ -9,6 +9,7 @@ pub(crate) mod command;
 pub(crate) mod database;
 pub(crate) mod fuzzy_search;
 pub(crate) mod login;
+pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
 pub(crate) mod room;
@@ -140,8 +141,8 @@ impl From<String> for TextAreaWrapper {
 }
 
 impl TextAreaWrapper {
-    fn new(title: &str) -> Self {
-        let mut text_area = Self::default();
+    fn new(title: &str, content: String) -> Self {
+        let mut text_area = Self::from(content);
         text_area.inner.set_block(
             Block::default()
                 .borders(Borders::ALL)

@@ -2,6 +2,7 @@ use crossterm::event::{Event, KeyCode, KeyEventKind};
 
 use super::fuzzy_search::FuzzySearch;
 use super::login::Login;
+use super::media::MediaDir;
 use super::{EventHandler, OverlayState};
 use crate::view::RatatuiView;
 
@@ -24,6 +25,9 @@ impl EventHandler for Options {
                             .set_current_overlay_state(Some(OverlayState::from(FuzzySearch {})));
                         view.app.fuzzy_search("".to_string());
                     }
+                    KeyCode::Char('m') => view
+                        .app
+                        .set_current_overlay_state(Some(OverlayState::from(MediaDir {}))),
                     _ => {
                         view.app.reset_overlay();
                     }

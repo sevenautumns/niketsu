@@ -60,6 +60,7 @@ impl StatefulWidget for OptionsWidget {
             Line::from(vec![Span::raw(" h Show help")]),
             Line::from(vec![Span::raw(" l Open login")]),
             Line::from(vec![Span::raw(" f Open fuzzy search")]),
+            Line::from(vec![Span::raw(" m Open media paths")]),
         ])
         .style(state.style)
         .block(options_block);

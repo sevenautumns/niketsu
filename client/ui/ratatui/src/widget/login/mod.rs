@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
+use niketsu_core::config::Config;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::Text;
@@ -28,14 +29,14 @@ pub struct LoginWidget {
 }
 
 impl LoginWidget {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             current_state: State::default(),
-            address_field: TextAreaWrapper::new("Address"),
-            password_field: TextAreaWrapper::new("Password"),
-            username_field: TextAreaWrapper::new("Username"),
-            room_field: TextAreaWrapper::new("Room"),
-            secure: true,
+            address_field: TextAreaWrapper::new("Address", config.url),
+            password_field: TextAreaWrapper::new("Password", config.password),
+            username_field: TextAreaWrapper::new("Username", config.username),
+            room_field: TextAreaWrapper::new("Room", config.room),
+            secure: config.secure,
             style: Style::default().fg(Color::Cyan),
         }
     }
