@@ -13,6 +13,7 @@ use niketsu_core::player::*;
 use super::bindings::mpv_event;
 use super::{Mpv, MpvHandle, MpvProperty};
 use crate::bindings::*;
+use crate::FileLoadStatus;
 
 unsafe extern "C" fn on_mpv_event(_: *mut c_void) {
     if let Some(waker) = EVENT_WAKER.load().as_ref() {
@@ -104,6 +105,9 @@ pub struct MpvFileLoaded;
 
 impl MpvEventTrait for MpvFileLoaded {
     fn process(self, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
+        // TODO // a race condition is thinkable where an old file is loaded,
+        // TODO // when a new file was already added
+        mpv.status.file_load_status = FileLoadStatus::Loaded;
         if mpv.status.paused {
             mpv.pause();
         } else {
