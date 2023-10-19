@@ -527,7 +527,7 @@ mod tests {
         let message = OutgoingMessage::from(NiketsuSelect {
             actor: user.clone(),
             filename: Some("video1".to_string()),
-            position: Duration::ZERO,
+            position: pos,
         });
 
         file_database.expect_all_files().return_const(file_store);

@@ -91,13 +91,20 @@ impl From<MpvCommand> for CString {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum FileLoadStatus {
+    NotLoaded,
+    Loading,
+    Loaded,
+}
+
 #[derive(Debug, Clone)]
 pub struct MpvStatus {
     paused: bool,
     seeking: bool,
     speed: f64,
     file: Option<Video>,
-    file_loaded: bool,
+    file_load_status: FileLoadStatus,
     load_position: Duration,
 }
 
@@ -108,7 +115,7 @@ impl Default for MpvStatus {
             seeking: false,
             speed: 1.0,
             file: None,
-            file_loaded: false,
+            file_load_status: FileLoadStatus::NotLoaded,
             load_position: Duration::ZERO,
         }
     }
@@ -297,7 +304,7 @@ impl Mpv {
         let options = format!("start={start}");
         let options = CString::new(options).expect("Got invalid UTF-8");
         let res = self.send_command(&[&cmd, &path, &replace, &options]);
-        self.status.file_loaded = true;
+        self.status.file_load_status = FileLoadStatus::Loading;
         log!(res)
     }
 }
@@ -358,6 +365,12 @@ impl MediaPlayerTrait for Mpv {
 
     fn get_position(&mut self) -> Option<Duration> {
         self.status.file.as_ref()?;
+
+        // If the file is not loaded yet, return the expected load position
+        if !matches!(self.status.file_load_status, FileLoadStatus::Loaded) {
+            return Some(self.status.load_position);
+        }
+
         self.get_property_f64(MpvProperty::PlaybackTime)
             .ok()
             .map(Duration::from_secs_f64)
@@ -365,7 +378,7 @@ impl MediaPlayerTrait for Mpv {
 
     fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore) {
         self.status.paused = true;
-        self.status.file_loaded = false;
+        self.status.file_load_status = FileLoadStatus::NotLoaded;
         self.status.file = Some(load.clone());
         self.status.load_position = pos;
 
@@ -375,7 +388,7 @@ impl MediaPlayerTrait for Mpv {
     // TODO allow for an unload which sets status.file to None
     // keep one which does not touch status.file
     fn unload_video(&mut self) {
-        self.status.file_loaded = false;
+        self.status.file_load_status = FileLoadStatus::NotLoaded;
 
         let cmd: CString = MpvCommand::Loadfile.into();
         let path = CString::new("null://").expect("Got invalid UTF-8");
@@ -389,7 +402,7 @@ impl MediaPlayerTrait for Mpv {
     }
 
     fn maybe_reload_video(&mut self, db: &FileStore) {
-        if self.status.file_loaded {
+        if !matches!(self.status.file_load_status, FileLoadStatus::NotLoaded) {
             return;
         }
         let Some(load) = &self.status.file else {
@@ -407,7 +420,10 @@ impl MediaPlayerTrait for Mpv {
     }
 
     fn video_loaded(&self) -> bool {
-        self.status.file_loaded
+        matches!(
+            self.status.file_load_status,
+            FileLoadStatus::Loading | FileLoadStatus::Loaded
+        )
     }
 
     async fn event(&mut self) -> MediaPlayerEvent {

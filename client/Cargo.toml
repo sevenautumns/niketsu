@@ -5,12 +5,18 @@ edition = "2021"
 authors = ["Sven Friedrich <sven@autumnal.de>"]
 license = "Apache-2.0"
 
+[features]
+default = ["iced", "ratatui"]
+iced = ["dep:niketsu-iced"]
+ratatui = ["dep:niketsu-ratatui"]
+
+
 [dependencies]
 niketsu-core.path = "core"
 niketsu-mpv.path = "player/mpv"
 niketsu-communicator.path = "communicator"
-niketsu-iced.path = "ui/iced"
-niketsu-ratatui.path = "ui/ratatui"
+niketsu-iced = { path = "ui/iced", optional = true }
+niketsu-ratatui = { path = "ui/ratatui", optional = true }
 anyhow.workspace = true
 tokio.workspace = true
 strum.workspace = true
@@ -25,6 +31,7 @@ anyhow.workspace = true
 strum.workspace = true
 clap_complete = "4"
 clap = { version = "4", features = [ "derive" ] }
+clap_mangen = "0.2"
 
 [dev-dependencies]
 log.workspace = true

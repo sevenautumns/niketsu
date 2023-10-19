@@ -10,10 +10,7 @@ use niketsu_core::config::Config;
 use niketsu_core::file_database::FileDatabase;
 use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::ui::UserInterfaceTrait;
-use niketsu_iced::config::Config as IcedConfig;
-use niketsu_iced::IcedUI;
 use niketsu_mpv::Mpv;
-use niketsu_ratatui::RatatuiUI;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,7 +18,6 @@ async fn main() -> Result<()> {
     setup_logger(args.log_level_terminal.into())?;
 
     let mut config: Config = Config::load_or_default();
-    let iced_config: IcedConfig = IcedConfig::load_or_default();
 
     if let Some(auto_login) = args.auto_login {
         config.auto_login = auto_login
@@ -30,13 +26,16 @@ async fn main() -> Result<()> {
     let view: Box<dyn UserInterfaceTrait>;
     let ui_fn;
     match args.ui {
+        #[cfg(feature = "iced")]
         niketsu::cli::UI::Iced => {
-            let iced = IcedUI::create(iced_config, config.clone());
+            let iced_config = niketsu_iced::config::Config::load_or_default();
+            let iced = niketsu_iced::IcedUI::create(iced_config, config.clone());
             view = Box::new(iced.0);
             ui_fn = iced.1;
         }
+        #[cfg(feature = "ratatui")]
         niketsu::cli::UI::Ratatui => {
-            let ratatui = RatatuiUI::create(config.clone());
+            let ratatui = niketsu_ratatui::RatatuiUI::create(config.clone());
             view = Box::new(ratatui.0);
             ui_fn = ratatui.1;
         }

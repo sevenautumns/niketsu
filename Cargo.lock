@@ -520,6 +520,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd7cc57abe963c6d3b9d8be5b06ba7c8957a930305ca90304f24ef040aa6f961"
 
 [[package]]
+name = "clap_mangen"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b44f35c514163027542f7147797ff930523eea288e03642727348ef1a9666f6b"
+dependencies = [
+ "clap",
+ "roff",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "4.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2028,6 +2038,7 @@ dependencies = [
  "chrono",
  "clap",
  "clap_complete",
+ "clap_mangen",
  "directories",
  "log",
  "niketsu-communicator",
@@ -2881,6 +2892,12 @@ name = "renderdoc-sys"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "216080ab382b992234dda86873c18d4c48358f5cfcb70fd693d7f6f2131b628b"
+
+[[package]]
+name = "roff"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b833d8d034ea094b1ea68aa6d5c740e0d04bad9d16568d08ba6f76823a114316"
 
 [[package]]
 name = "roxmltree"
