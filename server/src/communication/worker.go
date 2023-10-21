@@ -123,6 +123,10 @@ func (worker *Worker) setRoomState() {
 }
 
 func (worker *Worker) deleteAndCloseEmptyRoom() {
+	if worker.room == nil {
+		return
+	}
+
 	if worker.room.ShouldBeClosed() {
 		err := worker.roomHandler.DeleteRoom(worker.room)
 		if err != nil {
@@ -440,21 +444,20 @@ func (worker *Worker) detelePing(workerUUID uuid.UUID) {
 // TODO change username if no longer available
 func (worker *Worker) handleStatus(status Status) {
 	if worker.isStatusNew(status) {
-		worker.handleUsername(status)
-		worker.room.SetWorkerStatus(worker.state.uuid, worker.userStatus)
-		worker.roomHandler.BroadcastStatusList()
+		worker.handleDuplicateUsername(status)
+		worker.broadcastStartOnReady()
 	}
-
-	worker.broadcastStartOnReady()
 }
 
-func (worker *Worker) handleUsername(status Status) {
-	newUsername := worker.roomHandler.RenameUserIfUnavailable(status.Username)
-	if newUsername != status.Username {
+func (worker *Worker) handleDuplicateUsername(status Status) {
+	if worker.userStatus.Username != status.Username {
+		newUsername := worker.roomHandler.RenameUserIfUnavailable(status.Username)
 		status.Username = newUsername
-		worker.sendUsername(newUsername)
+		worker.sendUserStatus(status)
 	}
 	worker.SetUserStatus(status)
+	worker.room.SetWorkerStatus(worker.state.uuid, status)
+	worker.roomHandler.BroadcastStatusList()
 }
 
 func (worker *Worker) isStatusNew(status Status) bool {
@@ -582,25 +585,22 @@ func (worker *Worker) handleJoin(join Join) {
 		return
 	}
 
-	if !worker.state.loggedIn {
-		status := Status{Username: join.Username}
-		worker.handleUsername(status)
-	} else {
-		// in case of a room change, try to delete the previous room
-		worker.deleteAndCloseEmptyRoom()
-	}
+	// in case of a room change, try to delete the previous room
+	worker.deleteAndCloseEmptyRoom()
 
 	err := worker.handleRoomJoin(join)
 	if err != nil {
 		worker.sendServerMessage("Failed to access room. Please try again", true)
 		return
 	}
+
+	status := Status{Username: join.Username}
+	worker.handleDuplicateUsername(status)
 	worker.state.loggedIn = true
 }
 
-func (worker *Worker) sendUsername(username string) {
-	userStatus := Status{Username: username}
-	payload, err := MarshalMessage(userStatus)
+func (worker *Worker) sendUserStatus(status Status) {
+	payload, err := MarshalMessage(status)
 	if err != nil {
 		logger.Warnw("Failed to marshal username message")
 		return
@@ -647,8 +647,6 @@ func (worker *Worker) updateRoomChangeState(roomName string) error {
 }
 
 func (worker *Worker) sendRoomChangeUpdates() {
-	worker.room.SetWorkerStatus(worker.state.uuid, worker.userStatus)
-	worker.roomHandler.BroadcastStatusList()
 	worker.sendPlaylist()
 	roomState := worker.room.RoomState()
 	if roomState.video != nil && roomState.position != nil {

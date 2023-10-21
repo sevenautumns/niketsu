@@ -9,6 +9,7 @@ require (
 	github.com/stretchr/testify v1.8.3
 	go.etcd.io/bbolt v1.3.7
 	go.uber.org/zap v1.24.0
+	github.com/brianvoe/gofakeit/v6 v6.23.2
 )
 
 require (
