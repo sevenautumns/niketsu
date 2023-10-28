@@ -79,6 +79,7 @@ impl iced::widget::container::StyleSheet for ContainerBorder {
         }
     }
 }
+
 pub struct FileButton {
     pressed: bool,
     available: bool,
@@ -185,6 +186,21 @@ impl iced::widget::container::StyleSheet for ContainerBackground {
     }
 }
 
+pub struct ContainerText {
+    color: Color,
+}
+
+impl iced::widget::container::StyleSheet for ContainerText {
+    type Style = Theme;
+
+    fn appearance(&self, _: &Self::Style) -> iced::widget::container::Appearance {
+        iced::widget::container::Appearance {
+            text_color: Some(self.color),
+            ..Default::default()
+        }
+    }
+}
+
 pub struct ColorButton {
     color: Color,
 }
@@ -221,10 +237,34 @@ impl iced::widget::container::StyleSheet for MessageColor {
 
     fn appearance(&self, style: &Self::Style) -> iced::widget::container::Appearance {
         let color = match self.level {
-            MessageLevel::Normal => style.palette().background,
-            MessageLevel::Warn => style.palette().danger,
+            MessageLevel::Normal => style.palette().text,
+            MessageLevel::Success => style.palette().success,
             MessageLevel::Error => style.palette().danger,
+            MessageLevel::Warn => WARN_COLOR,
+            MessageLevel::Debug => DEBUG_COLOR,
+            MessageLevel::Trace => TRACE_COLOR,
         };
-        ContainerBackground { color }.appearance(style)
+        ContainerText { color }.appearance(style)
     }
 }
+
+pub const WARN_COLOR: Color = Color {
+    r: 0.92,
+    g: 0.80,
+    b: 0.55,
+    a: 1.0,
+};
+
+pub const DEBUG_COLOR: Color = Color {
+    r: 0.51,
+    g: 0.63,
+    b: 0.76,
+    a: 1.0,
+};
+
+pub const TRACE_COLOR: Color = Color {
+    r: 0.71,
+    g: 0.56,
+    b: 0.68,
+    a: 1.0,
+};

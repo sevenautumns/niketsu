@@ -1,10 +1,7 @@
-use std::str::FromStr;
-
 use enum_dispatch::enum_dispatch;
 use iced::Command;
 
 use super::SettingsView;
-use crate::config::RgbWrap;
 use crate::message::{Message, MessageHandler};
 use crate::view::ViewModel;
 
@@ -23,12 +20,6 @@ pub enum SettingsMessage {
     AddPath,
     RoomInput,
     PasswordInput,
-    TextSizeInput,
-    TextColorInput,
-    BackgroundColorInput,
-    PrimaryColorInput,
-    SuccessColorInput,
-    DangerColorInput,
     SecureCheckbox,
 }
 
@@ -105,75 +96,6 @@ pub struct PasswordInput(pub String);
 impl SettingsMessageTrait for PasswordInput {
     fn handle(self, ui: &mut SettingsView) {
         ui.password = self.0;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TextSizeInput(pub f32);
-
-impl SettingsMessageTrait for TextSizeInput {
-    fn handle(self, ui: &mut SettingsView) {
-        ui.text_size = self.0;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TextColorInput(pub String);
-
-impl SettingsMessageTrait for TextColorInput {
-    fn handle(self, ui: &mut SettingsView) {
-        ui.text_color_input = self.0.clone();
-        if let Ok(c) = RgbWrap::from_str(&self.0) {
-            ui.text_color = c;
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct BackgroundColorInput(pub String);
-
-impl SettingsMessageTrait for BackgroundColorInput {
-    fn handle(self, ui: &mut SettingsView) {
-        ui.background_color_input = self.0.clone();
-        if let Ok(c) = RgbWrap::from_str(&self.0) {
-            ui.background_color = c;
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PrimaryColorInput(pub String);
-
-impl SettingsMessageTrait for PrimaryColorInput {
-    fn handle(self, ui: &mut SettingsView) {
-        ui.primary_color_input = self.0.clone();
-        if let Ok(c) = RgbWrap::from_str(&self.0) {
-            ui.primary_color = c;
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SuccessColorInput(pub String);
-
-impl SettingsMessageTrait for SuccessColorInput {
-    fn handle(self, ui: &mut SettingsView) {
-        ui.success_color_input = self.0.clone();
-        if let Ok(c) = RgbWrap::from_str(&self.0) {
-            ui.success_color = c;
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DangerColorInput(pub String);
-
-impl SettingsMessageTrait for DangerColorInput {
-    fn handle(self, ui: &mut SettingsView) {
-        ui.danger_color_input = self.0.clone();
-        if let Ok(c) = RgbWrap::from_str(&self.0) {
-            ui.danger_color = c;
-        }
     }
 }
 

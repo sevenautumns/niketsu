@@ -3,6 +3,7 @@ use typed_builder::TypedBuilder;
 use crate::communicator::CommunicatorTrait;
 use crate::config::Config;
 use crate::file_database::FileDatabaseTrait;
+use crate::logging::ChatLogger;
 use crate::player::MediaPlayerTrait;
 use crate::playlist::PlaylistHandlerTrait;
 use crate::ui::UserInterfaceTrait;
@@ -16,6 +17,8 @@ pub struct CoreBuilder {
     communicator: Box<dyn CommunicatorTrait>,
     playlist: Box<dyn PlaylistHandlerTrait>,
     file_database: Box<dyn FileDatabaseTrait>,
+    #[builder(default)]
+    chat_logger: Option<ChatLogger>,
     config: Config,
 }
 
@@ -28,6 +31,7 @@ impl From<CoreBuilder> for CoreModel {
             ui: builder.ui,
             config: builder.config,
             playlist: builder.playlist,
+            chat_logger: builder.chat_logger,
             ready: false,
         }
     }

@@ -24,7 +24,6 @@ directories.workspace = true
 log.workspace = true
 whoami = "1.4"
 clap = { version = "4.4.2", features = ["derive"] }
-simplelog = { version = "0.12", features = ["paris"] }
 
 [build-dependencies]
 anyhow.workspace = true
@@ -32,6 +31,7 @@ strum.workspace = true
 clap_complete = "4"
 clap = { version = "4", features = [ "derive" ] }
 clap_mangen = "0.2"
+log.workspace = true
 
 [dev-dependencies]
 log.workspace = true

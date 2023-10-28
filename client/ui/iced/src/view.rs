@@ -3,7 +3,7 @@ use std::pin::Pin;
 
 use futures::Future;
 use iced::{Application, Command, Element, Renderer, Settings, Subscription, Theme};
-use niketsu_core::config::Config as CoreConfig;
+use niketsu_core::config::Config;
 use niketsu_core::log;
 use niketsu_core::playlist::Video;
 use niketsu_core::ui::{RoomChange, ServerChange, UiModel, UserInterface};
@@ -18,7 +18,6 @@ use super::widget::messages::MessagesWidgetState;
 use super::widget::playlist::PlaylistWidgetState;
 use super::widget::rooms::RoomsWidgetState;
 use super::PreExistingTokioRuntime;
-use crate::config::Config;
 use crate::message::{MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;
 
@@ -26,7 +25,6 @@ use crate::widget::file_search::FileSearchWidgetState;
 pub struct ViewModel {
     pub model: UiModel,
     pub config: Config,
-    pub core_config: CoreConfig,
     pub main: MainView,
     pub settings: Option<SettingsView>,
     pub rooms_widget_state: RoomsWidgetState,
@@ -38,11 +36,10 @@ pub struct ViewModel {
 
 impl ViewModel {
     pub fn new(flags: Flags) -> Self {
-        let settings = SettingsView::new(flags.config.clone(), flags.core_config.clone());
+        let settings = SettingsView::new(flags.config.clone());
         let mut view = Self {
             model: flags.ui_model,
-            config: flags.config,
-            core_config: flags.core_config.clone(),
+            config: flags.config.clone(),
             settings: Some(settings),
             main: Default::default(),
             rooms_widget_state: Default::default(),
@@ -51,7 +48,7 @@ impl ViewModel {
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
         };
-        if flags.core_config.auto_login {
+        if flags.config.auto_login {
             view.close_settings()
         }
         view
@@ -72,27 +69,21 @@ impl ViewModel {
         let Some(settings) = self.settings.take() else {
             return;
         };
-        let (config, core): (Config, CoreConfig) = settings.into_config();
-        let media_dirs: Vec<_> = core.media_dirs.iter().map(PathBuf::from).collect();
-        let username = core.username.clone();
+        let config: Config = settings.into();
+        let media_dirs: Vec<_> = config.media_dirs.iter().map(PathBuf::from).collect();
+        let username = config.username.clone();
         self.model.change_db_paths(media_dirs);
         self.model.change_username(username);
         self.model.change_server(ServerChange {
-            addr: core.url.clone(),
-            secure: core.secure,
-            password: Some(core.password.clone()),
+            addr: config.url.clone(),
+            secure: config.secure,
+            password: Some(config.password.clone()),
             room: RoomChange {
-                room: core.room.clone(),
+                room: config.room.clone(),
             },
         });
         self.config = config;
-        self.core_config = core;
         log!(self.config.save());
-        log!(self.core_config.save());
-    }
-
-    pub fn config(&self) -> &Config {
-        &self.config
     }
 
     pub fn user(&self) -> UserStatus {
@@ -104,7 +95,7 @@ impl ViewModel {
     }
 
     pub fn theme(&self) -> Theme {
-        self.config.theme()
+        Theme::Dark
     }
 
     pub fn get_rooms_widget_state(&self) -> &RoomsWidgetState {
@@ -149,7 +140,6 @@ impl ViewModel {
 
 pub struct Flags {
     pub config: Config,
-    pub core_config: CoreConfig,
     pub ui_model: UiModel,
 }
 
@@ -160,7 +150,6 @@ pub struct View {
 impl View {
     pub fn create(
         config: Config,
-        core_config: CoreConfig,
     ) -> (
         UserInterface,
         Pin<Box<dyn Future<Output = anyhow::Result<()>>>>,
@@ -168,7 +157,6 @@ impl View {
         let ui = UserInterface::default();
         let flags = Flags {
             config,
-            core_config,
             ui_model: ui.model().clone(),
         };
         let settings = Settings::with_flags(flags);

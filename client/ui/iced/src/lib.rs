@@ -5,7 +5,6 @@ use iced::Executor;
 use niketsu_core::util::RingBuffer;
 use once_cell::sync::Lazy;
 
-pub mod config;
 mod main_window;
 mod message;
 mod settings_window;

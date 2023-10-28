@@ -1,5 +1,7 @@
 use config::Config;
 use enum_dispatch::enum_dispatch;
+use futures::future::OptionFuture;
+use logging::ChatLogger;
 use playlist::PlaylistHandlerTrait;
 
 use self::communicator::*;
@@ -13,6 +15,7 @@ pub mod communicator;
 pub mod config;
 pub mod file_database;
 pub mod heartbeat;
+pub mod logging;
 pub mod player;
 pub mod playlist;
 pub mod rooms;
@@ -32,6 +35,7 @@ pub struct CoreModel {
     pub ui: Box<dyn UserInterfaceTrait>,
     pub database: Box<dyn FileDatabaseTrait>,
     pub playlist: Box<dyn PlaylistHandlerTrait>,
+    chat_logger: Option<ChatLogger>,
     pub config: Config,
     pub ready: bool,
 }
@@ -60,6 +64,9 @@ impl Core {
                 }
                 Some(db) = self.model.database.event() => {
                     db.handle(&mut self.model);
+                }
+                Some(Some(message)) = OptionFuture::from(self.model.chat_logger.as_mut().map(|l| l.recv())) => {
+                    self.model.ui.player_message(message)
                 }
             }
         }

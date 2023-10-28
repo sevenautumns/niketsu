@@ -1,4 +1,5 @@
 use clap::{Parser, ValueEnum};
+use log::LevelFilter;
 use strum::Display;
 
 #[derive(Parser, Debug)]
@@ -14,8 +15,11 @@ pub struct Args {
     #[arg(short, long)]
     pub auto_login: Option<bool>,
     /// Set the terminal log level (Incompatible with ratatui)
-    #[arg(short, long, default_value_t = LogLevel::default())]
+    #[arg(short = 't', long, default_value_t = LogLevel::default())]
     pub log_level_terminal: LogLevel,
+    /// Set the chat log level
+    #[arg(short = 'c', long, default_value_t = LogLevel::default())]
+    pub log_level_chat: LogLevel,
 }
 
 #[derive(ValueEnum, Debug, Default, Display, Clone, Copy, PartialEq)]
@@ -39,4 +43,17 @@ pub enum LogLevel {
     Info,
     Debug,
     Trace,
+}
+
+impl From<LogLevel> for LevelFilter {
+    fn from(value: LogLevel) -> Self {
+        match value {
+            LogLevel::Off => LevelFilter::Off,
+            LogLevel::Error => LevelFilter::Error,
+            LogLevel::Warn => LevelFilter::Warn,
+            LogLevel::Info => LevelFilter::Info,
+            LogLevel::Debug => LevelFilter::Debug,
+            LogLevel::Trace => LevelFilter::Trace,
+        }
+    }
 }

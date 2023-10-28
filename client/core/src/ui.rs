@@ -6,7 +6,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use enum_dispatch::enum_dispatch;
-use log::debug;
+use log::{debug, Level};
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
 
@@ -220,8 +220,23 @@ pub enum MessageSource {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum MessageLevel {
     Normal,
+    Success,
     Warn,
     Error,
+    Debug,
+    Trace,
+}
+
+impl From<Level> for MessageLevel {
+    fn from(value: Level) -> Self {
+        match value {
+            Level::Error => MessageLevel::Error,
+            Level::Warn => MessageLevel::Warn,
+            Level::Info => MessageLevel::Success,
+            Level::Debug => MessageLevel::Debug,
+            Level::Trace => MessageLevel::Trace,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 use niketsu::cli::Args;
-use niketsu::log::setup_logger;
 use niketsu_communicator::WebsocketCommunicator;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::FileDatabase;
+use niketsu_core::logging::setup_logger;
 use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::ui::UserInterfaceTrait;
 use niketsu_mpv::Mpv;
@@ -15,7 +15,7 @@ use niketsu_mpv::Mpv;
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    setup_logger(args.log_level_terminal.into())?;
+    let chat_logger = setup_logger(args.log_level_terminal.into(), args.log_level_chat.into())?;
 
     let mut config: Config = Config::load_or_default();
 
@@ -28,8 +28,7 @@ async fn main() -> Result<()> {
     match args.ui {
         #[cfg(feature = "iced")]
         niketsu::cli::UI::Iced => {
-            let iced_config = niketsu_iced::config::Config::load_or_default();
-            let iced = niketsu_iced::IcedUI::create(iced_config, config.clone());
+            let iced = niketsu_iced::IcedUI::create(config.clone());
             view = Box::new(iced.0);
             ui_fn = iced.1;
         }
@@ -53,6 +52,7 @@ async fn main() -> Result<()> {
         .communicator(Box::new(communicator))
         .file_database(Box::new(file_database))
         .playlist(Box::<PlaylistHandler>::default())
+        .chat_logger(chat_logger)
         .config(config)
         .build();
 
