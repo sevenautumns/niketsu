@@ -1,14 +1,11 @@
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Style, Stylize};
-use ratatui::widgets::{Paragraph, Widget};
+use ratatui::widgets::{Paragraph, StatefulWidget, Widget};
 use ratatui_textarea::Input;
 
 use super::TextAreaWrapper;
 
-#[derive(Debug, Default, Clone)]
-pub struct CommandInputWidget {
-    state: CommandInputWidgetState,
-}
+pub struct CommandInputWidget;
 
 #[derive(Debug, Default, Clone)]
 pub struct CommandInputWidgetState {
@@ -17,34 +14,33 @@ pub struct CommandInputWidgetState {
     style: Style,
 }
 
-impl CommandInputWidget {
+impl CommandInputWidgetState {
     pub fn set_active(&mut self, active: bool) {
-        self.state.active = active;
-        self.state
-            .input_field
-            .set_textarea_style(self.state.style, self.state.style.dark_gray().on_white());
+        self.active = active;
+        self.input_field
+            .set_textarea_style(self.style, self.style.dark_gray().on_white());
     }
 
     pub fn input(&mut self, event: impl Into<Input>) {
-        self.state.input_field.input(event);
+        self.input_field.input(event);
     }
 
     pub fn get_input(&self) -> String {
-        self.state.input_field.get_input()
+        self.input_field.get_input()
     }
 
     pub fn reset(&mut self) {
-        self.state.input_field = TextAreaWrapper::default();
-        self.state
-            .input_field
-            .set_textarea_style(self.state.style, self.state.style);
-        self.state.active = false;
+        self.input_field = TextAreaWrapper::default();
+        self.input_field.set_textarea_style(self.style, self.style);
+        self.active = false;
     }
 }
 
-impl Widget for CommandInputWidget {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let prefix = match self.state.active {
+impl StatefulWidget for CommandInputWidget {
+    type State = CommandInputWidgetState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let prefix = match state.active {
             true => ":".to_string(),
             false => "".to_string(),
         };
@@ -55,7 +51,7 @@ impl Widget for CommandInputWidget {
             .split(area);
 
         let prefix_block = Paragraph::new(prefix);
-        let input_block = self.state.input_field.widget();
+        let input_block = state.input_field.widget();
         prefix_block.render(horizontal_split[0], buf);
         input_block.render(horizontal_split[1], buf);
     }

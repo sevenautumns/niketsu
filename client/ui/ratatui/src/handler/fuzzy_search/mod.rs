@@ -14,6 +14,7 @@ impl EventHandler for FuzzySearch {
                     KeyCode::Esc => {
                         view.app.reset_overlay();
                         view.app.fuzzy_search_widget.reset_all();
+                        view.app.reset_fuzzy_search();
                     }
                     KeyCode::Enter => {
                         if let Some(video) = view.app.fuzzy_search_widget.get_selected() {

@@ -107,7 +107,8 @@ impl StatefulWidget for ChatWidget {
             .title(Title::from("Chat"))
             .borders(Borders::ALL);
 
-        let messages_list = List::new(messages.clone())
+        let messages_len = messages.len();
+        let messages_list = List::new(messages)
             .gray()
             .block(messages_block)
             .highlight_style(Style::default().fg(Color::Cyan));
@@ -121,7 +122,7 @@ impl StatefulWidget for ChatWidget {
             .end_symbol(None);
 
         let mut state = state.vertical_scroll_state;
-        state = state.content_length(messages.len());
+        state = state.content_length(messages_len);
         scrollbar.render(
             area.inner(&Margin {
                 vertical: 1,

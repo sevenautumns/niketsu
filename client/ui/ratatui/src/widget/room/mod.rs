@@ -118,7 +118,7 @@ impl StatefulWidget for RoomsWidget {
             .title(Title::from("Rooms"))
             .borders(Borders::ALL);
 
-        let rooms_list = List::new(rooms.clone())
+        let rooms_list = List::new(rooms)
             .gray()
             .block(messages_block)
             .highlight_style(Style::default().fg(Color::Cyan));

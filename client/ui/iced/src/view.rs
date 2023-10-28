@@ -1,5 +1,7 @@
 use std::path::PathBuf;
+use std::pin::Pin;
 
+use futures::Future;
 use iced::{Application, Command, Element, Renderer, Settings, Subscription, Theme};
 use niketsu_core::config::Config as CoreConfig;
 use niketsu_core::log;
@@ -159,7 +161,10 @@ impl View {
     pub fn create(
         config: Config,
         core_config: CoreConfig,
-    ) -> (UserInterface, Box<dyn FnOnce() -> anyhow::Result<()>>) {
+    ) -> (
+        UserInterface,
+        Pin<Box<dyn Future<Output = anyhow::Result<()>>>>,
+    ) {
         let ui = UserInterface::default();
         let flags = Flags {
             config,
@@ -167,7 +172,7 @@ impl View {
             ui_model: ui.model().clone(),
         };
         let settings = Settings::with_flags(flags);
-        let view = Box::new(move || View::run(settings).map_err(anyhow::Error::from));
+        let view = Box::pin(async { View::run(settings).map_err(anyhow::Error::from) });
         (ui, view)
     }
 }

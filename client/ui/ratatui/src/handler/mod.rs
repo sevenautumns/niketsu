@@ -1,4 +1,4 @@
-use crossterm::event::{Event, KeyEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent};
 use enum_dispatch::enum_dispatch;
 use ratatui::style::Style;
 
@@ -11,7 +11,7 @@ use self::media::MediaDir;
 use self::options::Options;
 use self::playlist::Playlist;
 use self::room::Rooms;
-use crate::view::RatatuiView;
+use crate::view::{Mode, RatatuiView};
 
 pub(crate) mod chat;
 pub(crate) mod chat_input;
@@ -33,6 +33,23 @@ pub trait EventHandler {
 #[enum_dispatch]
 pub trait MainEventHandler: EventHandler {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent);
+
+    fn handle_with_overlay(&self, view: &mut RatatuiView, event: &Event) {
+        if let Event::Key(key) = event {
+            match view.app.current_state() {
+                State::ChatInput(_) => {}
+                _ => {
+                    if key.code == KeyCode::Char(' ') {
+                        view.app.set_mode(Mode::Overlay);
+                        view.app
+                            .set_current_overlay_state(Some(OverlayState::from(Options {})));
+                    }
+                }
+            }
+        }
+        self.handle(view, event);
+    }
+
     fn set_style(&self, view: &mut RatatuiView, style: Style);
 }
 

@@ -12,5 +12,5 @@ async fn main() -> Result<()> {
     let (ratatui, run) = RatatuiUI::create(config);
     let core = CoreMock::new(ratatui);
     tokio::task::spawn(core.run());
-    run()
+    run.await
 }

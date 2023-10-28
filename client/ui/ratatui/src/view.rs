@@ -1,5 +1,7 @@
 use std::io::{self, Stdout};
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossterm::event::{
@@ -10,7 +12,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use futures::future::OptionFuture;
-use futures::StreamExt;
+use futures::{Future, StreamExt};
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::playlist::Video;
@@ -25,11 +27,12 @@ use crate::handler::command::handle_command_prompt;
 use crate::handler::options::Options;
 use crate::handler::{EventHandler, MainEventHandler, OverlayState, State};
 use crate::widget::chat::{ChatWidget, ChatWidgetState};
-use crate::widget::chat_input::ChatInputWidget;
-use crate::widget::command::CommandInputWidget;
+use crate::widget::chat_input::{ChatInputWidget, ChatInputWidgetState};
+use crate::widget::command::{CommandInputWidget, CommandInputWidgetState};
 use crate::widget::database::{DatabaseWidget, DatabaseWidgetState};
-use crate::widget::fuzzy_search::FuzzySearchWidget;
-use crate::widget::media::MediaDirWidget;
+use crate::widget::fuzzy_search::{FuzzySearchWidget, FuzzySearchWidgetState};
+use crate::widget::login::LoginWidgetState;
+use crate::widget::media::{MediaDirWidget, MediaDirWidgetState};
 use crate::widget::options::{OptionsWidget, OptionsWidgetState};
 use crate::widget::playlist::PlaylistWidgetState;
 use crate::widget::room::{RoomsWidget, RoomsWidgetState};
@@ -62,16 +65,17 @@ pub struct App {
     pub database_widget_state: DatabaseWidgetState,
     pub rooms_widget_state: RoomsWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
-    pub command_input_widget: CommandInputWidget,
-    pub chat_input_widget: ChatInputWidget,
+    pub command_input_widget: CommandInputWidgetState,
+    pub chat_input_widget: ChatInputWidgetState,
     pub current_overlay_state: Option<OverlayState>,
     pub options_widget_state: OptionsWidgetState,
     //TODO pub help_widget: HelpWidget,
-    pub login_widget: LoginWidget,
-    pub media_widget: MediaDirWidget,
-    pub fuzzy_search_widget: FuzzySearchWidget,
+    pub login_widget: LoginWidgetState,
+    pub media_widget: MediaDirWidgetState,
+    pub fuzzy_search_widget: FuzzySearchWidgetState,
     pub current_search: Option<FuzzySearch>,
     mode: Mode,
+    prev_mode: Option<Mode>,
 }
 
 impl App {
@@ -86,15 +90,16 @@ impl App {
             database_widget_state: DatabaseWidgetState::default(),
             rooms_widget_state: RoomsWidgetState::default(),
             playlist_widget_state: PlaylistWidgetState::default(),
-            command_input_widget: CommandInputWidget::default(),
-            chat_input_widget: ChatInputWidget::new(),
+            command_input_widget: CommandInputWidgetState::default(),
+            chat_input_widget: ChatInputWidgetState::new(),
             current_overlay_state: None,
             options_widget_state: OptionsWidgetState::new(),
-            login_widget: LoginWidget::new(config.clone()),
-            fuzzy_search_widget: FuzzySearchWidget::new(),
-            media_widget: MediaDirWidget::new(config.media_dirs),
+            login_widget: LoginWidgetState::new(config.clone()),
+            fuzzy_search_widget: FuzzySearchWidgetState::new(),
+            media_widget: MediaDirWidgetState::new(config.media_dirs),
             current_search: None,
             mode: Mode::Normal,
+            prev_mode: None,
         }
     }
 
@@ -107,21 +112,39 @@ impl App {
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
+        self.prev_mode = Some(self.mode.clone());
         self.mode = mode;
     }
 
     pub fn reset_overlay(&mut self) {
         self.current_overlay_state = None;
-        self.mode = Mode::Normal;
+        if let Some(mode) = self.prev_mode.clone() {
+            self.mode = mode;
+        } else {
+            self.mode = Mode::Normal;
+        }
+    }
+
+    pub fn current_state(&self) -> State {
+        self.current_state
     }
 
     pub fn fuzzy_search(&mut self, query: String) {
         self.current_search = Some(self.fuzzy_search_widget.fuzzy_search(query));
     }
+
+    pub fn reset_fuzzy_search(&mut self) {
+        self.current_search = None;
+    }
 }
 
 impl RatatuiView {
-    pub fn create(config: Config) -> (UserInterface, Box<dyn FnOnce() -> anyhow::Result<()>>) {
+    pub fn create(
+        config: Config,
+    ) -> (
+        UserInterface,
+        Pin<Box<dyn Future<Output = anyhow::Result<()>>>>,
+    ) {
         let ui = UserInterface::default();
         let app = App::new(config.clone());
         let mut view = Self {
@@ -129,13 +152,14 @@ impl RatatuiView {
             model: ui.model().clone(),
             config,
         };
-        let handle = Box::new(move || futures::executor::block_on(view.run()));
+        let handle = Box::pin(async move { view.run().await });
         (ui, handle)
     }
 
     pub async fn run(&mut self) -> Result<()> {
         let mut terminal = Self::setup_terminal().expect("tui setup failed");
         let mut event = EventStream::new();
+        let mut tick_rate = tokio::time::interval(Duration::from_millis(50));
         let notify = self.model.notify.clone();
 
         let original_hook = std::panic::take_hook();
@@ -144,21 +168,30 @@ impl RatatuiView {
             original_hook(panic);
         }));
 
+        let mut needs_update = false;
+        terminal.draw(|f| Self::render(f, &mut self.app))?;
         loop {
-            terminal.draw(|f| Self::render_player(f, &mut self.app))?;
-
             tokio::select! {
                 ct_event = event.next() => {
                     if let LoopControl::Break = self.handle_event(ct_event) {
                         break;
                     }
+                    needs_update = true;
                 },
                 Some(search_result) = OptionFuture::from(self.app.current_search.as_mut()) => {
                     self.app.fuzzy_search_widget.set_result(search_result);
                     self.app.current_search = None;
+                    needs_update = true;
                 },
                 _ = notify.notified() => {
-                    self.handle_notify()
+                    self.handle_notify();
+                        needs_update = true;
+                },
+                _ = tick_rate.tick() => {
+                    if needs_update {
+                        terminal.draw(|f| Self::render(f, &mut self.app))?;
+                        needs_update = false;
+                    }
                 }
             }
         }
@@ -186,7 +219,11 @@ impl RatatuiView {
         if let Some(Ok(event)) = ct_event {
             match self.app.mode {
                 Mode::Normal => return self.handle_normal_event(&event),
-                Mode::Inspecting => self.app.current_state.clone().handle(self, &event),
+                Mode::Inspecting => self
+                    .app
+                    .current_state
+                    .clone()
+                    .handle_with_overlay(self, &event),
                 Mode::Editing => handle_command_prompt(self, &event),
                 Mode::Overlay => {
                     if let Some(overlay) = self.app.current_overlay_state {
@@ -265,7 +302,8 @@ impl RatatuiView {
 
     pub fn insert(&self, index: usize, video: &Video) {
         let mut updated_playlist = self.model.playlist.get_inner();
-        updated_playlist.insert(index, video.clone());
+        let saturated_index = std::cmp::min(index, updated_playlist.len());
+        updated_playlist.insert(saturated_index, video.clone());
         self.model.playlist.set(updated_playlist.clone());
         self.model.change_playlist(updated_playlist);
     }
@@ -374,7 +412,7 @@ impl RatatuiView {
                         self.highlight();
                     }
                     KeyCode::Char(' ') => {
-                        self.app.mode = Mode::Overlay;
+                        self.app.set_mode(Mode::Overlay);
                         self.app
                             .set_current_overlay_state(Some(OverlayState::from(Options {})));
                     }
@@ -435,7 +473,7 @@ impl RatatuiView {
         }
     }
 
-    fn render_player(f: &mut Frame, app: &mut App) {
+    fn render(f: &mut Frame, app: &mut App) {
         let size = f.size();
         let main_vertical_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -469,23 +507,36 @@ impl RatatuiView {
             vertical_right_chunks[0],
             &mut app.database_widget_state,
         );
+
         f.render_stateful_widget(
             RoomsWidget,
             vertical_right_chunks[1],
             &mut app.rooms_widget_state,
         );
+
         f.render_stateful_widget(
             PlaylistWidget,
             vertical_right_chunks[2],
             &mut app.playlist_widget_state,
         );
+
         f.render_stateful_widget(
             ChatWidget {},
             vertical_left_chunks[0],
             &mut app.chat_widget_state,
         );
-        f.render_widget(app.chat_input_widget.clone(), vertical_left_chunks[1]);
-        f.render_widget(app.command_input_widget.clone(), main_vertical_chunks[1]);
+
+        f.render_stateful_widget(
+            ChatInputWidget {},
+            vertical_left_chunks[1],
+            &mut app.chat_input_widget,
+        );
+
+        f.render_stateful_widget(
+            CommandInputWidget {},
+            main_vertical_chunks[1],
+            &mut app.command_input_widget,
+        );
 
         if let Mode::Overlay = app.mode {
             if let Some(overlay) = &app.current_overlay_state {
@@ -502,25 +553,21 @@ impl RatatuiView {
                     OverlayState::Login(_login) => {
                         let area = app.login_widget.area(size);
                         f.render_widget(Clear, area);
-                        f.render_widget(app.login_widget.clone(), area);
+                        f.render_stateful_widget(LoginWidget {}, area, &mut app.login_widget);
                     }
                     OverlayState::FuzzySearch(_fuzzy_search) => {
                         let area = app.fuzzy_search_widget.area(size);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(
-                            app.fuzzy_search_widget.clone(),
+                            FuzzySearchWidget {},
                             area,
-                            &mut app.fuzzy_search_widget.get_state(),
+                            &mut app.fuzzy_search_widget,
                         );
                     }
                     OverlayState::MediaDir(_media_dir) => {
                         let area = app.media_widget.area(size);
                         f.render_widget(Clear, area);
-                        f.render_stateful_widget(
-                            app.media_widget.clone(),
-                            area,
-                            &mut app.media_widget.get_state(),
-                        );
+                        f.render_stateful_widget(MediaDirWidget {}, area, &mut app.media_widget);
                     }
                 }
             }
