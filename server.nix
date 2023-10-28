@@ -28,6 +28,8 @@
     settings.PasswordAuthentication = false;
   };
 
+  nix.gc.automatic = true;
+
   networking.networkmanager.enable = true;
 
   nix.settings.trusted-users = [ "admin" "autumnal" ];
