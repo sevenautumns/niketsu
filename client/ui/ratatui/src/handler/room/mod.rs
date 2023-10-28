@@ -1,4 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use niketsu_core::ui::RoomChange;
 use ratatui::style::Style;
 
 use super::chat_input::ChatInput;
@@ -24,6 +25,13 @@ impl EventHandler for Rooms {
                     }
                     KeyCode::Down => {
                         view.app.rooms_widget_state.previous();
+                    }
+                    KeyCode::Enter => {
+                        let room = view.app.rooms_widget_state.get_current_room();
+                        match room {
+                            Some(room_name) => view.model.change_room(RoomChange::from(room_name)),
+                            None => {}
+                        }
                     }
                     _ => {}
                 }

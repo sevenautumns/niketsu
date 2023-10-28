@@ -8,7 +8,6 @@ use ratatui_textarea::Input;
 
 use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
 
-//TODO add item where cursor is
 #[derive(Debug, Default, Clone)]
 pub struct MediaDirWidget {
     media_paths: Vec<String>,
