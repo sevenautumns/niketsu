@@ -12,9 +12,9 @@ pub fn handle_command_prompt(view: &mut RatatuiView, event: &Event) {
                 }
                 KeyCode::Enter => {
                     view.app.set_mode(Mode::Normal);
-                    view.app.command_input_widget.reset();
                     let msg = view.app.command_input_widget.get_input();
                     view.parse_commands(msg);
+                    view.app.command_input_widget.reset();
                 }
                 _ => view.app.command_input_widget.input(*key),
             },
