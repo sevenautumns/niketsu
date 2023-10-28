@@ -28,6 +28,10 @@ impl EventHandler for Options {
                     KeyCode::Char('m') => view
                         .app
                         .set_current_overlay_state(Some(OverlayState::from(MediaDir {}))),
+                    KeyCode::Char('r') => {
+                        view.model.user_ready_toggle();
+                        view.app.reset_overlay();
+                    }
                     _ => {
                         view.app.reset_overlay();
                     }
