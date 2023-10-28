@@ -1,4 +1,4 @@
-use niketsu_core::rooms::RoomList;
+use niketsu_core::rooms::{RoomList, RoomName};
 use niketsu_core::user::UserStatus;
 use ratatui::prelude::{Buffer, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
@@ -11,17 +11,17 @@ use ratatui::widgets::{
 
 use super::ListStateWrapper;
 
-//TODO roomswitch
-//TODO update user status
 #[derive(Debug, Default, Clone)]
 pub struct RoomsWidget;
 
+//TODO implement meaningful scrolling
 #[derive(Debug, Default, Clone)]
 pub struct RoomsWidgetState {
     rooms: RoomList,
     user: UserStatus,
     list_state: ListStateWrapper,
     vertical_scroll_state: ScrollbarState,
+    scroll_length: usize,
     style: Style,
 }
 
@@ -32,6 +32,14 @@ impl RoomsWidgetState {
 
     pub fn set_rooms(&mut self, rooms: RoomList) {
         self.rooms = rooms;
+        self.scroll_length = self.scroll_length()
+    }
+
+    fn scroll_length(&self) -> usize {
+        self.rooms
+            .iter()
+            .map(|(_, users)| users.into_iter().count().saturating_add(1))
+            .sum()
     }
 
     pub fn set_user(&mut self, user: UserStatus) {
@@ -46,50 +54,62 @@ impl RoomsWidgetState {
     }
 
     pub fn previous(&mut self) {
-        self.list_state.limited_previous(self.rooms.len());
+        self.list_state.limited_previous(self.scroll_length);
         if let Some(i) = self.list_state.selected() {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i as u16);
         }
     }
 
-    // fn get_current_room(&self) -> Option<&RoomName> {
-    //     match self.state.state.selected() {
-    //         Some(index) => self.state.rooms.get_room_name(index),
-    //         None => None,
-    //     }
-    // }
+    pub fn get_current_room(&self) -> Option<RoomName> {
+        match self.list_state.selected() {
+            Some(index) => {
+                let mut count = 0;
+                let mut current_room: Option<RoomName> = None;
+                for (room_name, users) in self.rooms.iter() {
+                    count += users.into_iter().count().saturating_add(1);
+                    if index < count {
+                        current_room = Some(room_name.clone());
+                        break;
+                    }
+                }
+                current_room
+            }
+            None => None,
+        }
+    }
 }
 
 impl StatefulWidget for RoomsWidget {
     type State = RoomsWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        //TODO highlight room of own user
-        //TODO scrolling
-        //TODO change room
-        //TODO split listitems since they cannot be display if too large
         let rooms: Vec<ListItem> = state
             .rooms
             .iter()
-            .map(|(room_name, users)| {
-                let room_line = Line::from(vec![room_name.gray()]);
-                let mut user_lines: Vec<Line> = users
+            .flat_map(|(room_name, users)| {
+                let mut user_lines: Vec<ListItem> = users
                     .into_iter()
                     .map(|u| {
                         let name = match u.eq(&state.user) {
                             true => format!("{} (me)", u.name),
                             false => u.name.clone(),
                         };
-                        let mut user_line = match u.ready {
-                            true => Line::from(format!("  {} (ready)", name)),
-                            false => Line::from(format!("  {} (not ready)", name)),
+                        let user_line = match u.ready {
+                            true => ListItem::new(vec![Line::styled(
+                                format!("    {}", name),
+                                Style::default().fg(Color::Green),
+                            )]),
+                            false => ListItem::new(vec![Line::styled(
+                                format!("    {}", name),
+                                Style::default().fg(Color::Red),
+                            )]),
                         };
-                        user_line.patch_style(Style::default().fg(Color::Gray));
                         user_line
                     })
                     .collect();
+                let room_line = ListItem::new(vec![Line::from(room_name.to_string())]);
                 user_lines.insert(0, room_line);
-                ListItem::new(user_lines)
+                user_lines
             })
             .collect();
 
@@ -111,15 +131,15 @@ impl StatefulWidget for RoomsWidget {
 
         StatefulWidget::render(rooms_list, area, buf, state.list_state.inner());
 
-        let mut state = state.vertical_scroll_state;
-        state = state.content_length(rooms.len() as u16);
+        let mut scroll_state = state.vertical_scroll_state;
+        scroll_state = scroll_state.content_length(state.scroll_length as u16);
         scrollbar.render(
             area.inner(&Margin {
                 vertical: 1,
                 horizontal: 0,
             }),
             buf,
-            &mut state,
+            &mut scroll_state,
         );
     }
 }
