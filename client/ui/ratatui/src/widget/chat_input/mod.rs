@@ -1,6 +1,7 @@
 use ratatui::prelude::{Buffer, Rect};
 use ratatui::style::{Style, Stylize};
-use ratatui::widgets::{Block, Borders, Widget};
+use ratatui::widgets::block::Block;
+use ratatui::widgets::{Borders, Widget};
 use ratatui_textarea::Input;
 
 use super::TextAreaWrapper;

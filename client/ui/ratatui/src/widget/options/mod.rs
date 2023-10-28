@@ -1,7 +1,8 @@
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, StatefulWidget, Widget};
+use ratatui::widgets::block::Block;
+use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget};
 
 use super::OverlayWidgetState;
 

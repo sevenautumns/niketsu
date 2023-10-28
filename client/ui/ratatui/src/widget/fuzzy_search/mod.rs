@@ -3,9 +3,8 @@ use niketsu_core::file_database::{FileEntry, FileStore};
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, List, ListItem, ListState, Padding, StatefulWidget, Widget,
-};
+use ratatui::widgets::block::Block;
+use ratatui::widgets::{Borders, List, ListItem, ListState, Padding, StatefulWidget, Widget};
 use ratatui_textarea::Input;
 
 use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};

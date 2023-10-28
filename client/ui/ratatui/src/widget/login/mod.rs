@@ -3,7 +3,8 @@ use niketsu_core::config::Config;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::Text;
-use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
+use ratatui::widgets::block::Block;
+use ratatui::widgets::{Borders, Paragraph, Widget, Wrap};
 
 use super::{OverlayWidgetState, TextAreaWrapper};
 
