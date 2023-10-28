@@ -2,43 +2,51 @@ use iced::alignment::Horizontal;
 use iced::widget::{
     row, Button, Checkbox, Column, Container, Row, Scrollable, Space, Text, TextInput,
 };
-use iced::{Alignment, Element, Length, Theme};
+use iced::{Alignment, Element, Length, Renderer, Theme};
 use niketsu_core::config::Config;
-use niketsu_core::ui::UiModel;
 
 use self::message::{
-    AddPath, DeletePath, PasswordInput, PathInput, RoomInput, SecureCheckbox, SettingsMessage,
-    SettingsMessageTrait, UrlInput, UsernameInput,
+    Abort, AddPath, Close, DeletePath, PasswordInput, PathInput, RoomInput, SecureCheckbox,
+    SettingsMessage, UrlInput, UsernameInput,
 };
 use super::message::Message;
-use super::view::{SubWindowTrait, ViewModel};
-use crate::message::CloseSettings;
-use crate::styling::{ColorButton, FileButton};
+use crate::settings_window::message::Activate;
+use crate::styling::{ColorButton, FileButton, ResultButton};
+use crate::widget::overlay::ElementOverlay;
 use crate::TEXT_SIZE;
 
 pub(super) mod message;
 
 const SPACING: u16 = 10;
 
-#[derive(Debug, Clone)]
-pub struct SettingsView {
-    username: String,
-    media_dirs: Vec<String>,
-    // TODO validate input with url crate
-    url: String,
-    secure: bool,
-    room: String,
-    password: String,
-    auto_login: bool,
+pub struct SettingsView<'a> {
+    button: Element<'a, Message>,
+    base: Element<'a, Message>,
+    state: &'a SettingsViewState,
 }
 
-impl SubWindowTrait for SettingsView {
-    type SubMessage = SettingsMessage;
+impl<'a> SettingsView<'a> {
+    pub fn new(state: &'a SettingsViewState) -> Self {
+        let settings_button = Button::new(
+            Text::new("Settings")
+                .width(Length::Fill)
+                .horizontal_alignment(iced::alignment::Horizontal::Center),
+        )
+        .on_press(SettingsMessage::from(Activate).into())
+        .width(Length::Fill)
+        .style(ResultButton::ready());
 
-    fn view(&self, _: &ViewModel) -> Element<Message> {
+        Self {
+            button: settings_button.into(),
+            base: Self::view(state),
+            state,
+        }
+    }
+
+    pub fn view(state: &'a SettingsViewState) -> Element<Message> {
         let text_size = *TEXT_SIZE.load_full();
 
-        let file_paths: Vec<_> = self
+        let file_paths: Vec<_> = state
             .media_dirs
             .iter()
             .enumerate()
@@ -62,8 +70,8 @@ impl SubWindowTrait for SettingsView {
 
         let column = Column::new()
             .push(
-                Text::new("Niketsu")
-                    .size(text_size + 75.0)
+                Text::new("Settings")
+                    .size(text_size + 25.0)
                     .horizontal_alignment(Horizontal::Center),
             )
             .push(Space::with_height(text_size))
@@ -86,13 +94,13 @@ impl SubWindowTrait for SettingsView {
                             .push(
                                 Row::new()
                                     .push(
-                                        TextInput::new("Server Address", &self.url).on_input(|u| {
-                                            SettingsMessage::from(UrlInput(u)).into()
-                                        }),
+                                        TextInput::new("Server Address", &state.url).on_input(
+                                            |u| SettingsMessage::from(UrlInput(u)).into(),
+                                        ),
                                     )
                                     .push(
                                         Container::new(
-                                            Checkbox::new("Secure", self.secure, |b| {
+                                            Checkbox::new("Secure", state.secure, |b| {
                                                 SettingsMessage::from(SecureCheckbox(b)).into()
                                             })
                                             .spacing(SPACING),
@@ -103,16 +111,16 @@ impl SubWindowTrait for SettingsView {
                                     .spacing(SPACING),
                             )
                             .push(
-                                TextInput::new("Password", &self.password)
+                                TextInput::new("Password", &state.password)
                                     .on_input(|u| SettingsMessage::from(PasswordInput(u)).into())
                                     .password(),
                             )
                             .push(
-                                TextInput::new("Username", &self.username)
+                                TextInput::new("Username", &state.username)
                                     .on_input(|u| SettingsMessage::from(UsernameInput(u)).into()),
                             )
                             .push(
-                                TextInput::new("Room", &self.room)
+                                TextInput::new("Room", &state.room)
                                     .on_input(|u| SettingsMessage::from(RoomInput(u)).into()),
                             )
                             .spacing(SPACING)
@@ -138,13 +146,14 @@ impl SubWindowTrait for SettingsView {
             )
             .push(Space::with_height(text_size))
             .push(
+                // TODO add one button for saving and one for not saving
                 Button::new(
-                    Text::new("Start")
+                    Text::new("Connect")
                         .width(Length::Fill)
                         .horizontal_alignment(iced::alignment::Horizontal::Center),
                 )
                 .width(Length::Fill)
-                .on_press(CloseSettings.into()),
+                .on_press(SettingsMessage::from(Close).into()),
             )
             .align_items(Alignment::Center)
             .width(Length::Fill)
@@ -163,13 +172,152 @@ impl SubWindowTrait for SettingsView {
         .center_y()
         .into()
     }
+}
 
-    fn update(&mut self, message: SettingsMessage, _: &UiModel) {
-        message.handle(self);
+impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsView<'a> {
+    fn width(&self) -> iced::Length {
+        self.button.as_widget().width()
+    }
+
+    fn height(&self) -> iced::Length {
+        self.button.as_widget().height()
+    }
+
+    fn layout(
+        &self,
+        renderer: &Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        self.button.as_widget().layout(renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        state: &iced::advanced::widget::Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        self.button.as_widget().draw(
+            &state.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn operate(
+        &self,
+        state: &mut iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn iced::advanced::widget::Operation<Message>,
+    ) {
+        self.button
+            .as_widget()
+            .operate(&mut state.children[0], layout, renderer, operation);
+    }
+
+    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
+        vec![
+            iced::advanced::widget::Tree::new(&self.button),
+            iced::advanced::widget::Tree::new(&self.base),
+        ]
+    }
+
+    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
+        tree.diff_children(&[&self.button, &self.base]);
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+        renderer: &Renderer,
+    ) -> iced::advanced::mouse::Interaction {
+        self.button.as_widget().mouse_interaction(
+            &state.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn on_event(
+        &mut self,
+        state: &mut iced::advanced::widget::Tree,
+        event: iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        viewport: &iced::Rectangle,
+    ) -> iced::event::Status {
+        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key_code,
+            modifiers: _,
+        }) = event
+        {
+            if key_code == iced::keyboard::KeyCode::Escape {
+                shell.publish(SettingsMessage::from(Abort).into());
+            }
+        }
+
+        self.button.as_widget_mut().on_event(
+            &mut state.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        state: &'b mut iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        _renderer: &Renderer,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Renderer>> {
+        if self.state.active {
+            return Some(iced::advanced::overlay::Element::new(
+                layout.position(),
+                Box::new(ElementOverlay {
+                    tree: &mut state.children[1],
+                    content: &mut self.base,
+                }),
+            ));
+        }
+        None
     }
 }
 
-impl SettingsView {
+#[derive(Debug, Clone)]
+pub struct SettingsViewState {
+    username: String,
+    media_dirs: Vec<String>,
+    // TODO validate input with url crate ?
+    url: String,
+    secure: bool,
+    room: String,
+    password: String,
+    auto_login: bool,
+    active: bool,
+}
+
+impl SettingsViewState {
     pub fn new(config: Config) -> Self {
         Self {
             username: config.username,
@@ -179,12 +327,17 @@ impl SettingsView {
             password: config.password,
             secure: config.secure,
             auto_login: config.auto_login,
+            active: false,
         }
+    }
+
+    pub fn activate(&mut self) {
+        self.active = true;
     }
 }
 
-impl From<SettingsView> for Config {
-    fn from(value: SettingsView) -> Self {
+impl From<SettingsViewState> for Config {
+    fn from(value: SettingsViewState) -> Self {
         Config {
             username: value.username,
             media_dirs: value.media_dirs,
@@ -194,5 +347,11 @@ impl From<SettingsView> for Config {
             secure: value.secure,
             auto_login: value.auto_login,
         }
+    }
+}
+
+impl<'a> From<SettingsView<'a>> for Element<'a, Message> {
+    fn from(table: SettingsView<'a>) -> Self {
+        Self::new(table)
     }
 }

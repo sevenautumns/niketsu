@@ -47,6 +47,21 @@ pub struct Core {
 
 impl Core {
     pub async fn run(mut self) {
+        if self.model.config.auto_login {
+            self.auto_login().await;
+        }
+        self.run_loop().await;
+    }
+
+    pub async fn auto_login(&mut self) {
+        let addr = self.model.config.url.clone();
+        let secure = self.model.config.secure;
+        self.model
+            .communicator
+            .connect(EndpointInfo { addr, secure });
+    }
+
+    pub async fn run_loop(mut self) {
         let mut pacemaker = Pacemaker::default();
         loop {
             tokio::select! {
