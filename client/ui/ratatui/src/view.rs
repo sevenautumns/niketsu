@@ -435,7 +435,7 @@ impl RatatuiView {
         }
     }
 
-    fn render_player<B: Backend>(f: &mut Frame<B>, app: &mut App) {
+    fn render_player(f: &mut Frame, app: &mut App) {
         let size = f.size();
         let main_vertical_chunks = Layout::default()
             .direction(Direction::Vertical)

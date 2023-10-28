@@ -3,9 +3,9 @@ use ratatui::prelude::{Buffer, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols::scrollbar;
 use ratatui::text::Line;
-use ratatui::widgets::block::Title;
+use ratatui::widgets::block::{Block, Title};
 use ratatui::widgets::{
-    Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+    Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
 };
 
 use super::ListStateWrapper;
@@ -43,7 +43,7 @@ impl PlaylistWidgetState {
         self.selection_offset = 0;
         self.list_state.overflowing_next(self.playlist.len());
         if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i as u16);
+            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
     }
 
@@ -51,7 +51,7 @@ impl PlaylistWidgetState {
         self.selection_offset = 0;
         self.list_state.overflowing_previous(self.playlist.len());
         if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i as u16);
+            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
     }
 
@@ -202,7 +202,7 @@ impl StatefulWidget for PlaylistWidget {
         StatefulWidget::render(list, area, buf, state.list_state.inner());
 
         let mut state = state.vertical_scroll_state;
-        state = state.content_length(playlist.len() as u16);
+        state = state.content_length(playlist.len());
         scrollbar.render(
             area.inner(&Margin {
                 vertical: 1,

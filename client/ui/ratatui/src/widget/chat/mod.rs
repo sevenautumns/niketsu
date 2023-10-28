@@ -4,9 +4,9 @@ use ratatui::prelude::{Buffer, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols::scrollbar;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::block::Title;
+use ratatui::widgets::block::{Block, Title};
 use ratatui::widgets::{
-    Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+    Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
 };
 
 use super::ListStateWrapper;
@@ -38,14 +38,14 @@ impl ChatWidgetState {
     pub fn next(&mut self) {
         self.list_state.next();
         if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i as u16);
+            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
     }
 
     pub fn previous(&mut self) {
         self.list_state.overflowing_previous(self.messages.len());
         if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i as u16);
+            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
     }
 
@@ -54,7 +54,7 @@ impl ChatWidgetState {
             .select(Some(self.messages.len().saturating_sub(1)));
         self.vertical_scroll_state = self
             .vertical_scroll_state
-            .position(self.messages.len().saturating_sub(1) as u16);
+            .position(self.messages.len().saturating_sub(1));
     }
 }
 
@@ -121,7 +121,7 @@ impl StatefulWidget for ChatWidget {
             .end_symbol(None);
 
         let mut state = state.vertical_scroll_state;
-        state = state.content_length(messages.len() as u16);
+        state = state.content_length(messages.len());
         scrollbar.render(
             area.inner(&Margin {
                 vertical: 1,

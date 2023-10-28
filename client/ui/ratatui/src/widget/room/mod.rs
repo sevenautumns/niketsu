@@ -4,9 +4,9 @@ use ratatui::prelude::{Buffer, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols::scrollbar;
 use ratatui::text::Line;
-use ratatui::widgets::block::Title;
+use ratatui::widgets::block::{Block, Title};
 use ratatui::widgets::{
-    Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+    Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
 };
 
 use super::ListStateWrapper;
@@ -49,14 +49,14 @@ impl RoomsWidgetState {
     pub fn next(&mut self) {
         self.list_state.next();
         if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i as u16);
+            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
     }
 
     pub fn previous(&mut self) {
         self.list_state.limited_previous(self.scroll_length);
         if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i as u16);
+            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
     }
 
@@ -132,7 +132,7 @@ impl StatefulWidget for RoomsWidget {
         StatefulWidget::render(rooms_list, area, buf, state.list_state.inner());
 
         let mut scroll_state = state.vertical_scroll_state;
-        scroll_state = scroll_state.content_length(state.scroll_length as u16);
+        scroll_state = scroll_state.content_length(state.scroll_length);
         scrollbar.render(
             area.inner(&Margin {
                 vertical: 1,

@@ -1,8 +1,8 @@
 use niketsu_core::file_database::FileStore;
 use ratatui::prelude::{Buffer, Rect};
 use ratatui::style::{Color, Style, Stylize};
-use ratatui::widgets::block::Title;
-use ratatui::widgets::{Block, Borders, Gauge, StatefulWidget, Widget};
+use ratatui::widgets::block::{Block, Title};
+use ratatui::widgets::{Borders, Gauge, StatefulWidget, Widget};
 
 pub struct DatabaseWidget;
 
