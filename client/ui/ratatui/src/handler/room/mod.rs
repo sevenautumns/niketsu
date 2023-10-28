@@ -28,9 +28,8 @@ impl EventHandler for Rooms {
                     }
                     KeyCode::Enter => {
                         let room = view.app.rooms_widget_state.get_current_room();
-                        match room {
-                            Some(room_name) => view.model.change_room(RoomChange::from(room_name)),
-                            None => {}
+                        if let Some(room_name) = room {
+                            view.model.change_room(RoomChange::from(room_name))
                         }
                     }
                     _ => {}

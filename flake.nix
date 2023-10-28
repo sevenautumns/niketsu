@@ -265,6 +265,16 @@
             {
               nativeBuildInputs = [ rust-toolchain ];
             } "cd ${./.}; cargo fmt --check; touch $out";
+          clippy = naersk-lib.buildPackage {
+            inherit LIBCLANG_PATH;
+            src = ./.;
+            nativeBuildInputs = with pkgs; [ cmake pkg-config ] ++ libraries;
+            mode = "clippy";
+            preConfigure = ''
+              export BINDGEN_EXTRA_CLANG_ARGS='${BINDGEN_EXTRA_LANG_ARGS pkgs}'
+              export C_INCLUDE_PATH=$C_INCLUDE_PATH:${pkgs.mpv}/include
+            '';
+          };
         };
       });
 }
