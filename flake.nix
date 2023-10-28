@@ -150,7 +150,7 @@
             postInstall = ''
               mv $out/bin/server $out/bin/niketsu-server
             '';
-            vendorHash = "sha256-uQJBgCGuMBpJJf0X0q/f4ghvqgfigFXn41WFhYXVb4k=";
+            vendorHash = "sha256-CooDjsusmq9hCxGkSh8hmvYJqcOOdbBpYMLcUhQOlKM=";
           };
         };
         devShells.default = (pkgs.devshell.mkShell {

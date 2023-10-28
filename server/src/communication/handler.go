@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"path/filepath"
 	"sync"
 
+	"github.com/brianvoe/gofakeit/v6"
 	"github.com/sevenautumns/niketsu/server/src/db"
 	"github.com/sevenautumns/niketsu/server/src/logger"
 )
@@ -238,24 +238,22 @@ func (server *Server) RenameUserIfUnavailable(username string) string {
 		}
 	}
 
-	if !usernameMap[username] {
-		return username
+	if usernameMap[username] {
+		return server.chooseNewUsername(username, usernameMap)
 	}
 
-	return server.chooseNewUsername(username, usernameMap)
+	return username
 }
 
 func (server *Server) chooseNewUsername(username string, usernameMap map[string]bool) string {
-	if !usernameMap[username] {
-		return username
-	}
-
-	for {
-		randomPrefix := usernamePrefix[rand.Intn(len(usernamePrefix))]
-		newUsername := fmt.Sprintf("%s%s", randomPrefix, username)
+	for i := 0; i < 100; i++ {
+		randomPrefix := gofakeit.BuzzWord()
+		newUsername := fmt.Sprintf("%s %s", randomPrefix, username)
 
 		if !usernameMap[newUsername] {
 			return newUsername
 		}
 	}
+
+	return fmt.Sprintf("%s_%s", username, gofakeit.UUID())
 }
