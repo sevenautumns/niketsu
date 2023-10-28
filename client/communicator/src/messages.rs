@@ -386,7 +386,7 @@ impl Ord for UserStatusMessage {
 }
 impl PartialOrd for UserStatusMessage {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.username.partial_cmp(&other.username)
+        Some(self.cmp(other))
     }
 }
 
