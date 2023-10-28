@@ -1,3 +1,4 @@
+use config::Config;
 use enum_dispatch::enum_dispatch;
 use playlist::PlaylistHandlerTrait;
 
@@ -6,7 +7,6 @@ use self::file_database::*;
 use self::heartbeat::Pacemaker;
 use self::player::*;
 use self::ui::*;
-use self::user::UserStatus;
 
 pub mod builder;
 pub mod communicator;
@@ -32,10 +32,8 @@ pub struct CoreModel {
     pub ui: Box<dyn UserInterfaceTrait>,
     pub database: Box<dyn FileDatabaseTrait>,
     pub playlist: Box<dyn PlaylistHandlerTrait>,
-    // TODO put the following in their own struct?
-    pub user: UserStatus,
-    pub room: String,
-    pub password: Option<String>,
+    pub config: Config,
+    pub ready: bool,
 }
 
 #[derive(Debug)]

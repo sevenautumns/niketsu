@@ -58,6 +58,7 @@ mod tests {
     use super::*;
     use crate::builder::CoreBuilder;
     use crate::communicator::{MockCommunicatorTrait, OutgoingMessage};
+    use crate::config::Config;
     use crate::file_database::MockFileDatabaseTrait;
     use crate::player::MockMediaPlayerTrait;
     use crate::playlist::{MockPlaylistHandlerTrait, Video, VideoInner};
@@ -89,6 +90,7 @@ mod tests {
         let position = Some(Duration::from_secs(15));
         let speed = 1.5;
         let paused = true;
+        let config = Config::default();
         let message = OutgoingMessage::from(NiketsuVideoStatus {
             filename: Some(video.to_string()),
             position,
@@ -116,6 +118,7 @@ mod tests {
             .ui(Box::new(ui))
             .playlist(Box::new(playlist_handler))
             .file_database(Box::new(file_database))
+            .config(config)
             .build();
 
         Heartbeat.handle(&mut core.model)

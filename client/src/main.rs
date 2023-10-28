@@ -48,14 +48,12 @@ async fn main() -> Result<()> {
     }
 
     let core = CoreBuilder::builder()
-        .username(config.username)
-        .password(config.password)
-        .room(config.room)
         .ui(view)
         .player(Box::new(player))
         .communicator(Box::new(communicator))
         .file_database(Box::new(file_database))
         .playlist(Box::<PlaylistHandler>::default())
+        .config(config)
         .build();
 
     tokio::task::spawn(async move { core.run().await });

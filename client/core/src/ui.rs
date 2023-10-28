@@ -56,7 +56,7 @@ pub struct PlaylistChange {
 impl EventHandler for PlaylistChange {
     fn handle(self, model: &mut CoreModel) {
         debug!("Playlist Change Message");
-        let actor = model.user.name.clone();
+        let actor = model.config.username.clone();
         let playlist = self.playlist.iter().map(|v| v.as_str().into()).collect();
 
         model.playlist.replace(self.playlist);
@@ -74,7 +74,7 @@ pub struct VideoChange {
 impl EventHandler for VideoChange {
     fn handle(self, model: &mut CoreModel) {
         debug!("Video Change Message");
-        let actor = model.user.name.clone();
+        let actor = model.config.username.clone();
         let filename = Some(self.video.as_str().to_string());
         let position = Duration::ZERO;
         model.playlist.select_playing(&self.video);
@@ -113,7 +113,7 @@ impl From<ServerChange> for EndpointInfo {
 impl EventHandler for ServerChange {
     fn handle(self, model: &mut CoreModel) {
         debug!("Server Change Message");
-        model.password = self.password.clone();
+        model.config.password = self.password.clone().unwrap_or_default();
         model.communicator.connect(self.clone().into());
         self.room.handle(model);
     }
@@ -134,9 +134,9 @@ impl EventHandler for RoomChange {
     fn handle(self, model: &mut CoreModel) {
         debug!("Room Change Message");
         let room = self.room;
-        let username = model.user.name.clone();
-        let password = model.password.clone().unwrap_or_default();
-        model.room = room.clone();
+        let username = model.config.username.clone();
+        let password = model.config.password.clone();
+        model.config.room = room.clone();
         model.communicator.send(
             NiketsuJoin {
                 password,
@@ -157,9 +157,11 @@ pub struct UserChange {
 impl EventHandler for UserChange {
     fn handle(self, model: &mut CoreModel) {
         debug!("User Change Message");
-        model.user.name = self.name;
-        model.user.ready = self.ready;
-        model.communicator.send(model.user.clone().into());
+        model.config.username = self.name;
+        model.ready = self.ready;
+        model
+            .communicator
+            .send(model.config.status(model.ready).into());
     }
 }
 
@@ -171,7 +173,7 @@ pub struct UserMessage {
 impl EventHandler for UserMessage {
     fn handle(self, model: &mut CoreModel) {
         debug!("User Chat Message");
-        let actor = model.user.name.clone();
+        let actor = model.config.username.clone();
         let message = self.message;
         model
             .communicator
@@ -466,6 +468,7 @@ mod tests {
     use super::*;
     use crate::builder::CoreBuilder;
     use crate::communicator::{MockCommunicatorTrait, NiketsuUserStatus, OutgoingMessage};
+    use crate::config::Config;
     use crate::file_database::{FileEntry, MockFileDatabaseTrait};
     use crate::player::MockMediaPlayerTrait;
     use crate::playlist::MockPlaylistHandlerTrait;
@@ -482,6 +485,10 @@ mod tests {
         let user = String::from("max");
         let videos: [ArcStr; 2] = ["video1".into(), "video2".into()];
         let playlist = Playlist::from_iter(videos.iter());
+        let config = Config {
+            username: user.clone(),
+            ..Default::default()
+        };
         let message = OutgoingMessage::from(NiketsuPlaylist {
             actor: user.clone(),
             playlist: videos.into_iter().collect(),
@@ -504,7 +511,7 @@ mod tests {
             .ui(Box::new(ui))
             .playlist(Box::new(playlist_handler))
             .file_database(Box::new(file_database))
-            .username(user)
+            .config(config)
             .build();
 
         let change = PlaylistChange { playlist };
@@ -524,6 +531,10 @@ mod tests {
         let file = FileEntry::new("video1".into(), "/video1".into(), None);
         let file_store = FileStore::from_iter([file.clone()]);
         let pos = Duration::ZERO;
+        let config = Config {
+            username: user.clone(),
+            ..Default::default()
+        };
         let message = OutgoingMessage::from(NiketsuSelect {
             actor: user.clone(),
             filename: Some("video1".to_string()),
@@ -553,8 +564,8 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .username(user)
             .playlist(Box::new(playlist_handler))
+            .config(config)
             .build();
 
         let change = VideoChange { video };
@@ -574,6 +585,10 @@ mod tests {
         let secure = true;
         let password = Some(String::from("passwd"));
         let room: RoomChange = String::from("room1").into();
+        let config = Config {
+            username: user.clone(),
+            ..Default::default()
+        };
         let endpoint = EndpointInfo {
             addr: addr.clone(),
             secure,
@@ -600,8 +615,8 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .username(user)
             .playlist(Box::new(playlist_handler))
+            .config(config)
             .build();
 
         let change = ServerChange {
@@ -612,7 +627,7 @@ mod tests {
         };
         change.handle(&mut core.model);
 
-        assert_eq!(core.model.room, room.room);
+        assert_eq!(core.model.config.room, room.room);
     }
 
     #[test]
@@ -626,6 +641,11 @@ mod tests {
         let user = String::from("max");
         let password = String::from("passwd");
         let room = String::from("room1");
+        let config = Config {
+            username: user.clone(),
+            password: password.clone(),
+            ..Default::default()
+        };
         let message = OutgoingMessage::from(NiketsuJoin {
             password: password.clone(),
             room: room.clone(),
@@ -643,15 +663,14 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .username(user)
-            .password(password)
             .playlist(Box::new(playlist_handler))
+            .config(config)
             .build();
 
         let change = RoomChange { room: room.clone() };
         change.handle(&mut core.model);
 
-        assert_eq!(core.model.room, room);
+        assert_eq!(core.model.config.room, room);
     }
 
     #[test]
@@ -665,6 +684,10 @@ mod tests {
         let user = String::from("max");
         let user_new = String::from("moritz");
         let ready = true;
+        let config = Config {
+            username: user.clone(),
+            ..Default::default()
+        };
         let message = OutgoingMessage::from(NiketsuUserStatus {
             ready,
             username: user_new.clone(),
@@ -681,12 +704,12 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .username(user.clone())
             .playlist(Box::new(playlist_handler))
+            .config(config)
             .build();
 
-        assert_eq!(core.model.user.name, user);
-        assert!(!core.model.user.ready);
+        assert_eq!(core.model.config.username, user);
+        assert!(!core.model.ready);
 
         let change = UserChange {
             name: user_new.clone(),
@@ -694,8 +717,8 @@ mod tests {
         };
         change.handle(&mut core.model);
 
-        assert_eq!(core.model.user.name, user_new);
-        assert_eq!(core.model.user.ready, ready);
+        assert_eq!(core.model.config.username, user_new);
+        assert_eq!(core.model.ready, ready);
     }
 
     #[test]
@@ -708,6 +731,10 @@ mod tests {
 
         let user = String::from("max");
         let user_msg = String::from("hello world!");
+        let config = Config {
+            username: user.clone(),
+            ..Default::default()
+        };
         let message = OutgoingMessage::from(NiketsuUserMessage {
             actor: user.clone(),
             message: user_msg.clone(),
@@ -724,8 +751,8 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .username(user.clone())
             .playlist(Box::new(playlist_handler))
+            .config(config)
             .build();
 
         let change = UserMessage { message: user_msg };
@@ -740,6 +767,8 @@ mod tests {
         let mut file_database = MockFileDatabaseTrait::default();
         let playlist_handler = MockPlaylistHandlerTrait::default();
 
+        let config = Config::default();
+
         file_database.expect_start_update().once().return_const(());
         file_database.expect_stop_update().once().return_const(());
 
@@ -749,6 +778,7 @@ mod tests {
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
             .playlist(Box::new(playlist_handler))
+            .config(config)
             .build();
 
         let start_update = FileDatabaseChange::StartUpdate;
@@ -768,6 +798,7 @@ mod tests {
 
         let paths = vec!["/videos".into(), "/music".into()];
         let paths_clone = paths.clone();
+        let config = Config::default();
 
         file_database.expect_clear_paths().once().return_const(());
         file_database
@@ -783,6 +814,7 @@ mod tests {
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
             .playlist(Box::new(playlist_handler))
+            .config(config)
             .build();
 
         let change = FileDatabaseChange::ChangePaths(paths.to_vec());
