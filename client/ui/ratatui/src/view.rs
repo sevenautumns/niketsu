@@ -72,6 +72,7 @@ pub struct App {
     pub fuzzy_search_widget: FuzzySearchWidget,
     pub current_search: Option<FuzzySearch>,
     mode: Mode,
+    prev_mode: Option<Mode>,
 }
 
 impl App {
@@ -95,6 +96,7 @@ impl App {
             media_widget: MediaDirWidget::new(config.media_dirs),
             current_search: None,
             mode: Mode::Normal,
+            prev_mode: None,
         }
     }
 
@@ -107,16 +109,29 @@ impl App {
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
+        self.prev_mode = Some(self.mode.clone());
         self.mode = mode;
     }
 
     pub fn reset_overlay(&mut self) {
         self.current_overlay_state = None;
-        self.mode = Mode::Normal;
+        if let Some(mode) = self.prev_mode.clone() {
+            self.mode = mode;
+        } else {
+            self.mode = Mode::Normal;
+        }
+    }
+
+    pub fn current_state(&self) -> State {
+        self.current_state
     }
 
     pub fn fuzzy_search(&mut self, query: String) {
         self.current_search = Some(self.fuzzy_search_widget.fuzzy_search(query));
+    }
+
+    pub fn reset_fuzzy_search(&mut self) {
+        self.current_search = None;
     }
 }
 
@@ -186,7 +201,11 @@ impl RatatuiView {
         if let Some(Ok(event)) = ct_event {
             match self.app.mode {
                 Mode::Normal => return self.handle_normal_event(&event),
-                Mode::Inspecting => self.app.current_state.clone().handle(self, &event),
+                Mode::Inspecting => self
+                    .app
+                    .current_state
+                    .clone()
+                    .handle_with_overlay(self, &event),
                 Mode::Editing => handle_command_prompt(self, &event),
                 Mode::Overlay => {
                     if let Some(overlay) = self.app.current_overlay_state {
@@ -374,7 +393,7 @@ impl RatatuiView {
                         self.highlight();
                     }
                     KeyCode::Char(' ') => {
-                        self.app.mode = Mode::Overlay;
+                        self.app.set_mode(Mode::Overlay);
                         self.app
                             .set_current_overlay_state(Some(OverlayState::from(Options {})));
                     }
