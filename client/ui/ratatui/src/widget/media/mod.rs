@@ -7,24 +7,26 @@ use ratatui_textarea::Input;
 
 use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
 
+pub struct MediaDirWidget;
+
 #[derive(Debug, Default, Clone)]
-pub struct MediaDirWidget {
+pub struct MediaDirWidgetState {
     media_paths: Vec<String>,
     input_field: TextAreaWrapper,
-    state: ListStateWrapper,
+    list_state: ListStateWrapper,
     style: Style,
 }
 
-impl MediaDirWidget {
+impl MediaDirWidgetState {
     pub fn new(paths: Vec<String>) -> Self {
         let mut widget = Self {
             media_paths: paths,
             input_field: Default::default(),
-            state: Default::default(),
+            list_state: Default::default(),
             style: Default::default(),
         };
         widget.setup_input_field();
-        widget.state.select(Some(0));
+        widget.list_state.select(Some(0));
         widget
     }
 
@@ -44,7 +46,7 @@ impl MediaDirWidget {
     }
 
     pub fn get_state(&self) -> ListState {
-        self.state.clone_inner()
+        self.list_state.clone_inner()
     }
 
     pub fn push_path(&mut self) {
@@ -55,13 +57,13 @@ impl MediaDirWidget {
     }
 
     pub fn remove_path(&mut self) {
-        if let Some(i) = self.state.selected() {
+        if let Some(i) = self.list_state.selected() {
             _ = self.media_paths.remove(i);
         }
     }
 
     pub fn reset_all(&mut self) {
-        self.state.select(Some(0));
+        self.list_state.select(Some(0));
         self.input_field = TextAreaWrapper::default();
         self.setup_input_field();
     }
@@ -69,18 +71,18 @@ impl MediaDirWidget {
     pub fn next(&mut self) {
         let len = self.len();
         if len == 0 {
-            self.state.select(None);
+            self.list_state.select(None);
         } else {
-            self.state.overflowing_next(len);
+            self.list_state.overflowing_next(len);
         }
     }
 
     pub fn previous(&mut self) {
         let len = self.len();
         if len == 0 {
-            self.state.select(None);
+            self.list_state.select(None);
         } else {
-            self.state.overflowing_previous(len);
+            self.list_state.overflowing_previous(len);
         }
     }
 
@@ -93,7 +95,7 @@ impl MediaDirWidget {
     }
 }
 
-impl OverlayWidgetState for MediaDirWidget {
+impl OverlayWidgetState for MediaDirWidgetState {
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -122,7 +124,7 @@ impl OverlayWidgetState for MediaDirWidget {
 }
 
 impl StatefulWidget for MediaDirWidget {
-    type State = ListState;
+    type State = MediaDirWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let outer_block = Block::default()
@@ -135,17 +137,17 @@ impl StatefulWidget for MediaDirWidget {
             .margin(1)
             .split(area);
 
-        let media_paths = self.media_paths.clone();
-        let media_dirs: Vec<ListItem> = media_paths
-            .into_iter()
-            .map(|m| ListItem::new(Line::from(m)))
+        let media_dirs: Vec<ListItem> = state
+            .media_paths
+            .iter()
+            .map(|m| ListItem::new(Line::from(m.to_string())))
             .collect();
 
         let media_path_list = List::new(media_dirs)
             .gray()
             .block(
                 Block::default()
-                    .style(self.style)
+                    .style(state.style)
                     .title("Results")
                     .borders(Borders::TOP)
                     .padding(Padding::new(1, 1, 1, 1)),
@@ -153,9 +155,9 @@ impl StatefulWidget for MediaDirWidget {
             .highlight_style(Style::default().fg(Color::Cyan))
             .highlight_symbol("> ");
 
-        let input_field = self.input_field.clone();
+        let input_field = state.input_field.clone();
         outer_block.render(area, buf);
         input_field.widget().render(layout[0], buf);
-        StatefulWidget::render(media_path_list, layout[1], buf, state);
+        StatefulWidget::render(media_path_list, layout[1], buf, state.list_state.inner());
     }
 }

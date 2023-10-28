@@ -4,9 +4,11 @@ use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::Text;
 use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget, Wrap};
 
 use super::{OverlayWidgetState, TextAreaWrapper};
+
+pub struct LoginWidget;
 
 #[derive(Debug, Default, Clone)]
 enum State {
@@ -19,7 +21,7 @@ enum State {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct LoginWidget {
+pub struct LoginWidgetState {
     current_state: State,
     address_field: TextAreaWrapper,
     password_field: TextAreaWrapper,
@@ -29,7 +31,7 @@ pub struct LoginWidget {
     style: Style,
 }
 
-impl LoginWidget {
+impl LoginWidgetState {
     pub fn new(config: Config) -> Self {
         Self {
             current_state: State::default(),
@@ -93,7 +95,7 @@ impl LoginWidget {
     }
 }
 
-impl OverlayWidgetState for LoginWidget {
+impl OverlayWidgetState for LoginWidgetState {
     fn area(&self, r: Rect) -> Rect {
         let vert_width = match r.height {
             0..=50 => 10,
@@ -127,29 +129,31 @@ impl OverlayWidgetState for LoginWidget {
     }
 }
 
-impl Widget for LoginWidget {
-    fn render(self, area: Rect, buf: &mut Buffer) {
+impl StatefulWidget for LoginWidget {
+    type State = LoginWidgetState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let outer_block = Block::default().title("Login").borders(Borders::ALL).gray();
 
         let text_block = Paragraph::new(Text::raw("Press Enter to submit."))
             .block(Block::default().borders(Borders::NONE).gray())
             .wrap(Wrap { trim: false });
 
-        let mut address_field = self.address_field.clone();
-        let password_field = self.password_field.clone();
+        let mut address_field = state.address_field.clone();
+        let password_field = state.password_field.clone();
         let mut password_field = password_field.into_masked("Password");
-        let mut username_field = self.username_field.clone();
-        let mut room_field = self.room_field.clone();
+        let mut username_field = state.username_field.clone();
+        let mut room_field = state.room_field.clone();
 
-        let mut secure_block = match self.secure {
+        let mut secure_block = match state.secure {
             true => Paragraph::new(Text::raw("Secure: on"))
                 .block(Block::default().borders(Borders::ALL).green()),
             false => Paragraph::new(Text::raw("Secure: off"))
                 .block(Block::default().borders(Borders::ALL).red()),
         };
 
-        let style = self.style;
-        match self.current_state {
+        let style = state.style;
+        match state.current_state {
             State::Address => address_field.set_textarea_style(style, style.dark_gray().on_cyan()),
             State::Password => {
                 password_field.set_textarea_style(style, style.dark_gray().on_cyan())

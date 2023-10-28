@@ -9,21 +9,24 @@ use ratatui_textarea::Input;
 
 use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
 
-//TODO add item where cursor is
+pub struct FuzzySearchWidget;
+
 #[derive(Debug, Default, Clone)]
-pub struct FuzzySearchWidget {
+pub struct FuzzySearchWidgetState {
     file_database: FileStore,
     current_result: Option<Vec<FuzzyResult>>,
     input_field: TextAreaWrapper,
-    state: ListStateWrapper,
+    list_state: ListStateWrapper,
+    max_len: usize,
     style: Style,
 }
 
-impl FuzzySearchWidget {
+impl FuzzySearchWidgetState {
     pub fn new() -> Self {
         let mut widget = Self::default();
         widget.setup_input_field();
-        widget.state.select(Some(0));
+        widget.list_state.select(Some(0));
+        widget.max_len = 200;
         widget
     }
 
@@ -39,11 +42,11 @@ impl FuzzySearchWidget {
     }
 
     pub fn get_state(&self) -> ListState {
-        self.state.clone_inner()
+        self.list_state.clone_inner()
     }
 
     pub fn get_selected(&self) -> Option<FileEntry> {
-        match self.state.selected() {
+        match self.list_state.selected() {
             Some(i) => self
                 .current_result
                 .clone()
@@ -58,14 +61,14 @@ impl FuzzySearchWidget {
 
     pub fn set_result(&mut self, results: Vec<FuzzyResult>) {
         if results.is_empty() {
-            self.state.select(None);
+            self.list_state.select(None);
         }
         self.current_result = Some(results);
     }
 
     pub fn reset_all(&mut self) {
         self.current_result = None;
-        self.state.select(Some(0));
+        self.list_state.select(Some(0));
         self.input_field = TextAreaWrapper::default();
         self.setup_input_field();
     }
@@ -73,24 +76,24 @@ impl FuzzySearchWidget {
     pub fn next(&mut self) {
         let len = self.len();
         if len == 0 {
-            self.state.select(None);
+            self.list_state.select(None);
         } else {
-            self.state.overflowing_next(len);
+            self.list_state.overflowing_next(len);
         }
     }
 
     pub fn previous(&mut self) {
         let len = self.len();
         if len == 0 {
-            self.state.select(None);
+            self.list_state.select(None);
         } else {
-            self.state.overflowing_previous(len);
+            self.list_state.overflowing_previous(len);
         }
     }
 
     fn len(&self) -> usize {
         match self.current_result.clone() {
-            Some(vec) => vec.len(),
+            Some(vec) => std::cmp::min(self.max_len, vec.len()),
             None => 0,
         }
     }
@@ -104,7 +107,7 @@ impl FuzzySearchWidget {
     }
 }
 
-impl OverlayWidgetState for FuzzySearchWidget {
+impl OverlayWidgetState for FuzzySearchWidgetState {
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -133,7 +136,7 @@ impl OverlayWidgetState for FuzzySearchWidget {
 }
 
 impl StatefulWidget for FuzzySearchWidget {
-    type State = ListState;
+    type State = FuzzySearchWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let outer_block = Block::default()
@@ -146,17 +149,18 @@ impl StatefulWidget for FuzzySearchWidget {
             .margin(1)
             .split(area);
 
-        let search_result = self.current_result.clone();
-        let search_result: Vec<ListItem> = match search_result {
+        let search_result: Vec<ListItem> = match &state.current_result {
             Some(result) => result
-                .into_iter()
+                .iter()
+                .take(state.max_len)
                 .map(|s| {
                     let mut text = Vec::new();
                     let name = s.entry.file_name();
-                    let hits = s.hits;
+                    let hits = &s.hits;
                     let mut hits_index = 0;
+                    let hits_len = hits.len();
                     for (index, char) in name.char_indices() {
-                        if index < hits.len() && index == hits[hits_index] {
+                        if hits_index < hits_len && index == hits[hits_index] {
                             text.push(Span::styled(
                                 char.to_string(),
                                 Style::default().fg(Color::Yellow),
@@ -176,7 +180,7 @@ impl StatefulWidget for FuzzySearchWidget {
             .gray()
             .block(
                 Block::default()
-                    .style(self.style)
+                    .style(state.style)
                     .title("Results")
                     .borders(Borders::TOP)
                     .padding(Padding::new(1, 1, 1, 1)),
@@ -184,9 +188,9 @@ impl StatefulWidget for FuzzySearchWidget {
             .highlight_style(Style::default().fg(Color::Cyan))
             .highlight_symbol("> ");
 
-        let input_field = self.input_field.clone();
+        let input_field = state.input_field.clone();
         outer_block.render(area, buf);
         input_field.widget().render(layout[0], buf);
-        StatefulWidget::render(search_list, layout[1], buf, state);
+        StatefulWidget::render(search_list, layout[1], buf, state.list_state.inner());
     }
 }

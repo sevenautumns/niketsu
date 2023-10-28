@@ -60,5 +60,5 @@ async fn main() -> Result<()> {
 
     tokio::task::spawn(async move { core.run().await });
 
-    ui_fn()
+    ui_fn.await
 }

@@ -11,8 +11,6 @@ use ratatui::widgets::{
 use super::ListStateWrapper;
 
 //TODO negative offset support
-//TODO wrap length
-//TODO fix list state
 pub struct PlaylistWidget;
 
 #[derive(Debug, Default, Clone)]
@@ -116,78 +114,37 @@ impl StatefulWidget for PlaylistWidget {
             .borders(Borders::ALL)
             .style(state.style);
 
-        //TODO refactor
-        let playlist = state.playlist.clone();
         let playlist: Vec<ListItem> = match state.list_state.selected() {
-            Some(index) => playlist
+            Some(index) => state
+                .playlist
                 .iter()
                 .take(index)
-                .map(|t| {
-                    if let Some(video) = state.playing_video.clone() {
-                        let video_text = format!("> {}", t.as_str());
-                        if t.eq(&video) {
-                            return ListItem::new(vec![Line::styled(
-                                video_text,
-                                Style::default().fg(Color::Yellow),
-                            )]);
-                        }
-                    }
-                    ListItem::new(vec![Line::from(t.as_str().gray())])
-                })
+                .map(|t| mark_selection(t, state, Color::Gray))
                 .chain(
-                    playlist
+                    state
+                        .playlist
                         .iter()
                         .skip(index)
                         .take(state.selection_offset + 1)
-                        .map(|t| {
-                            if let Some(video) = state.playing_video.clone() {
-                                let video_text = format!("> {}", t.as_str());
-                                if t.eq(&video) {
-                                    return ListItem::new(vec![Line::styled(
-                                        video_text,
-                                        Style::default().fg(Color::Yellow),
-                                    )]);
-                                }
-                            }
-                            ListItem::new(vec![Line::from(t.as_str().cyan())])
-                        }),
+                        .map(|t| mark_selection(t, state, Color::Cyan)),
                 )
                 .chain(
-                    playlist
+                    state
+                        .playlist
                         .iter()
                         .skip(index + state.selection_offset + 1)
-                        .map(|t| {
-                            if let Some(video) = state.playing_video.clone() {
-                                let video_text = format!("> {}", t.as_str());
-                                if t.eq(&video) {
-                                    return ListItem::new(vec![Line::styled(
-                                        video_text,
-                                        Style::default().fg(Color::Yellow),
-                                    )]);
-                                }
-                            }
-                            ListItem::new(vec![Line::from(t.as_str().gray())])
-                        }),
+                        .map(|t| mark_selection(t, state, Color::Gray)),
                 )
                 .collect(),
-            None => playlist
+            None => state
+                .playlist
                 .iter()
-                .map(|t| {
-                    if let Some(video) = state.playing_video.clone() {
-                        let video_text = format!("> {}", t.as_str());
-                        if t.eq(&video) {
-                            return ListItem::new(vec![Line::styled(
-                                video_text,
-                                Style::default().fg(Color::Yellow),
-                            )]);
-                        }
-                    }
-                    ListItem::new(vec![Line::from(t.as_str().gray())])
-                })
+                .map(|t| mark_selection(t, state, Color::Gray))
                 .collect(),
         };
 
-        let list = List::new(playlist.clone())
+        let playlist_len = playlist.len();
+        let list = List::new(playlist)
             .gray()
             .block(scroll_block)
             .highlight_style(Style::default().fg(Color::Cyan))
@@ -202,7 +159,7 @@ impl StatefulWidget for PlaylistWidget {
         StatefulWidget::render(list, area, buf, state.list_state.inner());
 
         let mut state = state.vertical_scroll_state;
-        state = state.content_length(playlist.len());
+        state = state.content_length(playlist_len);
         scrollbar.render(
             area.inner(&Margin {
                 vertical: 1,
@@ -212,4 +169,21 @@ impl StatefulWidget for PlaylistWidget {
             &mut state,
         );
     }
+}
+
+fn mark_selection<'a>(
+    video: &'a Video,
+    state: &PlaylistWidgetState,
+    default_color: Color,
+) -> ListItem<'a> {
+    if let Some(playing_video) = &state.playing_video {
+        if video.eq(playing_video) {
+            let video_text = format!("> {}", video.as_str());
+            return ListItem::new(vec![Line::styled(
+                video_text,
+                Style::default().fg(Color::Yellow),
+            )]);
+        }
+    }
+    ListItem::new(vec![Line::from(video.as_str().fg(default_color))])
 }
