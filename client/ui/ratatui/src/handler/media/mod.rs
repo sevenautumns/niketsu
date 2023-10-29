@@ -28,6 +28,11 @@ impl EventHandler for MediaDir {
                     KeyCode::Char('d') => {
                         if key.modifiers == KeyModifiers::CONTROL {
                             view.app.media_widget.remove_path();
+                            let media_paths = view.app.media_widget.get_paths();
+                            view.change_media_dirs(
+                                media_paths.clone().iter().map(|m| m.into()).collect(),
+                            );
+                            view.save_media_dir(media_paths)
                         } else {
                             view.app.media_widget.input(*key);
                         }

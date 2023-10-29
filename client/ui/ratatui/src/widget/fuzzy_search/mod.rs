@@ -47,10 +47,14 @@ impl FuzzySearchWidgetState {
 
     pub fn get_selected(&self) -> Option<FileEntry> {
         match self.list_state.selected() {
-            Some(i) => self
-                .current_result
-                .clone()
-                .map(|result| result[i].clone().entry),
+            Some(i) => {
+                if let Some(result) = &self.current_result {
+                    if i < result.len() {
+                        return Some(result[i].entry.clone());
+                    }
+                }
+                None
+            }
             None => None,
         }
     }
@@ -64,6 +68,7 @@ impl FuzzySearchWidgetState {
             self.list_state.select(None);
         }
         self.current_result = Some(results);
+        self.list_state.limited_previous(self.len());
     }
 
     pub fn reset_all(&mut self) {
