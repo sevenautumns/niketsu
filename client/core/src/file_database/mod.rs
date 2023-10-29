@@ -384,6 +384,7 @@ mod tests {
             store: Default::default(),
             paths: Default::default(),
             last_progress_event: Default::default(),
+            stopped: false,
         };
         let test_path = PathBuf::from("test/path/");
         file_db.add_path(test_path.clone());
@@ -408,6 +409,7 @@ mod tests {
             store: Default::default(),
             paths: BTreeSet::from([test_path.clone()]),
             last_progress_event: Default::default(),
+            stopped: false,
         };
         file_db.del_path(Path::new("test/path"));
         let expected: BTreeSet<PathBuf> = Default::default();
@@ -425,6 +427,7 @@ mod tests {
             store: Default::default(),
             paths: BTreeSet::from([PathBuf::from("test/path/"), PathBuf::from("test/path2/")]),
             last_progress_event: Default::default(),
+            stopped: false,
         };
         file_db.clear_paths();
         let expected: BTreeSet<PathBuf> = Default::default();
@@ -443,6 +446,7 @@ mod tests {
             store: Default::default(),
             paths: paths.iter().cloned().collect(),
             last_progress_event: Default::default(),
+            stopped: false,
         };
         let actual = file_db.get_paths();
         assert_eq!(paths, actual);
@@ -473,10 +477,12 @@ mod tests {
             store: Default::default(),
             paths: BTreeSet::from([dir.into_path(), dir2.into_path(), dir3.into_path()]),
             last_progress_event: Default::default(),
+            stopped: true,
         };
         file_db.start_update();
         let result = file_db.update.expect("failed to create join handle").await;
         assert_eq!(result.expect("failed to get results").len(), 1000);
+        assert!(!file_db.stopped, "stop variable should not be set");
         Ok(())
     }
 
@@ -491,6 +497,7 @@ mod tests {
             store: Default::default(),
             paths: Default::default(),
             last_progress_event: Default::default(),
+            stopped: false,
         };
         file_db.update = Some(tokio::spawn(async move {
             sleep(Duration::from_secs(1)).await;
@@ -501,6 +508,7 @@ mod tests {
             file_db.update.is_none(),
             "update handle should have stopped early"
         );
+        assert!(file_db.stopped, "stop variable should be set");
     }
 
     // #[test]

@@ -1,4 +1,3 @@
-use iced::alignment::Horizontal;
 use iced::widget::{
     row, Button, Checkbox, Column, Container, Row, Scrollable, Space, Text, TextInput,
 };
@@ -71,12 +70,25 @@ impl<'a> SettingsWidget<'a> {
 
         let column = Column::new()
             .push(
-                Text::new("Settings")
-                    .size(text_size + 25.0)
-                    .horizontal_alignment(Horizontal::Center),
+                Row::new()
+                    .push(
+                        Text::new("Settings")
+                            .size(text_size + 25.0)
+                            .width(Length::Fill),
+                    )
+                    .push(
+                        Button::new("Close")
+                            .on_press(SettingsWidgetMessage::from(Abort).into())
+                            .style(ResultButton::not_ready()),
+                    )
+                    .spacing(SPACING),
             )
             .push(Space::with_height(text_size))
-            .push(Text::new("General").size(text_size + 15.0))
+            .push(
+                Text::new("General")
+                    .size(text_size + 15.0)
+                    .width(Length::Fill),
+            )
             .push(
                 Row::new()
                     .push(
@@ -132,7 +144,11 @@ impl<'a> SettingsWidget<'a> {
                     .spacing(SPACING),
             )
             .push(Space::with_height(text_size))
-            .push(Text::new("Directories").size(text_size + 15.0))
+            .push(
+                Text::new("Directories")
+                    .size(text_size + 15.0)
+                    .width(Length::Fill),
+            )
             .push(
                 Column::new()
                     .push(Column::with_children(file_paths).spacing(SPACING))
@@ -278,13 +294,23 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
         shell: &mut iced::advanced::Shell<'_, Message>,
         viewport: &iced::Rectangle,
     ) -> iced::event::Status {
-        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-            key_code,
-            modifiers: _,
-        }) = event
-        {
-            if key_code == iced::keyboard::KeyCode::Escape {
-                shell.publish(SettingsWidgetMessage::from(Abort).into());
+        if self.state.active {
+            if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
+                iced::mouse::Button::Left,
+            )) = event
+            {
+                if matches!(cursor, iced::mouse::Cursor::Available(_)) {
+                    shell.publish(SettingsWidgetMessage::from(Abort).into());
+                }
+            }
+            if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key_code,
+                modifiers: _,
+            }) = event
+            {
+                if key_code == iced::keyboard::KeyCode::Escape {
+                    shell.publish(SettingsWidgetMessage::from(Abort).into());
+                }
             }
         }
 

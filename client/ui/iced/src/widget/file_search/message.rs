@@ -53,7 +53,13 @@ impl FileSearchWidgetMessageTrait for Input {
 pub struct Activate;
 
 impl FileSearchWidgetMessageTrait for Activate {
-    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) {
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) {
+        state.search = Some(
+            model
+                .file_database
+                .get_inner_arc()
+                .fuzzy_search(state.query.clone()),
+        );
         state.active = true
     }
 }
