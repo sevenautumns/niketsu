@@ -9,7 +9,7 @@ use niketsu_core::file_database::fuzzy::{FuzzyResult, FuzzySearch};
 use self::message::{
     Activate, Click, Close, FileSearchWidgetMessage, Input, Insert, SearchFinished, Select,
 };
-use super::overlay::ElementOverlay;
+use super::overlay::{ElementOverlay, ElementOverlayConfig};
 use crate::message::Message;
 use crate::styling::{FileButton, ResultButton};
 
@@ -228,6 +228,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
                 Box::new(ElementOverlay {
                     tree: &mut state.children[1],
                     content: &mut self.base,
+                    config: ElementOverlayConfig::default(),
                 }),
             ));
         }

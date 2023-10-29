@@ -20,7 +20,8 @@ pub trait SettingsWidgetMessageTrait {
 pub enum SettingsWidgetMessage {
     Activate,
     Abort,
-    Close,
+    ApplyClose,
+    ApplyCloseSave,
     UsernameInput,
     UrlInput,
     PathInput,
@@ -57,9 +58,9 @@ impl SettingsWidgetMessageTrait for Abort {
 }
 
 #[derive(Debug, Clone)]
-pub struct Close;
+pub struct ApplyClose;
 
-impl SettingsWidgetMessageTrait for Close {
+impl SettingsWidgetMessageTrait for ApplyClose {
     fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
         state.active = false;
         let config: Config = state.clone().into();
@@ -75,6 +76,16 @@ impl SettingsWidgetMessageTrait for Close {
                 room: config.room.clone(),
             },
         });
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ApplyCloseSave;
+
+impl SettingsWidgetMessageTrait for ApplyCloseSave {
+    fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
+        ApplyClose.handle(state, model);
+        let config: Config = state.clone().into();
         log!(config.save());
     }
 }

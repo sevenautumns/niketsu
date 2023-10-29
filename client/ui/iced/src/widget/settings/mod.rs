@@ -6,9 +6,10 @@ use iced::{Alignment, Element, Length, Renderer, Theme};
 use niketsu_core::config::Config;
 
 use self::message::{
-    Abort, Activate, AddPath, Close, DeletePath, PasswordInput, PathInput, RoomInput,
-    SecureCheckbox, SettingsWidgetMessage, UrlInput, UsernameInput,
+    Abort, Activate, AddPath, ApplyClose, ApplyCloseSave, DeletePath, PasswordInput, PathInput,
+    RoomInput, SecureCheckbox, SettingsWidgetMessage, UrlInput, UsernameInput,
 };
+use super::overlay::ElementOverlayConfig;
 use crate::message::Message;
 use crate::styling::{ColorButton, FileButton, ResultButton};
 use crate::widget::overlay::ElementOverlay;
@@ -17,6 +18,7 @@ use crate::TEXT_SIZE;
 pub mod message;
 
 const SPACING: u16 = 10;
+const MAX_WIDTH: f32 = 600.0;
 
 pub struct SettingsWidget<'a> {
     button: Element<'a, Message>,
@@ -147,29 +149,42 @@ impl<'a> SettingsWidget<'a> {
             )
             .push(Space::with_height(text_size))
             .push(
-                // TODO add one button for saving and one for not saving
-                Button::new(
-                    Text::new("Connect")
+                Row::new()
+                    .push(
+                        Button::new(
+                            Text::new("Connect")
+                                .width(Length::Fill)
+                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        )
                         .width(Length::Fill)
-                        .horizontal_alignment(iced::alignment::Horizontal::Center),
-                )
-                .width(Length::Fill)
-                .on_press(SettingsWidgetMessage::from(Close).into()),
+                        .on_press(SettingsWidgetMessage::from(ApplyClose).into()),
+                    )
+                    .push(
+                        Button::new(
+                            Text::new("Save & Connect")
+                                .width(Length::Fill)
+                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        )
+                        .width(Length::Fill)
+                        .on_press(SettingsWidgetMessage::from(ApplyCloseSave).into()),
+                    )
+                    .spacing(SPACING),
             )
             .align_items(Alignment::Center)
             .width(Length::Fill)
-            .max_width(500)
+            .max_width(MAX_WIDTH)
             .spacing(SPACING)
             .padding(SPACING);
 
         Container::new(Scrollable::new(
             Container::new(column)
-                .padding(5)
+                .padding(10)
                 .center_x()
                 .width(Length::Fill),
         ))
-        .height(Length::Fill)
+        // .height(Length::Fill)
         .padding(SPACING)
+        .max_width(MAX_WIDTH)
         .center_y()
         .into()
     }
@@ -298,6 +313,10 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
                 Box::new(ElementOverlay {
                     tree: &mut state.children[1],
                     content: &mut self.base,
+                    config: ElementOverlayConfig {
+                        max_width: Some(MAX_WIDTH),
+                        ..Default::default()
+                    },
                 }),
             ));
         }
