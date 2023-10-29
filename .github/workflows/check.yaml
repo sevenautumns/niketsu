@@ -20,7 +20,7 @@ jobs:
           name: niketsu
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - name: Run Checks
-        run: nix flake check
+        run: nix flake check --fallback
 
   format:
     name: Check Format
@@ -36,5 +36,5 @@ jobs:
           name: niketsu
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - name: Run verify commands
-        run: nix develop --command treefmt --fail-on-change
+        run: nix develop --fallback --command treefmt --fail-on-change
 

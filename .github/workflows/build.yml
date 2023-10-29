@@ -48,7 +48,7 @@ jobs:
         with:
           platforms: arm64
       - name: Run build
-        run: nix build .#packages.${{ matrix.target }}.${{ matrix.package }}
+        run: nix build .#packages.${{ matrix.target }}.${{ matrix.package }} --fallback
       - name: Rename
         if: ${{ matrix.package == 'niketsu-client-windows' }}
         run: mkdir out && cp result out/x86_64-windows-niketsu-client.zip
