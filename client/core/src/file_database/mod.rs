@@ -161,6 +161,7 @@ pub struct FileDatabase {
     store: FileStore,
     paths: BTreeSet<PathBuf>,
     last_progress_event: Option<Instant>,
+    stopped: bool,
 }
 
 impl FileDatabase {
@@ -227,11 +228,13 @@ impl FileDatabaseTrait for FileDatabase {
         let update = FileDatabaseUpdater::update_all(paths, progress);
         self.last_progress_event = None;
         self.update = Some(tokio::task::spawn(update));
+        self.stopped = false;
     }
 
     fn stop_update(&mut self) {
         if let Some(update) = self.update.take() {
             self.progress = Arc::default();
+            self.stopped = true;
             update.abort();
         }
     }
@@ -246,6 +249,11 @@ impl FileDatabaseTrait for FileDatabase {
 
     async fn event(&mut self) -> Option<FileDatabaseEvent> {
         // TODO REFACTOR
+        if self.stopped {
+            self.stopped = false;
+            return Some(UpdateComplete.into());
+        }
+
         use crate::file_database::UpdateProgress as Prog;
         let updater = self.update.as_mut()?;
 

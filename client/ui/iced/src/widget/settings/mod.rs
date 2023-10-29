@@ -182,7 +182,6 @@ impl<'a> SettingsWidget<'a> {
                 .center_x()
                 .width(Length::Fill),
         ))
-        // .height(Length::Fill)
         .padding(SPACING)
         .max_width(MAX_WIDTH)
         .center_y()
