@@ -99,9 +99,9 @@ impl EventHandler for NiketsuConnected {
         debug!("Server Connection Established");
         model.communicator.send(
             NiketsuJoin {
-                password: model.password.clone().unwrap_or_default(),
-                room: model.room.clone(),
-                username: model.user.name.clone(),
+                password: model.config.password.clone(),
+                room: model.config.room.clone(),
+                username: model.config.username.clone(),
             }
             .into(),
         );
@@ -475,7 +475,7 @@ pub struct NiketsuUserStatus {
 impl EventHandler for NiketsuUserStatus {
     fn handle(self, model: &mut CoreModel) {
         debug!("Username changed by Server");
-        model.user.name = self.username.clone();
+        model.config.username = self.username.clone();
         model.ui.username_change(self.username.clone());
         model.ui.player_message(PlayerMessage::from(self));
     }

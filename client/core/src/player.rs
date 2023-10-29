@@ -48,13 +48,13 @@ pub struct PlayerPause;
 
 impl EventHandler for PlayerPause {
     fn handle(self, model: &mut CoreModel) {
-        model.user.not_ready();
+        model.ready = false;
         model
             .communicator
-            .send(OutgoingMessage::from(model.user.clone()));
+            .send(OutgoingMessage::from(model.config.status(model.ready)));
         model.communicator.send(
             NiketsuPause {
-                actor: model.user.name.clone(),
+                actor: model.config.username.clone(),
             }
             .into(),
         )
@@ -66,13 +66,13 @@ pub struct PlayerStart;
 
 impl EventHandler for PlayerStart {
     fn handle(self, model: &mut CoreModel) {
-        model.user.ready();
+        model.ready = true;
         model
             .communicator
-            .send(OutgoingMessage::from(model.user.clone()));
+            .send(OutgoingMessage::from(model.config.status(model.ready)));
         model.communicator.send(
             NiketsuStart {
-                actor: model.user.name.clone(),
+                actor: model.config.username.clone(),
             }
             .into(),
         )
@@ -96,7 +96,7 @@ impl EventHandler for PlayerPositionChange {
             return;
         };
         let file = playing.as_str().to_string();
-        let actor = model.user.name.clone();
+        let actor = model.config.username.clone();
         let position = self.pos;
 
         model.communicator.send(
@@ -124,7 +124,7 @@ impl PlayerSpeedChange {
 impl EventHandler for PlayerSpeedChange {
     fn handle(self, model: &mut CoreModel) {
         let speed = self.speed;
-        let actor = model.user.name.clone();
+        let actor = model.config.username.clone();
         model
             .communicator
             .send(NiketsuPlaybackSpeed { actor, speed }.into());
@@ -148,7 +148,7 @@ impl EventHandler for PlayerFileEnd {
             model.player.unload_video();
             model.ui.video_change(None);
         }
-        let actor = model.user.name.clone();
+        let actor = model.config.username.clone();
         let position = model.player.get_position().unwrap_or_default();
         model.communicator.send(
             NiketsuSelect {

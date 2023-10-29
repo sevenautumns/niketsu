@@ -1,34 +1,29 @@
-use std::path::PathBuf;
 use std::pin::Pin;
 
 use futures::Future;
 use iced::{Application, Command, Element, Renderer, Settings, Subscription, Theme};
-use niketsu_core::config::Config as CoreConfig;
-use niketsu_core::log;
+use niketsu_core::config::Config;
 use niketsu_core::playlist::Video;
-use niketsu_core::ui::{RoomChange, ServerChange, UiModel, UserInterface};
+use niketsu_core::ui::{UiModel, UserInterface};
 use niketsu_core::user::UserStatus;
 use tokio::sync::Notify;
 
 use super::main_window::MainView;
 use super::message::Message;
-use super::settings_window::SettingsView;
+use super::settings_window::SettingsViewState;
 use super::widget::database::DatabaseWidgetState;
 use super::widget::messages::MessagesWidgetState;
 use super::widget::playlist::PlaylistWidgetState;
 use super::widget::rooms::RoomsWidgetState;
 use super::PreExistingTokioRuntime;
-use crate::config::Config;
 use crate::message::{MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;
 
 #[derive(Debug)]
 pub struct ViewModel {
     pub model: UiModel,
-    pub config: Config,
-    pub core_config: CoreConfig,
     pub main: MainView,
-    pub settings: Option<SettingsView>,
+    pub settings: SettingsViewState,
     pub rooms_widget_state: RoomsWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
     pub messages_widget_state: MessagesWidgetState,
@@ -38,61 +33,28 @@ pub struct ViewModel {
 
 impl ViewModel {
     pub fn new(flags: Flags) -> Self {
-        let settings = SettingsView::new(flags.config.clone(), flags.core_config.clone());
-        let mut view = Self {
+        let mut settings = SettingsViewState::new(flags.config.clone());
+        if !flags.config.auto_login {
+            settings.activate();
+        }
+        Self {
             model: flags.ui_model,
-            config: flags.config,
-            core_config: flags.core_config.clone(),
-            settings: Some(settings),
-            main: Default::default(),
+            settings,
             rooms_widget_state: Default::default(),
             playlist_widget_state: Default::default(),
             messages_widget_state: Default::default(),
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
-        };
-        if flags.core_config.auto_login {
-            view.close_settings()
+            main: MainView,
         }
-        view
     }
 
     pub fn view(&self) -> Element<'_, Message, Renderer<Theme>> {
-        if let Some(settings) = &self.settings {
-            return settings.view(self);
-        }
         self.main.view(self)
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
         message.handle(self)
-    }
-
-    pub fn close_settings(&mut self) {
-        let Some(settings) = self.settings.take() else {
-            return;
-        };
-        let (config, core): (Config, CoreConfig) = settings.into_config();
-        let media_dirs: Vec<_> = core.media_dirs.iter().map(PathBuf::from).collect();
-        let username = core.username.clone();
-        self.model.change_db_paths(media_dirs);
-        self.model.change_username(username);
-        self.model.change_server(ServerChange {
-            addr: core.url.clone(),
-            secure: core.secure,
-            password: Some(core.password.clone()),
-            room: RoomChange {
-                room: core.room.clone(),
-            },
-        });
-        self.config = config;
-        self.core_config = core;
-        log!(self.config.save());
-        log!(self.core_config.save());
-    }
-
-    pub fn config(&self) -> &Config {
-        &self.config
     }
 
     pub fn user(&self) -> UserStatus {
@@ -104,7 +66,7 @@ impl ViewModel {
     }
 
     pub fn theme(&self) -> Theme {
-        self.config.theme()
+        Theme::Dark
     }
 
     pub fn get_rooms_widget_state(&self) -> &RoomsWidgetState {
@@ -125,6 +87,10 @@ impl ViewModel {
 
     pub fn get_file_search_widget_state(&self) -> &FileSearchWidgetState {
         &self.file_search_widget_state
+    }
+
+    pub fn get_settings_view_state(&self) -> &SettingsViewState {
+        &self.settings
     }
 
     pub fn update_from_inner_model(&mut self) {
@@ -149,7 +115,6 @@ impl ViewModel {
 
 pub struct Flags {
     pub config: Config,
-    pub core_config: CoreConfig,
     pub ui_model: UiModel,
 }
 
@@ -160,7 +125,6 @@ pub struct View {
 impl View {
     pub fn create(
         config: Config,
-        core_config: CoreConfig,
     ) -> (
         UserInterface,
         Pin<Box<dyn Future<Output = anyhow::Result<()>>>>,
@@ -168,20 +132,12 @@ impl View {
         let ui = UserInterface::default();
         let flags = Flags {
             config,
-            core_config,
             ui_model: ui.model().clone(),
         };
         let settings = Settings::with_flags(flags);
         let view = Box::pin(async { View::run(settings).map_err(anyhow::Error::from) });
         (ui, view)
     }
-}
-
-pub trait SubWindowTrait {
-    type SubMessage;
-
-    fn view<'a>(&'a self, model: &'a ViewModel) -> Element<Message>;
-    fn update(&mut self, message: Self::SubMessage, model: &UiModel);
 }
 
 impl Application for View {

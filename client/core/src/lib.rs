@@ -1,4 +1,7 @@
+use config::Config;
 use enum_dispatch::enum_dispatch;
+use futures::future::OptionFuture;
+use logging::ChatLogger;
 use playlist::PlaylistHandlerTrait;
 
 use self::communicator::*;
@@ -6,13 +9,13 @@ use self::file_database::*;
 use self::heartbeat::Pacemaker;
 use self::player::*;
 use self::ui::*;
-use self::user::UserStatus;
 
 pub mod builder;
 pub mod communicator;
 pub mod config;
 pub mod file_database;
 pub mod heartbeat;
+pub mod logging;
 pub mod player;
 pub mod playlist;
 pub mod rooms;
@@ -32,10 +35,9 @@ pub struct CoreModel {
     pub ui: Box<dyn UserInterfaceTrait>,
     pub database: Box<dyn FileDatabaseTrait>,
     pub playlist: Box<dyn PlaylistHandlerTrait>,
-    // TODO put the following in their own struct?
-    pub user: UserStatus,
-    pub room: String,
-    pub password: Option<String>,
+    chat_logger: Option<ChatLogger>,
+    pub config: Config,
+    pub ready: bool,
 }
 
 #[derive(Debug)]
@@ -45,6 +47,21 @@ pub struct Core {
 
 impl Core {
     pub async fn run(mut self) {
+        if self.model.config.auto_login {
+            self.auto_login().await;
+        }
+        self.run_loop().await;
+    }
+
+    pub async fn auto_login(&mut self) {
+        let addr = self.model.config.url.clone();
+        let secure = self.model.config.secure;
+        self.model
+            .communicator
+            .connect(EndpointInfo { addr, secure });
+    }
+
+    pub async fn run_loop(mut self) {
         let mut pacemaker = Pacemaker::default();
         loop {
             tokio::select! {
@@ -62,6 +79,9 @@ impl Core {
                 }
                 Some(db) = self.model.database.event() => {
                     db.handle(&mut self.model);
+                }
+                Some(Some(message)) = OptionFuture::from(self.model.chat_logger.as_mut().map(|l| l.recv())) => {
+                    self.model.ui.player_message(message)
                 }
             }
         }

@@ -20,7 +20,6 @@ pub trait MessageHandler {
 pub enum Message {
     Settings(SettingsMessage),
     Main(MainMessage),
-    CloseSettings,
     ModelChanged,
     //
     RoomsWidget(RoomsWidgetMessage),
@@ -28,16 +27,6 @@ pub enum Message {
     MessagesWidget(MessagesWidgetMessage),
     DatabaseWidget(DatabaseWidgetMessage),
     FileSearchWidget(FileSearchWidgetMessage),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct CloseSettings;
-
-impl MessageHandler for CloseSettings {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
-        model.close_settings();
-        Command::none()
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

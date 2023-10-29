@@ -1,15 +1,15 @@
 use iced::widget::scrollable::Id;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
 use iced::{Element, Length};
-use niketsu_core::ui::UiModel;
 
-use self::message::{MainMessage, MainMessageTrait, ReadyButton};
+use self::message::{MainMessage, ReadyButton};
 use super::message::Message;
-use super::view::{SubWindowTrait, ViewModel};
+use super::view::ViewModel;
 use super::widget::database::DatabaseWidget;
 use super::widget::messages::MessagesWidget;
 use super::widget::playlist::PlaylistWidget;
 use super::widget::rooms::RoomsWidget;
+use crate::settings_window::SettingsView;
 use crate::styling::{ContainerBorder, ResultButton};
 use crate::widget::file_search::FileSearchWidget;
 
@@ -26,12 +26,8 @@ impl Default for MainView {
     }
 }
 
-impl MainView {}
-
-impl SubWindowTrait for MainView {
-    type SubMessage = MainMessage;
-
-    fn view<'a>(&'a self, view_model: &'a ViewModel) -> Element<Message> {
+impl MainView {
+    pub fn view<'a>(&'a self, view_model: &'a ViewModel) -> Element<Message> {
         let mut btn: Button<Message>;
         match view_model.user().ready {
             true => {
@@ -56,9 +52,14 @@ impl SubWindowTrait for MainView {
         Row::new()
             .push(
                 Column::new()
-                    .push(FileSearchWidget::new(
-                        view_model.get_file_search_widget_state(),
-                    ))
+                    .push(
+                        Row::new()
+                            .push(SettingsView::new(view_model.get_settings_view_state()))
+                            .push(FileSearchWidget::new(
+                                view_model.get_file_search_widget_state(),
+                            ))
+                            .spacing(SPACING),
+                    )
                     .push(MessagesWidget::new(view_model.get_messages_widget_state()))
                     .spacing(SPACING)
                     .width(Length::Fill)
@@ -98,9 +99,5 @@ impl SubWindowTrait for MainView {
             .spacing(SPACING)
             .padding(SPACING)
             .into()
-    }
-
-    fn update(&mut self, message: MainMessage, model: &UiModel) {
-        message.handle(self, model);
     }
 }

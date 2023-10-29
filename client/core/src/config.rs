@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use url::Url;
 
+use crate::user::UserStatus;
+
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 pub struct Config {
@@ -65,5 +67,12 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
         Ok(std::fs::write(path, toml::to_string(self)?)?)
+    }
+
+    pub(crate) fn status(&self, ready: bool) -> UserStatus {
+        UserStatus {
+            name: self.username.clone(),
+            ready,
+        }
     }
 }

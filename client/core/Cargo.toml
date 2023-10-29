@@ -25,8 +25,8 @@ whoami = "1.4"
 async-trait = "0.1"
 toml = "0.8"
 typed-builder = "0.18"
-fake = "2.8"
 ordered-float = "4"
+simplelog = { version = "0.12", features = ["paris"] }
 
 [dev-dependencies]
 tempfile = "3.6"

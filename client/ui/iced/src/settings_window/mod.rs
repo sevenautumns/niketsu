@@ -2,60 +2,51 @@ use iced::alignment::Horizontal;
 use iced::widget::{
     row, Button, Checkbox, Column, Container, Row, Scrollable, Space, Text, TextInput,
 };
-use iced::{Alignment, Element, Length, Theme};
-use niketsu_core::config::Config as CoreConfig;
-use niketsu_core::ui::UiModel;
+use iced::{Alignment, Element, Length, Renderer, Theme};
+use niketsu_core::config::Config;
 
 use self::message::{
-    AddPath, BackgroundColorInput, DangerColorInput, DeletePath, PasswordInput, PathInput,
-    PrimaryColorInput, RoomInput, SecureCheckbox, SettingsMessage, SettingsMessageTrait,
-    SuccessColorInput, TextColorInput, UrlInput, UsernameInput,
+    Abort, AddPath, Close, DeletePath, PasswordInput, PathInput, RoomInput, SecureCheckbox,
+    SettingsMessage, UrlInput, UsernameInput,
 };
 use super::message::Message;
-use super::view::{SubWindowTrait, ViewModel};
-use crate::config::{
-    default_background, default_danger, default_primary, default_success, default_text, Config,
-    RgbWrap,
-};
-use crate::message::CloseSettings;
-use crate::styling::{ColorButton, FileButton};
+use crate::settings_window::message::Activate;
+use crate::styling::{ColorButton, FileButton, ResultButton};
+use crate::widget::overlay::ElementOverlay;
 use crate::TEXT_SIZE;
 
 pub(super) mod message;
 
 const SPACING: u16 = 10;
 
-#[derive(Debug, Clone)]
-pub struct SettingsView {
-    username: String,
-    media_dirs: Vec<String>,
-    // TODO validate input with url crate
-    url: String,
-    secure: bool,
-    room: String,
-    password: String,
-    auto_login: bool,
-
-    text_size: f32,
-    background_color: RgbWrap,
-    background_color_input: String,
-    text_color: RgbWrap,
-    text_color_input: String,
-    primary_color: RgbWrap,
-    primary_color_input: String,
-    success_color: RgbWrap,
-    success_color_input: String,
-    danger_color: RgbWrap,
-    danger_color_input: String,
+pub struct SettingsView<'a> {
+    button: Element<'a, Message>,
+    base: Element<'a, Message>,
+    state: &'a SettingsViewState,
 }
 
-impl SubWindowTrait for SettingsView {
-    type SubMessage = SettingsMessage;
+impl<'a> SettingsView<'a> {
+    pub fn new(state: &'a SettingsViewState) -> Self {
+        let settings_button = Button::new(
+            Text::new("Settings")
+                .width(Length::Fill)
+                .horizontal_alignment(iced::alignment::Horizontal::Center),
+        )
+        .on_press(SettingsMessage::from(Activate).into())
+        .width(Length::Fill)
+        .style(ResultButton::ready());
 
-    fn view(&self, model: &ViewModel) -> Element<Message> {
+        Self {
+            button: settings_button.into(),
+            base: Self::view(state),
+            state,
+        }
+    }
+
+    pub fn view(state: &'a SettingsViewState) -> Element<Message> {
         let text_size = *TEXT_SIZE.load_full();
 
-        let file_paths: Vec<_> = self
+        let file_paths: Vec<_> = state
             .media_dirs
             .iter()
             .enumerate()
@@ -68,7 +59,7 @@ impl SubWindowTrait for SettingsView {
                             .center_x()
                             .width(Length::Fill)
                     )
-                    .style(ColorButton::theme(model.config().theme().palette().danger))
+                    .style(ColorButton::theme(Theme::Dark.palette().danger))
                     .on_press(SettingsMessage::from(DeletePath(i)).into())
                     .width(text_size * 2.0),
                 )
@@ -79,8 +70,8 @@ impl SubWindowTrait for SettingsView {
 
         let column = Column::new()
             .push(
-                Text::new("Niketsu")
-                    .size(text_size + 75.0)
+                Text::new("Settings")
+                    .size(text_size + 25.0)
                     .horizontal_alignment(Horizontal::Center),
             )
             .push(Space::with_height(text_size))
@@ -103,13 +94,13 @@ impl SubWindowTrait for SettingsView {
                             .push(
                                 Row::new()
                                     .push(
-                                        TextInput::new("Server Address", &self.url).on_input(|u| {
-                                            SettingsMessage::from(UrlInput(u)).into()
-                                        }),
+                                        TextInput::new("Server Address", &state.url).on_input(
+                                            |u| SettingsMessage::from(UrlInput(u)).into(),
+                                        ),
                                     )
                                     .push(
                                         Container::new(
-                                            Checkbox::new("Secure", self.secure, |b| {
+                                            Checkbox::new("Secure", state.secure, |b| {
                                                 SettingsMessage::from(SecureCheckbox(b)).into()
                                             })
                                             .spacing(SPACING),
@@ -120,16 +111,16 @@ impl SubWindowTrait for SettingsView {
                                     .spacing(SPACING),
                             )
                             .push(
-                                TextInput::new("Password", &self.password)
+                                TextInput::new("Password", &state.password)
                                     .on_input(|u| SettingsMessage::from(PasswordInput(u)).into())
                                     .password(),
                             )
                             .push(
-                                TextInput::new("Username", &self.username)
+                                TextInput::new("Username", &state.username)
                                     .on_input(|u| SettingsMessage::from(UsernameInput(u)).into()),
                             )
                             .push(
-                                TextInput::new("Room", &self.room)
+                                TextInput::new("Room", &state.room)
                                     .on_input(|u| SettingsMessage::from(RoomInput(u)).into()),
                             )
                             .spacing(SPACING)
@@ -154,23 +145,15 @@ impl SubWindowTrait for SettingsView {
                     .spacing(SPACING),
             )
             .push(Space::with_height(text_size))
-            .push(Text::new("Theme").size(text_size + 15.0))
             .push(
-                Row::new()
-                    .push(self.theme_text_column())
-                    .push(self.theme_input_column())
-                    .push(self.theme_reset_column())
-                    .spacing(SPACING),
-            )
-            .push(Space::with_height(text_size))
-            .push(
+                // TODO add one button for saving and one for not saving
                 Button::new(
-                    Text::new("Start")
+                    Text::new("Connect")
                         .width(Length::Fill)
                         .horizontal_alignment(iced::alignment::Horizontal::Center),
                 )
                 .width(Length::Fill)
-                .on_press(CloseSettings.into()),
+                .on_press(SettingsMessage::from(Close).into()),
             )
             .align_items(Alignment::Center)
             .width(Length::Fill)
@@ -189,149 +172,186 @@ impl SubWindowTrait for SettingsView {
         .center_y()
         .into()
     }
+}
 
-    fn update(&mut self, message: SettingsMessage, _: &UiModel) {
-        message.handle(self);
+impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsView<'a> {
+    fn width(&self) -> iced::Length {
+        self.button.as_widget().width()
+    }
+
+    fn height(&self) -> iced::Length {
+        self.button.as_widget().height()
+    }
+
+    fn layout(
+        &self,
+        renderer: &Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        self.button.as_widget().layout(renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        state: &iced::advanced::widget::Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        self.button.as_widget().draw(
+            &state.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn operate(
+        &self,
+        state: &mut iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn iced::advanced::widget::Operation<Message>,
+    ) {
+        self.button
+            .as_widget()
+            .operate(&mut state.children[0], layout, renderer, operation);
+    }
+
+    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
+        vec![
+            iced::advanced::widget::Tree::new(&self.button),
+            iced::advanced::widget::Tree::new(&self.base),
+        ]
+    }
+
+    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
+        tree.diff_children(&[&self.button, &self.base]);
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+        renderer: &Renderer,
+    ) -> iced::advanced::mouse::Interaction {
+        self.button.as_widget().mouse_interaction(
+            &state.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn on_event(
+        &mut self,
+        state: &mut iced::advanced::widget::Tree,
+        event: iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        viewport: &iced::Rectangle,
+    ) -> iced::event::Status {
+        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key_code,
+            modifiers: _,
+        }) = event
+        {
+            if key_code == iced::keyboard::KeyCode::Escape {
+                shell.publish(SettingsMessage::from(Abort).into());
+            }
+        }
+
+        self.button.as_widget_mut().on_event(
+            &mut state.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        state: &'b mut iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        _renderer: &Renderer,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Renderer>> {
+        if self.state.active {
+            return Some(iced::advanced::overlay::Element::new(
+                layout.position(),
+                Box::new(ElementOverlay {
+                    tree: &mut state.children[1],
+                    content: &mut self.base,
+                }),
+            ));
+        }
+        None
     }
 }
 
-impl SettingsView {
-    pub fn new(config: Config, core_config: CoreConfig) -> Self {
+#[derive(Debug, Clone)]
+pub struct SettingsViewState {
+    username: String,
+    media_dirs: Vec<String>,
+    // TODO validate input with url crate ?
+    url: String,
+    secure: bool,
+    room: String,
+    password: String,
+    auto_login: bool,
+    active: bool,
+}
+
+impl SettingsViewState {
+    pub fn new(config: Config) -> Self {
         Self {
-            username: core_config.username,
-            media_dirs: core_config.media_dirs,
-            url: core_config.url,
-            room: core_config.room,
-            password: core_config.password,
-            secure: core_config.secure,
-            auto_login: core_config.auto_login,
-            text_size: config.text_size,
-            background_color: config.background_color,
-            background_color_input: config.background_color.to_string(),
-            text_color: config.text_color,
-            text_color_input: config.text_color.to_string(),
-            primary_color: config.primary_color,
-            primary_color_input: config.primary_color.to_string(),
-            success_color: config.success_color,
-            success_color_input: config.success_color.to_string(),
-            danger_color: config.danger_color,
-            danger_color_input: config.danger_color.to_string(),
+            username: config.username,
+            media_dirs: config.media_dirs,
+            url: config.url,
+            room: config.room,
+            password: config.password,
+            secure: config.secure,
+            auto_login: config.auto_login,
+            active: false,
         }
     }
 
-    pub fn into_config(self) -> (Config, CoreConfig) {
-        let conf = Config {
-            text_size: self.text_size,
-            background_color: self.background_color,
-            text_color: self.text_color,
-            primary_color: self.primary_color,
-            success_color: self.success_color,
-            danger_color: self.danger_color,
-        };
-        let core = CoreConfig {
-            username: self.username,
-            media_dirs: self.media_dirs,
-            url: self.url,
-            room: self.room,
-            password: self.password,
-            secure: self.secure,
-            auto_login: self.auto_login,
-        };
-        (conf, core)
+    pub fn activate(&mut self) {
+        self.active = true;
     }
 }
 
-impl SettingsView {
-    fn theme_text_column<'a>(&self) -> Element<'a, Message> {
-        Column::new()
-            .push(Button::new("Text").style(FileButton::theme(false, true)))
-            .push(Button::new("Background").style(FileButton::theme(false, true)))
-            .push(Button::new("Primary").style(FileButton::theme(false, true)))
-            .push(Button::new("Success").style(FileButton::theme(false, true)))
-            .push(Button::new("Danger").style(FileButton::theme(false, true)))
-            .spacing(SPACING)
-            .width(Length::Shrink)
-            .into()
+impl From<SettingsViewState> for Config {
+    fn from(value: SettingsViewState) -> Self {
+        Config {
+            username: value.username,
+            media_dirs: value.media_dirs,
+            url: value.url,
+            room: value.room,
+            password: value.password,
+            secure: value.secure,
+            auto_login: value.auto_login,
+        }
     }
+}
 
-    fn theme_input_column<'a>(&self) -> Element<'a, Message, iced::Renderer<Theme>> {
-        Column::new()
-            .push(
-                TextInput::new("Text Color", &self.text_color_input)
-                    .on_input(|c| SettingsMessage::from(TextColorInput(c)).into()),
-            )
-            .push(
-                TextInput::new("Background Color", &self.background_color_input)
-                    .on_input(|c| SettingsMessage::from(BackgroundColorInput(c)).into()),
-            )
-            .push(
-                TextInput::new("Primary Color", &self.primary_color_input)
-                    .on_input(|c| SettingsMessage::from(PrimaryColorInput(c)).into()),
-            )
-            .push(
-                TextInput::new("Success Color", &self.success_color_input)
-                    .on_input(|c| SettingsMessage::from(SuccessColorInput(c)).into()),
-            )
-            .push(
-                TextInput::new("Danger Color", &self.danger_color_input)
-                    .on_input(|c| SettingsMessage::from(DangerColorInput(c)).into()),
-            )
-            .spacing(SPACING)
-            .width(Length::Fill)
-            .into()
-    }
-
-    fn theme_reset_column<'a>(&self) -> Element<'a, Message> {
-        let text_size = *TEXT_SIZE.load_full();
-        Column::new()
-            .push(
-                Button::new(" ")
-                    .style(ColorButton::theme(self.text_color.into()))
-                    .on_press(
-                        SettingsMessage::from(TextColorInput(default_text().to_string())).into(),
-                    )
-                    .width(text_size * 2.0),
-            )
-            .push(
-                Button::new(" ")
-                    .style(ColorButton::theme(self.background_color.into()))
-                    .on_press(
-                        SettingsMessage::from(BackgroundColorInput(
-                            default_background().to_string(),
-                        ))
-                        .into(),
-                    )
-                    .width(text_size * 2.0),
-            )
-            .push(
-                Button::new(" ")
-                    .style(ColorButton::theme(self.primary_color.into()))
-                    .on_press(
-                        SettingsMessage::from(PrimaryColorInput(default_primary().to_string()))
-                            .into(),
-                    )
-                    .width(text_size * 2.0),
-            )
-            .push(
-                Button::new(" ")
-                    .style(ColorButton::theme(self.success_color.into()))
-                    .on_press(
-                        SettingsMessage::from(SuccessColorInput(default_success().to_string()))
-                            .into(),
-                    )
-                    .width(text_size * 2.0),
-            )
-            .push(
-                Button::new(" ")
-                    .style(ColorButton::theme(self.danger_color.into()))
-                    .on_press(
-                        SettingsMessage::from(DangerColorInput(default_danger().to_string()))
-                            .into(),
-                    )
-                    .width(text_size * 2.0),
-            )
-            .spacing(SPACING)
-            .width(Length::Shrink)
-            .into()
+impl<'a> From<SettingsView<'a>> for Element<'a, Message> {
+    fn from(table: SettingsView<'a>) -> Self {
+        Self::new(table)
     }
 }
