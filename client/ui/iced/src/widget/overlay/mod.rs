@@ -1,4 +1,4 @@
-use iced::{BorderRadius, Color, Element, Point, Renderer, Size, Theme};
+use iced::{BorderRadius, Color, Element, Padding, Point, Renderer, Size, Theme};
 
 use crate::message::Message;
 
@@ -12,8 +12,7 @@ pub struct ElementOverlay<'a, 'b> {
 pub struct ElementOverlayConfig {
     pub max_height: Option<f32>,
     pub max_width: Option<f32>,
-    pub min_padding_x: f32,
-    pub min_padding_y: f32,
+    pub min_padding: f32,
 }
 
 impl Default for ElementOverlayConfig {
@@ -21,8 +20,7 @@ impl Default for ElementOverlayConfig {
         Self {
             max_height: None,
             max_width: None,
-            min_padding_x: 20.0,
-            min_padding_y: 20.0,
+            min_padding: 20.0,
         }
     }
 }
@@ -37,10 +35,7 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, '
         let limits = iced::advanced::layout::Limits::new(Size::ZERO, bounds)
             .max_width(self.config.max_width.unwrap_or(f32::INFINITY))
             .max_height(self.config.max_height.unwrap_or(f32::INFINITY))
-            .shrink(Size::new(
-                self.config.min_padding_x * 2.0,
-                self.config.min_padding_y * 2.0,
-            ));
+            .pad(Padding::new(self.config.min_padding * 2.0));
         let mut child = self.content.as_widget().layout(renderer, &limits);
         child.align(
             iced::Alignment::Center,
