@@ -5,13 +5,13 @@ use iced::{Element, Length};
 use self::message::{MainMessage, ReadyButton};
 use super::message::Message;
 use super::view::ViewModel;
+use super::widget::chat::ChatWidget;
 use super::widget::database::DatabaseWidget;
-use super::widget::messages::MessagesWidget;
 use super::widget::playlist::PlaylistWidget;
 use super::widget::rooms::RoomsWidget;
-use crate::settings_window::SettingsView;
 use crate::styling::{ContainerBorder, ResultButton};
 use crate::widget::file_search::FileSearchWidget;
+use crate::widget::settings::SettingsWidget;
 
 pub(super) mod message;
 
@@ -54,13 +54,13 @@ impl MainView {
                 Column::new()
                     .push(
                         Row::new()
-                            .push(SettingsView::new(view_model.get_settings_view_state()))
+                            .push(SettingsWidget::new(view_model.get_settings_widget_state()))
                             .push(FileSearchWidget::new(
                                 view_model.get_file_search_widget_state(),
                             ))
                             .spacing(SPACING),
                     )
-                    .push(MessagesWidget::new(view_model.get_messages_widget_state()))
+                    .push(ChatWidget::new(view_model.get_chat_widget_state()))
                     .spacing(SPACING)
                     .width(Length::Fill)
                     .height(Length::Fill),

@@ -3,34 +3,34 @@ use iced::widget::scrollable::RelativeOffset;
 use iced::Command;
 use niketsu_core::ui::UiModel;
 
-use super::MessagesWidgetState;
+use super::ChatWidgetState;
 use crate::message::{Message, MessageHandler};
 use crate::view::ViewModel;
 
 #[enum_dispatch]
-pub trait MessagesWidgetMessageTrait {
-    fn handle(self, state: &mut MessagesWidgetState, model: &UiModel) -> Command<Message>;
+pub trait ChatWidgetMessageTrait {
+    fn handle(self, state: &mut ChatWidgetState, model: &UiModel) -> Command<Message>;
 }
 
-#[enum_dispatch(MessagesWidgetMessageTrait)]
+#[enum_dispatch(ChatWidgetMessageTrait)]
 #[derive(Debug, Clone)]
-pub enum MessagesWidgetMessage {
+pub enum ChatWidgetMessage {
     ScrollMessages,
     MessageInput,
     SendMessage,
 }
 
-impl MessageHandler for MessagesWidgetMessage {
+impl MessageHandler for ChatWidgetMessage {
     fn handle(self, model: &mut ViewModel) -> Command<Message> {
-        MessagesWidgetMessageTrait::handle(self, &mut model.messages_widget_state, &model.model)
+        ChatWidgetMessageTrait::handle(self, &mut model.chat_widget_statet, &model.model)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ScrollMessages(pub RelativeOffset);
 
-impl MessagesWidgetMessageTrait for ScrollMessages {
-    fn handle(self, _: &mut MessagesWidgetState, _: &UiModel) -> Command<Message> {
+impl ChatWidgetMessageTrait for ScrollMessages {
+    fn handle(self, _: &mut ChatWidgetState, _: &UiModel) -> Command<Message> {
         // TODO how to snap to the end?
         Command::none()
     }
@@ -39,8 +39,8 @@ impl MessagesWidgetMessageTrait for ScrollMessages {
 #[derive(Debug, Clone)]
 pub struct MessageInput(pub String);
 
-impl MessagesWidgetMessageTrait for MessageInput {
-    fn handle(self, state: &mut MessagesWidgetState, _: &UiModel) -> Command<Message> {
+impl ChatWidgetMessageTrait for MessageInput {
+    fn handle(self, state: &mut ChatWidgetState, _: &UiModel) -> Command<Message> {
         state.message = self.0;
         Command::none()
     }
@@ -49,8 +49,8 @@ impl MessagesWidgetMessageTrait for MessageInput {
 #[derive(Debug, Clone)]
 pub struct SendMessage;
 
-impl MessagesWidgetMessageTrait for SendMessage {
-    fn handle(self, state: &mut MessagesWidgetState, model: &UiModel) -> Command<Message> {
+impl ChatWidgetMessageTrait for SendMessage {
+    fn handle(self, state: &mut ChatWidgetState, model: &UiModel) -> Command<Message> {
         let message = state.message.clone();
         if message.is_empty() {
             return Command::none();

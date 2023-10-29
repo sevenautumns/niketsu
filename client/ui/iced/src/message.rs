@@ -2,13 +2,13 @@ use enum_dispatch::enum_dispatch;
 use iced::Command;
 
 use super::main_window::message::MainMessage;
+use super::widget::chat::message::ChatWidgetMessage;
 use super::widget::database::message::DatabaseWidgetMessage;
-use super::widget::messages::message::MessagesWidgetMessage;
 use super::widget::playlist::message::PlaylistWidgetMessage;
 use super::widget::rooms::message::RoomsWidgetMessage;
-use crate::settings_window::message::SettingsMessage;
 use crate::view::ViewModel;
 use crate::widget::file_search::message::FileSearchWidgetMessage;
+use crate::widget::settings::message::SettingsWidgetMessage;
 
 #[enum_dispatch]
 pub trait MessageHandler {
@@ -18,13 +18,13 @@ pub trait MessageHandler {
 #[enum_dispatch(MessageHandler)]
 #[derive(Debug, Clone)]
 pub enum Message {
-    Settings(SettingsMessage),
     Main(MainMessage),
     ModelChanged,
     //
+    SettingsWidget(SettingsWidgetMessage),
     RoomsWidget(RoomsWidgetMessage),
     PlaylistWidget(PlaylistWidgetMessage),
-    MessagesWidget(MessagesWidgetMessage),
+    ChatWidget(ChatWidgetMessage),
     DatabaseWidget(DatabaseWidgetMessage),
     FileSearchWidget(FileSearchWidgetMessage),
 }

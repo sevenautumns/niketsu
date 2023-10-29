@@ -7,7 +7,6 @@ use once_cell::sync::Lazy;
 
 mod main_window;
 mod message;
-mod settings_window;
 mod styling;
 mod view;
 mod widget;
