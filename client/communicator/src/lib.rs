@@ -29,7 +29,7 @@ type WsStream = SplitStream<
     WebSocketStream<Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<TcpStream>>>>,
 >;
 
-pub const RECONNECT_INTERVAL: Duration = Duration::from_secs(1);
+pub const RECONNECT_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
 enum ConnectionState {
@@ -47,6 +47,7 @@ impl Default for ConnectionState {
 #[derive(Debug)]
 struct Disconnected {
     last_reconnect: Instant,
+    error: Option<anyhow::Error>,
 }
 
 impl Disconnected {
@@ -64,7 +65,10 @@ impl From<Disconnected> for ConnectionState {
 impl Default for Disconnected {
     fn default() -> Self {
         let last_reconnect = Instant::now();
-        Self { last_reconnect }
+        Self {
+            last_reconnect,
+            error: None,
+        }
     }
 }
 
@@ -91,7 +95,13 @@ impl Connected {
     async fn new(endpoint: EndpointInfo) -> Result<Self> {
         let addr = endpoint.to_string();
         let (sender, rx) = tokio::sync::mpsc::unbounded_channel();
-        let (ws, _) = async_tungstenite::tokio::connect_async(addr).await?;
+        let connect = async_tungstenite::tokio::connect_async(addr);
+        let connect = tokio::time::timeout(Duration::from_secs(3), connect);
+        let connection_res = connect
+            .await
+            .map_err(|_| anyhow::anyhow!("Connection timeout"))?
+            .map_err(anyhow::Error::from)?;
+        let (ws, _) = connection_res;
         let (sink, receiver) = ws.split();
         let sender_task = tokio::task::spawn(Self::sender(rx, sink));
         Ok(Self {
@@ -192,9 +202,12 @@ impl From<Result<Connected>> for ConnectionState {
     fn from(result: Result<Connected>) -> Self {
         match result {
             Ok(connected) => ConnectionState::Connected(connected),
-            err @ Err(_) => {
-                niketsu_core::log!(err);
-                ConnectionState::Disconnected(Disconnected::default())
+            Err(err) => {
+                niketsu_core::log!(Err::<Connected, _>(&err));
+                ConnectionState::Disconnected(Disconnected {
+                    error: Some(err),
+                    ..Default::default()
+                })
             }
         }
     }
@@ -230,6 +243,12 @@ impl WebsocketCommunicator {
             let msg = connection.receive_incoming_message().await;
             return self.disconnect_on_err(msg);
         }
+        if let ConnectionState::Disconnected(disconnected) = &mut self.state {
+            if let Some(error) = disconnected.error.take() {
+                self.in_queue
+                    .push_back(NiketsuConnectionError(error.to_string()).into());
+            }
+        }
 
         self.reconnect().await;
         None
@@ -238,9 +257,12 @@ impl WebsocketCommunicator {
     fn disconnect_on_err(&mut self, msg: Result<IncomingMessage>) -> Option<IncomingMessage> {
         match msg {
             Ok(msg) => Some(msg),
-            err @ Err(_) => {
-                niketsu_core::log!(err);
-                self.state = Disconnected::default().into();
+            Err(err) => {
+                niketsu_core::log!(Err::<Connected, _>(&err));
+                self.state = ConnectionState::Disconnected(Disconnected {
+                    error: Some(err),
+                    ..Default::default()
+                });
                 None
             }
         }
@@ -251,6 +273,12 @@ impl WebsocketCommunicator {
             self.state = connecting.await;
             if let ConnectionState::Connected(_) = &self.state {
                 self.in_queue.push_back(NiketsuConnected.into());
+            }
+            if let ConnectionState::Disconnected(dis) = &mut self.state {
+                if let Some(error) = dis.error.take() {
+                    self.in_queue
+                        .push_back(NiketsuConnectionError(error.to_string()).into())
+                }
             }
             return;
         }

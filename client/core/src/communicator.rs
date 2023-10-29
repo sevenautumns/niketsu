@@ -67,6 +67,7 @@ pub enum OutgoingMessage {
 #[derive(Clone, Debug)]
 pub enum IncomingMessage {
     Connected(NiketsuConnected),
+    ConnectionError(NiketsuConnectionError),
     UserStatusList(NiketsuUserStatusList),
     Start(NiketsuStart),
     Pause(NiketsuPause),
@@ -95,6 +96,36 @@ impl From<NiketsuConnected> for PlayerMessage {
 }
 
 impl EventHandler for NiketsuConnected {
+    fn handle(self, model: &mut CoreModel) {
+        debug!("Server Connection Established");
+        model.communicator.send(
+            NiketsuJoin {
+                password: model.config.password.clone(),
+                room: model.config.room.clone(),
+                username: model.config.username.clone(),
+            }
+            .into(),
+        );
+        model.ui.player_message(PlayerMessage::from(self));
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NiketsuConnectionError(pub String);
+
+impl From<NiketsuConnectionError> for PlayerMessage {
+    fn from(error: NiketsuConnectionError) -> Self {
+        PlayerMessageInner {
+            message: format!("Connection Error: {}", error.0),
+            source: MessageSource::Internal,
+            level: MessageLevel::Error,
+            timestamp: Local::now(),
+        }
+        .into()
+    }
+}
+
+impl EventHandler for NiketsuConnectionError {
     fn handle(self, model: &mut CoreModel) {
         debug!("Server Connection Established");
         model.communicator.send(
