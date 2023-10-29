@@ -11,7 +11,7 @@ use crate::widget::playlist::MAX_DOUBLE_CLICK_INTERVAL;
 
 #[enum_dispatch]
 pub trait FileSearchWidgetMessageTrait {
-    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel);
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Command<Message>;
 }
 
 #[enum_dispatch(FileSearchWidgetMessageTrait)]
@@ -32,8 +32,7 @@ impl MessageHandler for FileSearchWidgetMessage {
             self,
             &mut model.file_search_widget_state,
             &model.model,
-        );
-        Command::none()
+        )
     }
 }
 
@@ -43,9 +42,10 @@ pub struct Input {
 }
 
 impl FileSearchWidgetMessageTrait for Input {
-    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) {
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Command<Message> {
         state.query = self.query.clone();
-        state.search = Some(model.file_database.get_inner_arc().fuzzy_search(self.query))
+        state.search = Some(model.file_database.get_inner_arc().fuzzy_search(self.query));
+        Command::none()
     }
 }
 
@@ -53,14 +53,15 @@ impl FileSearchWidgetMessageTrait for Input {
 pub struct Activate;
 
 impl FileSearchWidgetMessageTrait for Activate {
-    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) {
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Command<Message> {
         state.search = Some(
             model
                 .file_database
                 .get_inner_arc()
                 .fuzzy_search(state.query.clone()),
         );
-        state.active = true
+        state.active = true;
+        iced::widget::text_input::focus(iced::widget::text_input::Id::new("file_search_query"))
     }
 }
 
@@ -68,8 +69,9 @@ impl FileSearchWidgetMessageTrait for Activate {
 pub struct Close;
 
 impl FileSearchWidgetMessageTrait for Close {
-    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) {
-        state.active = false
+    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) -> Command<Message> {
+        state.active = false;
+        Command::none()
     }
 }
 
@@ -79,7 +81,7 @@ pub struct Click {
 }
 
 impl FileSearchWidgetMessageTrait for Click {
-    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) {
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Command<Message> {
         if state.cursor_index != self.index || state.last_click.is_none() {
             Select::from(self).handle(state, model)
         } else {
@@ -106,9 +108,10 @@ pub struct Select {
 }
 
 impl FileSearchWidgetMessageTrait for Select {
-    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) {
+    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) -> Command<Message> {
         state.last_click = Some(Instant::now());
         state.cursor_index = self.index;
+        Command::none()
     }
 }
 
@@ -118,14 +121,14 @@ pub struct Insert {
 }
 
 impl FileSearchWidgetMessageTrait for Insert {
-    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) {
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Command<Message> {
         if let Some(last) = state.last_click {
             state.last_click = None;
             if MAX_DOUBLE_CLICK_INTERVAL
                 .saturating_sub(last.elapsed())
                 .is_zero()
             {
-                return;
+                return Command::none();
             }
             if let Some(video) = state.results.get(state.cursor_index) {
                 let mut playlist = model.playlist.get_inner();
@@ -133,6 +136,7 @@ impl FileSearchWidgetMessageTrait for Insert {
                 model.change_playlist(playlist)
             }
         }
+        Command::none()
     }
 }
 
@@ -140,7 +144,7 @@ impl FileSearchWidgetMessageTrait for Insert {
 pub struct SearchFinished;
 
 impl FileSearchWidgetMessageTrait for SearchFinished {
-    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) {
+    fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) -> Command<Message> {
         if let Some(results) = state.search.take().and_then(|mut s| s.poll()) {
             state.results = results.into_iter().take(100).collect();
             state.cursor_index = state
@@ -148,5 +152,6 @@ impl FileSearchWidgetMessageTrait for SearchFinished {
                 .checked_rem(state.results.len())
                 .unwrap_or_default();
         }
+        Command::none()
     }
 }

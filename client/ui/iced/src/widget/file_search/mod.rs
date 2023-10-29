@@ -55,6 +55,7 @@ impl<'a> FileSearchWidget<'a> {
                 })
                 .into(),
             )
+            .id(iced::widget::text_input::Id::new("file_search_query"))
             .width(Length::Fill);
         let close_button = Button::new("Close")
             .on_press(FileSearchWidgetMessage::from(Close).into())
