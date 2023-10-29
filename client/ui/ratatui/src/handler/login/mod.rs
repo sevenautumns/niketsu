@@ -13,12 +13,12 @@ impl EventHandler for Login {
             if key.kind == KeyEventKind::Press {
                 match key.code {
                     KeyCode::Esc => view.app.reset_overlay(),
-                    KeyCode::Up => view.app.login_widget.previous_state(),
-                    KeyCode::Down => view.app.login_widget.next_state(),
-                    KeyCode::Char(' ') => view.app.login_widget.input(*key),
+                    KeyCode::Up => view.app.login_widget_state.previous_state(),
+                    KeyCode::Down => view.app.login_widget_state.next_state(),
+                    KeyCode::Char(' ') => view.app.login_widget_state.input(*key),
                     KeyCode::Enter => {
                         view.app.reset_overlay();
-                        let input = view.app.login_widget.collect_input();
+                        let input = view.app.login_widget_state.collect_input();
                         view.model.change_server(ServerChange {
                             addr: input.0.clone(),
                             secure: input.1,
@@ -30,7 +30,7 @@ impl EventHandler for Login {
                         view.model.change_username(input.4.clone());
                         view.save_config(input.0, input.1, input.2, input.3, input.4);
                     }
-                    _ => view.app.login_widget.input(*key),
+                    _ => view.app.login_widget_state.input(*key),
                 }
             }
         }

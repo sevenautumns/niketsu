@@ -1,6 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 
 use super::fuzzy_search::FuzzySearch;
+use super::help::Help;
 use super::login::Login;
 use super::media::MediaDir;
 use super::{EventHandler, OverlayState};
@@ -20,6 +21,10 @@ impl EventHandler for Options {
                     KeyCode::Char('l') => view
                         .app
                         .set_current_overlay_state(Some(OverlayState::from(Login {}))),
+                    KeyCode::Char('h') => {
+                        view.app
+                            .set_current_overlay_state(Some(OverlayState::from(Help {})));
+                    }
                     KeyCode::Char('f') => {
                         view.app
                             .set_current_overlay_state(Some(OverlayState::from(FuzzySearch {})));

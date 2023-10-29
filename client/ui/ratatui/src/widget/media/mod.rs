@@ -58,7 +58,7 @@ impl MediaDirWidgetState {
 
     pub fn remove_path(&mut self) {
         if let Some(i) = self.list_state.selected() {
-            if self.media_paths.len() > 0 {
+            if self.media_paths.is_empty() {
                 _ = self.media_paths.remove(i);
             }
         }

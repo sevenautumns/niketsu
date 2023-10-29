@@ -31,6 +31,7 @@ use crate::widget::chat_input::{ChatInputWidget, ChatInputWidgetState};
 use crate::widget::command::{CommandInputWidget, CommandInputWidgetState};
 use crate::widget::database::{DatabaseWidget, DatabaseWidgetState};
 use crate::widget::fuzzy_search::{FuzzySearchWidget, FuzzySearchWidgetState};
+use crate::widget::help::{HelpWidget, HelpWidgetState};
 use crate::widget::login::LoginWidgetState;
 use crate::widget::media::{MediaDirWidget, MediaDirWidgetState};
 use crate::widget::options::{OptionsWidget, OptionsWidgetState};
@@ -68,10 +69,10 @@ pub struct App {
     pub chat_input_widget: ChatInputWidgetState,
     pub current_overlay_state: Option<OverlayState>,
     pub options_widget_state: OptionsWidgetState,
-    //TODO pub help_widget: HelpWidget,
-    pub login_widget: LoginWidgetState,
-    pub media_widget: MediaDirWidgetState,
-    pub fuzzy_search_widget: FuzzySearchWidgetState,
+    pub help_widget_state: HelpWidgetState,
+    pub login_widget_state: LoginWidgetState,
+    pub media_widget_state: MediaDirWidgetState,
+    pub fuzzy_search_widget_state: FuzzySearchWidgetState,
     pub current_search: Option<FuzzySearch>,
     mode: Mode,
     prev_mode: Option<Mode>,
@@ -92,10 +93,11 @@ impl App {
             command_input_widget: CommandInputWidgetState::default(),
             chat_input_widget: ChatInputWidgetState::new(),
             current_overlay_state: None,
-            options_widget_state: OptionsWidgetState::new(),
-            login_widget: LoginWidgetState::new(config.clone()),
-            fuzzy_search_widget: FuzzySearchWidgetState::new(),
-            media_widget: MediaDirWidgetState::new(config.media_dirs),
+            options_widget_state: OptionsWidgetState::default(),
+            help_widget_state: HelpWidgetState::new(),
+            login_widget_state: LoginWidgetState::new(config.clone()),
+            fuzzy_search_widget_state: FuzzySearchWidgetState::new(),
+            media_widget_state: MediaDirWidgetState::new(config.media_dirs),
             current_search: None,
             mode: Mode::Normal,
             prev_mode: None,
@@ -129,7 +131,7 @@ impl App {
     }
 
     pub fn fuzzy_search(&mut self, query: String) {
-        self.current_search = Some(self.fuzzy_search_widget.fuzzy_search(query));
+        self.current_search = Some(self.fuzzy_search_widget_state.fuzzy_search(query));
     }
 
     pub fn reset_fuzzy_search(&mut self) {
@@ -178,7 +180,7 @@ impl RatatuiView {
                     needs_update = true;
                 },
                 Some(search_result) = OptionFuture::from(self.app.current_search.as_mut()) => {
-                    self.app.fuzzy_search_widget.set_result(search_result);
+                    self.app.fuzzy_search_widget_state.set_result(search_result);
                     self.app.current_search = None;
                     needs_update = true;
                 },
@@ -232,6 +234,196 @@ impl RatatuiView {
         }
 
         LoopControl::Continue
+    }
+
+    fn handle_normal_event(&mut self, event: &Event) -> LoopControl {
+        if let Event::Key(key) = event {
+            if key.kind == KeyEventKind::Press {
+                match key.code {
+                    KeyCode::Char('q') => return LoopControl::Break,
+                    KeyCode::Char(':') => {
+                        self.app.set_mode(Mode::Overlay);
+                        self.app
+                            .set_current_overlay_state(Some(OverlayState::from(Command {})));
+                        self.app.command_input_widget.set_active(true);
+                    }
+                    KeyCode::Enter => {
+                        self.app.mode = Mode::Inspecting;
+                        self.highlight();
+                    }
+                    KeyCode::Char(' ') => {
+                        self.app.set_mode(Mode::Overlay);
+                        self.app
+                            .set_current_overlay_state(Some(OverlayState::from(Options {})));
+                    }
+                    KeyCode::Right | KeyCode::Left | KeyCode::Down | KeyCode::Up => {
+                        self.app.current_state.clone().handle_next(self, key)
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        LoopControl::Continue
+    }
+
+    fn handle_notify(&mut self) {
+        if self.model.file_database_status.changed() {
+            let file_db_status = self.model.file_database_status.get_inner();
+            self.app
+                .database_widget_state
+                .set_file_database_status((file_db_status * 100.0) as u16);
+        }
+
+        if self.model.file_database.changed() {
+            let file_db = self.model.file_database.get_inner();
+            self.app
+                .database_widget_state
+                .set_file_database(file_db.clone());
+            self.app
+                .fuzzy_search_widget_state
+                .set_file_database(file_db);
+        }
+
+        if self.model.playlist.changed() {
+            let playlist = self.model.playlist.get_inner();
+            self.app.playlist_widget_state.set_playlist(playlist);
+        }
+
+        if self.model.messages.changed() {
+            let messages = self.model.messages.get_inner().iter().cloned().collect();
+            self.app.chat_widget_state.set_messages(messages);
+            self.app.chat_widget_state.update_cursor_latest();
+        }
+
+        if self.model.room_list.changed() {
+            let rooms = self.model.room_list.get_inner();
+            self.app.rooms_widget_state.set_rooms(rooms);
+        }
+
+        if self.model.user.changed() {
+            let user = self.model.user.get_inner();
+            self.app.rooms_widget_state.set_user(user.clone());
+            self.app.chat_widget_state.set_user(user);
+        }
+
+        if self.model.playing_video.changed() {
+            let playing_video = self.model.playing_video.get_inner();
+            self.app
+                .playlist_widget_state
+                .set_playing_video(playing_video);
+        }
+    }
+
+    fn render(f: &mut Frame, app: &mut App) {
+        let size = f.size();
+        let main_vertical_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
+            .split(size);
+
+        let horizontal_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(main_vertical_chunks[0]);
+
+        let vertical_left_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(4)].as_ref())
+            .split(horizontal_chunks[0]);
+
+        let vertical_right_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(
+                [
+                    Constraint::Length(3),
+                    Constraint::Percentage(20),
+                    Constraint::Min(0),
+                ]
+                .as_ref(),
+            )
+            .split(horizontal_chunks[1]);
+
+        f.render_stateful_widget(
+            DatabaseWidget,
+            vertical_right_chunks[0],
+            &mut app.database_widget_state,
+        );
+
+        f.render_stateful_widget(
+            RoomsWidget,
+            vertical_right_chunks[1],
+            &mut app.rooms_widget_state,
+        );
+
+        f.render_stateful_widget(
+            PlaylistWidget,
+            vertical_right_chunks[2],
+            &mut app.playlist_widget_state,
+        );
+
+        f.render_stateful_widget(
+            ChatWidget {},
+            vertical_left_chunks[0],
+            &mut app.chat_widget_state,
+        );
+
+        f.render_stateful_widget(
+            ChatInputWidget {},
+            vertical_left_chunks[1],
+            &mut app.chat_input_widget,
+        );
+
+        if let Mode::Overlay = app.mode {
+            if let Some(overlay) = &app.current_overlay_state {
+                match overlay {
+                    OverlayState::Option(_options) => {
+                        let area = app.options_widget_state.area(size);
+                        f.render_widget(Clear, area);
+                        f.render_stateful_widget(
+                            OptionsWidget {},
+                            area,
+                            &mut app.options_widget_state,
+                        );
+                    }
+                    OverlayState::Help(_help) => {
+                        let area = app.help_widget_state.area(size);
+                        f.render_widget(Clear, area);
+                        f.render_stateful_widget(HelpWidget {}, area, &mut app.help_widget_state);
+                    }
+                    OverlayState::Login(_login) => {
+                        let area = app.login_widget_state.area(size);
+                        f.render_widget(Clear, area);
+                        f.render_stateful_widget(LoginWidget {}, area, &mut app.login_widget_state);
+                    }
+                    OverlayState::FuzzySearch(_fuzzy_search) => {
+                        let area = app.fuzzy_search_widget_state.area(size);
+                        f.render_widget(Clear, area);
+                        f.render_stateful_widget(
+                            FuzzySearchWidget {},
+                            area,
+                            &mut app.fuzzy_search_widget_state,
+                        );
+                    }
+                    OverlayState::MediaDir(_media_dir) => {
+                        let area = app.media_widget_state.area(size);
+                        f.render_widget(Clear, area);
+                        f.render_stateful_widget(
+                            MediaDirWidget {},
+                            area,
+                            &mut app.media_widget_state,
+                        );
+                    }
+                    OverlayState::Command(_command) => {
+                        f.render_stateful_widget(
+                            CommandInputWidget {},
+                            main_vertical_chunks[1],
+                            &mut app.command_input_widget,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // TODO move to app
@@ -394,184 +586,5 @@ impl RatatuiView {
         };
 
         self.move_to(&Video::from(filename), position);
-    }
-
-    fn handle_normal_event(&mut self, event: &Event) -> LoopControl {
-        if let Event::Key(key) = event {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Char('q') => return LoopControl::Break,
-                    KeyCode::Char(':') => {
-                        self.app.set_mode(Mode::Overlay);
-                        self.app
-                            .set_current_overlay_state(Some(OverlayState::from(Command {})));
-                        self.app.command_input_widget.set_active(true);
-                    }
-                    KeyCode::Enter => {
-                        self.app.mode = Mode::Inspecting;
-                        self.highlight();
-                    }
-                    KeyCode::Char(' ') => {
-                        self.app.set_mode(Mode::Overlay);
-                        self.app
-                            .set_current_overlay_state(Some(OverlayState::from(Options {})));
-                    }
-                    KeyCode::Right | KeyCode::Left | KeyCode::Down | KeyCode::Up => {
-                        self.app.current_state.clone().handle_next(self, key)
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        LoopControl::Continue
-    }
-
-    fn handle_notify(&mut self) {
-        if self.model.file_database_status.changed() {
-            let file_db_status = self.model.file_database_status.get_inner();
-            self.app
-                .database_widget_state
-                .set_file_database_status((file_db_status * 100.0) as u16);
-        }
-
-        if self.model.file_database.changed() {
-            let file_db = self.model.file_database.get_inner();
-            self.app
-                .database_widget_state
-                .set_file_database(file_db.clone());
-            self.app.fuzzy_search_widget.set_file_database(file_db);
-        }
-
-        if self.model.playlist.changed() {
-            let playlist = self.model.playlist.get_inner();
-            self.app.playlist_widget_state.set_playlist(playlist);
-        }
-
-        if self.model.messages.changed() {
-            let messages = self.model.messages.get_inner().iter().cloned().collect();
-            self.app.chat_widget_state.set_messages(messages);
-            self.app.chat_widget_state.update_cursor_latest();
-        }
-
-        if self.model.room_list.changed() {
-            let rooms = self.model.room_list.get_inner();
-            self.app.rooms_widget_state.set_rooms(rooms);
-        }
-
-        if self.model.user.changed() {
-            let user = self.model.user.get_inner();
-            self.app.rooms_widget_state.set_user(user.clone());
-            self.app.chat_widget_state.set_user(user);
-        }
-
-        if self.model.playing_video.changed() {
-            let playing_video = self.model.playing_video.get_inner();
-            self.app
-                .playlist_widget_state
-                .set_playing_video(playing_video);
-        }
-    }
-
-    fn render(f: &mut Frame, app: &mut App) {
-        let size = f.size();
-        let main_vertical_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
-            .split(size);
-
-        let horizontal_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-            .split(main_vertical_chunks[0]);
-
-        let vertical_left_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(4)].as_ref())
-            .split(horizontal_chunks[0]);
-
-        let vertical_right_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Length(3),
-                    Constraint::Percentage(20),
-                    Constraint::Min(0),
-                ]
-                .as_ref(),
-            )
-            .split(horizontal_chunks[1]);
-
-        f.render_stateful_widget(
-            DatabaseWidget,
-            vertical_right_chunks[0],
-            &mut app.database_widget_state,
-        );
-
-        f.render_stateful_widget(
-            RoomsWidget,
-            vertical_right_chunks[1],
-            &mut app.rooms_widget_state,
-        );
-
-        f.render_stateful_widget(
-            PlaylistWidget,
-            vertical_right_chunks[2],
-            &mut app.playlist_widget_state,
-        );
-
-        f.render_stateful_widget(
-            ChatWidget {},
-            vertical_left_chunks[0],
-            &mut app.chat_widget_state,
-        );
-
-        f.render_stateful_widget(
-            ChatInputWidget {},
-            vertical_left_chunks[1],
-            &mut app.chat_input_widget,
-        );
-
-        if let Mode::Overlay = app.mode {
-            if let Some(overlay) = &app.current_overlay_state {
-                match overlay {
-                    OverlayState::Option(_options) => {
-                        let area = app.options_widget_state.area(size);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(
-                            OptionsWidget {},
-                            area,
-                            &mut app.options_widget_state,
-                        );
-                    }
-                    OverlayState::Login(_login) => {
-                        let area = app.login_widget.area(size);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(LoginWidget {}, area, &mut app.login_widget);
-                    }
-                    OverlayState::FuzzySearch(_fuzzy_search) => {
-                        let area = app.fuzzy_search_widget.area(size);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(
-                            FuzzySearchWidget {},
-                            area,
-                            &mut app.fuzzy_search_widget,
-                        );
-                    }
-                    OverlayState::MediaDir(_media_dir) => {
-                        let area = app.media_widget.area(size);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(MediaDirWidget {}, area, &mut app.media_widget);
-                    }
-                    OverlayState::Command(_command) => {
-                        f.render_stateful_widget(
-                            CommandInputWidget {},
-                            main_vertical_chunks[1],
-                            &mut app.command_input_widget,
-                        );
-                    }
-                }
-            }
-        }
     }
 }
