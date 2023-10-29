@@ -338,9 +338,13 @@ pub struct NiketsuSelect {
 impl From<NiketsuSelect> for PlayerMessage {
     fn from(value: NiketsuSelect) -> Self {
         let actor = value.actor;
-        let filename = value.filename;
+        let message = if let Some(filename) = value.filename {
+            format!("{actor} selected {filename}")
+        } else {
+            format!("{actor} unselected video")
+        };
         PlayerMessageInner {
-            message: format!("{actor} selected {filename:?}"),
+            message,
             source: MessageSource::UserAction(actor),
             level: MessageLevel::Normal,
             timestamp: Local::now(),
