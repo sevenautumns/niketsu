@@ -4,6 +4,7 @@ use ratatui::style::Style;
 
 use self::chat::Chat;
 use self::chat_input::ChatInput;
+use self::command::Command;
 use self::database::Database;
 use self::fuzzy_search::FuzzySearch;
 use self::login::Login;
@@ -76,6 +77,7 @@ pub enum OverlayState {
     FuzzySearch(FuzzySearch),
     Option(Options),
     MediaDir(MediaDir),
+    Command(Command),
     // Help,
 }
 

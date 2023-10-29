@@ -23,7 +23,7 @@ use ratatui::widgets::*;
 use super::widget::login::LoginWidget;
 use super::widget::playlist::PlaylistWidget;
 use crate::handler::chat::Chat;
-use crate::handler::command::handle_command_prompt;
+use crate::handler::command::Command;
 use crate::handler::options::Options;
 use crate::handler::{EventHandler, MainEventHandler, OverlayState, State};
 use crate::widget::chat::{ChatWidget, ChatWidgetState};
@@ -53,7 +53,6 @@ enum LoopControl {
 pub enum Mode {
     #[default]
     Normal,
-    Editing,
     Inspecting,
     Overlay,
 }
@@ -224,7 +223,6 @@ impl RatatuiView {
                     .current_state
                     .clone()
                     .handle_with_overlay(self, &event),
-                Mode::Editing => handle_command_prompt(self, &event),
                 Mode::Overlay => {
                     if let Some(overlay) = self.app.current_overlay_state {
                         overlay.handle(self, &event)
@@ -404,7 +402,9 @@ impl RatatuiView {
                 match key.code {
                     KeyCode::Char('q') => return LoopControl::Break,
                     KeyCode::Char(':') => {
-                        self.app.mode = Mode::Editing;
+                        self.app.set_mode(Mode::Overlay);
+                        self.app
+                            .set_current_overlay_state(Some(OverlayState::from(Command {})));
                         self.app.command_input_widget.set_active(true);
                     }
                     KeyCode::Enter => {
@@ -532,12 +532,6 @@ impl RatatuiView {
             &mut app.chat_input_widget,
         );
 
-        f.render_stateful_widget(
-            CommandInputWidget {},
-            main_vertical_chunks[1],
-            &mut app.command_input_widget,
-        );
-
         if let Mode::Overlay = app.mode {
             if let Some(overlay) = &app.current_overlay_state {
                 match overlay {
@@ -568,6 +562,13 @@ impl RatatuiView {
                         let area = app.media_widget.area(size);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(MediaDirWidget {}, area, &mut app.media_widget);
+                    }
+                    OverlayState::Command(_command) => {
+                        f.render_stateful_widget(
+                            CommandInputWidget {},
+                            main_vertical_chunks[1],
+                            &mut app.command_input_widget,
+                        );
                     }
                 }
             }
