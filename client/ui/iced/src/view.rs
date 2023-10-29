@@ -10,11 +10,11 @@ use tokio::sync::Notify;
 
 use super::main_window::MainView;
 use super::message::Message;
-use super::settings_window::SettingsViewState;
+use super::widget::chat::ChatWidgetState;
 use super::widget::database::DatabaseWidgetState;
-use super::widget::messages::MessagesWidgetState;
 use super::widget::playlist::PlaylistWidgetState;
 use super::widget::rooms::RoomsWidgetState;
+use super::widget::settings::SettingsWidgetState;
 use super::PreExistingTokioRuntime;
 use crate::message::{MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;
@@ -23,26 +23,26 @@ use crate::widget::file_search::FileSearchWidgetState;
 pub struct ViewModel {
     pub model: UiModel,
     pub main: MainView,
-    pub settings: SettingsViewState,
+    pub settings_widget_state: SettingsWidgetState,
     pub rooms_widget_state: RoomsWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
-    pub messages_widget_state: MessagesWidgetState,
+    pub chat_widget_statet: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
     pub file_search_widget_state: FileSearchWidgetState,
 }
 
 impl ViewModel {
     pub fn new(flags: Flags) -> Self {
-        let mut settings = SettingsViewState::new(flags.config.clone());
+        let mut settings = SettingsWidgetState::new(flags.config.clone());
         if !flags.config.auto_login {
             settings.activate();
         }
         Self {
             model: flags.ui_model,
-            settings,
+            settings_widget_state: settings,
             rooms_widget_state: Default::default(),
             playlist_widget_state: Default::default(),
-            messages_widget_state: Default::default(),
+            chat_widget_statet: Default::default(),
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
             main: MainView,
@@ -54,7 +54,7 @@ impl ViewModel {
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
-        message.handle(self)
+        Command::batch([message.handle(self), self.get_chat_widget_state().snap()])
     }
 
     pub fn user(&self) -> UserStatus {
@@ -77,8 +77,8 @@ impl ViewModel {
         &self.playlist_widget_state
     }
 
-    pub fn get_messages_widget_state(&self) -> &MessagesWidgetState {
-        &self.messages_widget_state
+    pub fn get_chat_widget_state(&self) -> &ChatWidgetState {
+        &self.chat_widget_statet
     }
 
     pub fn get_database_widget_state(&self) -> &DatabaseWidgetState {
@@ -89,8 +89,8 @@ impl ViewModel {
         &self.file_search_widget_state
     }
 
-    pub fn get_settings_view_state(&self) -> &SettingsViewState {
-        &self.settings
+    pub fn get_settings_widget_state(&self) -> &SettingsWidgetState {
+        &self.settings_widget_state
     }
 
     pub fn update_from_inner_model(&mut self) {
@@ -109,7 +109,7 @@ impl ViewModel {
             .on_change(|ratio| self.database_widget_state.update_progress(ratio));
         self.model
             .messages
-            .on_change_arc(|msgs| self.messages_widget_state.replace_messages(msgs))
+            .on_change_arc(|msgs| self.chat_widget_statet.replace_messages(msgs))
     }
 }
 

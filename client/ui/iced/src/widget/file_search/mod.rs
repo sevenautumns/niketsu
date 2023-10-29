@@ -9,7 +9,7 @@ use niketsu_core::file_database::fuzzy::{FuzzyResult, FuzzySearch};
 use self::message::{
     Activate, Click, Close, FileSearchWidgetMessage, Input, Insert, SearchFinished, Select,
 };
-use super::overlay::ElementOverlay;
+use super::overlay::{ElementOverlay, ElementOverlayConfig};
 use crate::message::Message;
 use crate::styling::{FileButton, ResultButton};
 
@@ -55,6 +55,7 @@ impl<'a> FileSearchWidget<'a> {
                 })
                 .into(),
             )
+            .id(iced::widget::text_input::Id::new("file_search_query"))
             .width(Length::Fill);
         let close_button = Button::new("Close")
             .on_press(FileSearchWidgetMessage::from(Close).into())
@@ -165,42 +166,52 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
         shell: &mut iced::advanced::Shell<'_, Message>,
         viewport: &iced::Rectangle,
     ) -> iced::event::Status {
-        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-            key_code,
-            modifiers: _,
-        }) = event
-        {
-            match key_code {
-                iced::keyboard::KeyCode::Up => {
-                    let index = (self.state.cursor_index + self.state.results.len() - 1)
-                        .checked_rem(self.state.results.len())
-                        .unwrap_or_default();
-                    shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
-                }
-                iced::keyboard::KeyCode::Down => {
-                    let index = (self.state.cursor_index + 1)
-                        .checked_rem(self.state.results.len())
-                        .unwrap_or_default();
-                    shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
-                }
-                iced::keyboard::KeyCode::Enter => {
-                    shell.publish(
-                        FileSearchWidgetMessage::from(Insert {
-                            index: self.state.cursor_index,
-                        })
-                        .into(),
-                    );
-                }
-                iced::keyboard::KeyCode::Escape => {
+        if self.state.active {
+            if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
+                iced::mouse::Button::Left,
+            )) = event
+            {
+                if matches!(cursor, iced::mouse::Cursor::Available(_)) {
                     shell.publish(FileSearchWidgetMessage::from(Close).into());
                 }
-                _ => {}
             }
-        }
+            if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key_code,
+                modifiers: _,
+            }) = event
+            {
+                match key_code {
+                    iced::keyboard::KeyCode::Up => {
+                        let index = (self.state.cursor_index + self.state.results.len() - 1)
+                            .checked_rem(self.state.results.len())
+                            .unwrap_or_default();
+                        shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
+                    }
+                    iced::keyboard::KeyCode::Down => {
+                        let index = (self.state.cursor_index + 1)
+                            .checked_rem(self.state.results.len())
+                            .unwrap_or_default();
+                        shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
+                    }
+                    iced::keyboard::KeyCode::Enter => {
+                        shell.publish(
+                            FileSearchWidgetMessage::from(Insert {
+                                index: self.state.cursor_index,
+                            })
+                            .into(),
+                        );
+                    }
+                    iced::keyboard::KeyCode::Escape => {
+                        shell.publish(FileSearchWidgetMessage::from(Close).into());
+                    }
+                    _ => {}
+                }
+            }
 
-        if let Some(search) = &self.state.search {
-            if search.is_finished() {
-                shell.publish(FileSearchWidgetMessage::from(SearchFinished).into());
+            if let Some(search) = &self.state.search {
+                if search.is_finished() {
+                    shell.publish(FileSearchWidgetMessage::from(SearchFinished).into());
+                }
             }
         }
 
@@ -228,6 +239,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
                 Box::new(ElementOverlay {
                     tree: &mut state.children[1],
                     content: &mut self.base,
+                    config: ElementOverlayConfig::default(),
                 }),
             ));
         }

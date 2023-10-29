@@ -104,8 +104,6 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for RoomsWidget<'a> {
         viewport: &iced::Rectangle,
         renderer: &Renderer,
     ) -> iced::mouse::Interaction {
-        //TODO Change mouse interaction
-
         self.base.as_widget().mouse_interaction(
             &state.children[0],
             layout,

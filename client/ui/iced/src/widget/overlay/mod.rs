@@ -1,10 +1,28 @@
-use iced::{BorderRadius, Color, Element, Point, Renderer, Size, Theme};
+use iced::{BorderRadius, Color, Element, Padding, Point, Renderer, Size, Theme};
 
 use crate::message::Message;
 
 pub struct ElementOverlay<'a, 'b> {
     pub tree: &'b mut iced::advanced::widget::Tree,
     pub content: &'b mut Element<'a, Message, Renderer>,
+    pub config: ElementOverlayConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct ElementOverlayConfig {
+    pub max_height: Option<f32>,
+    pub max_width: Option<f32>,
+    pub min_padding: f32,
+}
+
+impl Default for ElementOverlayConfig {
+    fn default() -> Self {
+        Self {
+            max_height: None,
+            max_width: None,
+            min_padding: 20.0,
+        }
+    }
 }
 
 impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, 'b> {
@@ -14,15 +32,19 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, '
         bounds: Size,
         _position: Point,
     ) -> iced_futures::core::layout::Node {
-        let limits =
-            iced::advanced::layout::Limits::new(Size::ZERO, bounds).shrink(Size::new(40.0, 40.0));
+        let limits = iced::advanced::layout::Limits::new(Size::ZERO, bounds)
+            .max_width(self.config.max_width.unwrap_or(f32::INFINITY))
+            .max_height(self.config.max_height.unwrap_or(f32::INFINITY))
+            .pad(Padding::new(self.config.min_padding * 2.0));
         let mut child = self.content.as_widget().layout(renderer, &limits);
         child.align(
             iced::Alignment::Center,
             iced::Alignment::Center,
             limits.max(),
         );
-        child.translate(iced::Vector::new(20.0, 20.0))
+        let offset_x = (bounds.width - limits.max().width) / 2.0;
+        let offset_y = (bounds.height - limits.max().height) / 2.0;
+        child.translate(iced::Vector::new(offset_x, offset_y))
     }
 
     fn is_over(
@@ -51,7 +73,7 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, '
                 border_color: theme.palette().text,
             },
             Color {
-                a: 0.98,
+                a: 0.99,
                 ..theme.palette().background
             },
         );

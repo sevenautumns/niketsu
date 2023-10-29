@@ -6,21 +6,22 @@ use niketsu_core::config::Config;
 use niketsu_core::log;
 use niketsu_core::ui::{RoomChange, ServerChange, UiModel};
 
-use super::SettingsViewState;
+use super::SettingsWidgetState;
 use crate::message::{Message, MessageHandler};
 use crate::view::ViewModel;
 
 #[enum_dispatch]
-pub trait SettingsMessageTrait {
-    fn handle(self, ui: &mut SettingsViewState, model: &UiModel);
+pub trait SettingsWidgetMessageTrait {
+    fn handle(self, ui: &mut SettingsWidgetState, model: &UiModel);
 }
 
-#[enum_dispatch(SettingsMessageTrait)]
+#[enum_dispatch(SettingsWidgetMessageTrait)]
 #[derive(Debug, Clone)]
-pub enum SettingsMessage {
+pub enum SettingsWidgetMessage {
     Activate,
     Abort,
-    Close,
+    ApplyClose,
+    ApplyCloseSave,
     UsernameInput,
     UrlInput,
     PathInput,
@@ -31,9 +32,9 @@ pub enum SettingsMessage {
     SecureCheckbox,
 }
 
-impl MessageHandler for SettingsMessage {
+impl MessageHandler for SettingsWidgetMessage {
     fn handle(self, model: &mut ViewModel) -> Command<Message> {
-        SettingsMessageTrait::handle(self, &mut model.settings, &model.model);
+        SettingsWidgetMessageTrait::handle(self, &mut model.settings_widget_state, &model.model);
         Command::none()
     }
 }
@@ -41,8 +42,8 @@ impl MessageHandler for SettingsMessage {
 #[derive(Debug, Clone)]
 pub struct Activate;
 
-impl SettingsMessageTrait for Activate {
-    fn handle(self, state: &mut SettingsViewState, _: &UiModel) {
+impl SettingsWidgetMessageTrait for Activate {
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
         state.active = true
     }
 }
@@ -50,17 +51,17 @@ impl SettingsMessageTrait for Activate {
 #[derive(Debug, Clone)]
 pub struct Abort;
 
-impl SettingsMessageTrait for Abort {
-    fn handle(self, state: &mut SettingsViewState, _: &UiModel) {
+impl SettingsWidgetMessageTrait for Abort {
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
         state.active = false
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Close;
+pub struct ApplyClose;
 
-impl SettingsMessageTrait for Close {
-    fn handle(self, state: &mut SettingsViewState, model: &UiModel) {
+impl SettingsWidgetMessageTrait for ApplyClose {
+    fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
         state.active = false;
         let config: Config = state.clone().into();
         let media_dirs: Vec<_> = config.media_dirs.iter().map(PathBuf::from).collect();
@@ -75,6 +76,16 @@ impl SettingsMessageTrait for Close {
                 room: config.room.clone(),
             },
         });
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ApplyCloseSave;
+
+impl SettingsWidgetMessageTrait for ApplyCloseSave {
+    fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
+        ApplyClose.handle(state, model);
+        let config: Config = state.clone().into();
         log!(config.save());
     }
 }
@@ -82,8 +93,8 @@ impl SettingsMessageTrait for Close {
 #[derive(Debug, Clone)]
 pub struct UsernameInput(pub String);
 
-impl SettingsMessageTrait for UsernameInput {
-    fn handle(self, ui: &mut SettingsViewState, _: &UiModel) {
+impl SettingsWidgetMessageTrait for UsernameInput {
+    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
         ui.username = self.0;
     }
 }
@@ -91,8 +102,8 @@ impl SettingsMessageTrait for UsernameInput {
 #[derive(Debug, Clone)]
 pub struct UrlInput(pub String);
 
-impl SettingsMessageTrait for UrlInput {
-    fn handle(self, ui: &mut SettingsViewState, _: &UiModel) {
+impl SettingsWidgetMessageTrait for UrlInput {
+    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
         ui.url = self.0;
     }
 }
@@ -100,8 +111,8 @@ impl SettingsMessageTrait for UrlInput {
 #[derive(Debug, Clone)]
 pub struct PathInput(pub usize, pub String);
 
-impl SettingsMessageTrait for PathInput {
-    fn handle(self, ui: &mut SettingsViewState, _: &UiModel) {
+impl SettingsWidgetMessageTrait for PathInput {
+    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
         if let Some(d) = ui.media_dirs.get_mut(self.0) {
             *d = self.1
         }
@@ -111,8 +122,8 @@ impl SettingsMessageTrait for PathInput {
 #[derive(Debug, Clone)]
 pub struct DeletePath(pub usize);
 
-impl SettingsMessageTrait for DeletePath {
-    fn handle(self, ui: &mut SettingsViewState, _: &UiModel) {
+impl SettingsWidgetMessageTrait for DeletePath {
+    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
         if self.0 < ui.media_dirs.len() {
             ui.media_dirs.remove(self.0);
         }
@@ -122,8 +133,8 @@ impl SettingsMessageTrait for DeletePath {
 #[derive(Debug, Clone)]
 pub struct AddPath;
 
-impl SettingsMessageTrait for AddPath {
-    fn handle(self, ui: &mut SettingsViewState, _: &UiModel) {
+impl SettingsWidgetMessageTrait for AddPath {
+    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
         ui.media_dirs.push(Default::default());
     }
 }
@@ -131,8 +142,8 @@ impl SettingsMessageTrait for AddPath {
 #[derive(Debug, Clone)]
 pub struct RoomInput(pub String);
 
-impl SettingsMessageTrait for RoomInput {
-    fn handle(self, ui: &mut SettingsViewState, _: &UiModel) {
+impl SettingsWidgetMessageTrait for RoomInput {
+    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
         ui.room = self.0;
     }
 }
@@ -140,8 +151,8 @@ impl SettingsMessageTrait for RoomInput {
 #[derive(Debug, Clone)]
 pub struct PasswordInput(pub String);
 
-impl SettingsMessageTrait for PasswordInput {
-    fn handle(self, ui: &mut SettingsViewState, _: &UiModel) {
+impl SettingsWidgetMessageTrait for PasswordInput {
+    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
         ui.password = self.0;
     }
 }
@@ -149,8 +160,8 @@ impl SettingsMessageTrait for PasswordInput {
 #[derive(Debug, Clone)]
 pub struct SecureCheckbox(pub bool);
 
-impl SettingsMessageTrait for SecureCheckbox {
-    fn handle(self, ui: &mut SettingsViewState, _: &UiModel) {
+impl SettingsWidgetMessageTrait for SecureCheckbox {
+    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
         ui.secure = self.0;
     }
 }

@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use iced::event::Status;
 use iced::mouse::Cursor;
-use iced::widget::scrollable::Id;
+use iced::widget::scrollable::{Id, RelativeOffset};
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
-use iced::{Element, Length, Rectangle, Renderer, Theme};
+use iced::{Command, Element, Length, Rectangle, Renderer, Theme};
 use niketsu_core::ui::{MessageSource, PlayerMessage};
 
-use self::message::{MessageInput, MessagesWidgetMessage, ScrollMessages, SendMessage};
+use self::message::{ChatWidgetMessage, MessageInput, ScrollMessages, SendMessage};
 use crate::message::Message;
 use crate::styling::{ContainerBorder, MessageColor};
 use crate::RingBuffer;
@@ -16,12 +16,12 @@ pub mod message;
 
 const SPACING: u16 = 5;
 
-pub struct MessagesWidget<'a> {
+pub struct ChatWidget<'a> {
     base: Element<'a, Message>,
 }
 
-impl<'a> MessagesWidget<'a> {
-    pub fn new(state: &MessagesWidgetState) -> Self {
+impl<'a> ChatWidget<'a> {
+    pub fn new(state: &ChatWidgetState) -> Self {
         let mut column = Column::new()
             .spacing(SPACING)
             .width(Length::Fill)
@@ -31,9 +31,7 @@ impl<'a> MessagesWidget<'a> {
         let messages = Container::new(
             Scrollable::new(Column::with_children(msgs))
                 .width(Length::Fill)
-                .on_scroll(|o| {
-                    MessagesWidgetMessage::from(ScrollMessages(o.relative_offset())).into()
-                })
+                .on_scroll(|o| ChatWidgetMessage::from(ScrollMessages(o.relative_offset())).into())
                 .id(Id::new("messages")),
         )
         .style(ContainerBorder::basic())
@@ -46,10 +44,10 @@ impl<'a> MessagesWidget<'a> {
             .push(
                 TextInput::new("Message", &state.message)
                     .width(Length::Fill)
-                    .on_input(|i| MessagesWidgetMessage::from(MessageInput(i)).into())
-                    .on_submit(MessagesWidgetMessage::from(SendMessage).into()),
+                    .on_input(|i| ChatWidgetMessage::from(MessageInput(i)).into())
+                    .on_submit(ChatWidgetMessage::from(SendMessage).into()),
             )
-            .push(Button::new("Send").on_press(MessagesWidgetMessage::from(SendMessage).into()))
+            .push(Button::new("Send").on_press(ChatWidgetMessage::from(SendMessage).into()))
             .spacing(SPACING);
         column = column.push(message_input);
 
@@ -58,7 +56,7 @@ impl<'a> MessagesWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for MessagesWidget<'a> {
+impl<'a> iced::advanced::Widget<Message, Renderer> for ChatWidget<'a> {
     fn width(&self) -> Length {
         self.base.as_widget().width()
     }
@@ -157,22 +155,43 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for MessagesWidget<'a> {
     }
 }
 
-impl<'a> From<MessagesWidget<'a>> for Element<'a, Message> {
-    fn from(msgs: MessagesWidget<'a>) -> Self {
+impl<'a> From<ChatWidget<'a>> for Element<'a, Message> {
+    fn from(msgs: ChatWidget<'a>) -> Self {
         Self::new(msgs)
     }
 }
 
-/// TODO rename to ChatWidgetState
-#[derive(Debug, Clone, Default)]
-pub struct MessagesWidgetState {
+#[derive(Debug, Clone)]
+pub struct ChatWidgetState {
     messages: Arc<RingBuffer<PlayerMessage>>,
     message: String,
+    offset: RelativeOffset,
 }
 
-impl MessagesWidgetState {
+impl Default for ChatWidgetState {
+    fn default() -> Self {
+        let offset = RelativeOffset {
+            y: 1.0,
+            ..Default::default()
+        };
+        Self {
+            messages: Default::default(),
+            message: Default::default(),
+            offset,
+        }
+    }
+}
+
+impl ChatWidgetState {
     pub fn replace_messages(&mut self, messages: Arc<RingBuffer<PlayerMessage>>) {
         self.messages = messages;
+    }
+
+    pub fn snap(&self) -> Command<Message> {
+        if self.offset.y == 1.0 {
+            return iced::widget::scrollable::snap_to(Id::new("messages"), self.offset);
+        }
+        Command::none()
     }
 }
 
