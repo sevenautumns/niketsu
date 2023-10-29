@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use iced::event::Status;
 use iced::mouse::Cursor;
-use iced::widget::scrollable::Id;
+use iced::widget::scrollable::{Id, RelativeOffset};
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
-use iced::{Element, Length, Rectangle, Renderer, Theme};
+use iced::{Command, Element, Length, Rectangle, Renderer, Theme};
 use niketsu_core::ui::{MessageSource, PlayerMessage};
 
 use self::message::{ChatWidgetMessage, MessageInput, ScrollMessages, SendMessage};
@@ -161,15 +161,37 @@ impl<'a> From<ChatWidget<'a>> for Element<'a, Message> {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ChatWidgetState {
     messages: Arc<RingBuffer<PlayerMessage>>,
     message: String,
+    offset: RelativeOffset,
+}
+
+impl Default for ChatWidgetState {
+    fn default() -> Self {
+        let offset = RelativeOffset {
+            y: 1.0,
+            ..Default::default()
+        };
+        Self {
+            messages: Default::default(),
+            message: Default::default(),
+            offset,
+        }
+    }
 }
 
 impl ChatWidgetState {
     pub fn replace_messages(&mut self, messages: Arc<RingBuffer<PlayerMessage>>) {
         self.messages = messages;
+    }
+
+    pub fn snap(&self) -> Command<Message> {
+        if self.offset.y == 1.0 {
+            return iced::widget::scrollable::snap_to(Id::new("messages"), self.offset);
+        }
+        Command::none()
     }
 }
 

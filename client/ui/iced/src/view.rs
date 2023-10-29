@@ -54,7 +54,7 @@ impl ViewModel {
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
-        message.handle(self)
+        Command::batch([message.handle(self), self.get_chat_widget_state().snap()])
     }
 
     pub fn user(&self) -> UserStatus {

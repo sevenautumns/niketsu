@@ -30,8 +30,8 @@ impl MessageHandler for ChatWidgetMessage {
 pub struct ScrollMessages(pub RelativeOffset);
 
 impl ChatWidgetMessageTrait for ScrollMessages {
-    fn handle(self, _: &mut ChatWidgetState, _: &UiModel) -> Command<Message> {
-        // TODO how to snap to the end?
+    fn handle(self, state: &mut ChatWidgetState, _: &UiModel) -> Command<Message> {
+        state.offset = self.0;
         Command::none()
     }
 }
