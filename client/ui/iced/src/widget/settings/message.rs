@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use enum_dispatch::enum_dispatch;
 use iced::Command;
+use niketsu_core::config::Config;
 use niketsu_core::log;
 use niketsu_core::ui::{RoomChange, ServerChange, UiModel};
 
@@ -19,8 +20,11 @@ pub trait SettingsWidgetMessageTrait {
 pub enum SettingsWidgetMessage {
     Activate,
     Abort,
+    Reset,
     ConnectApplyClose,
     ApplyClose,
+    ConnectApplyCloseSave,
+    ApplyCloseSave,
     UsernameInput,
     UrlInput,
     PathInput,
@@ -29,8 +33,7 @@ pub enum SettingsWidgetMessage {
     RoomInput,
     PasswordInput,
     SecureCheckbox,
-    AutoLoginCheckbox,
-    SaveConfigCheckbox,
+    AutoConnectCheckbox,
 }
 
 impl MessageHandler for SettingsWidgetMessage {
@@ -55,6 +58,15 @@ pub struct Abort;
 impl SettingsWidgetMessageTrait for Abort {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
         state.active = false
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Reset;
+
+impl SettingsWidgetMessageTrait for Reset {
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.config = Config::load_or_default()
     }
 }
 
@@ -87,10 +99,26 @@ impl SettingsWidgetMessageTrait for ApplyClose {
         let username = config.username.clone();
         model.change_db_paths(media_dirs);
         model.change_username(username);
+    }
+}
 
-        if state.save_config {
-            log!(state.config().save());
-        }
+#[derive(Debug, Clone)]
+pub struct ConnectApplyCloseSave;
+
+impl SettingsWidgetMessageTrait for ConnectApplyCloseSave {
+    fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
+        ConnectApplyClose.handle(state, model);
+        log!(state.config().save());
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ApplyCloseSave;
+
+impl SettingsWidgetMessageTrait for ApplyCloseSave {
+    fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
+        ApplyClose.handle(state, model);
+        log!(state.config().save());
     }
 }
 
@@ -171,19 +199,10 @@ impl SettingsWidgetMessageTrait for SecureCheckbox {
 }
 
 #[derive(Debug, Clone)]
-pub struct AutoLoginCheckbox(pub bool);
+pub struct AutoConnectCheckbox(pub bool);
 
-impl SettingsWidgetMessageTrait for AutoLoginCheckbox {
+impl SettingsWidgetMessageTrait for AutoConnectCheckbox {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
-        state.config.auto_login = self.0;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SaveConfigCheckbox(pub bool);
-
-impl SettingsWidgetMessageTrait for SaveConfigCheckbox {
-    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
-        state.save_config = self.0;
+        state.config.auto_connect = self.0;
     }
 }

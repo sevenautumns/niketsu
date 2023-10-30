@@ -34,7 +34,7 @@ pub struct ViewModel {
 impl ViewModel {
     pub fn new(flags: Flags) -> Self {
         let mut settings = SettingsWidgetState::new(flags.config.clone());
-        if !flags.config.auto_login {
+        if !flags.config.auto_connect {
             settings.activate();
         }
         Self {

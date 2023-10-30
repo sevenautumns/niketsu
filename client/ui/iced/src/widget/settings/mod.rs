@@ -5,9 +5,9 @@ use iced::{Alignment, Element, Length, Renderer, Theme};
 use niketsu_core::config::Config;
 
 use self::message::{
-    Abort, Activate, AddPath, ApplyClose, AutoLoginCheckbox, ConnectApplyClose, DeletePath,
-    PasswordInput, PathInput, RoomInput, SaveConfigCheckbox, SecureCheckbox, SettingsWidgetMessage,
-    UrlInput, UsernameInput,
+    Abort, Activate, AddPath, ApplyClose, ApplyCloseSave, AutoConnectCheckbox, ConnectApplyClose,
+    ConnectApplyCloseSave, DeletePath, PasswordInput, PathInput, Reset, RoomInput, SecureCheckbox,
+    SettingsWidgetMessage, UrlInput, UsernameInput,
 };
 use super::overlay::ElementOverlayConfig;
 use crate::message::Message;
@@ -78,6 +78,7 @@ impl<'a> SettingsWidget<'a> {
                             .size(text_size + 25.0)
                             .width(Length::Fill),
                     )
+                    .push(Button::new("Reset").on_press(SettingsWidgetMessage::from(Reset).into()))
                     .push(
                         Button::new("Close")
                             .on_press(SettingsWidgetMessage::from(Abort).into())
@@ -101,7 +102,7 @@ impl<'a> SettingsWidget<'a> {
                             .push(Button::new("Password").style(FileButton::theme(false, true)))
                             .push(Button::new("Username").style(FileButton::theme(false, true)))
                             .push(Button::new("Room").style(FileButton::theme(false, true)))
-                            .push(Button::new("Auto Login").style(FileButton::theme(false, true)))
+                            .push(Button::new("Auto Connect").style(FileButton::theme(false, true)))
                             .spacing(SPACING)
                             .width(Length::Shrink),
                     )
@@ -146,8 +147,8 @@ impl<'a> SettingsWidget<'a> {
                             )
                             .push(
                                 Container::new(
-                                    Checkbox::new("", state.config.auto_login, |b| {
-                                        SettingsWidgetMessage::from(AutoLoginCheckbox(b)).into()
+                                    Checkbox::new("", state.config.auto_connect, |b| {
+                                        SettingsWidgetMessage::from(AutoConnectCheckbox(b)).into()
                                     })
                                     .spacing(SPACING),
                                 )
@@ -193,7 +194,7 @@ impl<'a> SettingsWidget<'a> {
                     )
                     .push(
                         Button::new(
-                            Text::new("Apply & Connect")
+                            Text::new("Connect")
                                 .width(Length::Fill)
                                 .horizontal_alignment(iced::alignment::Horizontal::Center),
                         )
@@ -203,14 +204,26 @@ impl<'a> SettingsWidget<'a> {
                     .spacing(SPACING),
             )
             .push(
-                Container::new(
-                    Checkbox::new("Save Config", state.save_config, |b| {
-                        SettingsWidgetMessage::from(SaveConfigCheckbox(b)).into()
-                    })
+                Row::new()
+                    .push(
+                        Button::new(
+                            Text::new("Apply & Save")
+                                .width(Length::Fill)
+                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        )
+                        .width(Length::Fill)
+                        .on_press(SettingsWidgetMessage::from(ApplyCloseSave).into()),
+                    )
+                    .push(
+                        Button::new(
+                            Text::new("Connect & Save")
+                                .width(Length::Fill)
+                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        )
+                        .width(Length::Fill)
+                        .on_press(SettingsWidgetMessage::from(ConnectApplyCloseSave).into()),
+                    )
                     .spacing(SPACING),
-                )
-                .center_y()
-                .height(text_size + 15.0),
             )
             .align_items(Alignment::Center)
             .width(Length::Fill)
@@ -378,7 +391,6 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
 #[derive(Debug, Clone)]
 pub struct SettingsWidgetState {
     config: Config,
-    save_config: bool,
     active: bool,
 }
 
@@ -387,7 +399,6 @@ impl SettingsWidgetState {
         Self {
             config,
             active: false,
-            save_config: true,
         }
     }
 
