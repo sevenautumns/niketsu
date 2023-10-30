@@ -1,5 +1,6 @@
 use enum_dispatch::enum_dispatch;
-use iced::Command;
+use iced::keyboard::KeyCode;
+use iced::{Command, Event};
 
 use super::main_window::message::MainMessage;
 use super::widget::chat::message::ChatWidgetMessage;
@@ -20,6 +21,7 @@ pub trait MessageHandler {
 pub enum Message {
     Main(MainMessage),
     ModelChanged,
+    EventOccured,
     //
     SettingsWidget(SettingsWidgetMessage),
     RoomsWidget(RoomsWidgetMessage),
@@ -35,6 +37,24 @@ pub struct ModelChanged;
 impl MessageHandler for ModelChanged {
     fn handle(self, model: &mut ViewModel) -> Command<Message> {
         model.update_from_inner_model();
+        Command::none()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EventOccured(pub Event);
+
+impl MessageHandler for EventOccured {
+    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+        if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key_code,
+            modifiers: _,
+        }) = self.0
+        {
+            if key_code == KeyCode::Space {
+                model.model.user_ready_toggle();
+            }
+        }
         Command::none()
     }
 }
