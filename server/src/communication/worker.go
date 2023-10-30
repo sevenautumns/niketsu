@@ -834,6 +834,10 @@ func (worker *Worker) broadcastStartOnReady() {
 		return
 	}
 
+	if !roomState.paused {
+		return
+	}
+
 	if worker.room.AllUsersReady() {
 		start := Start{Username: worker.userStatus.Username}
 		payload, err := MarshalMessage(start)
