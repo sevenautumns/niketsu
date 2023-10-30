@@ -10,43 +10,19 @@ pub struct OptionsWidget;
 
 #[derive(Debug, Default, Clone)]
 pub struct OptionsWidgetState {
-    percent_x: u8,
-    percent_y: u8,
     style: Style,
-}
-
-impl OptionsWidgetState {
-    pub fn new() -> Self {
-        Self {
-            percent_x: 30,
-            percent_y: 20,
-            style: Style::default(),
-        }
-    }
 }
 
 impl OverlayWidgetState for OptionsWidgetState {
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Percentage(100 - self.percent_y as u16),
-                    Constraint::Percentage(self.percent_y as u16),
-                ]
-                .as_ref(),
-            )
+            .constraints([Constraint::Percentage(80), Constraint::Percentage(20)].as_ref())
             .split(r);
 
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints(
-                [
-                    Constraint::Percentage(100 - self.percent_x as u16),
-                    Constraint::Percentage(self.percent_x as u16),
-                ]
-                .as_ref(),
-            )
+            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
             .split(popup_layout[1])[1]
     }
 }

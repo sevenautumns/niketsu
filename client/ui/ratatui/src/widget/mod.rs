@@ -9,6 +9,7 @@ pub(crate) mod chat_input;
 pub(crate) mod command;
 pub(crate) mod database;
 pub(crate) mod fuzzy_search;
+pub(crate) mod help;
 pub(crate) mod login;
 pub(crate) mod media;
 pub(crate) mod options;

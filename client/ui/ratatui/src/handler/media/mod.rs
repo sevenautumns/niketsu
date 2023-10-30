@@ -13,26 +13,31 @@ impl EventHandler for MediaDir {
                 match key.code {
                     KeyCode::Esc => {
                         view.app.reset_overlay();
-                        view.app.media_widget.reset_all();
+                        view.app.media_widget_state.reset_all();
                     }
                     KeyCode::Enter => {
-                        view.app.media_widget.push_path();
-                        let media_paths = view.app.media_widget.get_paths();
+                        view.app.media_widget_state.push_path();
+                        let media_paths = view.app.media_widget_state.get_paths();
                         view.change_media_dirs(
                             media_paths.clone().iter().map(|m| m.into()).collect(),
                         );
                         view.save_media_dir(media_paths)
                     }
-                    KeyCode::Up => view.app.media_widget.next(),
-                    KeyCode::Down => view.app.media_widget.previous(),
+                    KeyCode::Up => view.app.media_widget_state.next(),
+                    KeyCode::Down => view.app.media_widget_state.previous(),
                     KeyCode::Char('d') => {
                         if key.modifiers == KeyModifiers::CONTROL {
-                            view.app.media_widget.remove_path();
+                            view.app.media_widget_state.remove_path();
+                            let media_paths = view.app.media_widget_state.get_paths();
+                            view.change_media_dirs(
+                                media_paths.clone().iter().map(|m| m.into()).collect(),
+                            );
+                            view.save_media_dir(media_paths)
                         } else {
-                            view.app.media_widget.input(*key);
+                            view.app.media_widget_state.input(*key);
                         }
                     }
-                    _ => view.app.media_widget.input(*key),
+                    _ => view.app.media_widget_state.input(*key),
                 }
             }
         }
