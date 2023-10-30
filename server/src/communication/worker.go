@@ -452,12 +452,17 @@ func (worker *Worker) handleStatus(status Status) {
 func (worker *Worker) handleDuplicateUsername(status Status) {
 	if worker.userStatus.Username != status.Username {
 		newUsername := worker.roomHandler.RenameUserIfUnavailable(status.Username)
-		status.Username = newUsername
-		worker.sendUserStatus(status)
+		if newUsername != status.Username {
+			status.Username = newUsername
+			worker.sendUserStatus(status)
+		}
 	}
 	worker.SetUserStatus(status)
-	worker.room.SetWorkerStatus(worker.state.uuid, status)
-	worker.roomHandler.BroadcastStatusList()
+
+	if worker.room != nil {
+		worker.room.SetWorkerStatus(worker.state.uuid, status)
+		worker.roomHandler.BroadcastStatusList()
+	}
 }
 
 func (worker *Worker) isStatusNew(status Status) bool {
@@ -588,14 +593,16 @@ func (worker *Worker) handleJoin(join Join) {
 	// in case of a room change, try to delete the previous room
 	worker.deleteAndCloseEmptyRoom()
 
+	// rename user if duplicated
+	status := Status{Username: join.Username}
+	worker.handleDuplicateUsername(status)
+
 	err := worker.handleRoomJoin(join)
 	if err != nil {
 		worker.sendServerMessage("Failed to access room. Please try again", true)
 		return
 	}
 
-	status := Status{Username: join.Username}
-	worker.handleDuplicateUsername(status)
 	worker.state.loggedIn = true
 }
 
@@ -642,6 +649,7 @@ func (worker *Worker) updateRoomChangeState(roomName string) error {
 	worker.setVideoState(VideoStatus{Filename: roomState.video, Position: roomState.position,
 		Paused: roomState.paused, Speed: roomState.speed}, time.Now())
 	worker.room = room
+	worker.room.SetWorkerStatus(worker.state.uuid, worker.userStatus)
 
 	return nil
 }
@@ -652,6 +660,7 @@ func (worker *Worker) sendRoomChangeUpdates() {
 	if roomState.video != nil && roomState.position != nil {
 		worker.sendSelect(roomState.video, *roomState.position)
 	}
+	worker.roomHandler.BroadcastStatusList()
 }
 
 func (worker *Worker) setSpeed(speed float64) {
@@ -831,6 +840,10 @@ func (worker *Worker) broadcastPause() {
 func (worker *Worker) broadcastStartOnReady() {
 	roomState := worker.room.RoomState()
 	if roomState.video == nil {
+		return
+	}
+
+	if !roomState.paused {
 		return
 	}
 
