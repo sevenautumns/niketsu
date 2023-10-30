@@ -183,6 +183,7 @@ func (server *Server) CreateOrFindRoom(roomName string) (RoomStateHandler, error
 		if err != nil {
 			return nil, err
 		}
+		go tmpRoom.Start()
 
 		return tmpRoom, nil
 	} else {
