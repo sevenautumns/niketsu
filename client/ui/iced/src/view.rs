@@ -16,7 +16,7 @@ use super::widget::playlist::PlaylistWidgetState;
 use super::widget::rooms::RoomsWidgetState;
 use super::widget::settings::SettingsWidgetState;
 use super::PreExistingTokioRuntime;
-use crate::message::{MessageHandler, ModelChanged};
+use crate::message::{EventOccured, MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;
 
 #[derive(Debug)]
@@ -34,7 +34,7 @@ pub struct ViewModel {
 impl ViewModel {
     pub fn new(flags: Flags) -> Self {
         let mut settings = SettingsWidgetState::new(flags.config.clone());
-        if !flags.config.auto_login {
+        if !flags.config.auto_connect {
             settings.activate();
         }
         Self {
@@ -173,13 +173,20 @@ impl Application for View {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        iced::subscription::unfold(
+        let notify = self.view_model.model.notify.clone();
+        let notify_subscription = iced::subscription::channel(
             std::any::TypeId::of::<Notify>(),
-            self.view_model.model.notify.clone(),
-            |notify| async {
-                notify.notified().await;
-                (ModelChanged.into(), notify)
+            1,
+            |mut sender| async move {
+                loop {
+                    notify.notified().await;
+                    let _ = sender.try_send(ModelChanged.into());
+                }
             },
-        )
+        );
+
+        let ready_subscription = iced::subscription::events().map(|e| EventOccured(e).into());
+
+        iced::subscription::Subscription::batch([notify_subscription, ready_subscription])
     }
 }

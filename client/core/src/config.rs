@@ -25,7 +25,7 @@ pub struct Config {
     #[serde(default)]
     pub password: String,
     #[serde(default)]
-    pub auto_login: bool,
+    pub auto_connect: bool,
 }
 
 impl Config {

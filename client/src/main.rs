@@ -19,8 +19,8 @@ async fn main() -> Result<()> {
 
     let mut config: Config = Config::load_or_default();
 
-    if let Some(auto_login) = args.auto_login {
-        config.auto_login = auto_login
+    if let Some(auto_connect) = args.auto_connect {
+        config.auto_connect = auto_connect
     }
 
     let view: Box<dyn UserInterfaceTrait>;

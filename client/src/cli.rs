@@ -11,9 +11,9 @@ pub struct Args {
     /// Skip the initial refresh of the file database
     #[arg(short, long)]
     pub skip_database_refresh: bool,
-    /// Auto-login from config
+    /// Auto-connect from config
     #[arg(short, long)]
-    pub auto_login: Option<bool>,
+    pub auto_connect: Option<bool>,
     /// Set the terminal log level (Incompatible with ratatui)
     #[arg(short = 't', long, default_value_t = LogLevel::default())]
     pub log_level_terminal: LogLevel,

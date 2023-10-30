@@ -47,13 +47,13 @@ pub struct Core {
 
 impl Core {
     pub async fn run(mut self) {
-        if self.model.config.auto_login {
-            self.auto_login().await;
+        if self.model.config.auto_connect {
+            self.auto_connect().await;
         }
         self.run_loop().await;
     }
 
-    pub async fn auto_login(&mut self) {
+    pub async fn auto_connect(&mut self) {
         let addr = self.model.config.url.clone();
         let secure = self.model.config.secure;
         self.model

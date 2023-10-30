@@ -5,8 +5,9 @@ use iced::{Alignment, Element, Length, Renderer, Theme};
 use niketsu_core::config::Config;
 
 use self::message::{
-    Abort, Activate, AddPath, ApplyClose, ApplyCloseSave, DeletePath, PasswordInput, PathInput,
-    RoomInput, SecureCheckbox, SettingsWidgetMessage, UrlInput, UsernameInput,
+    Abort, Activate, AddPath, ApplyClose, ApplyCloseSave, AutoConnectCheckbox, ConnectApplyClose,
+    ConnectApplyCloseSave, DeletePath, PasswordInput, PathInput, Reset, RoomInput, SecureCheckbox,
+    SettingsWidgetMessage, UrlInput, UsernameInput,
 };
 use super::overlay::ElementOverlayConfig;
 use crate::message::Message;
@@ -47,6 +48,7 @@ impl<'a> SettingsWidget<'a> {
         let text_size = *TEXT_SIZE.load_full();
 
         let file_paths: Vec<_> = state
+            .config
             .media_dirs
             .iter()
             .enumerate()
@@ -76,6 +78,7 @@ impl<'a> SettingsWidget<'a> {
                             .size(text_size + 25.0)
                             .width(Length::Fill),
                     )
+                    .push(Button::new("Reset").on_press(SettingsWidgetMessage::from(Reset).into()))
                     .push(
                         Button::new("Close")
                             .on_press(SettingsWidgetMessage::from(Abort).into())
@@ -99,6 +102,7 @@ impl<'a> SettingsWidget<'a> {
                             .push(Button::new("Password").style(FileButton::theme(false, true)))
                             .push(Button::new("Username").style(FileButton::theme(false, true)))
                             .push(Button::new("Room").style(FileButton::theme(false, true)))
+                            .push(Button::new("Auto Connect").style(FileButton::theme(false, true)))
                             .spacing(SPACING)
                             .width(Length::Shrink),
                     )
@@ -106,37 +110,50 @@ impl<'a> SettingsWidget<'a> {
                         Column::new()
                             .push(
                                 Row::new()
-                                    .push(TextInput::new("Server Address", &state.url).on_input(
-                                        |u| SettingsWidgetMessage::from(UrlInput(u)).into(),
-                                    ))
+                                    .push(
+                                        TextInput::new("Server Address", &state.config.url)
+                                            .on_input(|u| {
+                                                SettingsWidgetMessage::from(UrlInput(u)).into()
+                                            }),
+                                    )
                                     .push(
                                         Container::new(
-                                            Checkbox::new("Secure", state.secure, |b| {
+                                            Checkbox::new("Secure", state.config.secure, |b| {
                                                 SettingsWidgetMessage::from(SecureCheckbox(b))
                                                     .into()
                                             })
                                             .spacing(SPACING),
                                         )
                                         .center_y()
-                                        .height(text_size + 10.0),
+                                        .height(text_size + 15.0),
                                     )
                                     .spacing(SPACING),
                             )
                             .push(
-                                TextInput::new("Password", &state.password)
+                                TextInput::new("Password", &state.config.password)
                                     .on_input(|u| {
                                         SettingsWidgetMessage::from(PasswordInput(u)).into()
                                     })
                                     .password(),
                             )
                             .push(
-                                TextInput::new("Username", &state.username).on_input(|u| {
+                                TextInput::new("Username", &state.config.username).on_input(|u| {
                                     SettingsWidgetMessage::from(UsernameInput(u)).into()
                                 }),
                             )
                             .push(
-                                TextInput::new("Room", &state.room)
+                                TextInput::new("Room", &state.config.room)
                                     .on_input(|u| SettingsWidgetMessage::from(RoomInput(u)).into()),
+                            )
+                            .push(
+                                Container::new(
+                                    Checkbox::new("", state.config.auto_connect, |b| {
+                                        SettingsWidgetMessage::from(AutoConnectCheckbox(b)).into()
+                                    })
+                                    .spacing(SPACING),
+                                )
+                                .center_y()
+                                .height(text_size + 15.0),
                             )
                             .spacing(SPACING)
                             .width(Length::Fill),
@@ -168,7 +185,7 @@ impl<'a> SettingsWidget<'a> {
                 Row::new()
                     .push(
                         Button::new(
-                            Text::new("Connect")
+                            Text::new("Apply")
                                 .width(Length::Fill)
                                 .horizontal_alignment(iced::alignment::Horizontal::Center),
                         )
@@ -177,12 +194,34 @@ impl<'a> SettingsWidget<'a> {
                     )
                     .push(
                         Button::new(
-                            Text::new("Save & Connect")
+                            Text::new("Connect")
+                                .width(Length::Fill)
+                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        )
+                        .width(Length::Fill)
+                        .on_press(SettingsWidgetMessage::from(ConnectApplyClose).into()),
+                    )
+                    .spacing(SPACING),
+            )
+            .push(
+                Row::new()
+                    .push(
+                        Button::new(
+                            Text::new("Apply & Save")
                                 .width(Length::Fill)
                                 .horizontal_alignment(iced::alignment::Horizontal::Center),
                         )
                         .width(Length::Fill)
                         .on_press(SettingsWidgetMessage::from(ApplyCloseSave).into()),
+                    )
+                    .push(
+                        Button::new(
+                            Text::new("Connect & Save")
+                                .width(Length::Fill)
+                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        )
+                        .width(Length::Fill)
+                        .on_press(SettingsWidgetMessage::from(ConnectApplyCloseSave).into()),
                     )
                     .spacing(SPACING),
             )
@@ -351,27 +390,14 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
 
 #[derive(Debug, Clone)]
 pub struct SettingsWidgetState {
-    username: String,
-    media_dirs: Vec<String>,
-    // TODO validate input with url crate ?
-    url: String,
-    secure: bool,
-    room: String,
-    password: String,
-    auto_login: bool,
+    config: Config,
     active: bool,
 }
 
 impl SettingsWidgetState {
     pub fn new(config: Config) -> Self {
         Self {
-            username: config.username,
-            media_dirs: config.media_dirs,
-            url: config.url,
-            room: config.room,
-            password: config.password,
-            secure: config.secure,
-            auto_login: config.auto_login,
+            config,
             active: false,
         }
     }
@@ -379,19 +405,9 @@ impl SettingsWidgetState {
     pub fn activate(&mut self) {
         self.active = true;
     }
-}
 
-impl From<SettingsWidgetState> for Config {
-    fn from(value: SettingsWidgetState) -> Self {
-        Config {
-            username: value.username,
-            media_dirs: value.media_dirs,
-            url: value.url,
-            room: value.room,
-            password: value.password,
-            secure: value.secure,
-            auto_login: value.auto_login,
-        }
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 }
 
