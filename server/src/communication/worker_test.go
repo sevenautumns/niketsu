@@ -303,7 +303,9 @@ func TestHandleStatus(t *testing.T) {
 	defer ctrl.Finish()
 
 	status := []byte(fmt.Sprintf(`{"ready":%t,"username":"%s","type":"status"}`, notReady, username))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, true, false, false, true)
+	pausedVideoState := simpleRoomState
+	pausedVideoState.paused = true
+	mockRoom := setUpMockRoom(ctrl, pausedVideoState, true, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 2, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, status)
 	mockRoom.EXPECT().
@@ -337,8 +339,7 @@ func TestHandleStatus(t *testing.T) {
 	require.Equal(t, username, worker.userStatus.Username)
 }
 
-//TODO test all users ready case
-
+// TODO test all users ready case
 func TestHandleVideoStatusEqualStates(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -538,7 +539,9 @@ func TestHandleSelect(t *testing.T) {
 	defer ctrl.Finish()
 
 	sel := []byte(fmt.Sprintf(`{"filename":"%s","position":%d,"username":"","type":"select"}`, testWorkerVideo, testWorkerPosition.Uint64()))
-	mockRoom := setUpMockRoom(ctrl, simpleRoomState, true, false, false, true)
+	pausedVideoState := simpleRoomState
+	pausedVideoState.paused = true
+	mockRoom := setUpMockRoom(ctrl, pausedVideoState, true, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, sel)
 	truePointer := true
