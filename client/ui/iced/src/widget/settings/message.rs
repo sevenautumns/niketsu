@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use enum_dispatch::enum_dispatch;
 use iced::Command;
-use niketsu_core::config::Config;
 use niketsu_core::log;
 use niketsu_core::ui::{RoomChange, ServerChange, UiModel};
 
@@ -20,8 +19,8 @@ pub trait SettingsWidgetMessageTrait {
 pub enum SettingsWidgetMessage {
     Activate,
     Abort,
+    ConnectApplyClose,
     ApplyClose,
-    ApplyCloseSave,
     UsernameInput,
     UrlInput,
     PathInput,
@@ -30,6 +29,8 @@ pub enum SettingsWidgetMessage {
     RoomInput,
     PasswordInput,
     SecureCheckbox,
+    AutoLoginCheckbox,
+    SaveConfigCheckbox,
 }
 
 impl MessageHandler for SettingsWidgetMessage {
@@ -58,16 +59,12 @@ impl SettingsWidgetMessageTrait for Abort {
 }
 
 #[derive(Debug, Clone)]
-pub struct ApplyClose;
+pub struct ConnectApplyClose;
 
-impl SettingsWidgetMessageTrait for ApplyClose {
+impl SettingsWidgetMessageTrait for ConnectApplyClose {
     fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
-        state.active = false;
-        let config: Config = state.clone().into();
-        let media_dirs: Vec<_> = config.media_dirs.iter().map(PathBuf::from).collect();
-        let username = config.username.clone();
-        model.change_db_paths(media_dirs);
-        model.change_username(username);
+        ApplyClose.handle(state, model);
+        let config = state.config();
         model.change_server(ServerChange {
             addr: config.url.clone(),
             secure: config.secure,
@@ -80,13 +77,20 @@ impl SettingsWidgetMessageTrait for ApplyClose {
 }
 
 #[derive(Debug, Clone)]
-pub struct ApplyCloseSave;
+pub struct ApplyClose;
 
-impl SettingsWidgetMessageTrait for ApplyCloseSave {
+impl SettingsWidgetMessageTrait for ApplyClose {
     fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
-        ApplyClose.handle(state, model);
-        let config: Config = state.clone().into();
-        log!(config.save());
+        state.active = false;
+        let config = state.config();
+        let media_dirs: Vec<_> = config.media_dirs.iter().map(PathBuf::from).collect();
+        let username = config.username.clone();
+        model.change_db_paths(media_dirs);
+        model.change_username(username);
+
+        if state.save_config {
+            log!(state.config().save());
+        }
     }
 }
 
@@ -94,8 +98,8 @@ impl SettingsWidgetMessageTrait for ApplyCloseSave {
 pub struct UsernameInput(pub String);
 
 impl SettingsWidgetMessageTrait for UsernameInput {
-    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
-        ui.username = self.0;
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.config.username = self.0;
     }
 }
 
@@ -103,8 +107,8 @@ impl SettingsWidgetMessageTrait for UsernameInput {
 pub struct UrlInput(pub String);
 
 impl SettingsWidgetMessageTrait for UrlInput {
-    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
-        ui.url = self.0;
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.config.url = self.0;
     }
 }
 
@@ -112,8 +116,8 @@ impl SettingsWidgetMessageTrait for UrlInput {
 pub struct PathInput(pub usize, pub String);
 
 impl SettingsWidgetMessageTrait for PathInput {
-    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
-        if let Some(d) = ui.media_dirs.get_mut(self.0) {
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        if let Some(d) = state.config.media_dirs.get_mut(self.0) {
             *d = self.1
         }
     }
@@ -124,8 +128,8 @@ pub struct DeletePath(pub usize);
 
 impl SettingsWidgetMessageTrait for DeletePath {
     fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
-        if self.0 < ui.media_dirs.len() {
-            ui.media_dirs.remove(self.0);
+        if self.0 < ui.config.media_dirs.len() {
+            ui.config.media_dirs.remove(self.0);
         }
     }
 }
@@ -134,8 +138,8 @@ impl SettingsWidgetMessageTrait for DeletePath {
 pub struct AddPath;
 
 impl SettingsWidgetMessageTrait for AddPath {
-    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
-        ui.media_dirs.push(Default::default());
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.config.media_dirs.push(Default::default());
     }
 }
 
@@ -143,8 +147,8 @@ impl SettingsWidgetMessageTrait for AddPath {
 pub struct RoomInput(pub String);
 
 impl SettingsWidgetMessageTrait for RoomInput {
-    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
-        ui.room = self.0;
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.config.room = self.0;
     }
 }
 
@@ -152,8 +156,8 @@ impl SettingsWidgetMessageTrait for RoomInput {
 pub struct PasswordInput(pub String);
 
 impl SettingsWidgetMessageTrait for PasswordInput {
-    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
-        ui.password = self.0;
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.config.password = self.0;
     }
 }
 
@@ -161,7 +165,25 @@ impl SettingsWidgetMessageTrait for PasswordInput {
 pub struct SecureCheckbox(pub bool);
 
 impl SettingsWidgetMessageTrait for SecureCheckbox {
-    fn handle(self, ui: &mut SettingsWidgetState, _: &UiModel) {
-        ui.secure = self.0;
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.config.secure = self.0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AutoLoginCheckbox(pub bool);
+
+impl SettingsWidgetMessageTrait for AutoLoginCheckbox {
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.config.auto_login = self.0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SaveConfigCheckbox(pub bool);
+
+impl SettingsWidgetMessageTrait for SaveConfigCheckbox {
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.save_config = self.0;
     }
 }
