@@ -1,0 +1,67 @@
+name: Build Client Action
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-client.yml'
+      - 'client/**'
+      - 'Cargo.*'
+      - 'flake.*'
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build Client
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix: 
+        target:
+          - aarch64-linux
+          - x86_64-linux
+        package:
+          - niketsu-client
+          - niketsu-client-windows
+        isMain:
+          - ${{ contains(github.ref, 'main') }}
+        exclude:
+          - target: aarch64-linux
+            package: niketsu-client
+            isMain: false
+          - target: aarch64-linux
+            package: niketsu-client-windows
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Nix
+        uses: cachix/install-nix-action@v23
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-platforms = aarch64-linux
+      - uses: cachix/cachix-action@v12
+        with:
+          name: niketsu
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: docker/setup-qemu-action@v3
+        if: ${{ matrix.target == 'aarch64-linux' }}
+        with:
+          platforms: arm64
+      - name: Run build
+        run: nix build .#packages.${{ matrix.target }}.${{ matrix.package }} --fallback
+      - name: Rename
+        if: ${{ matrix.package == 'niketsu-client-windows' }}
+        run: mkdir out && cp result out/${{ matrix.target }}-niketsu-client.zip
+      - name: Rename
+        if: ${{ matrix.package != 'niketsu-client-windows' }}
+        run: mkdir out && cp result/bin/niketsu* out/${{ matrix.target }}-${{ matrix.package }}
+      - name: Pre-Release
+        uses: softprops/action-gh-release@v1
+        if: ${{ github.event_name == 'push' && matrix.package == 'niketsu-client-windows' }}
+        with:
+          prerelease: true
+          tag_name: nightly
+          files: out/*

@@ -1,13 +1,18 @@
-name: Build Action
+name: Build Server Action
 
 on:
   pull_request:
+    paths:
+      - '.github/workflows/build-server.yml'
+      - 'server/**'
+      - 'flake.*'
+      - 'go.*'
   push:
     branches: [main]
 
 jobs:
   build:
-    name: Build
+    name: Build Server
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -17,19 +22,11 @@ jobs:
         target: 
           - aarch64-linux
           - x86_64-linux
-        package:
-          - niketsu-client
-          - niketsu-server
         isMain:
           - ${{ contains(github.ref, 'main') }}
         exclude:
           - target: aarch64-linux
-            package: niketsu-client
             isMain: false
-        include:
-          # Windows build from x86_64-linux
-          - target: x86_64-linux
-            package: niketsu-client-windows
     steps:
       - uses: actions/checkout@v3
       - name: Install Nix
@@ -48,16 +45,12 @@ jobs:
         with:
           platforms: arm64
       - name: Run build
-        run: nix build .#packages.${{ matrix.target }}.${{ matrix.package }} --fallback
+        run: nix build .#packages.${{ matrix.target }}.niketsu-server --fallback
       - name: Rename
-        if: ${{ matrix.package == 'niketsu-client-windows' }}
-        run: mkdir out && cp result out/x86_64-windows-niketsu-client.zip
-      - name: Rename
-        if: ${{ matrix.package != 'niketsu-client-windows' }}
-        run: mkdir out && cp result/bin/niketsu* out/${{ matrix.target }}-${{ matrix.package }}
+        run: mkdir out && cp result/bin/niketsu* out/${{ matrix.target }}-niketsu-server
       - name: Pre-Release
         uses: softprops/action-gh-release@v1
-        if: ${{ github.event_name == 'push' && matrix.package != 'niketsu-client' }}
+        if: ${{ github.event_name == 'push' }}
         with:
           prerelease: true
           tag_name: nightly
