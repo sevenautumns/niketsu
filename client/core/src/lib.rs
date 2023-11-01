@@ -1,6 +1,7 @@
 use config::Config;
 use enum_dispatch::enum_dispatch;
 use futures::future::OptionFuture;
+use log::{info, trace};
 use logging::ChatLogger;
 use playlist::PlaylistHandlerTrait;
 
@@ -47,7 +48,9 @@ pub struct Core {
 
 impl Core {
     pub async fn run(mut self) {
+        info!("starting core");
         if self.model.config.auto_connect {
+            info!("autoconnect to server");
             self.auto_connect().await;
         }
         self.run_loop().await;
@@ -56,28 +59,33 @@ impl Core {
     pub async fn auto_connect(&mut self) {
         let addr = self.model.config.url.clone();
         let secure = self.model.config.secure;
-        self.model
-            .communicator
-            .connect(EndpointInfo { addr, secure });
+        let endpoint = EndpointInfo { addr, secure };
+        self.model.communicator.connect(endpoint);
     }
 
     pub async fn run_loop(mut self) {
+        info!("enter main loop");
         let mut pacemaker = Pacemaker::default();
         loop {
             tokio::select! {
                 com = self.model.communicator.receive() => {
+                    trace!("handle communicator event");
                     com.handle(&mut self.model);
                 }
                 play = self.model.player.event() => {
+                    trace!("handle player event");
                     play.handle(&mut self.model);
                 }
                 ui = self.model.ui.event() => {
+                    trace!("handle ui event");
                     ui.handle(&mut self.model);
                 }
                 beat = pacemaker.recv() => {
+                    trace!("handle pacemaker event");
                     beat.handle(&mut self.model);
                 }
                 Some(db) = self.model.database.event() => {
+                    trace!("handle database event");
                     db.handle(&mut self.model);
                 }
                 Some(Some(message)) = OptionFuture::from(self.model.chat_logger.as_mut().map(|l| l.recv())) => {

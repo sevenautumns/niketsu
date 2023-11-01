@@ -11,7 +11,7 @@ use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use im::Vector;
 use itertools::Itertools;
-use log::warn;
+use log::{trace, warn};
 use rayon::prelude::IntoParallelRefIterator;
 use tokio::task::JoinHandle;
 
@@ -63,6 +63,7 @@ impl From<UpdateComplete> for PlayerMessage {
 
 impl EventHandler for UpdateComplete {
     fn handle(self, model: &mut CoreModel) {
+        trace!("database update complete");
         let database = model.database.all_files();
         model.ui.file_database_status(1.0);
         model.ui.file_database(database.clone());
@@ -78,6 +79,7 @@ pub struct UpdateProgress {
 
 impl EventHandler for UpdateProgress {
     fn handle(self, model: &mut CoreModel) {
+        trace!("database update progress");
         model.ui.file_database_status(self.ratio);
     }
 }
@@ -280,7 +282,7 @@ impl FileDatabaseTrait for FileDatabase {
             update = updater => {
                 match update {
                     Ok(data) => self.store = FileStore::from_iter(data),
-                    Err(e) => warn!("Update error: {e:?}"),
+                    Err(e) => warn!("update error: {e:?}"),
                 };
                 self.update.take();
                 Some(UpdateComplete.into())

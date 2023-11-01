@@ -113,7 +113,7 @@ impl MpvEventTrait for MpvFileLoaded {
         } else {
             mpv.start();
         }
-        trace!("File loaded");
+        trace!("file loaded");
         Option::None
     }
 }

@@ -388,7 +388,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
                     }
                 }
                 iced::window::Event::FileDropped(file) => {
-                    trace!("File dropped: {file:?}");
+                    trace!("file dropped: {file:?}");
                     self.released(Some(file.clone()), inner_state, layout, shell)
                 }
                 iced::window::Event::FilesHoveredLeft => shell.publish(

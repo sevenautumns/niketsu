@@ -136,7 +136,7 @@ impl Connected {
                         }
                     },
                     Err(e) => {
-                        error!("Into Text failed: {e:?}");
+                        error!("into text failed: {e:?}");
                         continue;
                     }
                 }
@@ -152,7 +152,7 @@ impl Connected {
     async fn sender(mut ch: MpscReceiver<NiketsuMessage>, mut sink: WsSink) {
         loop {
             if let Some(msg) = ch.recv().await {
-                debug!("Sending {msg:?}");
+                debug!("sending {msg:?}");
                 match serde_json::to_string(&msg) {
                     Ok(msg) => {
                         if let Err(err) = sink.send(TsMessage::Text(msg)).await {
@@ -184,7 +184,7 @@ impl From<Connecting> for ConnectionState {
 
 impl Connecting {
     fn connect(endpoint: EndpointInfo) -> Self {
-        debug!("Attempt connection for: {endpoint}");
+        debug!("attempt connection for: {endpoint}");
         let handle = tokio::task::spawn(Connected::new(endpoint));
         Self { handle }
     }

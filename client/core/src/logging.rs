@@ -3,7 +3,7 @@ use std::fs::File;
 use anyhow::Result;
 use chrono::Local;
 use directories::ProjectDirs;
-use log::{LevelFilter, Log};
+use log::{debug, LevelFilter, Log};
 use simplelog::{
     CombinedLogger, Config as LogConfig, ConfigBuilder, SharedLogger, TermLogger, WriteLogger,
 };
@@ -38,6 +38,7 @@ fn setup_terminal_logger(filter: LevelFilter) -> Option<Box<dyn SharedLogger>> {
     if let LevelFilter::Off = filter {
         return None;
     }
+    debug!("setup terminal logger");
     Some(TermLogger::new(
         filter,
         setup_config(),
@@ -55,6 +56,7 @@ fn setup_chat_logger(filter: LevelFilter) -> (Option<Box<dyn SharedLogger>>, Opt
 }
 
 fn setup_file_logger() -> Option<Box<dyn SharedLogger>> {
+    debug!("setup file logger");
     let mut log_file = ProjectDirs::from("de", "autumnal", "niketsu")?
         .cache_dir()
         .to_path_buf();
