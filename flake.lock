@@ -205,11 +205,11 @@
         "utils": "utils"
       },
       "locked": {
-        "lastModified": 1698855624,
-        "narHash": "sha256-EuZhOTGzJiPUz0KdYAzW+K5W0T+0Cd2U6xnwitZxS+k=",
+        "lastModified": 1698855790,
+        "narHash": "sha256-GG3z57JcRUKPjSWhP2XQhRhAn4kmrK3W8DBfrbCH1f0=",
         "owner": "sevenautumns",
         "repo": "niketsu",
-        "rev": "ed021d2e60780ffeb52231fc839b25e75ae61f88",
+        "rev": "0172a8991b90d0029c81d49b04d8e3efe588c96c",
         "type": "github"
       },
       "original": {
@@ -227,11 +227,11 @@
         "utils": "utils_2"
       },
       "locked": {
-        "lastModified": 1698855624,
-        "narHash": "sha256-EuZhOTGzJiPUz0KdYAzW+K5W0T+0Cd2U6xnwitZxS+k=",
+        "lastModified": 1698855790,
+        "narHash": "sha256-GG3z57JcRUKPjSWhP2XQhRhAn4kmrK3W8DBfrbCH1f0=",
         "owner": "sevenautumns",
         "repo": "niketsu",
-        "rev": "ed021d2e60780ffeb52231fc839b25e75ae61f88",
+        "rev": "0172a8991b90d0029c81d49b04d8e3efe588c96c",
         "type": "github"
       },
       "original": {
