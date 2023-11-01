@@ -9,7 +9,8 @@ Refer to https://sevenautumns.github.io/niketsu for news, downloads, and more do
 
 <div align="center">
 
-![[Build Action Card](https://github.com/sevenautumns/niketsu/actions/workflows/build.yml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/build.yml/badge.svg)
+![[Build Server Action Card](https://github.com/sevenautumns/niketsu/actions/workflows/build-server.yml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/build-server.yml/badge.svg)
+![[Build Client Action Card](https://github.com/sevenautumns/niketsu/actions/workflows/build-client.yml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/build-client.yml/badge.svg)
 ![[Check Action Card](https://github.com/sevenautumns/niketsu/actions/workflows/check.yaml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/check.yaml/badge.svg)
 ![[Nightly Tag Card](https://github.com/sevenautumns/niketsu/actions/workflows/branch.yaml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/branch.yaml/badge.svg)
 [![Rust Report Card](https://rust-reportcard.xuri.me/badge/github.com/sevenautumns/niketsu)](https://rust-reportcard.xuri.me/report/github.com/sevenautumns/niketsu)

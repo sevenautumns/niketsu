@@ -5,6 +5,10 @@ on:
     branches:
       - main
   pull_request:
+    paths:
+      - '.github/workflows/book.yaml'
+      - 'book/**'
+      - 'flake.*'
 
 jobs:
   deploy:
