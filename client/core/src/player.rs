@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
+use log::trace;
 
 use super::communicator::{
     NiketsuPause, NiketsuPlaybackSpeed, NiketsuSeek, NiketsuStart, OutgoingMessage,
@@ -48,6 +49,7 @@ pub struct PlayerPause;
 
 impl EventHandler for PlayerPause {
     fn handle(self, model: &mut CoreModel) {
+        trace!("player pause");
         model.ready = false;
         model
             .communicator
@@ -66,6 +68,7 @@ pub struct PlayerStart;
 
 impl EventHandler for PlayerStart {
     fn handle(self, model: &mut CoreModel) {
+        trace!("player start");
         model.ready = true;
         model
             .communicator
@@ -92,6 +95,7 @@ impl PlayerPositionChange {
 
 impl EventHandler for PlayerPositionChange {
     fn handle(self, model: &mut CoreModel) {
+        trace!("player position change");
         let Some(playing) = model.player.playing_video() else {
             return;
         };
@@ -123,6 +127,7 @@ impl PlayerSpeedChange {
 
 impl EventHandler for PlayerSpeedChange {
     fn handle(self, model: &mut CoreModel) {
+        trace!("player speed change");
         let speed = self.speed;
         let actor = model.config.username.clone();
         model
@@ -136,6 +141,7 @@ pub struct PlayerFileEnd;
 
 impl EventHandler for PlayerFileEnd {
     fn handle(self, model: &mut CoreModel) {
+        trace!("player file end");
         // TODO refactor
         let mut filename = None;
         if let Some(next) = model.playlist.advance_to_next() {
@@ -166,6 +172,7 @@ pub struct PlayerExit;
 
 impl EventHandler for PlayerExit {
     fn handle(self, _: &mut CoreModel) {
+        trace!("player exit");
         exit(0)
     }
 }

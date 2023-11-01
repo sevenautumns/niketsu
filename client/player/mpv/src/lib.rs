@@ -348,11 +348,11 @@ impl MediaPlayerTrait for Mpv {
 
     fn set_position(&mut self, pos: Duration) {
         if self.status.seeking {
-            debug!("Already seeking, ignoring set_position: {pos:?}");
+            debug!("already seeking, ignoring set_position: {pos:?}");
             return;
         }
         if self.status.file.is_none() {
-            debug!("No file is playing, ignoring set_position: {pos:?}");
+            debug!("no file is playing, ignoring set_position: {pos:?}");
             return;
         }
         self.status.seeking = true;
@@ -391,8 +391,8 @@ impl MediaPlayerTrait for Mpv {
         self.status.file_load_status = FileLoadStatus::NotLoaded;
 
         let cmd: CString = MpvCommand::Loadfile.into();
-        let path = CString::new("null://").expect("Got invalid UTF-8");
-        let replace = CString::new("replace").expect("Got invalid UTF-8");
+        let path = CString::new("null://").expect("got invalid utf-8");
+        let replace = CString::new("replace").expect("got invalid utf-8");
         let res = self.send_command(&[&cmd, &path, &replace]);
         log!(res)
     }
@@ -410,12 +410,12 @@ impl MediaPlayerTrait for Mpv {
             return;
         };
         let Some(path) = load.to_path_str(db) else {
-            debug!("Get path from: {:?}", load);
+            debug!("get path from: {:?}", load);
             self.unload_video();
             return;
         };
 
-        let path = CString::new(path).expect("Got invalid UTF-8");
+        let path = CString::new(path).expect("got invalid utf-8");
         self.replace_video(path);
     }
 

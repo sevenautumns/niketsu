@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use log::trace;
 use tokio::time::Interval;
 
 use super::communicator::NiketsuVideoStatus;
@@ -31,6 +32,7 @@ pub struct Heartbeat;
 
 impl EventHandler for Heartbeat {
     fn handle(self, model: &mut CoreModel) {
+        trace!("heartbeat");
         let filename = model.player.playing_video().map(|v| v.as_str().to_string());
         let position = model.player.get_position();
         let speed = model.player.get_speed();

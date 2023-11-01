@@ -36,7 +36,7 @@ pub struct DoubleClick {
 
 impl PlaylistWidgetMessageTrait for DoubleClick {
     fn handle(self, _state: &mut PlaylistWidgetState, model: &UiModel) {
-        debug!("FileTable doubleclick: {:?}", self.video);
+        debug!("filetable doubleclick: {:?}", self.video);
         model.change_video(self.video)
     }
 }
@@ -48,7 +48,7 @@ pub struct Delete {
 
 impl PlaylistWidgetMessageTrait for Delete {
     fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel) {
-        debug!("FileTable delete file: {:?}", self.video);
+        debug!("filetable delete file: {:?}", self.video);
         state.delete_video(&self.video);
         model.change_playlist(state.playlist.clone());
     }
@@ -62,7 +62,7 @@ pub struct Move {
 
 impl PlaylistWidgetMessageTrait for Move {
     fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel) {
-        debug!("FileTable move file: {:?}, {}", self.video, self.pos);
+        debug!("filetable move file: {:?}, {}", self.video, self.pos);
         state.move_video(&self.video, self.pos);
         model.change_playlist(state.playlist.clone());
     }
@@ -77,7 +77,7 @@ pub struct Interaction {
 impl PlaylistWidgetMessageTrait for Interaction {
     fn handle(self, state: &mut PlaylistWidgetState, _: &UiModel) {
         debug!(
-            "FileTable file interaction: {:?}, {:?}",
+            "filetable file interaction: {:?}, {:?}",
             self.video, self.interaction
         );
         state.file_interaction(self.video.clone(), self.interaction.clone());

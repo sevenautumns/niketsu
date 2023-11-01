@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use im::Vector;
-use log::debug;
+use log::trace;
 use ordered_float::OrderedFloat;
 use url::Url;
 
@@ -86,7 +86,7 @@ pub struct NiketsuConnected;
 impl From<NiketsuConnected> for PlayerMessage {
     fn from(_: NiketsuConnected) -> Self {
         PlayerMessageInner {
-            message: "Connected to Server".to_string(),
+            message: "connected to server".to_string(),
             source: MessageSource::Internal,
             level: MessageLevel::Normal,
             timestamp: Local::now(),
@@ -97,7 +97,7 @@ impl From<NiketsuConnected> for PlayerMessage {
 
 impl EventHandler for NiketsuConnected {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Server Connection Established");
+        trace!("server connection established");
         model.communicator.send(
             NiketsuJoin {
                 password: model.config.password.clone(),
@@ -127,7 +127,7 @@ impl From<NiketsuConnectionError> for PlayerMessage {
 
 impl EventHandler for NiketsuConnectionError {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Server Connection Established");
+        trace!("server connection established");
         model.communicator.send(
             NiketsuJoin {
                 password: model.config.password.clone(),
@@ -188,7 +188,7 @@ pub struct NiketsuUserStatusList {
 
 impl EventHandler for NiketsuUserStatusList {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Received User Status List");
+        trace!("received user status list");
         let rooms: BTreeMap<String, BTreeSet<UserStatus>> =
             BTreeMap::from_iter(self.rooms.into_iter().map(|(r, u)| {
                 (
@@ -220,7 +220,7 @@ impl From<NiketsuStart> for PlayerMessage {
 
 impl EventHandler for NiketsuStart {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Received Start");
+        trace!("received start");
         model.player.start();
         model.ui.player_message(PlayerMessage::from(self))
     }
@@ -252,7 +252,7 @@ impl From<NiketsuPause> for PlayerMessage {
 
 impl EventHandler for NiketsuPause {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Received Pause");
+        trace!("received pause");
         model.player.pause();
         model.ui.player_message(PlayerMessage::from(self))
     }
@@ -296,7 +296,7 @@ impl From<NiketsuPlaybackSpeed> for PlayerMessage {
 
 impl EventHandler for NiketsuPlaybackSpeed {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Received Speed Change");
+        trace!("received speed change");
         model.player.set_speed(self.speed);
         model.ui.player_message(PlayerMessage::from(self))
     }
@@ -331,7 +331,7 @@ impl From<NiketsuSeek> for PlayerMessage {
 
 impl EventHandler for NiketsuSeek {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Received Seek: {self:?}");
+        trace!("received seek: {self:?}");
         let playlist_video = Video::from(self.file.as_str());
         model.playlist.select_playing(&playlist_video);
         // TODO make this more readable
@@ -386,7 +386,7 @@ impl From<NiketsuSelect> for PlayerMessage {
 
 impl EventHandler for NiketsuSelect {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Received Select: {self:?}");
+        trace!("received select: {self:?}");
         let playlist_video = self.filename.as_ref().map(|f| Video::from(f.as_str()));
         if let Some(playlist_video) = playlist_video.clone() {
             model.playlist.select_playing(&playlist_video);
@@ -430,7 +430,7 @@ impl From<NiketsuUserMessage> for PlayerMessage {
 
 impl EventHandler for NiketsuUserMessage {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Received User Message: {self:?}");
+        trace!("received user message: {self:?}");
         model.ui.player_message(PlayerMessage::from(self))
     }
 }
@@ -461,7 +461,7 @@ impl From<NiketsuServerMessage> for PlayerMessage {
 
 impl EventHandler for NiketsuServerMessage {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Received Server Message: {self:?}");
+        trace!("received server message: {self:?}");
         model.ui.player_message(PlayerMessage::from(self))
     }
 }
@@ -487,7 +487,7 @@ impl From<NiketsuPlaylist> for PlayerMessage {
 
 impl EventHandler for NiketsuPlaylist {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Received Playlist");
+        trace!("received playlist");
         let playlist = Playlist::from_iter(self.playlist.iter());
         model.playlist.replace(playlist.clone());
         model.ui.playlist(playlist);
@@ -509,7 +509,7 @@ pub struct NiketsuUserStatus {
 
 impl EventHandler for NiketsuUserStatus {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Username changed by Server");
+        trace!("username changed by server");
         model.config.username = self.username.clone();
         model.ui.username_change(self.username.clone());
         model.ui.player_message(PlayerMessage::from(self));

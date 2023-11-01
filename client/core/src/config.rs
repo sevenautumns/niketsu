@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use directories::ProjectDirs;
-use log::warn;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use url::Url;
@@ -49,6 +49,7 @@ impl Config {
     }
 
     pub fn load() -> Result<Self> {
+        debug!("load config");
         let path = Self::file_path()?;
         let content = std::fs::read_to_string(path)?;
         Ok(toml::from_str(&content)?)
@@ -56,12 +57,13 @@ impl Config {
 
     pub fn load_or_default() -> Self {
         Self::load().unwrap_or_else(|e| {
-            warn!("No config loaded: {e:?}");
+            warn!("no config loaded: {e:?}");
             Default::default()
         })
     }
 
     pub fn save(&self) -> Result<()> {
+        debug!("save config");
         let path = Self::file_path()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;

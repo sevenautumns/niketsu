@@ -6,7 +6,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use enum_dispatch::enum_dispatch;
-use log::{debug, Level};
+use log::{trace, Level};
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
 
@@ -55,7 +55,7 @@ pub struct PlaylistChange {
 
 impl EventHandler for PlaylistChange {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Playlist Change Message");
+        trace!("playlist change message");
         let actor = model.config.username.clone();
         let playlist = self.playlist.iter().map(|v| v.as_str().into()).collect();
 
@@ -73,7 +73,7 @@ pub struct VideoChange {
 
 impl EventHandler for VideoChange {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Video Change Message");
+        trace!("video change message");
         let actor = model.config.username.clone();
         let filename = Some(self.video.as_str().to_string());
         let position = Duration::ZERO;
@@ -112,7 +112,7 @@ impl From<ServerChange> for EndpointInfo {
 
 impl EventHandler for ServerChange {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Server Change Message");
+        trace!("server change message");
         model.config.password = self.password.clone().unwrap_or_default();
         model.communicator.connect(self.clone().into());
         self.room.handle(model);
@@ -132,7 +132,7 @@ impl From<String> for RoomChange {
 
 impl EventHandler for RoomChange {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Room Change Message");
+        trace!("room change message");
         let room = self.room;
         let username = model.config.username.clone();
         let password = model.config.password.clone();
@@ -156,7 +156,7 @@ pub struct UserChange {
 
 impl EventHandler for UserChange {
     fn handle(self, model: &mut CoreModel) {
-        debug!("User Change Message");
+        trace!("user change message");
         model.config.username = self.name;
         model.ready = self.ready;
         model
@@ -172,7 +172,7 @@ pub struct UserMessage {
 
 impl EventHandler for UserMessage {
     fn handle(self, model: &mut CoreModel) {
-        debug!("User Chat Message");
+        trace!("user chat message");
         let actor = model.config.username.clone();
         let message = self.message;
         model
@@ -248,17 +248,24 @@ pub enum FileDatabaseChange {
 
 impl EventHandler for FileDatabaseChange {
     fn handle(self, model: &mut CoreModel) {
-        debug!("Filedatabase Change Message");
         match self {
             FileDatabaseChange::ChangePaths(paths) => {
+                trace!("filedatabase change paths message");
                 model.database.clear_paths();
                 for path in paths {
                     model.database.add_path(path);
                 }
                 model.database.start_update();
             }
-            FileDatabaseChange::StartUpdate => model.database.start_update(),
-            FileDatabaseChange::StopUpdate => model.database.stop_update(),
+            FileDatabaseChange::StartUpdate => {
+                trace!("filedatabase start update message");
+                model.database.start_update()
+            }
+
+            FileDatabaseChange::StopUpdate => {
+                trace!("filedatabase stop update message");
+                model.database.stop_update()
+            }
         }
     }
 }
@@ -357,6 +364,7 @@ pub struct UiModel {
 
 impl UiModel {
     pub fn user_ready_toggle(&self) {
+        trace!("toggle user ready");
         let mut user = self.user.get_inner();
         user.ready = !user.ready;
         self.user.set(user.clone());
@@ -371,6 +379,7 @@ impl UiModel {
     }
 
     pub fn change_username(&self, name: String) {
+        trace!("change username");
         let mut user = self.user.get_inner();
         user.name = name;
         self.user.set(user.clone());
@@ -385,6 +394,7 @@ impl UiModel {
     }
 
     pub fn send_message(&self, msg: String) {
+        trace!("send user message");
         let player_message: PlayerMessage = PlayerMessageInner {
             message: msg.clone(),
             source: MessageSource::UserMessage(self.user.get_inner_arc().name.clone()),
@@ -407,6 +417,7 @@ impl UiModel {
     }
 
     pub fn change_db_paths(&self, paths: Vec<PathBuf>) {
+        trace!("change db paths");
         let res = self
             .events
             .send(UserInterfaceEvent::FileDatabaseChange(
@@ -417,6 +428,7 @@ impl UiModel {
     }
 
     pub fn start_db_update(&self) {
+        trace!("start db update");
         let res = self
             .events
             .send(UserInterfaceEvent::FileDatabaseChange(
@@ -427,6 +439,7 @@ impl UiModel {
     }
 
     pub fn stop_db_update(&self) {
+        trace!("stop db update");
         let res = self
             .events
             .send(UserInterfaceEvent::FileDatabaseChange(
@@ -437,6 +450,7 @@ impl UiModel {
     }
 
     pub fn change_room(&self, request: RoomChange) {
+        trace!("change room");
         let res = self
             .events
             .send(UserInterfaceEvent::RoomChange(request))
@@ -445,6 +459,7 @@ impl UiModel {
     }
 
     pub fn change_server(&self, request: ServerChange) {
+        trace!("change server");
         let res = self
             .events
             .send(UserInterfaceEvent::ServerChange(request))
@@ -453,6 +468,7 @@ impl UiModel {
     }
 
     pub fn change_video(&self, video: Video) {
+        trace!("change video");
         self.playing_video.set(Some(video.clone()));
         let res = self
             .events
@@ -462,6 +478,7 @@ impl UiModel {
     }
 
     pub fn change_playlist(&self, playlist: Playlist) {
+        trace!("change playlist");
         let res = self
             .events
             .send(UserInterfaceEvent::PlaylistChange(PlaylistChange {
