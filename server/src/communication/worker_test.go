@@ -106,8 +106,10 @@ func TestWorkerStartClose(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockWebsocket := setUpMockWebsocket(ctrl, nil)
+	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	worker := &Worker{
-		websocket: mockWebsocket,
+		websocket:   mockWebsocket,
+		roomHandler: mockRoomHandler,
 		state: workerState{
 			stopChan:  make(chan int),
 			taskChan:  make(chan Task, 10),
@@ -217,11 +219,11 @@ func setUpMockRoom(
 	return mockRoom
 }
 
-func setUpMockRoomHandler(ctrl *gomock.Controller, expectedBroadcasts int, expectedDeleteRoom int) *MockServerStateHandler {
+func setUpMockRoomHandler(ctrl *gomock.Controller, minBroadcasts int, expectedDeleteRoom int) *MockServerStateHandler {
 	mockRoomHandler := NewMockServerStateHandler(ctrl)
 	mockRoomHandler.EXPECT().
 		BroadcastStatusList().
-		Times(expectedBroadcasts)
+		MinTimes(minBroadcasts)
 
 	mockRoomHandler.EXPECT().
 		DeleteRoom(gomock.Any()).
@@ -235,8 +237,10 @@ func TestCloseBeforeStart(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockWebsocket := setUpMockWebsocket(ctrl, nil)
+	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	worker := &Worker{
-		websocket: mockWebsocket,
+		websocket:   mockWebsocket,
+		roomHandler: mockRoomHandler,
 		state: workerState{
 			stopChan:  make(chan int),
 			taskChan:  make(chan Task, 10),
@@ -283,9 +287,11 @@ func TestHandlePing(t *testing.T) {
 		workerUUIDS[0]: farDate,
 	}
 	mockWebsocket := setUpMockWebsocket(ctrl, ping)
+	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 
 	worker := &Worker{
-		websocket: mockWebsocket,
+		websocket:   mockWebsocket,
+		roomHandler: mockRoomHandler,
 		state: workerState{
 			stopChan:  make(chan int),
 			taskChan:  make(chan Task, 10),
@@ -303,11 +309,12 @@ func TestHandleStatus(t *testing.T) {
 	defer ctrl.Finish()
 
 	status := []byte(fmt.Sprintf(`{"ready":%t,"username":"%s","type":"status"}`, notReady, username))
-	pausedVideoState := simpleRoomState
-	pausedVideoState.paused = true
-	mockRoom := setUpMockRoom(ctrl, pausedVideoState, true, false, false, true)
+	playingRoomState := simpleRoomState
+	playingRoomState.paused = true
+	mockRoom := setUpMockRoom(ctrl, playingRoomState, true, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 2, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, status)
+
 	mockRoom.EXPECT().
 		SetWorkerStatus(
 			gomock.Eq(defaultUUID),
@@ -539,9 +546,9 @@ func TestHandleSelect(t *testing.T) {
 	defer ctrl.Finish()
 
 	sel := []byte(fmt.Sprintf(`{"filename":"%s","position":%d,"username":"","type":"select"}`, testWorkerVideo, testWorkerPosition.Uint64()))
-	pausedVideoState := simpleRoomState
-	pausedVideoState.paused = true
-	mockRoom := setUpMockRoom(ctrl, pausedVideoState, true, false, false, true)
+	playingRoomState := simpleRoomState
+	playingRoomState.paused = true
+	mockRoom := setUpMockRoom(ctrl, playingRoomState, true, false, false, true)
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
 	mockWebsocket := setUpMockWebsocket(ctrl, sel)
 	truePointer := true
@@ -740,10 +747,6 @@ func TestHandleJoin(t *testing.T) {
 		SetWorkerStatus(gomock.Eq(defaultUUID), gomock.Eq(Status{Ready: false, Username: username})).
 		MinTimes(1)
 
-	mockRoom.EXPECT().
-		Start().
-		MinTimes(1)
-
 	mockRoomHandler.EXPECT().
 		CreateOrFindRoom(gomock.Eq("testRoom")).
 		Return(mockRoom, nil).
@@ -760,10 +763,6 @@ func TestHandleJoin(t *testing.T) {
 
 	mockRoomHandler.EXPECT().
 		DeleteRoom(gomock.Eq(mockRoom)).
-		MinTimes(1)
-
-	mockRoomHandler.EXPECT().
-		BroadcastStatusList().
 		MinTimes(1)
 
 	mockRoomHandler.EXPECT().

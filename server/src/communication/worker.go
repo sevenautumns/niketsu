@@ -99,34 +99,29 @@ func (worker *Worker) Close() {
 	worker.state.closeOnce.Do(func() {
 		close(worker.state.stopChan)
 
-		if worker.room != nil {
-			worker.closingCleanup()
-		}
+		worker.closingCleanup()
 	})
 }
 
 func (worker *Worker) closingCleanup() {
-	worker.setRoomState()
+	worker.setRoomStateAfterLeave()
 	worker.roomHandler.BroadcastStatusList()
 }
 
-func (worker *Worker) setRoomState() {
+func (worker *Worker) setRoomStateAfterLeave() {
 	if worker.room == nil {
 		return
 	}
 
-	worker.room.DeleteWorker(worker.UUID())
+	worker.room.DeleteWorker(worker.state.uuid)
 	if worker.room.IsEmpty() {
 		worker.room.SetPaused(true)
 	}
+
 	worker.deleteAndCloseEmptyRoom()
 }
 
 func (worker *Worker) deleteAndCloseEmptyRoom() {
-	if worker.room == nil {
-		return
-	}
-
 	if worker.room.ShouldBeClosed() {
 		err := worker.roomHandler.DeleteRoom(worker.room)
 		if err != nil {
@@ -441,10 +436,11 @@ func (worker *Worker) detelePing(workerUUID uuid.UUID) {
 	delete(worker.latency.timestamps, workerUUID)
 }
 
-// TODO change username if no longer available
 func (worker *Worker) handleStatus(status Status) {
 	if worker.isStatusNew(status) {
 		worker.handleDuplicateUsername(status)
+		worker.room.SetWorkerStatus(worker.state.uuid, worker.userStatus)
+		worker.roomHandler.BroadcastStatusList()
 		worker.broadcastStartOnReady()
 	}
 }
@@ -458,11 +454,6 @@ func (worker *Worker) handleDuplicateUsername(status Status) {
 		}
 	}
 	worker.SetUserStatus(status)
-
-	if worker.room != nil {
-		worker.room.SetWorkerStatus(worker.state.uuid, status)
-		worker.roomHandler.BroadcastStatusList()
-	}
 }
 
 func (worker *Worker) isStatusNew(status Status) bool {
@@ -591,7 +582,9 @@ func (worker *Worker) handleJoin(join Join) {
 	}
 
 	// in case of a room change, try to delete the previous room
-	worker.deleteAndCloseEmptyRoom()
+	if worker.state.loggedIn {
+		worker.setRoomStateAfterLeave()
+	}
 
 	// rename user if duplicated
 	status := Status{Username: join.Username}
@@ -618,10 +611,6 @@ func (worker *Worker) sendUserStatus(status Status) {
 }
 
 func (worker *Worker) handleRoomJoin(join Join) error {
-	if worker.room != nil {
-		worker.room.DeleteWorker(worker.state.uuid)
-	}
-
 	err := worker.updateRoomChangeState(join.Room)
 	if err != nil {
 		return err
@@ -643,8 +632,6 @@ func (worker *Worker) updateRoomChangeState(roomName string) error {
 	}
 
 	room.AppendWorker(worker)
-	go room.Start()
-
 	roomState := room.RoomState()
 	worker.setVideoState(VideoStatus{Filename: roomState.video, Position: roomState.position,
 		Paused: roomState.paused, Speed: roomState.speed}, time.Now())
