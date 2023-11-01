@@ -1,7 +1,6 @@
 use super::communicator::{NiketsuUserStatus, OutgoingMessage};
 use super::ui::UserChange;
 
-/// TODO check if default results in problems
 #[derive(Default, Debug, Clone, Eq)]
 pub struct UserStatus {
     pub name: String,

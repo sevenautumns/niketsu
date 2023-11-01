@@ -129,7 +129,7 @@ impl View {
         UserInterface,
         Pin<Box<dyn Future<Output = anyhow::Result<()>>>>,
     ) {
-        let ui = UserInterface::default();
+        let ui = UserInterface::new(&config);
         let flags = Flags {
             config,
             ui_model: ui.model().clone(),
