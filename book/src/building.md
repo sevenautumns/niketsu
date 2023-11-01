@@ -1,97 +1,74 @@
-# Building
+# Build Like a Pro: Your Comprehensive Guide to niketsu Deployment 🛠️
 
-## Docker image <img src="./images/docker.svg" alt="Docker" style="height: 3rem"/>
+## Unleash Docker Magic 🐳
 
-Who uses docker anyway?
+Too cool for Docker? Think again. We offer a sleek, ready-to-go Dockerfile for the server side, ensuring you're up and running in no time.
 
-<img src="./images/hugging-docker.svg" alt="Docker Gopher" style="height: 10rem;">
-
-But in case you care, there is a Dockerfile available for the server.
-
-To build the docker image with default values, use the following command:
-
+👇 **One-Click Build**:
 ```bash
 podman build -t niketsu-server:latest .
 ```
-
-(or use `docker` if you must)
-
-To run the container, use the following command:
-
+👇 **Effortless Deployment**:
 ```bash
 podman run -p 7766:7666 niketsu-server:latest
 ```
 
-If you are interested in building a `docker-compose` file, consider the environment variables described in the [usage page](usage.md#Arguments).
+For the Docker aficionados, you can even customize your setup with environment variables. Dive into our [Usage Page](usage.md#Arguments) for more details.
 
+## Hand-Craft Your Source Build 🚀
 
-## <img src="./images/rocket.svg" alt="Rocket Gopher" style="height: 5rem;"> Building from source <img src="./images/rocket.svg" alt="Rocket Gopher" style="height: 5rem;">
+### For the Client
 
-### client
+Join the cutting edge—build the niketsu client from source.
+  
+1. **Clone & Navigate**
+    ```bash
+    git clone https://github.com/sevenautumns/niketsu.git
+    cd niketsu
+    ```
+2. **Compile & Run**
+    ```bash
+    cargo build --release
+    ./target/release/niketsu
+    ```
 
-To build the niketsu client from source, clone the repo:
+### For the Server
 
-```bash
-git clone https://github.com/sevenautumns/niketsu.git
-cd niketsu
-```
+Want more control? Build your own niketsu server from the ground up.
+  
+1. **Clone & Navigate**
+    ```bash
+    git clone https://github.com/sevenautumns/niketsu.git
+    cd niketsu
+    ```
+2. **Compile & Run**
+    ```bash
+    go build -o niketsu-server server/main.go
+    ./niketsu-server
+    ```
 
-And use the build tools of Rust:
+## The Nix Nirvana 🌀
 
-```bash
-cargo build --release
-./niketsu-server
-```
+Already a Nix enthusiast? We've got you covered.
 
-### server
+### Effortless Development
 
-To build the niketsu server from source, clone the repo:
+1. Install [Nix](https://nixos.wiki/wiki/Nix_Installation_Guide).
+2. Clone the repository.
+3. **Enter Dev-Mode**: `nix develop`
+  
+All you need, conveniently packed into one shell.
 
-```bash
-git clone https://github.com/sevenautumns/niketsu.git
-cd niketsu
-```
+#### Running the Beast
 
-And use the build tools of Go:
+- **Server**: `go run server/main.go`
+- **Client**: `cargo run --release`
 
-```bash
-go build -o niketsu-server server/main.go
-./niketsu-server
-```
+### The Nix Build
 
-## nix
+Want even more control? Utilize our `flake.nix` to tailor your build.
 
-<div align="center">
-<img src="./images/power-to-the-linux.svg" alt="Linux Gopher" style="height: 5rem; float: right; margin-left: 3rem;"/>
-<img src="./images/power-to-the-linux.svg" alt="Linux Gopher" style="height: 5rem; float: left; margin-right: 3rem;"/>
+- **Client**: `nix build .#niketsu-client`
+- **Server**: `nix build .#niketsu-server`
 
-You know if you know.
-
-</div>
-
-
-### Development
-
-Install the almighty [Nix](https://nixos.wiki/wiki/Nix_Installation_Guide), clone the repository and run:
-
-```bash
-nix develop
-```
-
-All dependencies for the client and the server are now included in the dev-shell.
-
-
-### Building
-
-In addition, client and server can be built with the the `flake.nix` file in the root directory of the repository.
-
-#### client
-
-```bash
-nix build .#niketsu-client
-```
-#### server
-
-```bash
-nix build .#niketsu-server
-```
+**Whatever your tech stack, niketsu seamlessly integrates, empowering you to create the ultimate shared viewing experience. Build it your way, run it your way.** 🌠

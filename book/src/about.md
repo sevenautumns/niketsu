@@ -1,34 +1,40 @@
-# About
+# About Niketsu 🌐
 
-Find us on [Github](https://github.com/sevenautumns/niketsu/).
+Find us on [GitHub](https://github.com/sevenautumns/niketsu/) or dive into our socials that actually matter (none). 📣
 
-## Project
+## The Vision 🎯
 
-/s
+Unleash the full potential of social video streaming with Niketsu, your go-to platform for revolutionary video sync experiences. 🌠 We're not just another startup; we're an open-source alliance committed to demolishing boundaries and setting benchmarks. 
 
-Welcome to niketsu, the cutting-edge video sharing platform that's built with your needs in mind. Our mission is to create the ultimate video synchronisation experience for you and your loved ones, no matter where you are in the world.
+## Why Niketsu? 🚀
 
-We're proud to be an open source project that's driven by a community of passionate developers and users who believe in breaking down barriers and bringing people together through the power of video. We believe that everyone deserves to share in the joy of watching videos with others, and that's why we've made niketsu accessible to everyone, regardless of their location or technical know-how.
+1. **Open Source Synergy**: Built by devs who get it. Let's flip the script on video sharing. 🤖
+2. **Universal Access**: Forget geo-fences; we're tearing them down. Global reach, local feel. 🌍
+3. **Feature-Rich UX**: Our killer features aren't just skin deep. Deep-dive into advanced customization. 🛠️
+4. **Real-time Engagement**: Chat, react, and vibe in perfect harmony. Seamless and synchronic. 🗨️
+5. **Non-Profit Mojo**: Not here to line our pockets; we're here to shake up the ecosystem. 🌱
 
-Our team of experts has worked tirelessly to create a platform that's intuitive, easy-to-use, and jam-packed with features that enhance your video sharing experience. Whether you're watching a local video or streaming from popular online platforms like YouTube, niketsu's advanced technology ensures that your playback is always smooth and in sync, so you never miss a moment of the action.
+## Tech-Savvy Delight ⚙️
 
-And with customizable features like chat and reactions, you can connect with your friends and family in real-time, sharing your thoughts and emotions as you watch together. It's like having a virtual movie night with your loved ones, right from the comfort of your own home.
+Behind the scenes, we're a pack of tech ninjas hyper-focused on high-performance, low-latency video streaming. Whether you're into binge-watching or social streaming, expect zero glitches.  📺✨
 
-So why wait? Join the niketsu community today and experience the future of video sharing. We're here to help you connect with your friends and family in new and exciting ways, and we can't wait to see what you'll create with our platform.
+## Connect & Contribute 🤝
 
-As an open source, non-startup, non-organisation that aims to minimize profit, we believe that everyone deserves to [insert motivational text that is included in every About Website].
+Ready to break new ground? We're all about that DevOps life. Get with the program—contribute, fork, PR, and let's disrupt together! 📢🔧
 
-Follow us on social media, leave a like and do not forget to activate the clock. Share this video with friends and family, offer a kidney to support us and make us rich. 
+## The Ask 📣
 
-/s
+Sharing is caring. Upvote us on socials, smash that follow button, and ring that bell. No kidneys required—just a high-five will do. ✋
 
-You can find us on every useful social media platform that does not suck ([Github](https://github.com/sevenautumns/niketsu/)).
+> "Here's to the ones who dream, foolish as they may seem." 🌈
 
-## Images
+## Appreciation Corner 🎨
 
 <div>
 <img src="./images/birthday.svg" alt="Birthday Gopher" height=50 style="float: left; margin-right: 3rem;"/>
 <img src="./images/birthday.svg" alt="Birthday Gopher" height=50 style="float: right; margin-left: 3rem;"/>
-
-Please support [egonelbre](https://github.com/egonelbre/gophers) for his great, free Gopher vector graphics and gifs.
 </div>
+
+Shoutout to [egonelbre](https://github.com/egonelbre/gophers) for the dope Gopher vectors. Art fuels code. 🖌️👨‍🎨
+
+Let's get disruptive. 🤘
