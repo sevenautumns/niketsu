@@ -16,6 +16,7 @@ use super::communicator::{
 use super::playlist::Video;
 use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
+use crate::config::Config;
 use crate::file_database::FileStore;
 use crate::playlist::Playlist;
 use crate::rooms::RoomList;
@@ -277,22 +278,20 @@ pub struct UserInterface {
 }
 
 impl UserInterface {
-    pub fn model(&self) -> &UiModel {
-        &self.model
-    }
-}
-
-impl Default for UserInterface {
-    fn default() -> Self {
+    pub fn new(config: &Config) -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let notify = Arc::new(Notify::new());
+        let user = UserStatus {
+            name: config.username.clone(),
+            ready: false,
+        };
         let model = UiModel {
             file_database: Observed::<_>::default_with_notify(&notify),
             file_database_status: Observed::<_>::default_with_notify(&notify),
             playlist: Observed::<_>::default_with_notify(&notify),
             playing_video: Observed::<_>::default_with_notify(&notify),
             room_list: Observed::<_>::default_with_notify(&notify),
-            user: Observed::<_>::default_with_notify(&notify),
+            user: Observed::<_>::new(user, &notify),
             messages: Observed::new(RingBuffer::new(1000), &notify),
             events: tx,
             notify,
@@ -301,6 +300,10 @@ impl Default for UserInterface {
             model,
             ui_events: rx,
         }
+    }
+
+    pub fn model(&self) -> &UiModel {
+        &self.model
     }
 }
 

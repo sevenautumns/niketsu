@@ -95,7 +95,7 @@ impl App {
             current_overlay_state: None,
             options_widget_state: OptionsWidgetState::default(),
             help_widget_state: HelpWidgetState::new(),
-            login_widget_state: LoginWidgetState::new(config.clone()),
+            login_widget_state: LoginWidgetState::new(&config),
             fuzzy_search_widget_state: FuzzySearchWidgetState::new(),
             media_widget_state: MediaDirWidgetState::new(config.media_dirs),
             current_search: None,
@@ -146,7 +146,7 @@ impl RatatuiView {
         UserInterface,
         Pin<Box<dyn Future<Output = anyhow::Result<()>>>>,
     ) {
-        let ui = UserInterface::default();
+        let ui = UserInterface::new(&config);
         let app = App::new(config.clone());
         let mut view = Self {
             app,

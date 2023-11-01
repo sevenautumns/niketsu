@@ -32,13 +32,13 @@ pub struct LoginWidgetState {
 }
 
 impl LoginWidgetState {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: &Config) -> Self {
         Self {
             current_state: State::default(),
-            address_field: TextAreaWrapper::new("Address", config.url),
-            password_field: TextAreaWrapper::new("Password", config.password),
-            username_field: TextAreaWrapper::new("Username", config.username),
-            room_field: TextAreaWrapper::new("Room", config.room),
+            address_field: TextAreaWrapper::new("Address", config.url.clone()),
+            password_field: TextAreaWrapper::new("Password", config.password.clone()),
+            username_field: TextAreaWrapper::new("Username", config.username.clone()),
+            room_field: TextAreaWrapper::new("Room", config.room.clone()),
             secure: config.secure,
             style: Style::default().fg(Color::Cyan),
         }
