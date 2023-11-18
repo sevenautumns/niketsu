@@ -480,7 +480,8 @@ func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime tim
 		return
 	}
 
-	worker.handleTimeDifference()
+	worker.handleTimeDifference(videoStatus)
+	worker.room.HandleCache(videoStatus.Cache, worker.state.uuid, worker.userStatus.Username)
 }
 
 func (worker *Worker) isVideoStateDifferent(videoStatus VideoStatus, roomState RoomState) bool {
@@ -756,8 +757,7 @@ func (worker *Worker) broadcastStart() {
 		return
 	}
 
-	workerUUID := worker.UUID()
-	worker.room.BroadcastExcept(payload, workerUUID)
+	worker.room.BroadcastExcept(payload, worker.state.uuid)
 }
 
 func (worker *Worker) broadcastSeek(filename string, position Duration, desync bool) {
@@ -780,12 +780,7 @@ func (worker *Worker) broadcastSelect(filename *string, position Duration, all b
 		return
 	}
 
-	if all {
-		worker.room.BroadcastAll(payload)
-	} else {
-		workerUUID := worker.UUID()
-		worker.room.BroadcastExcept(payload, workerUUID)
-	}
+	worker.room.BroadcastAll(payload)
 }
 
 func (worker *Worker) broadcastUserMessage(message string) {
@@ -823,7 +818,6 @@ func (worker *Worker) broadcastPause() {
 	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
-// TODO consider fileLoaded in case some client is not ready
 func (worker *Worker) broadcastStartOnReady() {
 	roomState := worker.room.RoomState()
 	if roomState.video == nil {
@@ -834,7 +828,7 @@ func (worker *Worker) broadcastStartOnReady() {
 		return
 	}
 
-	if worker.room.AllUsersReady() {
+	if worker.room.Ready() {
 		start := Start{Username: worker.userStatus.Username}
 		payload, err := MarshalMessage(start)
 		if err != nil {
@@ -905,19 +899,19 @@ func (worker *Worker) setNextVideo(nextVideo string, oldVideo string, room RoomS
 
 // Evaluates the video states of all clients and broadcasts seek if difference between
 // fastest and slowest clients is too large. Can not seek before the last seek's position.
-func (worker *Worker) handleTimeDifference() {
+func (worker *Worker) handleTimeDifference(videoStatus VideoStatus) {
 	minPosition := worker.room.SlowestEstimatedClientPosition()
 	if minPosition == nil {
 		return
 	}
 
-	state := worker.VideoState()
-	if worker.shouldSeek(minPosition, state.position, state.speed) {
+	if worker.shouldSeek(minPosition, videoStatus.Position, videoStatus.Speed) {
 		worker.room.SetPosition(*minPosition)
 		worker.sendSeek(true)
 	} else {
-		worker.room.SetPosition(*state.position)
+		worker.room.SetPosition(*videoStatus.Position)
 	}
+	worker.room.SetDuration(videoStatus.Duration)
 }
 
 func (worker *Worker) shouldSeek(minPosition *Duration, workerPosition *Duration, speed float64) bool {

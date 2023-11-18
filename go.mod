@@ -1,20 +1,20 @@
 module github.com/sevenautumns/niketsu
 
-go 1.20
+go 1.21
 
 require (
 	github.com/alecthomas/kong v0.8.0
-	github.com/golang/mock v1.6.0
+	github.com/brianvoe/gofakeit/v6 v6.23.2
 	github.com/google/uuid v1.3.0
 	github.com/stretchr/testify v1.8.3
 	go.etcd.io/bbolt v1.3.7
 	go.uber.org/zap v1.24.0
-	github.com/brianvoe/gofakeit/v6 v6.23.2
 )
 
 require (
 	github.com/gobwas/ws v1.1.0 // indirect
 	github.com/klauspost/compress v1.16.7 // indirect
+	go.uber.org/mock v0.3.0 // indirect
 )
 
 require (

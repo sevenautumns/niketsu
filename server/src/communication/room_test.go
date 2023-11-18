@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	gomock "go.uber.org/mock/gomock"
 )
 
 var (
@@ -251,6 +251,8 @@ func TestAppendWorker(t *testing.T) {
 }
 
 // TODO check for status as well
+// TODO check for heap
+// TODO test handle cache
 func TestDeleteWorker(t *testing.T) {
 	testEmptyDeleteWorker(t)
 	testCorrectDeleteWorker(t)
@@ -414,7 +416,7 @@ func getMockClient(t *testing.T, ctrl *gomock.Controller) ClientWorker {
 	return m
 }
 
-func TestAllUsersReady(t *testing.T) {
+func TestReady(t *testing.T) {
 	testAllReady(t)
 	testNotAllReady(t)
 }
@@ -431,35 +433,58 @@ func testAllReady(t *testing.T) {
 func testAllReadyMultipleUsers(t *testing.T, ctrl *gomock.Controller) {
 	mockWorker1 := NewMockClientWorker(ctrl)
 	mockWorker2 := NewMockClientWorker(ctrl)
+	some_uuid := uuid.New()
+	cache := Cache{ID: some_uuid, Value: Duration{2 * time.Minute}, Index: 0}
+	some_uuid2 := uuid.New()
+	cache2 := Cache{ID: some_uuid2, Value: Duration{2 * time.Minute}, Index: 0}
 	room := &Room{
 		workers: []ClientWorker{mockWorker1, mockWorker2},
 		workersStatus: map[uuid.UUID]Status{
 			roomUUIDS[0]: {Ready: true},
 			roomUUIDS[1]: {Ready: true},
 		},
+		state: RoomState{
+			position: &Duration{0},
+			duration: Duration{42 * time.Minute},
+			paused:   true,
+		},
+		cacheHeapMap: CacheHeapMap{cacheHeap: CacheHeap{&cache, &cache2}, cacheMap: map[uuid.UUID]*Cache{some_uuid: &cache, some_uuid2: &cache2}},
 	}
-	allReady := room.AllUsersReady()
+	allReady := room.Ready()
 	require.Equal(t, true, allReady)
 }
 
 func testAllReadyOneUser(t *testing.T, ctrl *gomock.Controller) {
 	mockWorker1 := NewMockClientWorker(ctrl)
+	some_uuid := uuid.New()
+	cache := Cache{ID: some_uuid, Value: Duration{2 * time.Minute}, Index: 0}
 	room := &Room{
 		workers: []ClientWorker{mockWorker1},
 		workersStatus: map[uuid.UUID]Status{
 			roomUUIDS[0]: {Ready: true},
 		},
+		state: RoomState{
+			position: &Duration{0},
+			duration: Duration{42 * time.Minute},
+			paused:   true,
+		},
+		cacheHeapMap: CacheHeapMap{cacheHeap: CacheHeap{&cache}, cacheMap: map[uuid.UUID]*Cache{some_uuid: &cache}},
 	}
-	allReady := room.AllUsersReady()
+	allReady := room.Ready()
 	require.Equal(t, true, allReady)
 }
 
 func testAllReadyNoUsers(t *testing.T) {
 	room := &Room{
 		workers: []ClientWorker{},
+		state: RoomState{
+			position: &Duration{0},
+			duration: Duration{42 * time.Minute},
+			paused:   true,
+		},
 	}
-	allReady := room.AllUsersReady()
-	require.Equal(t, true, allReady)
+	allReady := room.Ready()
+	require.Equal(t, false, allReady)
 }
 
 func testNotAllReady(t *testing.T) {
@@ -480,7 +505,7 @@ func testNotAllReadyMultipleUsers(t *testing.T, ctrl *gomock.Controller) {
 			roomUUIDS[1]: {Ready: true},
 		},
 	}
-	allReady := room.AllUsersReady()
+	allReady := room.Ready()
 	require.Equal(t, false, allReady)
 }
 
@@ -492,7 +517,7 @@ func testNotAllOneUser(t *testing.T, ctrl *gomock.Controller) {
 			roomUUIDS[0]: {Ready: false},
 		},
 	}
-	allReady := room.AllUsersReady()
+	allReady := room.Ready()
 	require.Equal(t, false, allReady)
 }
 
@@ -681,4 +706,94 @@ func TestShouldBeClosed(t *testing.T) {
 	room.config.Persistent = true
 	shouldNotBeClosed = room.ShouldBeClosed()
 	require.False(t, shouldNotBeClosed)
+}
+
+// TODO more test cases
+func TestHandleCache(t *testing.T) {
+	handleLowCache(t)
+	handleHighCache(t)
+}
+
+func handleLowCache(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	cacheHeapMap := NewCacheHeapMap()
+	uuids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	caches := []uint64{100, 42, 96}
+
+	for i, c := range caches {
+		cacheHeapMap.Update(uuids[i], DurationFromUint64(c))
+	}
+
+	pauseMessage := `{"username":"test1","type":"pause"}`
+
+	worker1 := getMockClientWithPayload(t, ctrl, uuids[0], []byte(pauseMessage))
+	worker2 := getMockClientWithPayload(t, ctrl, uuids[1], []byte(pauseMessage))
+	worker3 := getMockClientWithPayload(t, ctrl, uuids[2], []byte(pauseMessage))
+
+	room := &Room{
+		workers: []ClientWorker{worker1, worker2, worker3},
+		state: RoomState{
+			duration: Duration{5 * time.Minute},
+			position: &Duration{20 * time.Second},
+			paused:   false,
+		},
+		cacheHeapMap: cacheHeapMap,
+		workersStatus: map[uuid.UUID]Status{
+			uuids[0]: {Ready: false, Username: "test1"},
+			uuids[1]: {Ready: false, Username: "test2"},
+			uuids[1]: {Ready: false, Username: "test3"},
+		},
+	}
+
+	room.HandleCache(&Duration{120}, uuids[0], "test1")
+	require.True(t, room.state.paused)
+	require.Equal(t, Duration{120}, room.cacheHeapMap.cacheMap[uuids[0]].Value)
+}
+
+func getMockClientWithPayload(t *testing.T, ctrl *gomock.Controller, newUUID uuid.UUID, payload []byte) ClientWorker {
+	m := NewMockClientWorker(ctrl)
+	m.EXPECT().
+		SendMessage(gomock.Eq(payload)).
+		MinTimes(1)
+
+	return m
+}
+
+func handleHighCache(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	cacheHeapMap := NewCacheHeapMap()
+	uuids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	caches := []Duration{{10 * time.Second}, {42 * time.Second}, {96 * time.Second}}
+
+	for i, c := range caches {
+		cacheHeapMap.Update(uuids[i], c)
+	}
+	startMessage := `{"username":"test1","type":"start"}`
+
+	worker1 := getMockClientWithPayload(t, ctrl, uuids[0], []byte(startMessage))
+	worker2 := getMockClientWithPayload(t, ctrl, uuids[1], []byte(startMessage))
+	worker3 := getMockClientWithPayload(t, ctrl, uuids[2], []byte(startMessage))
+
+	room := &Room{
+		workers: []ClientWorker{worker1, worker2, worker3},
+		state: RoomState{
+			duration: Duration{5 * time.Minute},
+			position: &Duration{20 * time.Second},
+			paused:   true,
+		},
+		cacheHeapMap: cacheHeapMap,
+		workersStatus: map[uuid.UUID]Status{
+			uuids[0]: {Ready: true, Username: "test1"},
+			uuids[1]: {Ready: true, Username: "test2"},
+			uuids[1]: {Ready: true, Username: "test3"},
+		},
+	}
+
+	room.HandleCache(&Duration{103 * time.Second}, uuids[0], "test1")
+	require.False(t, room.state.paused)
+	require.Equal(t, Duration{103 * time.Second}, room.cacheHeapMap.cacheMap[uuids[0]].Value)
 }

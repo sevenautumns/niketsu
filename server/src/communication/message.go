@@ -36,10 +36,12 @@ func (p Ping) Type() MessageType { return PingType }
 
 type VideoStatus struct {
 	Filename   *string   `json:"filename"`
+	Duration   Duration  `json:"duration"`
 	Position   *Duration `json:"position"`
 	Paused     bool      `json:"paused"`
 	Speed      float64   `json:"speed"`
 	FileLoaded bool      `json:"fileLoaded"`
+	Cache      *Duration `json:"cache"`
 	Username   string    `json:"username"`
 }
 

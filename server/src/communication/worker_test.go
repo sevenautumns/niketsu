@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	gomock "go.uber.org/mock/gomock"
 )
 
 const (
@@ -36,7 +36,12 @@ var (
 	testWorkerVideo               string   = "testVideo"
 	testWorkerVideo2              string   = "testVideo2"
 	testWorkerPosition            Duration = Duration{100}
+	testWorkerPositionMillis      uint64   = 100
 	testWorkerPositionMillisecond Duration = Duration{100 * 1000000}
+	testWorkerDuration            Duration = Duration{100000 * time.Millisecond}
+	testWorkerDurationMillis      uint64   = 100000
+	testWorkerCache               Duration = Duration{1000 * time.Millisecond}
+	testWorkerCacheMillis         uint64   = 1000
 	emptyVideoState                        = workerVideoState{}
 	simpleVideoStatus                      = VideoStatus{
 		Filename: &testWorkerVideo,
@@ -48,6 +53,7 @@ var (
 	simpleRoomState = RoomState{
 		playlist: simplePlaylist,
 		video:    &testWorkerVideo,
+		duration: Duration{0},
 		position: &testWorkerPositionMillisecond,
 		lastSeek: Duration{0},
 		paused:   notPaused,
@@ -195,7 +201,7 @@ func setUpMockRoom(
 
 	if useAllUsersReady {
 		mockRoom.EXPECT().
-			AllUsersReady().
+			Ready().
 			Return(allUsersReady).
 			MinTimes(1)
 	}
@@ -353,8 +359,8 @@ func TestHandleVideoStatusEqualStates(t *testing.T) {
 
 	videoStatus := []byte(
 		fmt.Sprintf(
-			`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"username":"%s","type":"videoStatus"}`,
-			testWorkerVideo, testWorkerPosition.Uint64(), notPaused, defaultSpeed, username,
+			`{"filename":"%s","duration":%d,"position":%d,"paused":%t,"speed":%g,"cache":%d,"username":"%s","type":"videoStatus"}`,
+			testWorkerVideo, testWorkerDurationMillis, testWorkerPositionMillis, notPaused, defaultSpeed, testWorkerCacheMillis, username,
 		),
 	)
 	worker := setUpWorkerForVideoStatus(t, ctrl, videoStatus, true)
@@ -380,6 +386,14 @@ func setUpWorkerForVideoStatus(t *testing.T, ctrl *gomock.Controller, videoStatu
 		mockRoom.EXPECT().
 			SetPosition(gomock.Eq(pos)).
 			MinTimes(1)
+
+		mockRoom.EXPECT().
+			SetDuration(gomock.Eq(testWorkerDuration)).
+			MinTimes(1)
+
+		mockRoom.EXPECT().
+			HandleCache(gomock.Eq(&testWorkerCache), gomock.Eq(workerUUIDS[0]), gomock.Eq(username)).
+			MinTimes(1)
 	}
 
 	mockRoomHandler := setUpMockRoomHandler(ctrl, 1, 0)
@@ -390,13 +404,14 @@ func setUpWorkerForVideoStatus(t *testing.T, ctrl *gomock.Controller, videoStatu
 		websocket:   mockWebsocket,
 		room:        mockRoom,
 		state: workerState{
+			uuid:      workerUUIDS[0],
 			stopChan:  make(chan int),
 			taskChan:  make(chan Task, 10),
 			writeChan: make(chan []byte, 10),
 			loggedIn:  true,
 		},
 		videoState: workerVideoState{},
-		userStatus: Status{Ready: true, Username: ""},
+		userStatus: Status{Ready: true, Username: username},
 		latency:    workerLatency{timestamps: make(map[uuid.UUID]time.Time)},
 	}
 
@@ -562,7 +577,7 @@ func TestHandleSelect(t *testing.T) {
 		MinTimes(1)
 
 	mockRoom.EXPECT().
-		BroadcastExcept(gomock.Eq(sel), gomock.Eq(defaultUUID)).
+		BroadcastAll(gomock.Eq(sel)).
 		MinTimes(1)
 
 	worker := &Worker{
