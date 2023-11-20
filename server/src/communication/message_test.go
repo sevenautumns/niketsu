@@ -17,8 +17,7 @@ var (
 	testDurationMillis    uint64   = 100
 	testPaused            bool     = false
 	testSpeed             float64  = 1.0
-	testCache             Duration = Duration{96 * time.Millisecond}
-	testCacheMillis       uint64   = 96
+	cacheFull             bool     = true
 	testFileLoaded        bool     = true
 	testReady             bool     = true
 	testNotReady          bool     = false
@@ -35,8 +34,8 @@ var (
 	testOtherCommand      string   = "testCommand2"
 	testOtherCommandValue bool     = false
 	pingMessage           string   = fmt.Sprintf(`{"uuid":"%s","type":"ping"}`, testUuid)
-	videoStatusMessage    string   = fmt.Sprintf(`{"filename":"%s","duration":%d,"position":%d,"paused":%t,"speed":%g,"fileLoaded":%t,"cache":%d,"username":"%s","type":"videoStatus"}`,
-		testFilename, testDurationMillis, testPositionMillis, testPaused, testSpeed, testFileLoaded, testCacheMillis, testUsername)
+	videoStatusMessage    string   = fmt.Sprintf(`{"filename":"%s","position":%d,"paused":%t,"speed":%g,"fileLoaded":%t,"cache":%t,"username":"%s","type":"videoStatus"}`,
+		testFilename, testPositionMillis, testPaused, testSpeed, testFileLoaded, cacheFull, testUsername)
 	statusListMessage string = fmt.Sprintf(`{"rooms":{"room1":[{"ready":%t,"username":"%s"},{"ready":%t,"username":"%s"}],"room2":[]},"type":"statusList"}`,
 		testNotReady, testUsername, testReady, testUsername2)
 	pauseMessage string = fmt.Sprintf(`{"username":"%s","type":"pause"}`, testUsername)
@@ -135,12 +134,11 @@ func TestMarshal(t *testing.T) {
 
 	videoStatus, err := MarshalMessage(VideoStatus{
 		Filename:   &testFilename,
-		Duration:   testDuration,
 		Position:   &testPosition,
 		Paused:     testPaused,
 		Speed:      testSpeed,
 		FileLoaded: testFileLoaded,
-		Cache:      &testCache,
+		Cache:      cacheFull,
 		Username:   testUsername,
 	})
 	testMessageContent(t, []byte(videoStatusMessage), videoStatus, err)

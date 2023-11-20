@@ -21,6 +21,7 @@ var (
 	pingTickInterval    Duration = Duration{time.Second}
 	pingDeleteInterval  Duration = Duration{600 * time.Second}
 	maxClientDifference Duration = Duration{time.Second}
+	lastSeekEpsilon     Duration = Duration{500 * time.Millisecond}
 )
 
 type Task struct {
@@ -461,10 +462,16 @@ func (worker *Worker) isStatusNew(status Status) bool {
 }
 
 func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime time.Time) {
-	worker.setVideoState(videoStatus, arrivalTime)
-	roomState := worker.room.RoomState()
-
 	logger.Debugw("Received video status", "videostatus", videoStatus)
+	fileLoaded := worker.VideoState().fileLoaded
+	worker.setVideoState(videoStatus, arrivalTime)
+
+	if !fileLoaded && videoStatus.FileLoaded {
+		worker.sendSeek(false)
+		return
+	}
+
+	roomState := worker.room.RoomState()
 	if worker.isVideoStateDifferent(videoStatus, roomState) {
 		worker.sendSelect(roomState.video, *roomState.position)
 		return
@@ -704,6 +711,7 @@ func (worker *Worker) sendSeek(desync bool) {
 		return
 	}
 
+	worker.room.SetLastSeek(position)
 	worker.queueMessage(payload)
 }
 
@@ -734,7 +742,7 @@ func (worker *Worker) sendPlaylist() {
 func (worker *Worker) EstimatePosition() *Duration {
 	videoState := worker.VideoState()
 
-	if videoState.position == nil {
+	if videoState.position == nil || !videoState.fileLoaded {
 		return nil
 	}
 
@@ -911,11 +919,10 @@ func (worker *Worker) handleTimeDifference(videoStatus VideoStatus) {
 	} else {
 		worker.room.SetPosition(*videoStatus.Position)
 	}
-	worker.room.SetDuration(videoStatus.Duration)
 }
 
 func (worker *Worker) shouldSeek(minPosition *Duration, workerPosition *Duration, speed float64) bool {
-	lastSeek := worker.room.RoomState().lastSeek
+	lastSeek := worker.room.RoomState().lastSeek.Sub(lastSeekEpsilon)
 	if workerPosition == nil || workerPosition.Smaller(lastSeek) {
 		return true
 	}

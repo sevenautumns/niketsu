@@ -158,3 +158,10 @@ func TestDurationTimeAdd(t *testing.T) {
 	result := TimeAdd(t1, dur)
 	require.Equal(t, t1.Add(time.Hour).Unix(), result.Unix())
 }
+
+func TestMinDuration(t *testing.T) {
+	smallDuration := Duration{42 * time.Second}
+	largerDuration := Duration{96 * time.Minute}
+	maxDuration := MinDuration(smallDuration, largerDuration)
+	require.Equal(t, Duration{42 * time.Second}, maxDuration)
+}
