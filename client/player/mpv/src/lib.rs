@@ -309,8 +309,10 @@ impl Mpv {
         TryInto::<mpv_error>::try_into(ret)?.try_into()
     }
 
-    fn eof_reached(&self) -> Result<bool> {
-        self.get_property_flag(MpvProperty::EofReached)
+    fn eof_reached(&mut self) -> Option<bool> {
+        let duration = self.get_duration()?;
+        let position = self.get_position()?;
+        Some(position + Duration::from_millis(100) >= duration)
     }
 
     fn replace_video(&mut self, path: CString) {

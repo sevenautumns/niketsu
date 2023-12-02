@@ -138,6 +138,9 @@ impl MpvEventTrait for MpvSeek {
             mpv.status.seeking = false;
             return Option::None;
         }
+        if mpv.eof_reached().unwrap_or_default() {
+            return Some(PlayerFileEnd.into());
+        }
         if let Some(pos) = mpv.get_position() {
             return Some(PlayerPositionChange::new(pos).into());
         }
