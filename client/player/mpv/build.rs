@@ -9,7 +9,7 @@ fn main() -> Result<()> {
 
     let bindings = bindgen::Builder::default()
         .header_contents("mpv.h", "#include <mpv/client.h>")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .parse_callbacks(Box::new(CustomCallback))
         .default_enum_style(EnumVariation::Rust {
             non_exhaustive: true,
