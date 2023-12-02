@@ -160,6 +160,7 @@ pub struct NiketsuVideoStatus {
     pub speed: f64,
     pub paused: bool,
     pub file_loaded: bool,
+    pub cache: bool,
 }
 
 impl PartialEq for NiketsuVideoStatus {
