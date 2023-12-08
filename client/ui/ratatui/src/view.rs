@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use copypasta::{ClipboardContext, ClipboardProvider};
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEventKind,
 };
@@ -58,7 +59,6 @@ pub enum Mode {
     Overlay,
 }
 
-#[derive(Debug, Default)]
 pub struct App {
     current_state: State,
     pub chat_widget_state: ChatWidgetState,
@@ -74,12 +74,15 @@ pub struct App {
     pub media_widget_state: MediaDirWidgetState,
     pub fuzzy_search_widget_state: FuzzySearchWidgetState,
     pub current_search: Option<FuzzySearch>,
+    pub clipboard: ClipboardContext,
     mode: Mode,
     prev_mode: Option<Mode>,
 }
 
 impl App {
     fn new(config: Config) -> App {
+        let ctx = ClipboardContext::new().unwrap();
+
         App {
             current_state: State::from(Chat {}),
             chat_widget_state: {
@@ -99,6 +102,7 @@ impl App {
             fuzzy_search_widget_state: FuzzySearchWidgetState::new(),
             media_widget_state: MediaDirWidgetState::new(config.media_dirs),
             current_search: None,
+            clipboard: ctx,
             mode: Mode::Normal,
             prev_mode: None,
         }
@@ -136,6 +140,12 @@ impl App {
 
     pub fn reset_fuzzy_search(&mut self) {
         self.current_search = None;
+    }
+
+    pub fn get_clipboard(&mut self) -> Result<String> {
+        self.clipboard
+            .get_contents()
+            .map_err(|e| anyhow::anyhow!("{e:?}"))
     }
 }
 

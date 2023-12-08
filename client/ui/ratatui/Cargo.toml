@@ -15,3 +15,4 @@ crossterm = { version = "0.27.0", features = ["event-stream"] }
 textwrap = { version = "0.16.0" }
 ratatui-textarea = { git = "https://github.com/TheAwiteb/ratatui-textarea.git", branch = "main" }
 enum_dispatch = { version = "0.3.12" }
+copypasta = { version = "0.10.0" }

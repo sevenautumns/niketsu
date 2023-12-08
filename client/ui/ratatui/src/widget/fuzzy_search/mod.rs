@@ -26,7 +26,7 @@ impl FuzzySearchWidgetState {
         let mut widget = Self::default();
         widget.setup_input_field();
         widget.list_state.select(Some(0));
-        widget.max_len = 200;
+        widget.max_len = 100;
         widget
     }
 
@@ -67,8 +67,13 @@ impl FuzzySearchWidgetState {
         if results.is_empty() {
             self.list_state.select(None);
         }
+        let results = results
+            .into_iter()
+            .take(self.max_len)
+            .filter(|f| f.score > 10)
+            .collect();
         self.current_result = Some(results);
-        self.list_state.limited_previous(self.len());
+        self.list_state.limit(self.len());
     }
 
     pub fn reset_all(&mut self) {
@@ -94,6 +99,22 @@ impl FuzzySearchWidgetState {
         } else {
             self.list_state.overflowing_previous(len);
         }
+    }
+
+    pub fn jump_next(&mut self, offset: usize) {
+        self.list_state.jump_next(offset)
+    }
+
+    pub fn jump_previous(&mut self, offset: usize) {
+        self.list_state.limited_jump_previous(offset, self.len())
+    }
+
+    pub fn jump_start(&mut self) {
+        self.list_state.select(Some(0))
+    }
+
+    pub fn jump_end(&mut self) {
+        self.list_state.select(Some(self.len().saturating_sub(1)))
     }
 
     fn len(&self) -> usize {

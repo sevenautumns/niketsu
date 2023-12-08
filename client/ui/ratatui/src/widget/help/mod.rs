@@ -24,6 +24,10 @@ impl HelpWidgetState {
                 vec!["Enter command mode", ":", "General"],
                 vec!["Enter options", "[Space]", "General"],
                 vec!["Exit widget", "[Esc]", "General"],
+                vec!["Jump to start", "[Home]", "General"],
+                vec!["Jump to end", "[End]", "General"],
+                vec!["Jump up", "[PageUp]", "General"],
+                vec!["Jump down", "[PageDown]", "General"],
                 vec!["Enter command mode", ":", "Command"],
                 vec!["Enter command input", "[Enter Key]", "Command"],
                 vec!["Other keybindings", "[Emacs]", "InputFields"],
@@ -45,19 +49,13 @@ impl HelpWidgetState {
 
 impl OverlayWidgetState for HelpWidgetState {
     fn area(&self, r: Rect) -> Rect {
-        let vert_width = match r.height {
-            0..=50 => 10,
-            51..=100 => 20,
-            _ => 40,
-        };
-
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints(
                 [
-                    Constraint::Percentage(vert_width),
-                    Constraint::Percentage(100 - 2 * vert_width),
-                    Constraint::Percentage(vert_width),
+                    Constraint::Percentage(20),
+                    Constraint::Min(30),
+                    Constraint::Percentage(20),
                 ]
                 .as_ref(),
             )
@@ -67,9 +65,9 @@ impl OverlayWidgetState for HelpWidgetState {
             .direction(Direction::Horizontal)
             .constraints(
                 [
-                    Constraint::Percentage(vert_width),
-                    Constraint::Percentage(100 - 2 * vert_width),
-                    Constraint::Percentage(vert_width),
+                    Constraint::Percentage(20),
+                    Constraint::Min(70),
+                    Constraint::Percentage(20),
                 ]
                 .as_ref(),
             )
@@ -93,9 +91,9 @@ impl StatefulWidget for HelpWidget {
         });
 
         let table = Table::new(rows).header(header).block(help_block).widths(&[
-            Constraint::Min(30),
-            Constraint::Min(15),
-            Constraint::Max(20),
+            Constraint::Length(30),
+            Constraint::Length(15),
+            Constraint::Min(20),
         ]);
         Widget::render(table, area, buf);
     }

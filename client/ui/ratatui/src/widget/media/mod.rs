@@ -129,10 +129,7 @@ impl StatefulWidget for MediaDirWidget {
     type State = MediaDirWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let outer_block = Block::default()
-            .title("Search")
-            .borders(Borders::ALL)
-            .gray();
+        let outer_block = Block::default().title("Path").borders(Borders::ALL).gray();
 
         let layout = Layout::default()
             .constraints([Constraint::Length(1), Constraint::Min(3)].as_ref())
@@ -150,7 +147,7 @@ impl StatefulWidget for MediaDirWidget {
             .block(
                 Block::default()
                     .style(state.style)
-                    .title("Results")
+                    .title("Media Directories")
                     .borders(Borders::TOP)
                     .padding(Padding::new(1, 1, 1, 1)),
             )

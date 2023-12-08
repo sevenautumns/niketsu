@@ -11,6 +11,7 @@ use ratatui::widgets::{
 use super::ListStateWrapper;
 
 //TODO negative offset support
+//TODO state trait wrapper
 pub struct PlaylistWidget;
 
 #[derive(Debug, Default, Clone)]
@@ -59,7 +60,16 @@ impl PlaylistWidgetState {
 
     pub fn jump_previous(&mut self, offset: usize) {
         self.list_state
-            .limited_jump_previous(offset, self.playlist.len());
+            .limited_jump_previous(offset, self.playlist.len())
+    }
+
+    pub fn jump_start(&mut self) {
+        self.list_state.select(Some(0))
+    }
+
+    pub fn jump_end(&mut self) {
+        self.list_state
+            .select(Some(self.playlist.len().saturating_sub(1)))
     }
 
     pub fn reset_offset(&mut self) {

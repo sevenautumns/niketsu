@@ -15,16 +15,12 @@ impl EventHandler for Options {
         if let Event::Key(key) = event {
             if key.kind == KeyEventKind::Press {
                 match key.code {
-                    // KeyCode::Char('h') => view
-                    //     .app
-                    //     .set_current_overlay_state(Some(OverlayState::from(Help {}))),
+                    KeyCode::Char('h') => view
+                        .app
+                        .set_current_overlay_state(Some(OverlayState::from(Help {}))),
                     KeyCode::Char('l') => view
                         .app
                         .set_current_overlay_state(Some(OverlayState::from(Login {}))),
-                    KeyCode::Char('h') => {
-                        view.app
-                            .set_current_overlay_state(Some(OverlayState::from(Help {})));
-                    }
                     KeyCode::Char('f') => {
                         view.app
                             .set_current_overlay_state(Some(OverlayState::from(FuzzySearch {})));
@@ -35,6 +31,8 @@ impl EventHandler for Options {
                         .set_current_overlay_state(Some(OverlayState::from(MediaDir {}))),
                     KeyCode::Char('r') => {
                         view.model.user_ready_toggle();
+                        //TODO needs to be changed once ready toggling works better
+                        view.app.rooms_widget_state.toggle_ready();
                         view.app.reset_overlay();
                     }
                     _ => {

@@ -17,12 +17,12 @@ impl OverlayWidgetState for OptionsWidgetState {
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(80), Constraint::Percentage(20)].as_ref())
+            .constraints([Constraint::Min(1), Constraint::Length(10)].as_ref())
             .split(r);
 
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+            .constraints([Constraint::Min(1), Constraint::Length(30)].as_ref())
             .split(popup_layout[1])[1]
     }
 }
@@ -34,11 +34,11 @@ impl StatefulWidget for OptionsWidget {
         let options_block = Block::default().title("Options").borders(Borders::ALL);
 
         let options_overlay = Paragraph::new(vec![
-            Line::from(vec![Span::raw(" h Show help")]),
-            Line::from(vec![Span::raw(" l Open login")]),
-            Line::from(vec![Span::raw(" f Open fuzzy search")]),
-            Line::from(vec![Span::raw(" m Open media paths")]),
-            Line::from(vec![Span::raw(" r Toggle ready")]),
+            Line::from(vec![Span::raw(" h     Show help")]),
+            Line::from(vec![Span::raw(" l     Open login")]),
+            Line::from(vec![Span::raw(" f     Open fuzzy search")]),
+            Line::from(vec![Span::raw(" m     Open media paths")]),
+            Line::from(vec![Span::raw(" r     Toggle ready")]),
         ])
         .style(state.style)
         .block(options_block);

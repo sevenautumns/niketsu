@@ -21,6 +21,10 @@ impl EventHandler for Chat {
                     }
                     KeyCode::Down => view.app.chat_widget_state.previous(),
                     KeyCode::Up => view.app.chat_widget_state.next(),
+                    KeyCode::PageUp => view.app.chat_widget_state.jump_next(5),
+                    KeyCode::PageDown => view.app.chat_widget_state.jump_previous(5),
+                    KeyCode::Home => view.app.chat_widget_state.jump_start(),
+                    KeyCode::End => view.app.chat_widget_state.jump_end(),
                     _ => {}
                 }
             }
