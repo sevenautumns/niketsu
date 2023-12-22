@@ -2,7 +2,7 @@ use ratatui::prelude::{Buffer, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, StatefulWidget, Widget};
-use ratatui_textarea::Input;
+use tui_textarea::Input;
 
 use super::TextAreaWrapper;
 

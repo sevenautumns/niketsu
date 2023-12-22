@@ -37,6 +37,7 @@ impl EventHandler for Heartbeat {
         let position = model.player.get_position();
         let speed = model.player.get_speed();
         let paused = model.player.is_paused().unwrap_or(true);
+        let cache = model.player.cache_available();
         let file_loaded = model.player.video_loaded();
         model.communicator.send(
             NiketsuVideoStatus {
@@ -45,6 +46,7 @@ impl EventHandler for Heartbeat {
                 speed,
                 paused,
                 file_loaded,
+                cache,
             }
             .into(),
         );
@@ -93,12 +95,14 @@ mod tests {
         let speed = 1.5;
         let paused = true;
         let config = Config::default();
+        let cache = true;
         let message = OutgoingMessage::from(NiketsuVideoStatus {
             filename: Some(video.to_string()),
             position,
             speed,
             paused,
             file_loaded: true,
+            cache,
         });
 
         player
@@ -107,6 +111,7 @@ mod tests {
         player.expect_get_position().return_const(position);
         player.expect_get_speed().return_const(speed);
         player.expect_is_paused().return_const(paused);
+        player.expect_cache_available().return_const(cache);
         player.expect_video_loaded().return_const(true);
         communicator
             .expect_send()

@@ -27,6 +27,8 @@ unsafe impl Send for MpvHandle {}
 
 unsafe impl Sync for MpvHandle {}
 
+const CACHE_THRESHOLD: Duration = Duration::from_secs(20);
+
 #[derive(Debug, EnumString, AsRefStr, Clone, Copy)]
 #[strum(serialize_all = "kebab-case")]
 pub enum MpvProperty {
@@ -35,16 +37,20 @@ pub enum MpvProperty {
     Pause,
     Speed,
     Filename,
+    Duration,
     KeepOpen,
     KeepOpenPause,
     CachePause,
     ForceWindow,
     Idle,
     EofReached,
+    DemuxerCacheDuration,
     Config,
     InputDefaultBindings,
     InputVoKeyboard,
     InputMediaKeys,
+    PausedForCache,
+    CachePauseWait,
 }
 
 impl TryFrom<MpvProperty> for CString {
@@ -73,6 +79,10 @@ impl MpvProperty {
             MpvProperty::InputMediaKeys => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::CachePause => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Speed => mpv_format::MPV_FORMAT_DOUBLE,
+            MpvProperty::DemuxerCacheDuration => mpv_format::MPV_FORMAT_DOUBLE,
+            MpvProperty::Duration => mpv_format::MPV_FORMAT_DOUBLE,
+            MpvProperty::PausedForCache => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::CachePauseWait => mpv_format::MPV_FORMAT_DOUBLE,
         }
     }
 }
@@ -151,23 +161,25 @@ impl Mpv {
     }
 
     fn init(mut self) -> Result<Self> {
-        self.pre_init()?;
+        self.set_config(true)?;
+        self.set_settings()?;
         self.init_handle()?;
+        self.set_settings()?;
         self.post_init()?;
 
         Ok(self)
     }
 
-    fn pre_init(&self) -> Result<()> {
+    fn set_settings(&self) -> Result<()> {
         self.set_ocs(true)?;
         self.set_keep_open(true)?;
         self.set_keep_open_pause(true)?;
-        self.set_cache_pause(false)?;
+        self.set_cache_pause(true)?;
         self.set_idle_mode(true)?;
         self.set_force_window(true)?;
-        self.set_config(true)?;
         self.set_input_default_bindings(true)?;
         self.set_input_vo_keyboard(true)?;
+        self.set_cache_pause_wait(CACHE_THRESHOLD)?;
         self.set_input_media_keys(true)
     }
 
@@ -180,6 +192,7 @@ impl Mpv {
     fn post_init(&mut self) -> Result<()> {
         self.pause();
         self.observe_property(MpvProperty::Pause)?;
+        self.observe_property(MpvProperty::PausedForCache)?;
         self.observe_property(MpvProperty::Filename)?;
         self.observe_property(MpvProperty::Speed)
     }
@@ -218,6 +231,13 @@ impl Mpv {
 
     fn set_cache_pause(&self, flag: bool) -> Result<()> {
         self.set_property(MpvProperty::CachePause, flag.into())
+    }
+
+    fn set_cache_pause_wait(&self, time: Duration) -> Result<()> {
+        self.set_property(
+            MpvProperty::CachePauseWait,
+            PropertyValue::Double(time.as_secs_f64()),
+        )
     }
 
     fn set_input_media_keys(&self, flag: bool) -> Result<()> {
@@ -289,8 +309,10 @@ impl Mpv {
         TryInto::<mpv_error>::try_into(ret)?.try_into()
     }
 
-    fn eof_reached(&self) -> Result<bool> {
-        self.get_property_flag(MpvProperty::EofReached)
+    fn eof_reached(&mut self) -> Option<bool> {
+        let duration = self.get_duration()?;
+        let position = self.get_position()?;
+        Some(position + Duration::from_millis(100) >= duration)
     }
 
     fn replace_video(&mut self, path: CString) {
@@ -306,6 +328,22 @@ impl Mpv {
         let res = self.send_command(&[&cmd, &path, &replace, &options]);
         self.status.file_load_status = FileLoadStatus::Loading;
         log!(res)
+    }
+
+    fn get_duration(&mut self) -> Option<Duration> {
+        self.status.file.as_ref()?;
+
+        self.get_property_f64(MpvProperty::Duration)
+            .ok()
+            .map(Duration::from_secs_f64)
+    }
+
+    fn get_cache(&mut self) -> Option<Duration> {
+        self.status.file.as_ref()?;
+
+        self.get_property_f64(MpvProperty::DemuxerCacheDuration)
+            .ok()
+            .map(Duration::from_secs_f64)
     }
 }
 
@@ -376,6 +414,25 @@ impl MediaPlayerTrait for Mpv {
             .map(Duration::from_secs_f64)
     }
 
+    fn cache_available(&mut self) -> bool {
+        if self.status.file.as_ref().is_none() {
+            return false;
+        };
+        let Some(cache) = self.get_cache() else {
+            return false;
+        };
+        if cache >= CACHE_THRESHOLD {
+            return true;
+        }
+        let Some(duration) = self.get_duration() else {
+            return false;
+        };
+        let Some(position) = self.get_position() else {
+            return false;
+        };
+        duration <= position + cache + Duration::from_secs(1)
+    }
+
     fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore) {
         self.status.paused = true;
         self.status.file_load_status = FileLoadStatus::NotLoaded;
@@ -420,10 +477,7 @@ impl MediaPlayerTrait for Mpv {
     }
 
     fn video_loaded(&self) -> bool {
-        matches!(
-            self.status.file_load_status,
-            FileLoadStatus::Loading | FileLoadStatus::Loaded
-        )
+        matches!(self.status.file_load_status, FileLoadStatus::Loaded)
     }
 
     async fn event(&mut self) -> MediaPlayerEvent {

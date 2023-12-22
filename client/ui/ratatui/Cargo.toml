@@ -10,8 +10,9 @@ log.workspace = true
 tokio.workspace = true
 futures = "0.3"
 async-trait = "0.1"
-ratatui = { version = "0.24.0", features = ["all-widgets"] }
-crossterm = { version = "0.27.0", features = ["event-stream"] }
-textwrap = { version = "0.16.0" }
-ratatui-textarea = { git = "https://github.com/TheAwiteb/ratatui-textarea.git", branch = "main" }
-enum_dispatch = { version = "0.3.12" }
+ratatui = { version = "0.25", features = ["all-widgets"] }
+crossterm = { version = "0.27", features = ["event-stream"] }
+textwrap = "0.16" 
+tui-textarea = "0.4"
+enum_dispatch ="0.3"
+gag = "1.0"

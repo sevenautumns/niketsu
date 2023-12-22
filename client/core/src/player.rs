@@ -6,11 +6,10 @@ use enum_dispatch::enum_dispatch;
 use log::trace;
 
 use super::communicator::{
-    NiketsuPause, NiketsuPlaybackSpeed, NiketsuSeek, NiketsuStart, OutgoingMessage,
+    NiketsuPause, NiketsuPlaybackSpeed, NiketsuSeek, NiketsuSelect, NiketsuStart, OutgoingMessage,
 };
 use super::playlist::Video;
 use super::{CoreModel, EventHandler};
-use crate::communicator::NiketsuSelect;
 use crate::file_database::FileStore;
 
 #[cfg_attr(test, mockall::automock)]
@@ -23,6 +22,7 @@ pub trait MediaPlayerTrait: std::fmt::Debug + Send {
     fn get_speed(&self) -> f64;
     fn set_position(&mut self, pos: Duration);
     fn get_position(&mut self) -> Option<Duration>;
+    fn cache_available(&mut self) -> bool;
     // TODO separate FileStore from MediaPlayer
     // for this we need to move the file_loaded out of the player
     fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore);
@@ -38,6 +38,7 @@ pub trait MediaPlayerTrait: std::fmt::Debug + Send {
 pub enum MediaPlayerEvent {
     Pause(PlayerPause),
     Start(PlayerStart),
+    CachePause(PlayerCachePause),
     PositionChange(PlayerPositionChange),
     SpeedChange(PlayerSpeedChange),
     FileEnd(PlayerFileEnd),
@@ -75,6 +76,24 @@ impl EventHandler for PlayerStart {
             .send(OutgoingMessage::from(model.config.status(model.ready)));
         model.communicator.send(
             NiketsuStart {
+                actor: model.config.username.clone(),
+            }
+            .into(),
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PlayerCachePause;
+
+impl EventHandler for PlayerCachePause {
+    fn handle(self, model: &mut CoreModel) {
+        trace!("player cache pause");
+        model
+            .communicator
+            .send(OutgoingMessage::from(model.config.status(model.ready)));
+        model.communicator.send(
+            NiketsuPause {
                 actor: model.config.username.clone(),
             }
             .into(),

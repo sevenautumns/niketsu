@@ -79,6 +79,7 @@ pub(super) struct VideoStatusMessage {
     pub(super) speed: f64,
     pub(super) paused: bool,
     pub(super) file_loaded: bool,
+    pub(super) cache: bool,
 }
 
 impl PartialEq for VideoStatusMessage {
@@ -102,6 +103,7 @@ impl From<NiketsuVideoStatus> for NiketsuMessage {
             speed: value.speed,
             paused: value.paused,
             file_loaded: value.file_loaded,
+            cache: value.cache,
         })
     }
 }
@@ -447,10 +449,11 @@ mod tests {
             speed: 1.0,
             paused: false,
             file_loaded: true,
+            cache: true,
         });
 
         let json_str = serde_json::to_string(&video_status_message).unwrap();
-        let expected_json = r#"{"type":"videoStatus","filename":"video.mp4","position":60000,"speed":1.0,"paused":false,"fileLoaded":true}"#;
+        let expected_json = r#"{"type":"videoStatus","filename":"video.mp4","position":60000,"speed":1.0,"paused":false,"fileLoaded":true,"cache":true}"#;
 
         assert_eq!(json_str, expected_json);
     }
@@ -624,13 +627,14 @@ mod tests {
 
     #[test]
     fn test_video_status_message_deserialization() {
-        let json_str = r#"{"type":"videoStatus","filename":"video.mp4","position":60000,"speed":1,"paused":false, "fileLoaded":true}"#;
+        let json_str = r#"{"type":"videoStatus","filename":"video.mp4","position":60000,"speed":1,"paused":false, "fileLoaded":true,"cache":false}"#;
         let expected_video_status_message = NiketsuMessage::VideoStatus(VideoStatusMessage {
             filename: Some(String::from("video.mp4")),
             position: Some(Duration::from_secs(60)),
             speed: 1.0,
             paused: false,
             file_loaded: true,
+            cache: false,
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();
