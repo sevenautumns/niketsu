@@ -15,13 +15,16 @@ import (
 	"github.com/sevenautumns/niketsu/server/src/logger"
 )
 
+var (
+	minStartCache Duration = Duration{30 * time.Second}
+)
+
 type RoomStateHandler interface {
 	Start()
 	Close() error
 	Shutdown(ctx context.Context)
 	AppendWorker(worker ClientWorker)
 	DeleteWorker(workerUUID uuid.UUID)
-	AllUsersReady() bool
 	BroadcastAll(message []byte)
 	BroadcastExcept(payload []byte, workerUUID uuid.UUID)
 	SlowestEstimatedClientPosition() *Duration
@@ -29,7 +32,9 @@ type RoomStateHandler interface {
 	SetSpeed(speed float64)
 	SetPaused(paused bool)
 	SetPlaylist(playlist []string)
+	SetLastSeek(position Duration)
 	SetPlaylistState(video *string, position Duration, paused *bool, lastSeek *Duration, speed *float64)
+	HandleCache(cache bool, workerUUID uuid.UUID, username string)
 	RoomState() RoomState
 	Name() string
 	RoomConfig() RoomConfig
@@ -37,15 +42,17 @@ type RoomStateHandler interface {
 	SetWorkerStatus(workerUUID uuid.UUID, status Status)
 	ShouldBeClosed() bool
 	IsEmpty() bool
+	Ready() bool
 }
 
 type RoomState struct {
-	playlist []string
-	video    *string
-	position *Duration
-	lastSeek Duration
-	paused   bool
-	speed    float64
+	playlist     []string
+	video        *string
+	position     *Duration
+	lastSeek     Duration
+	paused       bool
+	speed        float64
+	cacheTracker CacheTracker
 }
 
 type RoomConfig struct {
@@ -78,7 +85,7 @@ func NewRoom(name string, path string, dbUpdateInterval uint64, dbWaitTimeout ui
 	if err != nil {
 		return nil, err
 	}
-	room.state = RoomState{playlist: make([]string, 0), video: nil, position: &Duration{0}, lastSeek: Duration{0}, paused: true, speed: 1.0}
+	room.state = RoomState{playlist: make([]string, 0), video: nil, position: &Duration{0}, lastSeek: Duration{0}, paused: true, speed: 1.0, cacheTracker: *NewCacheTracker()}
 	room.setStateFromDB()
 	room.dbChannel = make(chan int)
 
@@ -176,6 +183,7 @@ func (room *Room) AppendWorker(worker ClientWorker) {
 func (room *Room) DeleteWorker(workerUUID uuid.UUID) {
 	room.deleteWorkerFromSlice(workerUUID)
 	room.deleteWorkerFromMap(workerUUID)
+	room.deleteWorkerFromCache(workerUUID)
 }
 
 func (room *Room) deleteWorkerFromSlice(workerUUID uuid.UUID) {
@@ -196,6 +204,13 @@ func (room *Room) deleteWorkerFromMap(workerUUID uuid.UUID) {
 	delete(room.workersStatus, workerUUID)
 }
 
+func (room *Room) deleteWorkerFromCache(workerUUID uuid.UUID) {
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
+
+	room.state.cacheTracker.DeleteCache(workerUUID)
+}
+
 func (room *Room) BroadcastExcept(payload []byte, workerUUID uuid.UUID) {
 	room.workersMutex.RLock()
 	defer room.workersMutex.RUnlock()
@@ -214,18 +229,6 @@ func (room *Room) BroadcastAll(payload []byte) {
 	for _, worker := range room.workers {
 		worker.SendMessage(payload)
 	}
-}
-
-func (room *Room) AllUsersReady() bool {
-	room.workersStatusMutex.RLock()
-	defer room.workersStatusMutex.RUnlock()
-
-	ready := true
-	for _, userStatus := range room.workersStatus {
-		ready = ready && userStatus.Ready
-	}
-
-	return ready
 }
 
 func (room *Room) SlowestEstimatedClientPosition() *Duration {
@@ -251,8 +254,13 @@ func (room *Room) SetPlaylistState(video *string, position Duration, paused *boo
 	room.stateMutex.Lock()
 	defer room.stateMutex.Unlock()
 
+	if video != nil && room.state.video != nil && *room.state.video != *video {
+		room.state.cacheTracker.Reset()
+	}
+
 	room.state.video = video
 	room.state.position = &position
+
 	if lastSeek != nil {
 		room.state.lastSeek = *lastSeek
 	}
@@ -263,6 +271,54 @@ func (room *Room) SetPlaylistState(video *string, position Duration, paused *boo
 	if speed != nil && *speed > 0 {
 		room.state.speed = *speed
 	}
+}
+
+func (room *Room) HandleCache(cache bool, workerUUID uuid.UUID, username string) {
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
+
+	room.state.cacheTracker.SetCache(workerUUID, cache)
+
+	if room.readyToStart() {
+		room.handleCacheStart(username)
+	}
+}
+
+func (room *Room) readyToStart() bool {
+	cacheFull := room.state.cacheTracker.CacheFull()
+	allUsersReady := room.allUsersReady()
+	return cacheFull && allUsersReady && room.state.paused
+}
+
+func (room *Room) allUsersReady() bool {
+	room.workersStatusMutex.RLock()
+	defer room.workersStatusMutex.RUnlock()
+
+	ready := true
+	for _, userStatus := range room.workersStatus {
+		ready = ready && userStatus.Ready
+	}
+
+	return ready
+}
+
+func (room *Room) handleCacheStart(username string) {
+	room.state.paused = false
+	start := Start{Username: username}
+	payload, err := MarshalMessage(start)
+	if err != nil {
+		logger.Errorw("Unable to marshal broadcast start for cache resume")
+		return
+	}
+
+	room.BroadcastAll(payload)
+}
+
+func (room *Room) Ready() bool {
+	room.stateMutex.RLock()
+	defer room.stateMutex.RUnlock()
+
+	return room.readyToStart()
 }
 
 func (room *Room) SetPosition(position Duration) {
@@ -289,6 +345,13 @@ func (room *Room) SetPaused(paused bool) {
 	defer room.stateMutex.Unlock()
 
 	room.state.paused = paused
+}
+
+func (room *Room) SetLastSeek(position Duration) {
+	room.stateMutex.Lock()
+	defer room.stateMutex.Unlock()
+
+	room.state.lastSeek = position
 }
 
 func (room *Room) SetPlaylist(playlist []string) {
