@@ -98,9 +98,9 @@ impl LoginWidgetState {
 impl OverlayWidgetState for LoginWidgetState {
     fn area(&self, r: Rect) -> Rect {
         let vert_width = match r.height {
-            0..=50 => 10,
-            51..=100 => 25,
-            _ => 45,
+            0..=50 => 5,
+            51..=100 => 20,
+            _ => 40,
         };
 
         let popup_layout = Layout::default()
@@ -108,7 +108,7 @@ impl OverlayWidgetState for LoginWidgetState {
             .constraints(
                 [
                     Constraint::Percentage(vert_width),
-                    Constraint::Percentage(100 - 2 * vert_width),
+                    Constraint::Min(30),
                     Constraint::Percentage(vert_width),
                 ]
                 .as_ref(),
@@ -120,7 +120,7 @@ impl OverlayWidgetState for LoginWidgetState {
             .constraints(
                 [
                     Constraint::Percentage(30),
-                    Constraint::Percentage(40),
+                    Constraint::Min(30),
                     Constraint::Percentage(30),
                 ]
                 .as_ref(),
@@ -139,11 +139,11 @@ impl StatefulWidget for LoginWidget {
             .block(Block::default().borders(Borders::NONE).gray())
             .wrap(Wrap { trim: false });
 
-        let mut address_field = state.address_field.clone();
-        let password_field = state.password_field.clone();
+        let mut address_field = state.address_field.clone().set_default_stye();
+        let password_field = state.password_field.clone().set_default_stye();
         let mut password_field = password_field.into_masked("Password");
-        let mut username_field = state.username_field.clone();
-        let mut room_field = state.room_field.clone();
+        let mut username_field = state.username_field.clone().set_default_stye();
+        let mut room_field = state.room_field.clone().set_default_stye();
 
         let mut secure_block = match state.secure {
             true => Paragraph::new(Text::raw("Secure: on"))

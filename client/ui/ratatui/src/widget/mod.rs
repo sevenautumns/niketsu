@@ -89,6 +89,13 @@ impl ListStateWrapper {
         }
     }
 
+    fn limit(&mut self, len: usize) {
+        if let Some(i) = self.selected() {
+            let mindex = usize::min(i, len);
+            self.inner.select(Some(mindex));
+        }
+    }
+
     fn select(&mut self, index: Option<usize>) {
         self.inner.select(index);
     }
@@ -118,11 +125,10 @@ impl std::fmt::Debug for TextAreaWrapper {
 
 impl Default for TextAreaWrapper {
     fn default() -> Self {
-        let mut wrapper = Self {
+        let wrapper = Self {
             inner: TextArea::default(),
         };
-        wrapper.set_default_stye();
-        wrapper
+        wrapper.set_default_stye()
     }
 }
 
@@ -158,19 +164,22 @@ impl TextAreaWrapper {
         self.inner.set_cursor_style(cursor_style);
     }
 
-    fn set_default_stye(&mut self) {
-        self.inner.set_tab_length(2);
-        self.inner
+    fn set_default_stye(self) -> Self {
+        let mut text_area = self;
+        text_area.inner.set_tab_length(2);
+        text_area
+            .inner
             .set_style(Style::default().fg(Color::Gray).add_modifier(Modifier::DIM));
-        self.inner.set_cursor_line_style(Style::default());
-        self.inner.set_cursor_style(Style::default());
+        text_area.inner.set_cursor_line_style(Style::default());
+        text_area.inner.set_cursor_style(Style::default());
+        text_area
     }
 
     fn set_block(&mut self, block: Block<'static>) {
         self.inner.set_block(block);
     }
 
-    fn into_masked(self, title: &str) -> TextAreaWrapper {
+    fn into_masked(self, title: &str) -> Self {
         let lines = self.inner.lines();
         let masked_lines: String = lines
             .iter()
@@ -183,8 +192,8 @@ impl TextAreaWrapper {
                 .borders(Borders::ALL)
                 .title(title.to_string()),
         );
-        text_area.set_default_stye();
         let cursor = self.inner.cursor();
+        text_area = text_area.set_default_stye();
         text_area
             .inner
             .move_cursor(CursorMove::Jump(cursor.0 as u16, cursor.1 as u16));

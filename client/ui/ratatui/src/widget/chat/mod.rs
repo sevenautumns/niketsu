@@ -43,18 +43,40 @@ impl ChatWidgetState {
     }
 
     pub fn previous(&mut self) {
-        self.list_state.overflowing_previous(self.messages.len());
+        self.list_state.limited_previous(self.messages.len());
         if let Some(i) = self.list_state.selected() {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
     }
 
-    pub fn update_cursor_latest(&mut self) {
+    pub fn jump_next(&mut self, offset: usize) {
+        self.list_state.jump_next(offset)
+    }
+
+    pub fn jump_previous(&mut self, offset: usize) {
         self.list_state
-            .select(Some(self.messages.len().saturating_sub(1)));
-        self.vertical_scroll_state = self
-            .vertical_scroll_state
-            .position(self.messages.len().saturating_sub(1));
+            .limited_jump_previous(offset, self.messages.len());
+    }
+
+    pub fn jump_start(&mut self) {
+        self.list_state.select(Some(0))
+    }
+
+    pub fn jump_end(&mut self) {
+        self.list_state
+            .select(Some(self.messages.len().saturating_sub(1)))
+    }
+
+    pub fn update_cursor_latest(&mut self) {
+        if let Some(index) = self.list_state.selected() {
+            if index > self.messages.len().saturating_sub(5) {
+                self.list_state
+                    .select(Some(self.messages.len().saturating_sub(1)));
+                self.vertical_scroll_state = self
+                    .vertical_scroll_state
+                    .position(self.messages.len().saturating_sub(1));
+            }
+        }
     }
 }
 
