@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/sevenautumns/niketsu/server/src/config"
 	"github.com/stretchr/testify/require"
+	gomock "go.uber.org/mock/gomock"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )

@@ -58,15 +58,12 @@ impl EventHandler for Playlist {
                     KeyCode::Char('v') => {
                         if key.modifiers == KeyModifiers::CONTROL {
                             let content = view.app.get_clipboard();
-                            match content {
-                                Ok(c) => {
-                                    if let Some(index) =
-                                        view.app.playlist_widget_state.get_current_index()
-                                    {
-                                        view.insert(index + 1, &Video::from(c.as_str()));
-                                    }
+                            if let Ok(c) = content {
+                                if let Some(index) =
+                                    view.app.playlist_widget_state.get_current_index()
+                                {
+                                    view.insert(index + 1, &Video::from(c.as_str()));
                                 }
-                                Err(_) => {}
                             }
                         }
                     }

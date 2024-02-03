@@ -2,7 +2,7 @@ use ratatui::prelude::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, ListState, Widget};
-use ratatui_textarea::{CursorMove, Input, TextArea};
+use tui_textarea::{CursorMove, Input, TextArea};
 
 pub(crate) mod chat;
 pub(crate) mod chat_input;

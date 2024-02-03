@@ -21,6 +21,7 @@ var (
 	pingTickInterval    Duration = Duration{time.Second}
 	pingDeleteInterval  Duration = Duration{600 * time.Second}
 	maxClientDifference Duration = Duration{time.Second}
+	lastSeekEpsilon     Duration = Duration{500 * time.Millisecond}
 )
 
 type Task struct {
@@ -461,10 +462,16 @@ func (worker *Worker) isStatusNew(status Status) bool {
 }
 
 func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime time.Time) {
-	worker.setVideoState(videoStatus, arrivalTime)
-	roomState := worker.room.RoomState()
-
 	logger.Debugw("Received video status", "videostatus", videoStatus)
+	fileLoaded := worker.VideoState().fileLoaded
+	worker.setVideoState(videoStatus, arrivalTime)
+
+	if !fileLoaded && videoStatus.FileLoaded {
+		worker.sendSeek(false)
+		return
+	}
+
+	roomState := worker.room.RoomState()
 	if worker.isVideoStateDifferent(videoStatus, roomState) {
 		worker.sendSelect(roomState.video, *roomState.position)
 		return
@@ -480,7 +487,8 @@ func (worker *Worker) handleVideoStatus(videoStatus VideoStatus, arrivalTime tim
 		return
 	}
 
-	worker.handleTimeDifference()
+	worker.handleTimeDifference(videoStatus)
+	worker.room.HandleCache(videoStatus.Cache, worker.state.uuid, worker.userStatus.Username)
 }
 
 func (worker *Worker) isVideoStateDifferent(videoStatus VideoStatus, roomState RoomState) bool {
@@ -703,6 +711,7 @@ func (worker *Worker) sendSeek(desync bool) {
 		return
 	}
 
+	worker.room.SetLastSeek(position)
 	worker.queueMessage(payload)
 }
 
@@ -733,7 +742,7 @@ func (worker *Worker) sendPlaylist() {
 func (worker *Worker) EstimatePosition() *Duration {
 	videoState := worker.VideoState()
 
-	if videoState.position == nil {
+	if videoState.position == nil || !videoState.fileLoaded {
 		return nil
 	}
 
@@ -756,8 +765,7 @@ func (worker *Worker) broadcastStart() {
 		return
 	}
 
-	workerUUID := worker.UUID()
-	worker.room.BroadcastExcept(payload, workerUUID)
+	worker.room.BroadcastExcept(payload, worker.state.uuid)
 }
 
 func (worker *Worker) broadcastSeek(filename string, position Duration, desync bool) {
@@ -780,12 +788,7 @@ func (worker *Worker) broadcastSelect(filename *string, position Duration, all b
 		return
 	}
 
-	if all {
-		worker.room.BroadcastAll(payload)
-	} else {
-		workerUUID := worker.UUID()
-		worker.room.BroadcastExcept(payload, workerUUID)
-	}
+	worker.room.BroadcastAll(payload)
 }
 
 func (worker *Worker) broadcastUserMessage(message string) {
@@ -823,7 +826,6 @@ func (worker *Worker) broadcastPause() {
 	worker.room.BroadcastExcept(payload, workerUUID)
 }
 
-// TODO consider fileLoaded in case some client is not ready
 func (worker *Worker) broadcastStartOnReady() {
 	roomState := worker.room.RoomState()
 	if roomState.video == nil {
@@ -834,7 +836,7 @@ func (worker *Worker) broadcastStartOnReady() {
 		return
 	}
 
-	if worker.room.AllUsersReady() {
+	if worker.room.Ready() {
 		start := Start{Username: worker.userStatus.Username}
 		payload, err := MarshalMessage(start)
 		if err != nil {
@@ -905,23 +907,22 @@ func (worker *Worker) setNextVideo(nextVideo string, oldVideo string, room RoomS
 
 // Evaluates the video states of all clients and broadcasts seek if difference between
 // fastest and slowest clients is too large. Can not seek before the last seek's position.
-func (worker *Worker) handleTimeDifference() {
+func (worker *Worker) handleTimeDifference(videoStatus VideoStatus) {
 	minPosition := worker.room.SlowestEstimatedClientPosition()
 	if minPosition == nil {
 		return
 	}
 
-	state := worker.VideoState()
-	if worker.shouldSeek(minPosition, state.position, state.speed) {
+	if worker.shouldSeek(minPosition, videoStatus.Position, videoStatus.Speed) {
 		worker.room.SetPosition(*minPosition)
 		worker.sendSeek(true)
 	} else {
-		worker.room.SetPosition(*state.position)
+		worker.room.SetPosition(*videoStatus.Position)
 	}
 }
 
 func (worker *Worker) shouldSeek(minPosition *Duration, workerPosition *Duration, speed float64) bool {
-	lastSeek := worker.room.RoomState().lastSeek
+	lastSeek := worker.room.RoomState().lastSeek.Sub(lastSeekEpsilon)
 	if workerPosition == nil || workerPosition.Smaller(lastSeek) {
 		return true
 	}

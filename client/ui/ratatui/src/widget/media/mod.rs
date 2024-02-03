@@ -3,7 +3,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::Line;
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, List, ListItem, ListState, Padding, StatefulWidget, Widget};
-use ratatui_textarea::Input;
+use tui_textarea::Input;
 
 use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
 

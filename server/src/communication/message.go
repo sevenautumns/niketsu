@@ -40,6 +40,7 @@ type VideoStatus struct {
 	Paused     bool      `json:"paused"`
 	Speed      float64   `json:"speed"`
 	FileLoaded bool      `json:"fileLoaded"`
+	Cache      bool      `json:"cache"`
 	Username   string    `json:"username"`
 }
 

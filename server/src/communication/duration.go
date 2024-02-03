@@ -12,7 +12,9 @@ type Duration struct {
 }
 
 func (d Duration) MarshalJSON() ([]byte, error) {
-	return json.Marshal(d.Div(uint64(time.Millisecond)).Uint64())
+	durMillis := d.Div(uint64(time.Millisecond)).Uint64()
+	durMillis = max(durMillis, 0)
+	return json.Marshal(durMillis)
 }
 
 func (d *Duration) UnmarshalJSON(b []byte) error {
@@ -94,4 +96,8 @@ func TimeSub(t time.Time, otherT time.Time) Duration {
 
 func TimeAdd(t time.Time, duration Duration) time.Time {
 	return t.Add(duration.Duration)
+}
+
+func MinDuration(x, y Duration) Duration {
+	return Duration{min(x.Duration, y.Duration)}
 }

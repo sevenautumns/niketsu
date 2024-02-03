@@ -90,11 +90,12 @@ impl StatefulWidget for HelpWidget {
             Row::new(items)
         });
 
-        let table = Table::new(rows).header(header).block(help_block).widths(&[
+        let widths = [
             Constraint::Length(30),
             Constraint::Length(15),
             Constraint::Min(20),
-        ]);
+        ];
+        let table = Table::new(rows, widths).header(header).block(help_block);
         Widget::render(table, area, buf);
     }
 }

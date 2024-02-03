@@ -36,7 +36,6 @@ pub enum MpvEvent {
     MpvPropertyChanged,
     MpvFileLoaded,
     MpvSeek,
-    MpvPlaybackRestart,
     Unparsed,
 }
 
@@ -86,6 +85,15 @@ impl MpvPropertyChanged {
         mpv.status.speed = speed;
         Some(PlayerSpeedChange::new(speed).into())
     }
+
+    fn process_paused_for_cache(self, paused: bool, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
+        if !paused {
+            return None;
+        }
+        mpv.status.paused = true;
+        mpv.pause();
+        Some(PlayerCachePause.into())
+    }
 }
 
 impl MpvEventTrait for MpvPropertyChanged {
@@ -95,6 +103,9 @@ impl MpvEventTrait for MpvPropertyChanged {
                 self.process_pause(paused > 0, mpv)
             }
             (MpvProperty::Speed, PropertyValue::Double(speed)) => self.process_speed(speed, mpv),
+            (MpvProperty::PausedForCache, PropertyValue::Flag(paused)) => {
+                self.process_paused_for_cache(paused > 0, mpv)
+            }
             _ => Option::None,
         }
     }
@@ -127,19 +138,13 @@ impl MpvEventTrait for MpvSeek {
             mpv.status.seeking = false;
             return Option::None;
         }
+        if mpv.eof_reached().unwrap_or_default() {
+            return Some(PlayerFileEnd.into());
+        }
         if let Some(pos) = mpv.get_position() {
             return Some(PlayerPositionChange::new(pos).into());
         }
         None
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct MpvPlaybackRestart;
-
-impl MpvEventTrait for MpvPlaybackRestart {
-    fn process(self, _: &mut Mpv) -> Option<MediaPlayerEvent> {
-        Option::None
     }
 }
 
@@ -157,11 +162,8 @@ impl From<mpv_event> for MpvEvent {
         match event.event_id {
             mpv_event_id::MPV_EVENT_NONE => Self::MpvNone(MpvNone),
             mpv_event_id::MPV_EVENT_SHUTDOWN => Self::MpvShutdown(MpvShutdown),
-            mpv_event_id::MPV_EVENT_FILE_LOADED => Self::MpvFileLoaded(MpvFileLoaded),
+            mpv_event_id::MPV_EVENT_PLAYBACK_RESTART => Self::MpvFileLoaded(MpvFileLoaded),
             mpv_event_id::MPV_EVENT_SEEK => Self::MpvSeek(MpvSeek),
-            mpv_event_id::MPV_EVENT_PLAYBACK_RESTART => {
-                Self::MpvPlaybackRestart(MpvPlaybackRestart)
-            }
             mpv_event_id::MPV_EVENT_PROPERTY_CHANGE => {
                 let name;
                 unsafe {

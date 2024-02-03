@@ -1,7 +1,7 @@
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::widgets::{Paragraph, StatefulWidget, Widget};
-use ratatui_textarea::Input;
+use tui_textarea::Input;
 
 use super::TextAreaWrapper;
 

@@ -19,4 +19,4 @@ libc = "0.2"
 
 [build-dependencies]
 anyhow.workspace = true
-bindgen = "0.68"
+bindgen = "0.69"

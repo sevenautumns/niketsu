@@ -14,6 +14,7 @@ use crossterm::terminal::{
 };
 use futures::future::OptionFuture;
 use futures::{Future, StreamExt};
+use gag::Gag;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::playlist::Video;
@@ -172,6 +173,7 @@ impl RatatuiView {
         let mut event = EventStream::new();
         let mut tick_rate = tokio::time::interval(Duration::from_millis(50));
         let notify = self.model.notify.clone();
+        let _suppress_stderr = Gag::stderr().unwrap();
 
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic| {

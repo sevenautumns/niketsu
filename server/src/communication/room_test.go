@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	gomock "go.uber.org/mock/gomock"
 )
 
 var (
@@ -251,6 +251,8 @@ func TestAppendWorker(t *testing.T) {
 }
 
 // TODO check for status as well
+// TODO check for heap
+// TODO test handle cache
 func TestDeleteWorker(t *testing.T) {
 	testEmptyDeleteWorker(t)
 	testCorrectDeleteWorker(t)
@@ -414,7 +416,7 @@ func getMockClient(t *testing.T, ctrl *gomock.Controller) ClientWorker {
 	return m
 }
 
-func TestAllUsersReady(t *testing.T) {
+func TestReady(t *testing.T) {
 	testAllReady(t)
 	testNotAllReady(t)
 }
@@ -431,35 +433,54 @@ func testAllReady(t *testing.T) {
 func testAllReadyMultipleUsers(t *testing.T, ctrl *gomock.Controller) {
 	mockWorker1 := NewMockClientWorker(ctrl)
 	mockWorker2 := NewMockClientWorker(ctrl)
+	some_uuid := uuid.New()
+	some_uuid2 := uuid.New()
 	room := &Room{
 		workers: []ClientWorker{mockWorker1, mockWorker2},
 		workersStatus: map[uuid.UUID]Status{
 			roomUUIDS[0]: {Ready: true},
 			roomUUIDS[1]: {Ready: true},
 		},
+		state: RoomState{
+			position:     &Duration{0},
+			paused:       true,
+			cacheTracker: CacheTracker{cacheStatus: map[uuid.UUID]bool{some_uuid: true, some_uuid2: true}, length: 2, trueCount: 2},
+		},
 	}
-	allReady := room.AllUsersReady()
+	allReady := room.Ready()
 	require.Equal(t, true, allReady)
 }
 
 func testAllReadyOneUser(t *testing.T, ctrl *gomock.Controller) {
 	mockWorker1 := NewMockClientWorker(ctrl)
+	some_uuid := uuid.New()
 	room := &Room{
 		workers: []ClientWorker{mockWorker1},
 		workersStatus: map[uuid.UUID]Status{
 			roomUUIDS[0]: {Ready: true},
 		},
+		state: RoomState{
+			position:     &Duration{0},
+			paused:       true,
+			cacheTracker: CacheTracker{cacheStatus: map[uuid.UUID]bool{some_uuid: true}, length: 1, trueCount: 1},
+		},
 	}
-	allReady := room.AllUsersReady()
+	allReady := room.Ready()
 	require.Equal(t, true, allReady)
 }
 
 func testAllReadyNoUsers(t *testing.T) {
+	some_uuid := uuid.New()
 	room := &Room{
 		workers: []ClientWorker{},
+		state: RoomState{
+			position:     &Duration{0},
+			paused:       true,
+			cacheTracker: CacheTracker{cacheStatus: map[uuid.UUID]bool{some_uuid: false}, length: 1, trueCount: 0},
+		},
 	}
-	allReady := room.AllUsersReady()
-	require.Equal(t, true, allReady)
+	allReady := room.Ready()
+	require.Equal(t, false, allReady)
 }
 
 func testNotAllReady(t *testing.T) {
@@ -480,7 +501,7 @@ func testNotAllReadyMultipleUsers(t *testing.T, ctrl *gomock.Controller) {
 			roomUUIDS[1]: {Ready: true},
 		},
 	}
-	allReady := room.AllUsersReady()
+	allReady := room.Ready()
 	require.Equal(t, false, allReady)
 }
 
@@ -492,7 +513,7 @@ func testNotAllOneUser(t *testing.T, ctrl *gomock.Controller) {
 			roomUUIDS[0]: {Ready: false},
 		},
 	}
-	allReady := room.AllUsersReady()
+	allReady := room.Ready()
 	require.Equal(t, false, allReady)
 }
 
@@ -681,4 +702,49 @@ func TestShouldBeClosed(t *testing.T) {
 	room.config.Persistent = true
 	shouldNotBeClosed = room.ShouldBeClosed()
 	require.False(t, shouldNotBeClosed)
+}
+
+// TODO more test cases
+func TestHandleCache(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	cacheTracker := NewCacheTracker()
+	uuids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	caches := []bool{false, true, true}
+
+	for i, c := range caches {
+		cacheTracker.SetCache(uuids[i], c)
+	}
+	startMessage := `{"username":"test1","type":"start"}`
+
+	worker1 := getMockClientWithPayload(t, ctrl, uuids[0], []byte(startMessage))
+	worker2 := getMockClientWithPayload(t, ctrl, uuids[1], []byte(startMessage))
+	worker3 := getMockClientWithPayload(t, ctrl, uuids[2], []byte(startMessage))
+
+	room := &Room{
+		workers: []ClientWorker{worker1, worker2, worker3},
+		state: RoomState{
+			position:     &Duration{20 * time.Second},
+			paused:       true,
+			cacheTracker: *cacheTracker,
+		},
+		workersStatus: map[uuid.UUID]Status{
+			uuids[0]: {Ready: true, Username: "test1"},
+			uuids[1]: {Ready: true, Username: "test2"},
+			uuids[1]: {Ready: true, Username: "test3"},
+		},
+	}
+
+	room.HandleCache(true, uuids[0], "test1")
+	require.False(t, room.state.paused)
+}
+
+func getMockClientWithPayload(t *testing.T, ctrl *gomock.Controller, newUUID uuid.UUID, payload []byte) ClientWorker {
+	m := NewMockClientWorker(ctrl)
+	m.EXPECT().
+		SendMessage(gomock.Eq(payload)).
+		MinTimes(1)
+
+	return m
 }
