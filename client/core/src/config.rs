@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
 use anyhow::{bail, Result};
-use directories::ProjectDirs;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use url::Url;
 
+use crate::room::RoomName;
 use crate::user::UserStatus;
+use crate::PROJECT_DIRS;
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
@@ -16,22 +16,29 @@ pub struct Config {
     pub username: String,
     #[serde(default)]
     pub media_dirs: Vec<String>,
+    #[serde(default = "bootstrap_relay", skip_serializing_if = "is_default")]
+    pub relay: String,
     #[serde(default)]
-    pub url: String,
-    #[serde(default)]
-    pub secure: bool,
-    #[serde(default)]
-    pub room: String,
+    pub room: RoomName,
     #[serde(default)]
     pub password: String,
     #[serde(default)]
     pub auto_connect: bool,
 }
 
+// TODO: look up on 89.58.15.23?
+fn bootstrap_relay() -> String {
+    "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
+        .to_string()
+}
+
+fn is_default(value: &String) -> bool {
+    *value == bootstrap_relay()
+}
+
 impl Config {
     fn file_path() -> Result<PathBuf> {
-        let path =
-            ProjectDirs::from("de", "autumnal", "niketsu").map(|p| p.config_dir().to_path_buf());
+        let path = PROJECT_DIRS.as_ref().map(|p| p.config_dir().to_path_buf());
         match path {
             Some(mut path) => {
                 path.push("config.toml");
@@ -41,11 +48,8 @@ impl Config {
         }
     }
 
-    pub fn addr(&self) -> Result<Url> {
-        match self.secure {
-            true => Ok(Url::parse(&format!("wss://{}", self.url))?),
-            false => Ok(Url::parse(&format!("ws://{}", self.url))?),
-        }
+    pub fn addr(&self) -> String {
+        self.relay.clone()
     }
 
     pub fn load() -> Result<Self> {

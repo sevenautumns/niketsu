@@ -6,6 +6,7 @@ members = [
   "client/player/mpv",
   "client/ui/iced",
   "client/ui/ratatui",
+  "relay",
 ]
 resolver = "2"
 
@@ -14,8 +15,8 @@ anyhow = "1"
 strum = { version = "0.25", features = ["derive"] }
 tokio = { version = "1.27", features = [ "full" ]}
 log = "0.4"
-serde = { version = "1.0", features = [ "derive" ] }
-url = "2.3"
+serde = { version = "1.0", features = [ "derive", "rc" ] }
+url = { version = "2.3", features = [ "serde" ] }
 enum_dispatch = "0.3"
 arc-swap = "1.6"
 arcstr = { version = "1.1", features = ["serde"] }

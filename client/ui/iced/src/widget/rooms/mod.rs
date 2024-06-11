@@ -4,14 +4,11 @@ use iced::mouse::Cursor;
 use iced::widget::scrollable::Id;
 use iced::widget::{row, Button, Column, Container, Row, Scrollable, Space, Text};
 use iced::{Element, Length, Rectangle, Renderer, Theme};
-use niketsu_core::rooms::RoomList;
+use niketsu_core::room::UserList;
 use niketsu_core::user::UserStatus;
 
-use self::message::{ClickRoom, RoomsWidgetMessage};
 use crate::message::Message;
 use crate::styling::FileButton;
-
-pub mod message;
 
 // TODO make configurable
 pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
@@ -21,33 +18,21 @@ pub struct RoomsWidget<'a> {
 }
 
 impl<'a> RoomsWidget<'a> {
-    pub fn new(state: &RoomsWidgetState, this_user: &UserStatus, theme: &Theme) -> Self {
-        let mut elements = vec![];
-        let mut rooms: Vec<_> = state.rooms.iter().collect();
-        rooms.sort_by_key(|(k, _)| k.to_string());
-        for room in &state.rooms {
-            let selected = state.selected.eq(room.0);
-            elements.push(
-                Button::new(Container::new(Text::new(room.0.clone())).padding(2))
-                    .on_press(RoomsWidgetMessage::from(ClickRoom(room.0.to_string())).into())
-                    .padding(0)
-                    .width(Length::Fill)
-                    .style(FileButton::theme(selected, true))
-                    .into(),
-            );
-            for user in room.1 {
-                elements.push(
-                    row!(
-                        Space::with_width(Length::Fixed(5.0)),
-                        Button::new(Container::new(user.to_text(this_user, theme)).padding(2))
-                            .padding(0)
-                            .width(Length::Fill)
-                            .style(FileButton::theme(false, true)),
-                    )
-                    .into(),
+    pub fn new(state: &UsersWidgetState, this_user: &UserStatus, theme: &Theme) -> Self {
+        let elements = state
+            .users
+            .iter()
+            .map(|u| {
+                row!(
+                    Space::with_width(Length::Fixed(5.0)),
+                    Button::new(Container::new(u.to_text(this_user, theme)).padding(2))
+                        .padding(0)
+                        .width(Length::Fill)
+                        .style(FileButton::theme(false, true)),
                 )
-            }
-        }
+                .into()
+            })
+            .collect();
 
         Self {
             base: Scrollable::new(Column::with_children(elements).width(Length::Fill))
@@ -159,40 +144,39 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for RoomsWidget<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct RoomsWidgetState {
-    rooms: RoomList,
+pub struct UsersWidgetState {
+    users: UserList,
     last_press: Instant,
     selected: String,
 }
 
-impl Default for RoomsWidgetState {
+impl Default for UsersWidgetState {
     fn default() -> Self {
         Self {
-            rooms: Default::default(),
+            users: Default::default(),
             last_press: Instant::now(),
             selected: Default::default(),
         }
     }
 }
 
-impl RoomsWidgetState {
+impl UsersWidgetState {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn replace_rooms(&mut self, rooms: RoomList) {
-        self.rooms = rooms;
+    pub fn replace_users(&mut self, users: UserList) {
+        self.users = users;
     }
 
-    /// Returns if whether this is a double click or not
-    pub fn is_double_click(&mut self, room: String) -> bool {
+    pub fn is_double_click(&mut self, user: String) -> bool {
         let mut double_click = false;
-        if self.rooms.contains_room(&room) {
-            if self.selected.eq(&room) && self.last_press.elapsed() < MAX_DOUBLE_CLICK_INTERVAL {
+        if self.users.contains_user(&user) {
+            if self.selected.eq(&user) && self.last_press.elapsed() < MAX_DOUBLE_CLICK_INTERVAL {
                 double_click = true;
             }
             self.last_press = Instant::now();
-            self.selected = room;
+            self.selected = user;
         }
         double_click
     }

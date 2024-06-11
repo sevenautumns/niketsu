@@ -2,7 +2,7 @@ use crossterm::event::{Event, KeyCode, KeyEventKind};
 use ratatui::style::Style;
 
 use super::chat::Chat;
-use super::room::Rooms;
+use super::users::Users;
 use super::{MainEventHandler, State};
 use crate::handler::EventHandler;
 use crate::view::{Mode, RatatuiView};
@@ -32,7 +32,7 @@ impl MainEventHandler for Database {
     fn handle_next(&self, view: &mut RatatuiView, event: &crossterm::event::KeyEvent) {
         match event.code {
             KeyCode::Left => view.transition(State::from(Chat {})),
-            KeyCode::Down => view.transition(State::from(Rooms {})),
+            KeyCode::Down => view.transition(State::from(Users {})),
             _ => {}
         }
     }

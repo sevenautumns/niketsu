@@ -1,5 +1,4 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
-use niketsu_core::ui::RoomChange;
 use ratatui::style::Style;
 
 use super::chat_input::ChatInput;
@@ -9,9 +8,9 @@ use super::{EventHandler, MainEventHandler, State};
 use crate::view::{Mode, RatatuiView};
 
 #[derive(Debug, Clone, Copy)]
-pub struct Rooms;
+pub struct Users;
 
-impl EventHandler for Rooms {
+impl EventHandler for Users {
     fn handle(&self, view: &mut RatatuiView, event: &Event) {
         if let Event::Key(key) = event {
             if key.kind == KeyEventKind::Press {
@@ -21,16 +20,10 @@ impl EventHandler for Rooms {
                         view.hover_highlight();
                     }
                     KeyCode::Up => {
-                        view.app.rooms_widget_state.next();
+                        view.app.users_widget_state.next();
                     }
                     KeyCode::Down => {
-                        view.app.rooms_widget_state.previous();
-                    }
-                    KeyCode::Enter => {
-                        let room = view.app.rooms_widget_state.get_current_room();
-                        if let Some(room_name) = room {
-                            view.model.change_room(RoomChange::from(room_name))
-                        }
+                        view.app.users_widget_state.previous();
                     }
                     _ => {}
                 }
@@ -39,7 +32,7 @@ impl EventHandler for Rooms {
     }
 }
 
-impl MainEventHandler for Rooms {
+impl MainEventHandler for Users {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
             KeyCode::Up => view.transition(State::from(Database {})),
@@ -50,6 +43,6 @@ impl MainEventHandler for Rooms {
     }
 
     fn set_style(&self, view: &mut RatatuiView, style: Style) {
-        view.app.rooms_widget_state.set_style(style);
+        view.app.users_widget_state.set_style(style);
     }
 }

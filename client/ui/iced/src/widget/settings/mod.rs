@@ -6,8 +6,8 @@ use niketsu_core::config::Config;
 
 use self::message::{
     Abort, Activate, AddPath, ApplyClose, ApplyCloseSave, AutoConnectCheckbox, ConnectApplyClose,
-    ConnectApplyCloseSave, DeletePath, PasswordInput, PathInput, Reset, RoomInput, SecureCheckbox,
-    SettingsWidgetMessage, UrlInput, UsernameInput,
+    ConnectApplyCloseSave, DeletePath, PasswordInput, PathInput, Reset, RoomInput,
+    SettingsWidgetMessage, UsernameInput,
 };
 use super::overlay::ElementOverlayConfig;
 use crate::message::Message;
@@ -96,39 +96,18 @@ impl<'a> SettingsWidget<'a> {
                 Row::new()
                     .push(
                         Column::new()
-                            .push(
-                                Button::new("Server Address").style(FileButton::theme(false, true)),
-                            )
+                            .push(Button::new("Room").style(FileButton::theme(false, true)))
                             .push(Button::new("Password").style(FileButton::theme(false, true)))
                             .push(Button::new("Username").style(FileButton::theme(false, true)))
-                            .push(Button::new("Room").style(FileButton::theme(false, true)))
                             .push(Button::new("Auto Connect").style(FileButton::theme(false, true)))
                             .spacing(SPACING)
                             .width(Length::Shrink),
                     )
                     .push(
                         Column::new()
-                            .push(
-                                Row::new()
-                                    .push(
-                                        TextInput::new("Server Address", &state.config.url)
-                                            .on_input(|u| {
-                                                SettingsWidgetMessage::from(UrlInput(u)).into()
-                                            }),
-                                    )
-                                    .push(
-                                        Container::new(
-                                            Checkbox::new("Secure", state.config.secure, |b| {
-                                                SettingsWidgetMessage::from(SecureCheckbox(b))
-                                                    .into()
-                                            })
-                                            .spacing(SPACING),
-                                        )
-                                        .center_y()
-                                        .height(text_size + 15.0),
-                                    )
-                                    .spacing(SPACING),
-                            )
+                            .push(TextInput::new("Room", &state.config.room).on_input(|u| {
+                                SettingsWidgetMessage::from(RoomInput(u.into())).into()
+                            }))
                             .push(
                                 TextInput::new("Password", &state.config.password)
                                     .on_input(|u| {
@@ -140,10 +119,6 @@ impl<'a> SettingsWidget<'a> {
                                 TextInput::new("Username", &state.config.username).on_input(|u| {
                                     SettingsWidgetMessage::from(UsernameInput(u)).into()
                                 }),
-                            )
-                            .push(
-                                TextInput::new("Room", &state.config.room)
-                                    .on_input(|u| SettingsWidgetMessage::from(RoomInput(u)).into()),
                             )
                             .push(
                                 Container::new(

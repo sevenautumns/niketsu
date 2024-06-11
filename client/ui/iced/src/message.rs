@@ -6,7 +6,6 @@ use super::main_window::message::MainMessage;
 use super::widget::chat::message::ChatWidgetMessage;
 use super::widget::database::message::DatabaseWidgetMessage;
 use super::widget::playlist::message::PlaylistWidgetMessage;
-use super::widget::rooms::message::RoomsWidgetMessage;
 use crate::view::ViewModel;
 use crate::widget::file_search::message::FileSearchWidgetMessage;
 use crate::widget::settings::message::SettingsWidgetMessage;
@@ -24,7 +23,6 @@ pub enum Message {
     EventOccured,
     //
     SettingsWidget(SettingsWidgetMessage),
-    RoomsWidget(RoomsWidgetMessage),
     PlaylistWidget(PlaylistWidgetMessage),
     ChatWidget(ChatWidgetMessage),
     DatabaseWidget(DatabaseWidgetMessage),

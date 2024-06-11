@@ -4,7 +4,8 @@ use enum_dispatch::enum_dispatch;
 use iced::Command;
 use niketsu_core::config::Config;
 use niketsu_core::log;
-use niketsu_core::ui::{RoomChange, ServerChange, UiModel};
+use niketsu_core::room::RoomName;
+use niketsu_core::ui::{ServerChange, UiModel};
 
 use super::SettingsWidgetState;
 use crate::message::{Message, MessageHandler};
@@ -32,7 +33,6 @@ pub enum SettingsWidgetMessage {
     AddPath,
     RoomInput,
     PasswordInput,
-    SecureCheckbox,
     AutoConnectCheckbox,
 }
 
@@ -78,12 +78,9 @@ impl SettingsWidgetMessageTrait for ConnectApplyClose {
         ApplyClose.handle(state, model);
         let config = state.config();
         model.change_server(ServerChange {
-            addr: config.url.clone(),
-            secure: config.secure,
-            password: Some(config.password.clone()),
-            room: RoomChange {
-                room: config.room.clone(),
-            },
+            addr: config.relay.clone(),
+            password: config.password.clone(),
+            room: config.room.clone(),
         });
     }
 }
@@ -136,7 +133,7 @@ pub struct UrlInput(pub String);
 
 impl SettingsWidgetMessageTrait for UrlInput {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
-        state.config.url = self.0;
+        state.config.relay = self.0;
     }
 }
 
@@ -172,7 +169,7 @@ impl SettingsWidgetMessageTrait for AddPath {
 }
 
 #[derive(Debug, Clone)]
-pub struct RoomInput(pub String);
+pub struct RoomInput(pub RoomName);
 
 impl SettingsWidgetMessageTrait for RoomInput {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
@@ -186,15 +183,6 @@ pub struct PasswordInput(pub String);
 impl SettingsWidgetMessageTrait for PasswordInput {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
         state.config.password = self.0;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SecureCheckbox(pub bool);
-
-impl SettingsWidgetMessageTrait for SecureCheckbox {
-    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
-        state.config.secure = self.0;
     }
 }
 

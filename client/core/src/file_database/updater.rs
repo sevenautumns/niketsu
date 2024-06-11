@@ -1,12 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::task::Poll;
 
 use anyhow::Result;
-use futures::stream::FusedStream;
-use futures::{Stream, StreamExt};
 use log::warn;
-use tokio::fs::{DirEntry, ReadDir};
+use tokio::fs::DirEntry;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -79,8 +76,8 @@ impl FileDatabaseUpdater {
 
     async fn crawl_dir(&mut self) -> Result<()> {
         let permit = self.semaphore.clone().acquire_owned();
-        let mut dir = FusedReadDir::new(self.path.clone()).await?;
-        while let Some(entry) = dir.next().await {
+        let mut read_dir = tokio::fs::read_dir(&self.path).await?;
+        while let Ok(Some(entry)) = read_dir.next_entry().await {
             self.handle_entry(entry).await;
         }
         drop(permit);
@@ -122,49 +119,5 @@ impl FileDatabaseUpdater {
                 Ok(Ok(paths)) => self.paths.extend(paths),
             }
         }
-    }
-}
-
-#[derive(Debug)]
-struct FusedReadDir {
-    dir: ReadDir,
-    ended: bool,
-}
-
-impl FusedReadDir {
-    pub async fn new(path: PathBuf) -> Result<Self> {
-        Ok(Self {
-            dir: tokio::fs::read_dir(path).await?,
-            ended: false,
-        })
-    }
-}
-
-impl Stream for FusedReadDir {
-    type Item = DirEntry;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        let reader = std::pin::Pin::<&mut FusedReadDir>::into_inner(self);
-        let entry = reader.dir.poll_next_entry(cx);
-        let Poll::Ready(entry) = entry else {
-            return Poll::Pending;
-        };
-        let entry = entry.unwrap_or_else(|e| {
-            warn!("{e:?}");
-            None
-        });
-        if entry.is_none() {
-            reader.ended = true;
-        }
-        Poll::Ready(entry)
-    }
-}
-
-impl FusedStream for FusedReadDir {
-    fn is_terminated(&self) -> bool {
-        self.ended
     }
 }

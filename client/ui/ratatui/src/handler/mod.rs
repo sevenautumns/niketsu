@@ -12,7 +12,7 @@ use self::login::Login;
 use self::media::MediaDir;
 use self::options::Options;
 use self::playlist::Playlist;
-use self::room::Rooms;
+use self::users::Users;
 use crate::view::{Mode, RatatuiView};
 
 pub(crate) mod chat;
@@ -25,7 +25,7 @@ pub(crate) mod login;
 pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
-pub(crate) mod room;
+pub(crate) mod users;
 
 #[enum_dispatch]
 pub trait EventHandler {
@@ -61,7 +61,7 @@ pub enum State {
     Chat(Chat),
     ChatInput(ChatInput),
     Database(Database),
-    Rooms(Rooms),
+    Users(Users),
     Playlist(Playlist),
 }
 

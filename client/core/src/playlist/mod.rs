@@ -1,13 +1,15 @@
 use std::ops::{Deref, Range, RangeBounds};
+use std::slice::Iter;
 use std::sync::Arc;
 
 use arcstr::ArcStr;
-use im::Vector;
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::file_database::FileStore;
 
+pub mod file;
 pub mod handler;
 
 #[cfg_attr(test, mockall::automock)]
@@ -20,8 +22,9 @@ pub trait PlaylistHandlerTrait: std::fmt::Debug + Send {
     fn replace(&mut self, playlist: Playlist);
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Video {
+    #[serde(flatten)]
     inner: Arc<VideoInner>,
 }
 
@@ -40,10 +43,10 @@ impl From<VideoInner> for Video {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VideoInner {
     File(ArcStr),
-    Url(Url),
+    Url(Arc<Url>),
 }
 
 impl VideoInner {
@@ -84,7 +87,7 @@ impl From<&str> for Video {
 impl From<&str> for VideoInner {
     fn from(value: &str) -> Self {
         if let Ok(url) = Url::parse(value) {
-            Self::Url(url)
+            Self::Url(Arc::new(url))
         } else {
             Self::File(value.into())
         }
@@ -100,25 +103,25 @@ impl From<&ArcStr> for Video {
 impl From<&ArcStr> for VideoInner {
     fn from(value: &ArcStr) -> Self {
         if let Ok(url) = Url::parse(value) {
-            Self::Url(url)
+            Self::Url(Arc::new(url))
         } else {
             Self::File(value.clone())
         }
     }
 }
 
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Playlist {
-    list: Vector<Video>,
+    playlist: Vec<Video>,
 }
 
 impl Playlist {
-    pub fn iter(&self) -> PlaylistIter<'_> {
-        self.into_iter()
+    pub fn iter(&self) -> Iter<'_, Video> {
+        self.playlist.iter()
     }
 
     pub fn find(&self, video: &Video) -> Option<usize> {
-        self.list
+        self.playlist
             .iter()
             .enumerate()
             .find(|(_, v)| v.eq(&video))
@@ -126,141 +129,110 @@ impl Playlist {
     }
 
     pub fn len(&self) -> usize {
-        self.list.len()
+        self.playlist.len()
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.list.is_empty()
+        self.playlist.is_empty()
     }
 
     pub fn get(&self, index: usize) -> Option<&Video> {
-        self.list.get(index)
+        self.playlist.get(index)
     }
 
     pub fn get_range(&self, from: usize, to: usize) -> impl Iterator<Item = &Video> {
-        self.list.iter().skip(from).take(to - from + 1)
+        self.playlist.iter().skip(from).take(to - from + 1)
     }
 
     pub fn move_video(&mut self, video: &Video, index: usize) {
         let mut new_index = index;
         if let Some(old_index) = self.find(video) {
-            let video = self.list.remove(old_index);
-            new_index = new_index.min(self.list.len());
-            self.list.insert(new_index, video);
+            let video = self.playlist.remove(old_index);
+            new_index = new_index.min(self.playlist.len());
+            self.playlist.insert(new_index, video);
         } else {
-            new_index = new_index.min(self.list.len());
-            self.list.insert(new_index, video.clone());
+            new_index = new_index.min(self.playlist.len());
+            self.playlist.insert(new_index, video.clone());
         }
     }
 
     pub fn move_range(&mut self, range: Range<usize>, mut target_index: usize) {
-        let slice = self.list.slice(range.clone());
+        let slice = self.playlist.drain(range.clone()).collect_vec();
 
         let target_adjustment = target_index
             .saturating_sub(range.start)
             .min(range.end - range.start);
         target_index -= target_adjustment;
 
-        let rest = self.list.split_off(target_index);
-        self.list.append(slice);
-        self.list.append(rest);
+        let rest = self.playlist.split_off(target_index);
+        self.playlist.extend(slice);
+        self.playlist.extend(rest);
     }
 
     pub fn move_indices(&mut self, indices: &[usize], mut target_index: usize) {
         let indices = indices.iter().unique().sorted().copied();
-        let mut moved = Vector::default();
+        let mut moved = Vec::default();
         for i in indices.enumerate().map(|(offset, i)| i - offset) {
-            moved.push_back(self.list.remove(i));
+            moved.push(self.playlist.remove(i));
             if target_index > i {
                 target_index -= 1;
             }
         }
-        let target_index = target_index.min(self.list.len());
-        let rest = self.list.split_off(target_index);
-        self.list.append(moved);
-        self.list.append(rest);
+        let target_index = target_index.min(self.playlist.len());
+        let rest = self.playlist.split_off(target_index);
+        self.playlist.extend(moved);
+        self.playlist.extend(rest);
     }
 
     pub fn remove(&mut self, index: usize) {
-        if self.list.get(index).is_some() {
-            self.list.remove(index);
+        if self.playlist.get(index).is_some() {
+            self.playlist.remove(index);
         }
     }
 
     pub fn remove_by_video(&mut self, video: &Video) -> Option<Video> {
         if let Some(index) = self.find(video) {
-            return Some(self.list.remove(index));
+            return Some(self.playlist.remove(index));
         }
         None
     }
 
     pub fn push(&mut self, video: Video) {
         if !self.contains(&video) {
-            self.list.push_back(video);
+            self.playlist.push(video);
         }
     }
 
     pub fn append(&mut self, videos: impl Iterator<Item = Video>) {
-        self.list.append(videos.collect())
+        self.playlist.extend(videos.collect_vec())
     }
 
     pub fn insert(&mut self, index: usize, video: Video) {
         if !self.contains(&video) {
-            self.list.insert(index, video)
+            self.playlist.insert(index, video)
         }
     }
 
     pub fn append_at(&mut self, index: usize, videos: impl Iterator<Item = Video>) {
-        let rest = self.list.split_off(index);
-        self.list.append(videos.collect());
-        self.list.append(rest);
+        let rest = self.playlist.split_off(index);
+        self.playlist.extend(videos.collect_vec());
+        self.playlist.extend(rest);
     }
 
     pub fn remove_range<R: RangeBounds<usize>>(&mut self, range: R) -> Vec<Video> {
-        self.list.slice(range).into_iter().collect_vec()
+        self.playlist.drain(range).collect_vec()
     }
 
     pub fn contains(&mut self, video: &Video) -> bool {
-        self.list.contains(video)
+        self.playlist.contains(video)
     }
 }
 
 impl<'a> FromIterator<&'a str> for Playlist {
     fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
         let list = iter.into_iter().map(Video::from).collect();
-        Self { list }
-    }
-}
-
-impl<'a> FromIterator<&'a ArcStr> for Playlist {
-    fn from_iter<T: IntoIterator<Item = &'a ArcStr>>(iter: T) -> Self {
-        let list = iter.into_iter().map(Video::from).collect();
-        Self { list }
-    }
-}
-
-impl<'a> IntoIterator for &'a Playlist {
-    type Item = &'a Video;
-
-    type IntoIter = PlaylistIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        PlaylistIter {
-            iter: self.list.iter(),
-        }
-    }
-}
-
-pub struct PlaylistIter<'a> {
-    iter: im::vector::Iter<'a, Video>,
-}
-
-impl<'a> Iterator for PlaylistIter<'a> {
-    type Item = &'a Video;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next()
+        Self { playlist: list }
     }
 }
 
@@ -461,7 +433,7 @@ mod tests {
 
         // Verify that the returned range contains the expected videos.
         assert_eq!(range_result.len(), 3);
-        assert_eq!(range_result.get(0), Some(&&video2));
+        assert_eq!(range_result.first(), Some(&&video2));
         assert_eq!(range_result.get(1), Some(&&video3));
         assert_eq!(range_result.get(2), Some(&&video4));
     }
@@ -641,21 +613,6 @@ mod tests {
         assert_eq!(playlist.get(0), Some(&video1));
         assert_eq!(playlist.get(1), Some(&video2));
         assert_eq!(playlist.get(2), Some(&video3));
-    }
-
-    #[test]
-    fn test_playlist_from_iter_arcstr() {
-        let arcstr1 = ArcStr::from("ArcStr 1");
-        let arcstr2 = ArcStr::from("ArcStr 2");
-        let arcstr3 = ArcStr::from("ArcStr 3");
-
-        let playlist: Playlist = vec![&arcstr1, &arcstr2, &arcstr3].into_iter().collect();
-
-        // Verify that the playlist contains the expected videos.
-        assert_eq!(playlist.len(), 3);
-        assert_eq!(playlist.get(0), Some(&Video::from(&arcstr1)));
-        assert_eq!(playlist.get(1), Some(&Video::from(&arcstr2)));
-        assert_eq!(playlist.get(2), Some(&Video::from(&arcstr3)));
     }
 
     #[test]
@@ -895,7 +852,7 @@ mod tests {
     fn test_no_duplicate_elements() {
         let mut playlist = Playlist::default();
         let video1 = Video::from("Video 1");
-        let video2 = Video::from("Video 2");
+        let video2 = Video::from("http://video_2");
 
         // Append Video 1 twice to create a duplicate.
         playlist.push(video1.clone());

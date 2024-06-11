@@ -10,16 +10,15 @@ use log::{trace, Level};
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
 
-use super::communicator::{
-    EndpointInfo, NiketsuJoin, NiketsuPlaylist, NiketsuSelect, NiketsuUserMessage,
-};
+use super::communicator::{EndpointInfo, PlaylistMsg, SelectMsg, UserMessageMsg};
+use super::player::MediaPlayerTrait;
 use super::playlist::Video;
 use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
 use crate::config::Config;
 use crate::file_database::FileStore;
 use crate::playlist::Playlist;
-use crate::rooms::RoomList;
+use crate::room::{RoomName, UserList};
 use crate::util::{Observed, RingBuffer};
 
 #[cfg_attr(test, mockall::automock)]
@@ -29,7 +28,7 @@ pub trait UserInterfaceTrait: std::fmt::Debug + Send {
     fn file_database(&mut self, db: FileStore);
     fn playlist(&mut self, playlist: Playlist);
     fn video_change(&mut self, video: Option<Video>);
-    fn room_list(&mut self, room_list: RoomList);
+    fn user_list(&mut self, user_list: UserList);
     fn user_update(&mut self, user: UserChange);
     fn player_message(&mut self, msg: PlayerMessage);
     fn username_change(&mut self, username: String);
@@ -43,7 +42,6 @@ pub enum UserInterfaceEvent {
     PlaylistChange,
     VideoChange,
     ServerChange,
-    RoomChange,
     UserChange,
     UserMessage,
     FileDatabaseChange,
@@ -58,12 +56,12 @@ impl EventHandler for PlaylistChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("playlist change message");
         let actor = model.config.username.clone();
-        let playlist = self.playlist.iter().map(|v| v.as_str().into()).collect();
+        let playlist = self.playlist.clone();
 
         model.playlist.replace(self.playlist);
         model
             .communicator
-            .send(NiketsuPlaylist { actor, playlist }.into())
+            .send(PlaylistMsg { actor, playlist }.into())
     }
 }
 
@@ -80,7 +78,7 @@ impl EventHandler for VideoChange {
         let position = Duration::ZERO;
         model.playlist.select_playing(&self.video);
         model.communicator.send(
-            NiketsuSelect {
+            SelectMsg {
                 actor,
                 filename,
                 position,
@@ -97,16 +95,16 @@ impl EventHandler for VideoChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerChange {
     pub addr: String,
-    pub secure: bool,
-    pub password: Option<String>,
-    pub room: RoomChange,
+    pub password: String,
+    pub room: RoomName,
 }
 
 impl From<ServerChange> for EndpointInfo {
     fn from(value: ServerChange) -> Self {
         Self {
+            room: value.room,
+            password: value.password,
             addr: value.addr,
-            secure: value.secure,
         }
     }
 }
@@ -114,38 +112,8 @@ impl From<ServerChange> for EndpointInfo {
 impl EventHandler for ServerChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("server change message");
-        model.config.password = self.password.clone().unwrap_or_default();
-        model.communicator.connect(self.clone().into());
-        self.room.handle(model);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RoomChange {
-    pub room: String,
-}
-
-impl From<String> for RoomChange {
-    fn from(value: String) -> Self {
-        Self { room: value }
-    }
-}
-
-impl EventHandler for RoomChange {
-    fn handle(self, model: &mut CoreModel) {
-        trace!("room change message");
-        let room = self.room;
-        let username = model.config.username.clone();
-        let password = model.config.password.clone();
-        model.config.room = room.clone();
-        model.communicator.send(
-            NiketsuJoin {
-                password,
-                room,
-                username,
-            }
-            .into(),
-        );
+        model.config.password.clone_from(&self.password);
+        model.communicator.connect(self.into());
     }
 }
 
@@ -178,7 +146,7 @@ impl EventHandler for UserMessage {
         let message = self.message;
         model
             .communicator
-            .send(NiketsuUserMessage { actor, message }.into())
+            .send(UserMessageMsg { actor, message }.into())
     }
 }
 
@@ -290,7 +258,7 @@ impl UserInterface {
             file_database_status: Observed::<_>::default_with_notify(&notify),
             playlist: Observed::<_>::default_with_notify(&notify),
             playing_video: Observed::<_>::default_with_notify(&notify),
-            room_list: Observed::<_>::default_with_notify(&notify),
+            user_list: Observed::<_>::default_with_notify(&notify),
             user: Observed::<_>::new(user, &notify),
             messages: Observed::new(RingBuffer::new(1000), &notify),
             events: tx,
@@ -325,8 +293,8 @@ impl UserInterfaceTrait for UserInterface {
         self.model.playing_video.set(video);
     }
 
-    fn room_list(&mut self, room_list: RoomList) {
-        self.model.room_list.set(room_list);
+    fn user_list(&mut self, room_list: UserList) {
+        self.model.user_list.set(room_list);
     }
 
     fn user_update(&mut self, user: UserChange) {
@@ -358,7 +326,7 @@ pub struct UiModel {
     pub file_database_status: Observed<f32>,
     pub playlist: Observed<Playlist>,
     pub playing_video: Observed<Option<Video>>,
-    pub room_list: Observed<RoomList>,
+    pub user_list: Observed<UserList>,
     pub user: Observed<UserStatus>,
     pub messages: Observed<RingBuffer<PlayerMessage>>,
     pub events: MpscSender<UserInterfaceEvent>,
@@ -452,15 +420,6 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn change_room(&self, request: RoomChange) {
-        trace!("change room");
-        let res = self
-            .events
-            .send(UserInterfaceEvent::RoomChange(request))
-            .map_err(anyhow::Error::from);
-        crate::log!(res)
-    }
-
     pub fn change_server(&self, request: ServerChange) {
         trace!("change server");
         let res = self
@@ -496,13 +455,12 @@ impl UiModel {
 mod tests {
     use std::time::Duration;
 
-    use arcstr::ArcStr;
     use mockall::predicate::{always, eq};
     use tokio::sync::Notify;
 
     use super::*;
     use crate::builder::CoreBuilder;
-    use crate::communicator::{MockCommunicatorTrait, NiketsuUserStatus, OutgoingMessage};
+    use crate::communicator::{MockCommunicatorTrait, OutgoingMessage};
     use crate::config::Config;
     use crate::file_database::{FileEntry, MockFileDatabaseTrait};
     use crate::player::MockMediaPlayerTrait;
@@ -518,15 +476,14 @@ mod tests {
         let mut playlist_handler = MockPlaylistHandlerTrait::default();
 
         let user = String::from("max");
-        let videos: [ArcStr; 2] = ["video1".into(), "video2".into()];
-        let playlist = Playlist::from_iter(videos.iter());
+        let playlist = Playlist::from_iter(["video1", "video2"]);
         let config = Config {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(NiketsuPlaylist {
+        let message = OutgoingMessage::from(PlaylistMsg {
             actor: user.clone(),
-            playlist: videos.into_iter().collect(),
+            playlist: playlist.clone(),
         });
 
         playlist_handler
@@ -570,7 +527,7 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(NiketsuSelect {
+        let message = OutgoingMessage::from(SelectMsg {
             actor: user.clone(),
             filename: Some("video1".to_string()),
             position: pos,
@@ -617,32 +574,22 @@ mod tests {
 
         let user = String::from("max");
         let addr = String::from("duckduckgo.com");
-        let secure = true;
-        let password = Some(String::from("passwd"));
-        let room: RoomChange = String::from("room1").into();
+        let password = String::from("passwd");
+        let room = arcstr::literal!("room1");
         let config = Config {
             username: user.clone(),
             ..Default::default()
         };
         let endpoint = EndpointInfo {
             addr: addr.clone(),
-            secure,
+            password: password.clone(),
+            room: room.clone(),
         };
-        let message = OutgoingMessage::from(NiketsuJoin {
-            password: password.clone().unwrap(),
-            room: room.room.clone(),
-            username: user.clone(),
-        });
 
         communicator
             .expect_connect()
             .once()
             .with(eq(endpoint))
-            .return_const(());
-        communicator
-            .expect_send()
-            .once()
-            .with(eq(message))
             .return_const(());
 
         let mut core = CoreBuilder::builder()
@@ -656,56 +603,10 @@ mod tests {
 
         let change = ServerChange {
             addr,
-            secure,
             password,
             room: room.clone(),
         };
         change.handle(&mut core.model);
-
-        assert_eq!(core.model.config.room, room.room);
-    }
-
-    #[test]
-    fn test_room_change() {
-        let mut communicator = MockCommunicatorTrait::default();
-        let player = MockMediaPlayerTrait::default();
-        let ui = MockUserInterfaceTrait::default();
-        let file_database = MockFileDatabaseTrait::default();
-        let playlist_handler = MockPlaylistHandlerTrait::default();
-
-        let user = String::from("max");
-        let password = String::from("passwd");
-        let room = String::from("room1");
-        let config = Config {
-            username: user.clone(),
-            password: password.clone(),
-            ..Default::default()
-        };
-        let message = OutgoingMessage::from(NiketsuJoin {
-            password: password.clone(),
-            room: room.clone(),
-            username: user.clone(),
-        });
-
-        communicator
-            .expect_send()
-            .once()
-            .with(eq(message))
-            .return_const(());
-
-        let mut core = CoreBuilder::builder()
-            .communicator(Box::new(communicator))
-            .player(Box::new(player))
-            .ui(Box::new(ui))
-            .file_database(Box::new(file_database))
-            .playlist(Box::new(playlist_handler))
-            .config(config)
-            .build();
-
-        let change = RoomChange { room: room.clone() };
-        change.handle(&mut core.model);
-
-        assert_eq!(core.model.config.room, room);
     }
 
     #[test]
@@ -723,9 +624,9 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(NiketsuUserStatus {
+        let message = OutgoingMessage::from(UserStatus {
             ready,
-            username: user_new.clone(),
+            name: user_new.clone(),
         });
 
         communicator
@@ -770,7 +671,7 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(NiketsuUserMessage {
+        let message = OutgoingMessage::from(UserMessageMsg {
             actor: user.clone(),
             message: user_msg.clone(),
         });
@@ -870,7 +771,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -896,7 +797,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -922,7 +823,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user.clone(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -945,7 +846,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -973,7 +874,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -997,7 +898,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -1013,31 +914,6 @@ mod tests {
     }
 
     #[test]
-    fn test_change_room() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let notify = Arc::new(Notify::new());
-        let ui_model = UiModel {
-            file_database: Observed::new(FileStore::default(), &notify),
-            file_database_status: Observed::new(0.0, &notify),
-            playlist: Observed::new(Playlist::default(), &notify),
-            playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
-            user: Observed::new(UserStatus::default(), &notify),
-            messages: Observed::new(RingBuffer::new(10), &notify),
-            events: tx,
-            notify: notify.clone(),
-        };
-
-        let room = String::from("room1");
-        let request = RoomChange { room: room.clone() };
-
-        ui_model.change_room(request.clone());
-
-        let received_event = rx.try_recv().unwrap();
-        assert_eq!(received_event, request.into());
-    }
-
-    #[test]
     fn test_change_server() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let notify = Arc::new(Notify::new());
@@ -1046,7 +922,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -1054,12 +930,10 @@ mod tests {
         };
 
         let addr = String::from("duckduckgo.com");
-        let secure = true;
-        let password = Some(String::from("passwd"));
-        let room: RoomChange = String::from("room1").into();
+        let password = String::from("passwd");
+        let room = arcstr::literal!("room1");
         let request = ServerChange {
             addr,
-            secure,
             password,
             room,
         };
@@ -1078,7 +952,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -1104,7 +978,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,

@@ -32,9 +32,13 @@ impl FuzzySearchWidgetState {
 
     fn setup_input_field(&mut self) {
         self.input_field
-            .set_textarea_style(self.style, self.style.dark_gray().on_white());
-        self.input_field
-            .set_block(Block::default().padding(Padding::new(1, 0, 0, 0)));
+            .set_default_style()
+            .set_block(
+                Block::default()
+                    .borders(Borders::NONE)
+                    .padding(Padding::new(1, 0, 0, 0)),
+            )
+            .placeholder("Enter your search");
     }
 
     pub fn get_input(&self) -> String {
@@ -171,8 +175,8 @@ impl StatefulWidget for FuzzySearchWidget {
             .gray();
 
         let layout = Layout::default()
-            .constraints([Constraint::Length(1), Constraint::Min(3)].as_ref())
-            .margin(1)
+            .constraints([Constraint::Length(2), Constraint::Min(3)].as_ref())
+            .horizontal_margin(1)
             .split(area);
 
         let search_result: Vec<ListItem> = match &state.current_result {
@@ -209,14 +213,13 @@ impl StatefulWidget for FuzzySearchWidget {
                     .style(state.style)
                     .title("Results")
                     .borders(Borders::TOP)
-                    .padding(Padding::new(1, 1, 1, 1)),
+                    .padding(Padding::new(1, 0, 0, 1)),
             )
             .highlight_style(Style::default().fg(Color::Cyan))
             .highlight_symbol("> ");
 
-        let input_field = state.input_field.clone();
         outer_block.render(area, buf);
-        input_field.widget().render(layout[0], buf);
+        state.input_field.widget().render(layout[0], buf);
         StatefulWidget::render(search_list, layout[1], buf, state.list_state.inner());
     }
 }

@@ -2,7 +2,6 @@ use std::fs::File;
 
 use anyhow::Result;
 use chrono::Local;
-use directories::ProjectDirs;
 use log::{debug, LevelFilter, Log};
 use simplelog::{
     CombinedLogger, Config as LogConfig, ConfigBuilder, SharedLogger, TermLogger, WriteLogger,
@@ -10,6 +9,7 @@ use simplelog::{
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::ui::{MessageSource, PlayerMessage, PlayerMessageInner};
+use crate::PROJECT_DIRS;
 
 pub fn setup_logger(
     term_filter: LevelFilter,
@@ -57,9 +57,7 @@ fn setup_chat_logger(filter: LevelFilter) -> (Option<Box<dyn SharedLogger>>, Opt
 
 fn setup_file_logger() -> Option<Box<dyn SharedLogger>> {
     debug!("setup file logger");
-    let mut log_file = ProjectDirs::from("de", "autumnal", "niketsu")?
-        .cache_dir()
-        .to_path_buf();
+    let mut log_file = PROJECT_DIRS.as_ref()?.cache_dir().to_path_buf();
     std::fs::create_dir_all(log_file.clone()).ok()?;
     log_file.push("niketsu.log");
     Some(WriteLogger::new(

@@ -3,7 +3,8 @@ use std::time::Duration;
 use log::trace;
 use tokio::time::Interval;
 
-use super::communicator::NiketsuVideoStatus;
+use super::communicator::VideoStatusMsg;
+use super::player::MediaPlayerTrait;
 use super::{CoreModel, EventHandler};
 
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
@@ -40,7 +41,7 @@ impl EventHandler for Heartbeat {
         let cache = model.player.cache_available();
         let file_loaded = model.player.video_loaded();
         model.communicator.send(
-            NiketsuVideoStatus {
+            VideoStatusMsg {
                 filename,
                 position,
                 speed,
@@ -96,7 +97,7 @@ mod tests {
         let paused = true;
         let config = Config::default();
         let cache = true;
-        let message = OutgoingMessage::from(NiketsuVideoStatus {
+        let message = OutgoingMessage::from(VideoStatusMsg {
             filename: Some(video.to_string()),
             position,
             speed,

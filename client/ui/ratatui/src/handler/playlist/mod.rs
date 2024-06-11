@@ -3,7 +3,7 @@ use niketsu_core::playlist::Video;
 use ratatui::style::Style;
 
 use super::chat_input::ChatInput;
-use super::room::Rooms;
+use super::users::Users;
 use super::{MainEventHandler, State};
 use crate::handler::EventHandler;
 use crate::view::{Mode, RatatuiView};
@@ -78,7 +78,7 @@ impl MainEventHandler for Playlist {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
             KeyCode::Left => view.transition(State::from(ChatInput {})),
-            KeyCode::Up => view.transition(State::from(Rooms {})),
+            KeyCode::Up => view.transition(State::from(Users {})),
             _ => {}
         }
     }

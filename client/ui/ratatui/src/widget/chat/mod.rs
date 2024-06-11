@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use niketsu_core::ui::PlayerMessage;
 use niketsu_core::user::UserStatus;
+use niketsu_core::util::RingBuffer;
 use ratatui::prelude::{Buffer, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols::scrollbar;
@@ -19,7 +22,7 @@ pub struct ChatWidgetState {
     list_state: ListStateWrapper,
     user: UserStatus,
     style: Style,
-    messages: Vec<PlayerMessage>,
+    messages: Arc<RingBuffer<PlayerMessage>>,
 }
 
 impl ChatWidgetState {
@@ -27,7 +30,7 @@ impl ChatWidgetState {
         self.style = style;
     }
 
-    pub fn set_messages(&mut self, messages: Vec<PlayerMessage>) {
+    pub fn set_messages(&mut self, messages: Arc<RingBuffer<PlayerMessage>>) {
         self.messages = messages;
     }
 
@@ -146,7 +149,7 @@ impl StatefulWidget for ChatWidget {
         let mut state = state.vertical_scroll_state;
         state = state.content_length(messages_len);
         scrollbar.render(
-            area.inner(&Margin {
+            area.inner(Margin {
                 vertical: 1,
                 horizontal: 0,
             }),

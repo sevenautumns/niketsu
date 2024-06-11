@@ -18,7 +18,8 @@ use gag::Gag;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::playlist::Video;
-use niketsu_core::ui::{RoomChange, ServerChange, UiModel, UserInterface};
+use niketsu_core::room::RoomName;
+use niketsu_core::ui::{ServerChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
@@ -38,7 +39,7 @@ use crate::widget::login::LoginWidgetState;
 use crate::widget::media::{MediaDirWidget, MediaDirWidgetState};
 use crate::widget::options::{OptionsWidget, OptionsWidgetState};
 use crate::widget::playlist::PlaylistWidgetState;
-use crate::widget::room::{RoomsWidget, RoomsWidgetState};
+use crate::widget::users::{UsersWidget, UsersWidgetState};
 use crate::widget::OverlayWidgetState;
 
 pub struct RatatuiView {
@@ -52,7 +53,7 @@ enum LoopControl {
     Break,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub enum Mode {
     #[default]
     Normal,
@@ -64,7 +65,7 @@ pub struct App {
     current_state: State,
     pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
-    pub rooms_widget_state: RoomsWidgetState,
+    pub users_widget_state: UsersWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
     pub command_input_widget: CommandInputWidgetState,
     pub chat_input_widget: ChatInputWidgetState,
@@ -92,7 +93,7 @@ impl App {
                 chat
             },
             database_widget_state: DatabaseWidgetState::default(),
-            rooms_widget_state: RoomsWidgetState::default(),
+            users_widget_state: UsersWidgetState::default(),
             playlist_widget_state: PlaylistWidgetState::default(),
             command_input_widget: CommandInputWidgetState::default(),
             chat_input_widget: ChatInputWidgetState::new(),
@@ -118,13 +119,13 @@ impl App {
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
-        self.prev_mode = Some(self.mode.clone());
+        self.prev_mode = Some(self.mode);
         self.mode = mode;
     }
 
     pub fn reset_overlay(&mut self) {
         self.current_overlay_state = None;
-        if let Some(mode) = self.prev_mode.clone() {
+        if let Some(mode) = self.prev_mode {
             self.mode = mode;
         } else {
             self.mode = Mode::Normal;
@@ -280,51 +281,38 @@ impl RatatuiView {
     }
 
     fn handle_notify(&mut self) {
-        if self.model.file_database_status.changed() {
-            let file_db_status = self.model.file_database_status.get_inner();
+        self.model.file_database_status.on_change(|status| {
             self.app
                 .database_widget_state
-                .set_file_database_status((file_db_status * 100.0) as u16);
-        }
+                .set_file_database_status((status * 100.0) as u16);
+        });
 
-        if self.model.file_database.changed() {
-            let file_db = self.model.file_database.get_inner();
-            self.app
-                .database_widget_state
-                .set_file_database(file_db.clone());
-            self.app
-                .fuzzy_search_widget_state
-                .set_file_database(file_db);
-        }
+        self.model.file_database.on_change(|db| {
+            self.app.database_widget_state.set_file_database(db.clone());
+            self.app.fuzzy_search_widget_state.set_file_database(db);
+        });
 
-        if self.model.playlist.changed() {
-            let playlist = self.model.playlist.get_inner();
+        self.model.playlist.on_change(|playlist| {
             self.app.playlist_widget_state.set_playlist(playlist);
-        }
+        });
 
-        if self.model.messages.changed() {
-            let messages = self.model.messages.get_inner().iter().cloned().collect();
+        self.model.messages.on_change_arc(|messages| {
             self.app.chat_widget_state.set_messages(messages);
             self.app.chat_widget_state.update_cursor_latest();
-        }
+        });
 
-        if self.model.room_list.changed() {
-            let rooms = self.model.room_list.get_inner();
-            self.app.rooms_widget_state.set_rooms(rooms);
-        }
+        self.model.user_list.on_change(|users| {
+            self.app.users_widget_state.set_user_list(users);
+        });
 
-        if self.model.user.changed() {
-            let user = self.model.user.get_inner();
-            self.app.rooms_widget_state.set_user(user.clone());
+        self.model.user.on_change(|user| {
+            self.app.users_widget_state.set_user(user.clone());
             self.app.chat_widget_state.set_user(user);
-        }
+        });
 
-        if self.model.playing_video.changed() {
-            let playing_video = self.model.playing_video.get_inner();
-            self.app
-                .playlist_widget_state
-                .set_playing_video(playing_video);
-        }
+        self.model.playing_video.on_change(|video| {
+            self.app.playlist_widget_state.set_playing_video(video);
+        });
     }
 
     fn render(f: &mut Frame, app: &mut App) {
@@ -363,9 +351,9 @@ impl RatatuiView {
         );
 
         f.render_stateful_widget(
-            RoomsWidget,
+            UsersWidget,
             vertical_right_chunks[1],
-            &mut app.rooms_widget_state,
+            &mut app.users_widget_state,
         );
 
         f.render_stateful_widget(
@@ -466,6 +454,7 @@ impl RatatuiView {
     }
 
     //TODO returning errors
+    // hidden feature
     pub fn parse_commands(&mut self, msg: String) {
         //TODO refactor
         let args: Vec<&str> = msg.split_whitespace().collect();
@@ -473,25 +462,23 @@ impl RatatuiView {
 
         match args {
             ["w", msg @ ..] | ["write", msg @ ..] => self.model.send_message(msg.concat()),
-            ["server-change", addr, secure, password, room]
-            | ["sc", addr, secure, password, room] => self.handle_server_change(
-                addr.to_string(),
-                secure,
-                Some(password.to_string()),
-                room.to_string(),
+            ["server-change", password, room] | ["sc", password, room] => self
+                .handle_server_change(
+                    self.config.addr(),
+                    password.to_string(),
+                    RoomName::from(*room),
+                ),
+            ["server-change", room] | ["sc", room] => self.handle_server_change(
+                self.config.addr(),
+                String::default(),
+                RoomName::from(*room),
             ),
-            ["server-change", addr, secure, room] | ["sc", addr, secure, room] => {
-                self.handle_server_change(addr.to_string(), secure, None, room.to_string())
-            }
-            ["room-change", room] | ["rc", room] => {
-                self.model.change_room(RoomChange::from(room.to_string()))
-            }
             ["username-change", username] | ["uc", username] => {
                 self.model.change_username(username.to_string())
             }
             ["toggle-ready"] | ["tr"] => self.model.user_ready_toggle(),
-            ["start-update"] => self.model.start_db_update(),
-            ["stop-update"] => self.model.stop_db_update(),
+            ["start-update"] | ["load"] => self.model.start_db_update(),
+            ["stop-update"] | ["stop"] => self.model.stop_db_update(),
             ["delete", filename] | ["d", filename] => self.remove(&Video::from(*filename)),
 
             ["move", filename, position] | ["mv", filename, position] => {
@@ -546,16 +533,7 @@ impl RatatuiView {
         self.model.change_db_paths(paths)
     }
 
-    pub fn save_config(
-        &mut self,
-        address: String,
-        secure: bool,
-        password: String,
-        room: String,
-        username: String,
-    ) {
-        self.config.url = address;
-        self.config.secure = secure;
+    pub fn save_config(&mut self, password: String, room: RoomName, username: String) {
         self.config.password = password;
         self.config.room = room;
         self.config.username = username;
@@ -567,25 +545,9 @@ impl RatatuiView {
         _ = self.config.save();
     }
 
-    fn handle_server_change(
-        &mut self,
-        addr: String,
-        secure: &str,
-        password: Option<String>,
-        room: String,
-    ) {
-        //TODO refactor
-        let secure: bool = match secure {
-            "true" => true,
-            "false" => false,
-            _ => return,
-        };
-
-        let room = RoomChange { room };
-
+    fn handle_server_change(&mut self, addr: String, password: String, room: RoomName) {
         self.model.change_server(ServerChange {
             addr,
-            secure,
             password,
             room,
         });

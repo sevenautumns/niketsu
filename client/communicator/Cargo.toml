@@ -11,6 +11,7 @@ log.workspace = true
 tokio.workspace = true
 serde.workspace = true
 im.workspace = true
+arc-swap.workspace = true
 serde_json = "1.0"
 async-tungstenite = { version = "0.24", features = [ "tokio-runtime", "tokio-native-tls" ] }
 serde_millis = "0.1"
@@ -18,3 +19,9 @@ ordered-float = "4"
 tokio-native-tls = "0.3"
 futures = "0.3"
 async-trait = "0.1"
+enum_dispatch.workspace = true
+libp2p = { version = "0.53.2", features = [ "full" ] }
+futures-timer = "3.0"
+uuid = { version = "1.8.0",  features = [ "v4","fast-rng" ]}
+bcrypt = "0.15.1"
+fake = "2.9.2"

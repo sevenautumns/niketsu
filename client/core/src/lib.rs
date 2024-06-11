@@ -1,8 +1,11 @@
 use config::Config;
+use directories::ProjectDirs;
 use enum_dispatch::enum_dispatch;
 use futures::future::OptionFuture;
 use log::{info, trace};
 use logging::ChatLogger;
+use once_cell::sync::Lazy;
+use player::wrapper::MediaPlayerWrapper;
 use playlist::PlaylistHandlerTrait;
 
 use self::communicator::*;
@@ -19,10 +22,13 @@ pub mod heartbeat;
 pub mod logging;
 pub mod player;
 pub mod playlist;
-pub mod rooms;
+pub mod room;
 pub mod ui;
 pub mod user;
 pub mod util;
+
+pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =
+    Lazy::new(|| ProjectDirs::from("de", "autumnal", "niketsu"));
 
 #[enum_dispatch]
 pub trait EventHandler {
@@ -32,7 +38,7 @@ pub trait EventHandler {
 #[derive(Debug)]
 pub struct CoreModel {
     pub communicator: Box<dyn CommunicatorTrait>,
-    pub player: Box<dyn MediaPlayerTrait>,
+    pub player: MediaPlayerWrapper,
     pub ui: Box<dyn UserInterfaceTrait>,
     pub database: Box<dyn FileDatabaseTrait>,
     pub playlist: Box<dyn PlaylistHandlerTrait>,
@@ -57,9 +63,14 @@ impl Core {
     }
 
     pub async fn auto_connect(&mut self) {
-        let addr = self.model.config.url.clone();
-        let secure = self.model.config.secure;
-        let endpoint = EndpointInfo { addr, secure };
+        let addr = self.model.config.relay.clone();
+        let room = self.model.config.room.clone();
+        let password = self.model.config.password.clone();
+        let endpoint = EndpointInfo {
+            room,
+            password,
+            addr,
+        };
         self.model.communicator.connect(endpoint);
     }
 

@@ -6,11 +6,13 @@ use enum_dispatch::enum_dispatch;
 use log::trace;
 
 use super::communicator::{
-    NiketsuPause, NiketsuPlaybackSpeed, NiketsuSeek, NiketsuSelect, NiketsuStart, OutgoingMessage,
+    OutgoingMessage, PauseMsg, PlaybackSpeedMsg, SeekMsg, SelectMsg, StartMsg,
 };
 use super::playlist::Video;
 use super::{CoreModel, EventHandler};
 use crate::file_database::FileStore;
+
+pub mod wrapper;
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -56,7 +58,7 @@ impl EventHandler for PlayerPause {
             .communicator
             .send(OutgoingMessage::from(model.config.status(model.ready)));
         model.communicator.send(
-            NiketsuPause {
+            PauseMsg {
                 actor: model.config.username.clone(),
             }
             .into(),
@@ -75,7 +77,7 @@ impl EventHandler for PlayerStart {
             .communicator
             .send(OutgoingMessage::from(model.config.status(model.ready)));
         model.communicator.send(
-            NiketsuStart {
+            StartMsg {
                 actor: model.config.username.clone(),
             }
             .into(),
@@ -93,7 +95,7 @@ impl EventHandler for PlayerCachePause {
             .communicator
             .send(OutgoingMessage::from(model.config.status(model.ready)));
         model.communicator.send(
-            NiketsuPause {
+            PauseMsg {
                 actor: model.config.username.clone(),
             }
             .into(),
@@ -123,7 +125,7 @@ impl EventHandler for PlayerPositionChange {
         let position = self.pos;
 
         model.communicator.send(
-            NiketsuSeek {
+            SeekMsg {
                 actor,
                 file,
                 position,
@@ -151,7 +153,7 @@ impl EventHandler for PlayerSpeedChange {
         let actor = model.config.username.clone();
         model
             .communicator
-            .send(NiketsuPlaybackSpeed { actor, speed }.into());
+            .send(PlaybackSpeedMsg { actor, speed }.into());
     }
 }
 
@@ -176,7 +178,7 @@ impl EventHandler for PlayerFileEnd {
         let actor = model.config.username.clone();
         let position = model.player.get_position().unwrap_or_default();
         model.communicator.send(
-            NiketsuSelect {
+            SelectMsg {
                 actor,
                 filename,
                 position,
