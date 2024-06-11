@@ -26,9 +26,17 @@ pub trait CommunicatorTrait: std::fmt::Debug + Send {
     async fn receive(&mut self) -> IncomingMessage;
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Instance {
+    pub room: String,
+    pub password: String,
+    pub host: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EndpointInfo {
     pub addr: String,
+    pub instance: Instance,
     pub secure: bool,
 }
 

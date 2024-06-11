@@ -59,7 +59,11 @@ impl Core {
     pub async fn auto_connect(&mut self) {
         let addr = self.model.config.url.clone();
         let secure = self.model.config.secure;
-        let endpoint = EndpointInfo { addr, secure };
+        let endpoint = EndpointInfo {
+            addr,
+            instance: Instance::default(),
+            secure,
+        };
         self.model.communicator.connect(endpoint);
     }
 

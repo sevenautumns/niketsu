@@ -11,7 +11,7 @@ use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as Mp
 use tokio::sync::Notify;
 
 use super::communicator::{
-    EndpointInfo, NiketsuJoin, NiketsuPlaylist, NiketsuSelect, NiketsuUserMessage,
+    EndpointInfo, Instance, NiketsuJoin, NiketsuPlaylist, NiketsuSelect, NiketsuUserMessage,
 };
 use super::playlist::Video;
 use super::user::UserStatus;
@@ -106,6 +106,7 @@ impl From<ServerChange> for EndpointInfo {
     fn from(value: ServerChange) -> Self {
         Self {
             addr: value.addr,
+            instance: Instance::default(),
             secure: value.secure,
         }
     }
@@ -626,6 +627,7 @@ mod tests {
         };
         let endpoint = EndpointInfo {
             addr: addr.clone(),
+            instance: Instance::default(),
             secure,
         };
         let message = OutgoingMessage::from(NiketsuJoin {

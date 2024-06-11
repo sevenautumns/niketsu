@@ -18,3 +18,7 @@ ordered-float = "4"
 tokio-native-tls = "0.3"
 futures = "0.3"
 async-trait = "0.1"
+libp2p = { version = "0.53.2", features = [ "full" ] }
+futures-timer = "3.0"
+uuid = { version = "1.8.0",  features = [ "v4","fast-rng" ]}
+bcrypt = "0.15.1"

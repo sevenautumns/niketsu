@@ -1,0 +1,25 @@
+[package]
+name = "chat-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[package.metadata.release]
+release = false
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+anyhow = "1.0.86"
+tokio = { version = "1.38", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3.30"
+libp2p = { version = "0.53.2", features = [ "full" ] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4.5.4", features = ["derive"] }
+futures-timer = "3.0"
+uuid = { version = "1.8.0",  features = [ "v4","fast-rng" ]}
+log = "0.4.21"
+bcrypt = "0.15.1"
+pretty_env_logger = "0.5.0"

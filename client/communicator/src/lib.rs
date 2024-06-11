@@ -4,30 +4,17 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
-use async_tungstenite::stream::Stream;
-use async_tungstenite::tokio::TokioAdapter;
-use async_tungstenite::tungstenite::Message as TsMessage;
-use async_tungstenite::WebSocketStream;
-use futures::stream::{SplitSink, SplitStream};
-use futures::{Future, SinkExt, StreamExt};
+use futures::channel::mpsc::SendError;
 use log::{debug, error, warn};
 use niketsu_core::communicator::*;
-use tokio::net::TcpStream;
+use p2p::P2PClient;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::task::JoinHandle;
-use tokio_native_tls::TlsStream;
 
 use self::messages::NiketsuMessage;
 
 pub mod messages;
-
-type WsSink = SplitSink<
-    WebSocketStream<Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<TcpStream>>>>,
-    TsMessage,
->;
-type WsStream = SplitStream<
-    WebSocketStream<Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<TcpStream>>>>,
->;
+pub mod p2p;
 
 pub const RECONNECT_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -75,8 +62,7 @@ impl Default for Disconnected {
 #[derive(Debug)]
 struct Connected {
     sender_task: JoinHandle<()>,
-    sender: MpscSender<NiketsuMessage>,
-    receiver: WsStream,
+    sender_receiver: P2PClient,
 }
 
 impl Drop for Connected {
@@ -93,21 +79,22 @@ impl From<Connected> for ConnectionState {
 
 impl Connected {
     async fn new(endpoint: EndpointInfo) -> Result<Self> {
-        let addr = endpoint.to_string();
-        let (sender, rx) = tokio::sync::mpsc::unbounded_channel();
-        let connect = async_tungstenite::tokio::connect_async(addr);
-        let connect = tokio::time::timeout(Duration::from_secs(3), connect);
-        let connection_res = connect
+        let client = tokio::time::timeout(
+            Duration::from_secs(5),
+            P2PClient::new(
+                endpoint.instance.room,
+                endpoint.instance.password,
+                endpoint.instance.host,
+            ),
+        );
+        let sender_receiver = client
             .await
             .map_err(|_| anyhow::anyhow!("Connection timeout"))?
             .map_err(anyhow::Error::from)?;
-        let (ws, _) = connection_res;
-        let (sink, receiver) = ws.split();
-        let sender_task = tokio::task::spawn(Self::sender(rx, sink));
+        let sender_task = sender_receiver.run();
         Ok(Self {
             sender_task,
-            sender,
-            receiver,
+            sender_receiver,
         })
     }
 
