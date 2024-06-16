@@ -4,7 +4,7 @@ use enum_dispatch::enum_dispatch;
 use iced::Command;
 use niketsu_core::config::Config;
 use niketsu_core::log;
-use niketsu_core::ui::{RoomChange, ServerChange, UiModel};
+use niketsu_core::ui::{ServerChange, UiModel};
 
 use super::SettingsWidgetState;
 use crate::message::{Message, MessageHandler};
@@ -80,10 +80,8 @@ impl SettingsWidgetMessageTrait for ConnectApplyClose {
         model.change_server(ServerChange {
             addr: config.url.clone(),
             secure: config.secure,
-            password: Some(config.password.clone()),
-            room: RoomChange {
-                room: config.room.clone(),
-            },
+            password: config.password.clone(),
+            room: config.room.clone(),
         });
     }
 }
