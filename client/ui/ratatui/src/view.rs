@@ -18,7 +18,7 @@ use gag::Gag;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::playlist::Video;
-use niketsu_core::ui::{RoomChange, ServerChange, UiModel, UserInterface};
+use niketsu_core::ui::{ServerChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
@@ -477,15 +477,16 @@ impl RatatuiView {
             | ["sc", addr, secure, password, room] => self.handle_server_change(
                 addr.to_string(),
                 secure,
-                Some(password.to_string()),
+                password.to_string(),
                 room.to_string(),
             ),
-            ["server-change", addr, secure, room] | ["sc", addr, secure, room] => {
-                self.handle_server_change(addr.to_string(), secure, None, room.to_string())
-            }
-            ["room-change", room] | ["rc", room] => {
-                self.model.change_room(RoomChange::from(room.to_string()))
-            }
+            ["server-change", addr, secure, room] | ["sc", addr, secure, room] => self
+                .handle_server_change(
+                    addr.to_string(),
+                    secure,
+                    String::default(),
+                    room.to_string(),
+                ),
             ["username-change", username] | ["uc", username] => {
                 self.model.change_username(username.to_string())
             }
@@ -567,21 +568,12 @@ impl RatatuiView {
         _ = self.config.save();
     }
 
-    fn handle_server_change(
-        &mut self,
-        addr: String,
-        secure: &str,
-        password: Option<String>,
-        room: String,
-    ) {
-        //TODO refactor
+    fn handle_server_change(&mut self, addr: String, secure: &str, password: String, room: String) {
         let secure: bool = match secure {
             "true" => true,
             "false" => false,
             _ => return,
         };
-
-        let room = RoomChange { room };
 
         self.model.change_server(ServerChange {
             addr,

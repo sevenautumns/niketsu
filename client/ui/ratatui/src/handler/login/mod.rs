@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
-use niketsu_core::ui::{RoomChange, ServerChange};
+use niketsu_core::ui::ServerChange;
 
 use super::EventHandler;
 use crate::view::RatatuiView;
@@ -22,10 +22,8 @@ impl EventHandler for Login {
                         view.model.change_server(ServerChange {
                             addr: input.0.clone(),
                             secure: input.1,
-                            password: Some(input.2.clone()),
-                            room: RoomChange {
-                                room: input.3.clone(),
-                            },
+                            password: input.2.clone(),
+                            room: input.3.clone(),
                         });
                         view.model.change_username(input.4.clone());
                         view.save_config(input.0, input.1, input.2, input.3, input.4);
