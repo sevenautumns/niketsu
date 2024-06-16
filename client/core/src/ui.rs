@@ -10,9 +10,7 @@ use log::{trace, Level};
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
 
-use super::communicator::{
-    EndpointInfo, Instance, NiketsuJoin, NiketsuPlaylist, NiketsuSelect, NiketsuUserMessage,
-};
+use super::communicator::{EndpointInfo, NiketsuPlaylist, NiketsuSelect, NiketsuUserMessage};
 use super::playlist::Video;
 use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
@@ -43,7 +41,6 @@ pub enum UserInterfaceEvent {
     PlaylistChange,
     VideoChange,
     ServerChange,
-    RoomChange,
     UserChange,
     UserMessage,
     FileDatabaseChange,
@@ -98,15 +95,16 @@ impl EventHandler for VideoChange {
 pub struct ServerChange {
     pub addr: String,
     pub secure: bool,
-    pub password: Option<String>,
-    pub room: RoomChange,
+    pub password: String,
+    pub room: String,
 }
 
 impl From<ServerChange> for EndpointInfo {
     fn from(value: ServerChange) -> Self {
         Self {
+            room: value.room,
+            password: value.password,
             addr: value.addr,
-            instance: Instance::default(),
             secure: value.secure,
         }
     }
@@ -115,38 +113,8 @@ impl From<ServerChange> for EndpointInfo {
 impl EventHandler for ServerChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("server change message");
-        model.config.password = self.password.clone().unwrap_or_default();
-        model.communicator.connect(self.clone().into());
-        self.room.handle(model);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RoomChange {
-    pub room: String,
-}
-
-impl From<String> for RoomChange {
-    fn from(value: String) -> Self {
-        Self { room: value }
-    }
-}
-
-impl EventHandler for RoomChange {
-    fn handle(self, model: &mut CoreModel) {
-        trace!("room change message");
-        let room = self.room;
-        let username = model.config.username.clone();
-        let password = model.config.password.clone();
-        model.config.room = room.clone();
-        model.communicator.send(
-            NiketsuJoin {
-                password,
-                room,
-                username,
-            }
-            .into(),
-        );
+        model.config.password = self.password.clone();
+        model.communicator.connect(self.into());
     }
 }
 
@@ -453,15 +421,6 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn change_room(&self, request: RoomChange) {
-        trace!("change room");
-        let res = self
-            .events
-            .send(UserInterfaceEvent::RoomChange(request))
-            .map_err(anyhow::Error::from);
-        crate::log!(res)
-    }
-
     pub fn change_server(&self, request: ServerChange) {
         trace!("change server");
         let res = self
@@ -619,32 +578,23 @@ mod tests {
         let user = String::from("max");
         let addr = String::from("duckduckgo.com");
         let secure = true;
-        let password = Some(String::from("passwd"));
-        let room: RoomChange = String::from("room1").into();
+        let password = String::from("passwd");
+        let room = String::from("room1");
         let config = Config {
             username: user.clone(),
             ..Default::default()
         };
         let endpoint = EndpointInfo {
             addr: addr.clone(),
-            instance: Instance::default(),
+            password: password.clone(),
+            room: room.clone(),
             secure,
         };
-        let message = OutgoingMessage::from(NiketsuJoin {
-            password: password.clone().unwrap(),
-            room: room.room.clone(),
-            username: user.clone(),
-        });
 
         communicator
             .expect_connect()
             .once()
             .with(eq(endpoint))
-            .return_const(());
-        communicator
-            .expect_send()
-            .once()
-            .with(eq(message))
             .return_const(());
 
         let mut core = CoreBuilder::builder()
@@ -662,49 +612,6 @@ mod tests {
             password,
             room: room.clone(),
         };
-        change.handle(&mut core.model);
-
-        assert_eq!(core.model.config.room, room.room);
-    }
-
-    #[test]
-    fn test_room_change() {
-        let mut communicator = MockCommunicatorTrait::default();
-        let player = MockMediaPlayerTrait::default();
-        let ui = MockUserInterfaceTrait::default();
-        let file_database = MockFileDatabaseTrait::default();
-        let playlist_handler = MockPlaylistHandlerTrait::default();
-
-        let user = String::from("max");
-        let password = String::from("passwd");
-        let room = String::from("room1");
-        let config = Config {
-            username: user.clone(),
-            password: password.clone(),
-            ..Default::default()
-        };
-        let message = OutgoingMessage::from(NiketsuJoin {
-            password: password.clone(),
-            room: room.clone(),
-            username: user.clone(),
-        });
-
-        communicator
-            .expect_send()
-            .once()
-            .with(eq(message))
-            .return_const(());
-
-        let mut core = CoreBuilder::builder()
-            .communicator(Box::new(communicator))
-            .player(Box::new(player))
-            .ui(Box::new(ui))
-            .file_database(Box::new(file_database))
-            .playlist(Box::new(playlist_handler))
-            .config(config)
-            .build();
-
-        let change = RoomChange { room: room.clone() };
         change.handle(&mut core.model);
 
         assert_eq!(core.model.config.room, room);
@@ -1015,31 +922,6 @@ mod tests {
     }
 
     #[test]
-    fn test_change_room() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let notify = Arc::new(Notify::new());
-        let ui_model = UiModel {
-            file_database: Observed::new(FileStore::default(), &notify),
-            file_database_status: Observed::new(0.0, &notify),
-            playlist: Observed::new(Playlist::default(), &notify),
-            playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
-            user: Observed::new(UserStatus::default(), &notify),
-            messages: Observed::new(RingBuffer::new(10), &notify),
-            events: tx,
-            notify: notify.clone(),
-        };
-
-        let room = String::from("room1");
-        let request = RoomChange { room: room.clone() };
-
-        ui_model.change_room(request.clone());
-
-        let received_event = rx.try_recv().unwrap();
-        assert_eq!(received_event, request.into());
-    }
-
-    #[test]
     fn test_change_server() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let notify = Arc::new(Notify::new());
@@ -1057,8 +939,8 @@ mod tests {
 
         let addr = String::from("duckduckgo.com");
         let secure = true;
-        let password = Some(String::from("passwd"));
-        let room: RoomChange = String::from("room1").into();
+        let password = String::from("passwd");
+        let room = String::from("room1");
         let request = ServerChange {
             addr,
             secure,

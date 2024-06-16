@@ -26,17 +26,11 @@ pub trait CommunicatorTrait: std::fmt::Debug + Send {
     async fn receive(&mut self) -> IncomingMessage;
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct Instance {
-    pub room: String,
-    pub password: String,
-    pub host: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EndpointInfo {
     pub addr: String,
-    pub instance: Instance,
+    pub room: String,
+    pub password: String,
     pub secure: bool,
 }
 
@@ -59,7 +53,6 @@ impl EndpointInfo {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutgoingMessage {
-    Join(NiketsuJoin),
     VideoStatus(NiketsuVideoStatus),
     Start(NiketsuStart),
     Pause(NiketsuPause),
@@ -106,14 +99,7 @@ impl From<NiketsuConnected> for PlayerMessage {
 impl EventHandler for NiketsuConnected {
     fn handle(self, model: &mut CoreModel) {
         trace!("server connection established");
-        model.communicator.send(
-            NiketsuJoin {
-                password: model.config.password.clone(),
-                room: model.config.room.clone(),
-                username: model.config.username.clone(),
-            }
-            .into(),
-        );
+        //TODO?
         model.ui.player_message(PlayerMessage::from(self));
     }
 }
@@ -136,28 +122,8 @@ impl From<NiketsuConnectionError> for PlayerMessage {
 impl EventHandler for NiketsuConnectionError {
     fn handle(self, model: &mut CoreModel) {
         trace!("server connection established");
-        model.communicator.send(
-            NiketsuJoin {
-                password: model.config.password.clone(),
-                room: model.config.room.clone(),
-                username: model.config.username.clone(),
-            }
-            .into(),
-        );
+        //TODO?
         model.ui.player_message(PlayerMessage::from(self));
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NiketsuJoin {
-    pub password: String,
-    pub room: String,
-    pub username: String,
-}
-
-impl From<NiketsuJoin> for OutgoingMessage {
-    fn from(value: NiketsuJoin) -> Self {
-        Self::Join(value)
     }
 }
 
