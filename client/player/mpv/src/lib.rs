@@ -325,7 +325,7 @@ impl Mpv {
         let start = self.status.load_position.as_secs_f64();
         let options = format!("start={start}");
         let options = CString::new(options).expect("Got invalid UTF-8");
-        let res = self.send_command(&[&cmd, &path, &replace, &options]);
+        let res = self.send_command(&[&cmd, &path, &replace, c"0", &options]);
         self.status.file_load_status = FileLoadStatus::Loading;
         log!(res)
     }
