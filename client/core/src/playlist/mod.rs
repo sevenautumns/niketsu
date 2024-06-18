@@ -196,7 +196,7 @@ impl Playlist {
     }
 
     pub fn push(&mut self, video: Video) {
-        if !self.contains(&video) {
+        if self.index_of(&video).is_none() {
             self.list.push_back(video);
         }
     }
@@ -206,7 +206,7 @@ impl Playlist {
     }
 
     pub fn insert(&mut self, index: usize, video: Video) {
-        if !self.contains(&video) {
+        if self.index_of(&video).is_none() {
             self.list.insert(index, video)
         }
     }
@@ -221,8 +221,8 @@ impl Playlist {
         self.list.slice(range).into_iter().collect_vec()
     }
 
-    pub fn contains(&mut self, video: &Video) -> bool {
-        self.list.contains(video)
+    pub fn index_of(&self, video: &Video) -> Option<usize> {
+        self.list.index_of(video)
     }
 }
 
@@ -461,7 +461,7 @@ mod tests {
 
         // Verify that the returned range contains the expected videos.
         assert_eq!(range_result.len(), 3);
-        assert_eq!(range_result.get(0), Some(&&video2));
+        assert_eq!(range_result.first(), Some(&&video2));
         assert_eq!(range_result.get(1), Some(&&video3));
         assert_eq!(range_result.get(2), Some(&&video4));
     }

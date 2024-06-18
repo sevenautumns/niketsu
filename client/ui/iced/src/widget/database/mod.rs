@@ -68,21 +68,20 @@ impl<'a> DatabaseWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for DatabaseWidget<'a> {
-    fn width(&self) -> Length {
-        self.base.as_widget().width()
-    }
-
-    fn height(&self) -> Length {
-        self.base.as_widget().height()
+impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for DatabaseWidget<'a> {
+    fn size(&self) -> iced::Size<Length> {
+        self.base.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.base.as_widget().layout(renderer, limits)
+        self.base
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(

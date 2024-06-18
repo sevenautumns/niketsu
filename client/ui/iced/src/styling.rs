@@ -1,5 +1,5 @@
 use iced::widget::rule::FillMode;
-use iced::{Color, Theme, Vector};
+use iced::{Border, Color, Theme, Vector};
 use niketsu_core::ui::MessageLevel;
 
 pub struct ResultButton {
@@ -72,9 +72,11 @@ impl iced::widget::container::StyleSheet for ContainerBorder {
 
     fn appearance(&self, style: &Self::Style) -> iced::widget::container::Appearance {
         iced::widget::container::Appearance {
-            border_color: style.palette().text,
-            border_radius: 5.0.into(),
-            border_width: 2.0,
+            border: Border {
+                color: style.palette().text,
+                width: 2.0,
+                radius: 5.0.into(),
+            },
             ..Default::default()
         }
     }
@@ -102,8 +104,11 @@ impl iced::widget::button::StyleSheet for FileButton {
         };
         iced::widget::button::Appearance {
             shadow_offset: Vector::ZERO,
-            border_radius: 0.0.into(),
-            border_width: 0.0,
+            border: Border {
+                color: Color::default(),
+                width: 0.0,
+                radius: 0.0.into(),
+            },
             background,
             text_color: style.palette().text,
             ..iced::widget::button::Appearance::default()

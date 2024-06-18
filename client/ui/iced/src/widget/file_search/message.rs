@@ -43,7 +43,7 @@ pub struct Input {
 
 impl FileSearchWidgetMessageTrait for Input {
     fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Command<Message> {
-        state.query = self.query.clone();
+        state.query.clone_from(&self.query);
         state.search = Some(model.file_database.get_inner_arc().fuzzy_search(self.query));
         Command::none()
     }

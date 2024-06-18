@@ -59,21 +59,20 @@ impl<'a> RoomsWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for RoomsWidget<'a> {
-    fn width(&self) -> Length {
-        self.base.as_widget().width()
-    }
-
-    fn height(&self) -> Length {
-        self.base.as_widget().height()
+impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for RoomsWidget<'a> {
+    fn size(&self) -> iced::Size<Length> {
+        self.base.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.base.as_widget().layout(renderer, limits)
+        self.base
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn children(&self) -> Vec<iced::advanced::widget::Tree> {
@@ -205,11 +204,11 @@ impl<'a> From<RoomsWidget<'a>> for Element<'a, Message> {
 }
 
 trait UserStatusExt {
-    fn to_text<'a>(&self, user: &UserStatus, theme: &Theme) -> Row<'a, Message, Renderer>;
+    fn to_text<'a>(&self, user: &UserStatus, theme: &Theme) -> Row<'a, Message>;
 }
 
 impl UserStatusExt for UserStatus {
-    fn to_text<'a>(&self, user: &UserStatus, theme: &Theme) -> Row<'a, Message, Renderer> {
+    fn to_text<'a>(&self, user: &UserStatus, theme: &Theme) -> Row<'a, Message> {
         let mut row = Row::new();
         if self.name.eq(&user.name) {
             row = row.push(Text::new("(me) "));
