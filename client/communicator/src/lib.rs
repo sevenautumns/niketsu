@@ -4,11 +4,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
-use futures::channel::mpsc::SendError;
+use futures::Future;
 use log::{debug, error, warn};
 use niketsu_core::communicator::*;
 use p2p::P2PClient;
-use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::task::JoinHandle;
 
 use self::messages::NiketsuMessage;
@@ -81,13 +80,9 @@ impl Connected {
     async fn new(endpoint: EndpointInfo) -> Result<Self> {
         let client = tokio::time::timeout(
             Duration::from_secs(5),
-            P2PClient::new(
-                endpoint.instance.room,
-                endpoint.instance.password,
-                endpoint.instance.host,
-            ),
+            P2PClient::new(endpoint.room, endpoint.password, endpoint.secure),
         );
-        let sender_receiver = client
+        let mut sender_receiver = client
             .await
             .map_err(|_| anyhow::anyhow!("Connection timeout"))?
             .map_err(anyhow::Error::from)?;
@@ -113,8 +108,8 @@ impl Connected {
 
     async fn receive_niketsu_message(&mut self) -> Result<NiketsuMessage> {
         loop {
-            if let Some(msg) = self.receiver.next().await {
-                match msg?.into_text() {
+            if let Some(msg) = self.sender_receiver.next().await {
+                match std::str::from_utf8(&msg) {
                     Ok(msg) => match serde_json::from_str::<NiketsuMessage>(&msg) {
                         Ok(msg) => return Ok(msg),
                         Err(e) => {
@@ -123,7 +118,7 @@ impl Connected {
                         }
                     },
                     Err(e) => {
-                        error!("into text failed: {e:?}");
+                        error!("from utf8 failed: {e:?}");
                         continue;
                     }
                 }
@@ -133,28 +128,7 @@ impl Connected {
     }
 
     fn send(&self, msg: NiketsuMessage) {
-        niketsu_core::log!(self.sender.send(msg))
-    }
-
-    async fn sender(mut ch: MpscReceiver<NiketsuMessage>, mut sink: WsSink) {
-        loop {
-            if let Some(msg) = ch.recv().await {
-                debug!("sending {msg:?}");
-                match serde_json::to_string(&msg) {
-                    Ok(msg) => {
-                        if let Err(err) = sink.send(TsMessage::Text(msg)).await {
-                            warn!("Websocket ended: {err:?}");
-                            return;
-                        }
-                    }
-                    Err(err) => {
-                        warn!("serde error: {err:?}")
-                    }
-                }
-            } else {
-                return;
-            }
-        }
+        niketsu_core::log!(self.sender_receiver.send(msg))
     }
 }
 

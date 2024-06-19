@@ -6,6 +6,7 @@ members = [
   "client/player/mpv",
   "client/ui/iced",
   "client/ui/ratatui",
+  "relay",
 ]
 resolver = "2"
 

@@ -22,12 +22,11 @@
 #![doc = include_str!("../README.md")]
 
 use async_std::sync::RwLock;
-use bcrypt::{hash, verify, DEFAULT_COST};
+use bcrypt::verify;
 use clap::Parser;
+use futures::executor::block_on;
 use futures::stream::StreamExt;
-use futures::{executor::block_on, stream::FusedStream};
-use libp2p::relay::RequestId;
-use libp2p::request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel};
+use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::{
     core::multiaddr::Protocol,
     core::Multiaddr,
@@ -36,18 +35,15 @@ use libp2p::{
     tcp, yamux,
 };
 use libp2p::{PeerId, StreamProtocol};
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
-use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .try_init();
-
+    pretty_env_logger::init();
     let opt = Opt::parse();
 
     let local_key: identity::Keypair = generate_ed25519(opt.secret_key_seed);
@@ -77,7 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         })?
         .build();
 
-    println!("peer-id: {:?}", swarm.local_peer_id());
+    info!("peer-id: {:?}", swarm.local_peer_id());
 
     // Listen on all interfaces
     let listen_addr_tcp = Multiaddr::empty()
@@ -97,19 +93,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with(Protocol::QuicV1);
     swarm.listen_on(listen_addr_quic)?;
 
-    let mut rooms: Arc<RwLock<HashMap<String, (PeerId, InitRequest)>>> =
+    let open_rooms: Arc<RwLock<HashMap<String, (PeerId, InitRequest)>>> =
         Arc::new(RwLock::new(HashMap::new()));
-    let mut auth_nodes: Arc<RwLock<HashMap<PeerId, String>>> =
-        Arc::new(RwLock::new(HashMap::new()));
+    let auth_nodes: Arc<RwLock<HashMap<PeerId, String>>> = Arc::new(RwLock::new(HashMap::new()));
     block_on(async {
         let map = auth_nodes.clone();
+        let rooms = open_rooms.clone();
         loop {
             match swarm.next().await.expect("Infinite Stream.") {
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {
                     info: identify::Info { observed_addr, .. },
                     ..
                 })) => {
-                    println!("Added external node");
+                    info!("Added external node");
                     swarm.add_external_address(observed_addr.clone());
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Ping(ping::Event {
@@ -117,116 +113,58 @@ fn main() -> Result<(), Box<dyn Error>> {
                     connection,
                     result,
                 })) => {
-                    println!("Received ping from {peer:?} of connection {connection:?} with result {result:?}")
+                    info!("Received ping from {peer:?} of connection {connection:?} with result {result:?}")
                 }
                 SwarmEvent::NewListenAddr { address, .. } => {
-                    println!("Listening on {address:?}");
+                    info!("Listening on {address:?}");
                 }
-                SwarmEvent::ConnectionClosed {
-                    peer_id,
-                    connection_id,
-                    endpoint,
-                    num_established,
-                    cause,
-                } => {
+                SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
                     let mut n = map.write().await;
                     let mut r = rooms.write().await;
                     if let Some(room) = n.get(&peer_id) {
                         r.remove(room);
                         n.remove(&peer_id);
                     }
-                    println!("Connection closed by {peer_id:?}, cause {cause:?}");
-                    println!("room {r:?}")
+                    info!("Connection closed by {peer_id:?}, cause {cause:?}");
+                    info!("room {r:?}")
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::InitRequestResponse(
-                    request_response::Event::Message { peer, message, .. },
+                    request_response::Event::Message { peer, message },
                 )) => match message {
                     request_response::Message::Request {
                         request, channel, ..
-                    } => match request.intent {
-                        0 => {
-                            println!("Received request from listener: {request:?}");
-                            let mut r = rooms.write().await;
-                            println!("room: {r:?}");
-                            if let Some(_) = r.get(request.room.as_str()) {
-                                swarm
-                                    .behaviour_mut()
-                                    .init_request_response
-                                    .send_response(
-                                        channel,
-                                        InitResponse {
-                                            status: 1,
-                                            peer_id: None,
-                                        },
-                                    )
-                                    .unwrap_or_default();
+                    } => {
+                        info!("Received request from client: {request:?}");
+                        let mut r = rooms.write().await;
+                        info!("room: {r:?}");
+                        let mut status: u8 = 0;
+                        let mut peer_id: Option<PeerId> = None;
+                        if let Some((pid, req)) = r.get(request.room.as_str()) {
+                            if req.verify(request.password) {
+                                // host is available and password is correct
+                                info!("verified password. returning {pid:?}");
+                                peer_id = Some(*pid);
                             } else {
-                                let mut n = auth_nodes.write().await;
-                                r.insert(request.room.clone(), (peer, request.clone()));
-                                n.insert(peer, request.room);
-                                swarm
-                                    .behaviour_mut()
-                                    .init_request_response
-                                    .send_response(
-                                        channel,
-                                        InitResponse {
-                                            status: 0,
-                                            peer_id: None,
-                                        },
-                                    )
-                                    .unwrap_or_default();
+                                info!("auth failed");
+                                // auth failed
+                                status = 1;
                             }
+                        } else {
+                            // else no error and query client will be host
+                            info!("Creating new room for {peer:?}");
+                            let mut n = map.write().await;
+                            n.insert(peer, request.room.clone());
+                            r.insert(request.room.clone(), (peer, request));
                         }
-                        1 => {
-                            println!("Received request from dialer: {request:?}");
-                            let r = rooms.read().await;
-                            println!("room: {r:?}");
-                            if let Some((pid, req)) = r.get(request.room.as_str()) {
-                                if !req.verify(request.password) {
-                                    swarm
-                                        .behaviour_mut()
-                                        .init_request_response
-                                        .send_response(
-                                            channel,
-                                            InitResponse {
-                                                status: 1,
-                                                peer_id: None,
-                                            },
-                                        )
-                                        .unwrap_or_default();
-                                } else {
-                                    swarm
-                                        .behaviour_mut()
-                                        .init_request_response
-                                        .send_response(
-                                            channel,
-                                            InitResponse {
-                                                status: 0,
-                                                peer_id: Some(*pid),
-                                            },
-                                        )
-                                        .unwrap_or_default();
-                                }
-                            } else {
-                                swarm
-                                    .behaviour_mut()
-                                    .init_request_response
-                                    .send_response(
-                                        channel,
-                                        InitResponse {
-                                            status: 1,
-                                            peer_id: None,
-                                        },
-                                    )
-                                    .unwrap_or_default();
-                            }
-                        }
-                        _ => {}
-                    },
-                    request_response::Message::Response {
-                        request_id,
-                        response,
-                    } => todo!(),
+                        swarm
+                            .behaviour_mut()
+                            .init_request_response
+                            .send_response(channel, InitResponse { status, peer_id })
+                            .unwrap_or_default();
+                    }
+                    request_response::Message::Response { .. } => {
+                        info!("Received init response. This should not happen")
+                    }
                 },
                 _ => {}
             }
@@ -243,27 +181,18 @@ struct Behaviour {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InitRequest {
-    intent: u8, // 0 -> listen, 1 -> dial
+struct InitRequest {
+    // should be hashed when listening
     room: String,
     password: String,
 }
 
 impl InitRequest {
-    fn new(intent: u8, room: String, password: String) -> Self {
-        Self {
-            intent,
-            room: room,
-            password: hash(password, DEFAULT_COST).expect("Failed to hash password"),
-        }
-    }
-
     fn verify(&self, password: String) -> bool {
         match verify(password, &self.password) {
-            Err(e) => return false,
+            Err(_) => return false,
             Ok(valid) => return valid,
         }
-        false
     }
 }
 

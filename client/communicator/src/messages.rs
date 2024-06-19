@@ -60,16 +60,6 @@ pub(super) struct JoinMessage {
     pub(super) username: String,
 }
 
-impl From<NiketsuJoin> for NiketsuMessage {
-    fn from(value: NiketsuJoin) -> Self {
-        Self::Join(JoinMessage {
-            password: value.password,
-            room: value.room,
-            username: value.username,
-        })
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct VideoStatusMessage {
@@ -395,7 +385,6 @@ impl PartialOrd for UserStatusMessage {
 impl From<OutgoingMessage> for NiketsuMessage {
     fn from(value: OutgoingMessage) -> Self {
         match value {
-            OutgoingMessage::Join(msg) => msg.into(),
             OutgoingMessage::VideoStatus(msg) => msg.into(),
             OutgoingMessage::Start(msg) => msg.into(),
             OutgoingMessage::Pause(msg) => msg.into(),
