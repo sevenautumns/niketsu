@@ -24,7 +24,7 @@ impl ChatInputWidgetState {
 
     fn setup_input_field(&mut self) {
         self.input_field
-            .set_textarea_style(self.style, self.style.dark_gray().on_white());
+            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     pub fn set_style(&mut self, style: Style) {

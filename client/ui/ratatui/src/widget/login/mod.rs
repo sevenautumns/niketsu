@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use niketsu_core::config::Config;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::Text;
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget, Wrap};
@@ -35,32 +35,32 @@ impl LoginWidgetState {
     pub fn new(config: &Config) -> Self {
         Self {
             current_state: State::default(),
-            address_field: TextAreaWrapper::new("Address", config.url.clone()),
-            password_field: TextAreaWrapper::new("Password", config.password.clone()),
-            username_field: TextAreaWrapper::new("Username", config.username.clone()),
-            room_field: TextAreaWrapper::new("Room", config.room.clone()),
+            address_field: TextAreaWrapper::new("Address".into(), config.url.clone()),
+            password_field: TextAreaWrapper::new("Password".into(), config.password.clone()),
+            username_field: TextAreaWrapper::new("Username".into(), config.username.clone()),
+            room_field: TextAreaWrapper::new("Room".into(), config.room.clone()),
             secure: config.secure,
-            style: Style::default().fg(Color::Cyan),
+            style: Style::default().cyan(),
         }
     }
 
     pub fn previous_state(&mut self) {
         match self.current_state {
-            State::Address => self.current_state = State::Secure,
-            State::Password => self.current_state = State::Address,
-            State::Username => self.current_state = State::Password,
-            State::Room => self.current_state = State::Username,
-            State::Secure => self.current_state = State::Room,
+            State::Username => self.current_state = State::Secure,
+            State::Address => self.current_state = State::Username,
+            State::Room => self.current_state = State::Address,
+            State::Password => self.current_state = State::Room,
+            State::Secure => self.current_state = State::Password,
         }
     }
 
     pub fn next_state(&mut self) {
         match self.current_state {
-            State::Address => self.current_state = State::Password,
-            State::Password => self.current_state = State::Username,
-            State::Username => self.current_state = State::Room,
-            State::Room => self.current_state = State::Secure,
-            State::Secure => self.current_state = State::Address,
+            State::Username => self.current_state = State::Address,
+            State::Address => self.current_state = State::Room,
+            State::Room => self.current_state = State::Password,
+            State::Password => self.current_state = State::Secure,
+            State::Secure => self.current_state = State::Username,
         }
     }
 
@@ -139,11 +139,22 @@ impl StatefulWidget for LoginWidget {
             .block(Block::default().borders(Borders::NONE).gray())
             .wrap(Wrap { trim: false });
 
-        let mut address_field = state.address_field.clone().set_default_stye();
-        let password_field = state.password_field.clone().set_default_stye();
-        let mut password_field = password_field.into_masked("Password");
-        let mut username_field = state.username_field.clone().set_default_stye();
-        let mut room_field = state.room_field.clone().set_default_stye();
+        let address_field = state
+            .address_field
+            .set_default_style()
+            .placeholder("Enter your domain address");
+        let room_field = state
+            .room_field
+            .set_default_style()
+            .placeholder("Enter the room");
+        let password_field = state
+            .password_field
+            .set_default_style()
+            .into_masked("Enter your password");
+        let username_field = state
+            .username_field
+            .set_default_style()
+            .placeholder("Enter your username");
 
         let mut secure_block = match state.secure {
             true => Paragraph::new(Text::raw("Secure: on"))
@@ -154,14 +165,10 @@ impl StatefulWidget for LoginWidget {
 
         let style = state.style;
         match state.current_state {
-            State::Address => address_field.set_textarea_style(style, style.dark_gray().on_cyan()),
-            State::Password => {
-                password_field.set_textarea_style(style, style.dark_gray().on_cyan())
-            }
-            State::Username => {
-                username_field.set_textarea_style(style, style.dark_gray().on_cyan())
-            }
-            State::Room => room_field.set_textarea_style(style, style.dark_gray().on_cyan()),
+            State::Username => username_field.highlight(style, style.black().on_cyan()),
+            State::Address => address_field.highlight(style, style.black().on_cyan()),
+            State::Room => room_field.highlight(style, style.black().on_cyan()),
+            State::Password => password_field.highlight(style, style.black().on_cyan()),
             State::Secure => secure_block = secure_block.style(style),
         };
 
@@ -182,10 +189,10 @@ impl StatefulWidget for LoginWidget {
 
         outer_block.render(area, buf);
         text_block.render(layout[0], buf);
-        address_field.widget().render(layout[1], buf);
-        password_field.widget().render(layout[2], buf);
-        username_field.widget().render(layout[3], buf);
-        room_field.widget().render(layout[4], buf);
+        username_field.widget().render(layout[1], buf);
+        address_field.widget().render(layout[2], buf);
+        room_field.widget().render(layout[3], buf);
+        password_field.widget().render(layout[4], buf);
         secure_block.render(layout[5], buf);
     }
 }
