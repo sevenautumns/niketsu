@@ -146,7 +146,7 @@ impl StatefulWidget for ChatWidget {
         let mut state = state.vertical_scroll_state;
         state = state.content_length(messages_len);
         scrollbar.render(
-            area.inner(&Margin {
+            area.inner(Margin {
                 vertical: 1,
                 horizontal: 0,
             }),

@@ -138,7 +138,7 @@ impl StatefulWidget for RoomsWidget {
         let mut scroll_state = state.vertical_scroll_state;
         scroll_state = scroll_state.content_length(state.scroll_length);
         scrollbar.render(
-            area.inner(&Margin {
+            area.inner(Margin {
                 vertical: 1,
                 horizontal: 0,
             }),
