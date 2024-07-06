@@ -123,7 +123,6 @@ impl From<StatusListMessage> for IncomingMessage {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct PauseMessage {
-    #[serde(skip_serializing)]
     pub(super) username: String,
 }
 
@@ -147,7 +146,6 @@ impl From<PauseMessage> for IncomingMessage {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct StartMessage {
-    #[serde(skip_serializing)]
     pub(super) username: String,
 }
 
@@ -172,7 +170,6 @@ impl From<StartMessage> for IncomingMessage {
 #[serde(rename_all = "camelCase")]
 pub(super) struct PlaybackSpeedMessage {
     pub(super) speed: f64,
-    #[serde(skip_serializing)]
     pub(super) username: String,
 }
 
@@ -211,7 +208,6 @@ pub(super) struct SeekMessage {
     pub(super) filename: String,
     #[serde(with = "serde_millis")]
     pub(super) position: Duration,
-    #[serde(skip_serializing)]
     pub(super) username: String,
     #[serde(skip_serializing)]
     pub(super) desync: bool,
@@ -245,7 +241,6 @@ pub(super) struct SelectMessage {
     pub(super) filename: Option<String>,
     #[serde(with = "serde_millis")]
     pub(super) position: Duration,
-    #[serde(skip_serializing)]
     pub(super) username: String,
 }
 
@@ -274,7 +269,6 @@ impl From<SelectMessage> for IncomingMessage {
 #[serde(rename_all = "camelCase")]
 pub(super) struct UserMessageMessage {
     pub(super) message: String,
-    #[serde(skip_serializing)]
     pub(super) username: String,
 }
 
@@ -317,7 +311,6 @@ impl From<ServerMessageMessage> for IncomingMessage {
 #[serde(rename_all = "camelCase")]
 pub(super) struct PlaylistMessage {
     pub(super) playlist: Vector<ArcStr>,
-    #[serde(skip_serializing)]
     pub(super) username: String,
 }
 
