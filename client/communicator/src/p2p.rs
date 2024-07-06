@@ -1,30 +1,26 @@
-use anyhow::{Context, Result};
-use futures::StreamExt;
-use libp2p::identity;
-use libp2p::kad::store::MemoryStore;
-use libp2p::multiaddr::Protocol;
-use libp2p::swarm::SwarmEvent;
-use libp2p::{
-    dcutr, gossipsub, identify, kad, noise, ping, relay, swarm::NetworkBehaviour, tcp, yamux,
-    Multiaddr, PeerId,
-};
-use log::{error, info};
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use std::time::Duration;
-use tokio::io;
-use tokio::spawn;
+
+use anyhow::{Context, Result};
+use bcrypt::{hash, DEFAULT_COST};
+use futures::StreamExt;
+use libp2p::kad::store::MemoryStore;
+use libp2p::multiaddr::Protocol;
+use libp2p::request_response::{self, ProtocolSupport};
+use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
+use libp2p::{
+    dcutr, gossipsub, identify, identity, kad, noise, ping, relay, tcp, yamux, Multiaddr, PeerId,
+    StreamProtocol,
+};
+use log::{error, info};
+use serde::{Deserialize, Serialize};
+use tokio::{io, spawn};
 use uuid::Uuid;
 
-use libp2p::request_response::{self, ProtocolSupport};
-use libp2p::swarm::Swarm;
-
 use crate::messages::NiketsuMessage;
-use bcrypt::{hash, DEFAULT_COST};
-use libp2p::StreamProtocol;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 const RELAY_ADDRESS: &str =
     "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN";
@@ -215,7 +211,7 @@ pub(crate) struct P2PClient {
     sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
     receiver: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     relay_addr: Multiaddr,
-    event_loop: Option<EventLoop>,
+    event_loop: tokio::task::JoinHandle<()>,
 }
 
 impl P2PClient {
@@ -306,21 +302,12 @@ impl P2PClient {
             sender: command_sender,
             receiver: message_receiver,
             relay_addr,
-            event_loop: Some(EventLoop::new(
-                swarm,
-                topic,
-                host,
-                command_receiver,
-                message_sender,
-            )),
+            event_loop: spawn(
+                EventLoop::new(swarm, topic, host, command_receiver, message_sender).run(),
+            ),
         };
 
         Ok(client)
-    }
-
-    pub(crate) fn run(&mut self) -> tokio::task::JoinHandle<()> {
-        let eventloop = self.event_loop.take().unwrap();
-        spawn(eventloop.run())
     }
 
     pub(crate) async fn next(&mut self) -> Option<Vec<u8>> {
