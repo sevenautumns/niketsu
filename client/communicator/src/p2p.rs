@@ -1,5 +1,5 @@
-use anyhow::{bail, Context, Result};
-use futures::{FutureExt, StreamExt};
+use anyhow::{Context, Result};
+use futures::StreamExt;
 use libp2p::identity;
 use libp2p::kad::store::MemoryStore;
 use libp2p::multiaddr::Protocol;
@@ -8,25 +8,23 @@ use libp2p::{
     dcutr, gossipsub, identify, kad, noise, ping, relay, swarm::NetworkBehaviour, tcp, yamux,
     Multiaddr, PeerId,
 };
-use log::info;
-use std::collections::HashSet;
+use log::{error, info};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::io;
-use tokio::io::AsyncBufReadExt;
 use tokio::spawn;
 use uuid::Uuid;
 
-use libp2p::request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel};
+use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::Swarm;
 
 use crate::messages::NiketsuMessage;
-use bcrypt::{hash, verify, DEFAULT_COST};
+use bcrypt::{hash, DEFAULT_COST};
 use libp2p::StreamProtocol;
 use serde::{Deserialize, Serialize};
-use std::collections::{hash_map, HashMap};
+use std::collections::HashMap;
 
 const RELAY_ADDRESS: &str =
     "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN";
@@ -82,14 +80,6 @@ impl InitRequest {
     fn new_without_hash(room: String, password: String) -> Self {
         Self { room, password }
     }
-
-    fn verify(&self, password: String) -> bool {
-        match verify(password, &self.password) {
-            Err(e) => return false,
-            Ok(valid) => return valid,
-        }
-        false
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,10 +119,6 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
             .identify_relay(relay_addr.clone(), room, password)
             .await;
 
-        info!("Listening on relay");
-        self.listen_on(relay_addr.clone().with(Protocol::P2pCircuit))
-            .expect("Failed to listen on remote relay");
-
         info!("Peer id from relay: {host_peer_id:?}");
         if let Some(peer_id) = host_peer_id? {
             info!("Dialing peer: {:?}", peer_id);
@@ -146,6 +132,10 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
             self.behaviour_mut()
                 .add_address(&peer_id, "/dnsaddr/bootstrap.libp2p.io".parse()?);
             return Ok(peer_id);
+        } else {
+            info!("Listening on relay");
+            self.listen_on(relay_addr.clone().with(Protocol::P2pCircuit))
+                .expect("Failed to listen on remote relay");
         }
 
         Ok(*self.local_peer_id())
@@ -231,7 +221,6 @@ pub(crate) struct P2PClient {
 impl P2PClient {
     pub(crate) async fn new(room: String, password: String, secure: bool) -> Result<P2PClient> {
         let key_pair = identity::Keypair::generate_ed25519();
-        let peer_id = key_pair.public().to_peer_id();
 
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key_pair)
             .with_tokio()
@@ -312,17 +301,17 @@ impl P2PClient {
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
 
         let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (message_sender, message_receiver) = tokio::sync::mpsc::unbounded_channel();
         let client = P2PClient {
             sender: command_sender,
-            receiver: event_receiver,
+            receiver: message_receiver,
             relay_addr,
             event_loop: Some(EventLoop::new(
                 swarm,
                 topic,
                 host,
                 command_receiver,
-                event_sender,
+                message_sender,
             )),
         };
 
@@ -410,17 +399,23 @@ impl EventLoop {
                     String::from_utf8_lossy(&message.data),
                 );
                 //TODO handle some messages already ...
-                self.message_sender.send(message.data);
+                self.message_sender
+                    .send(message.data)
+                    .expect("Sending should not fail");
             }
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
                 request_response::Event::Message { message, .. },
             )) => match message {
                 request_response::Message::Request { request, .. } => {
-                    self.message_sender.send(request.0);
+                    info!("Received message {:?}", request.clone());
+                    let err = self.message_sender.send(request.0);
+                    error!("{err:?}");
                 }
                 request_response::Message::Response { .. } => todo!(),
             },
-            // SwarmEvent::IncomingConnection { .. } => {}
+            SwarmEvent::IncomingConnection { local_addr, .. } => {
+                info!("Received connection from {local_addr:?}")
+            }
             // SwarmEvent::ConnectionClosed { .. } => {}
             // SwarmEvent::OutgoingConnectionError { .. } => {}
             // SwarmEvent::IncomingConnectionError { .. } => {}
@@ -455,7 +450,8 @@ impl EventLoop {
                 );
         } else {
             info!("Publishing message to gossipsub: {req:?}");
-            self.swarm
+            let _ = self
+                .swarm
                 .behaviour_mut()
                 .gossipsub
                 .publish(self.topic.clone(), req.into_bytes());

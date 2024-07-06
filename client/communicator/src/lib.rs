@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use futures::Future;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use niketsu_core::communicator::*;
 use p2p::P2PClient;
 use tokio::task::JoinHandle;
@@ -109,6 +109,7 @@ impl Connected {
     async fn receive_niketsu_message(&mut self) -> Result<NiketsuMessage> {
         loop {
             if let Some(msg) = self.sender_receiver.next().await {
+                info!("Got msg {msg:?}");
                 match std::str::from_utf8(&msg) {
                     Ok(msg) => match serde_json::from_str::<NiketsuMessage>(&msg) {
                         Ok(msg) => return Ok(msg),

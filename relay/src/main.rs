@@ -99,6 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     block_on(async {
         let map = auth_nodes.clone();
         let rooms = open_rooms.clone();
+
         loop {
             match swarm.next().await.expect("Infinite Stream.") {
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {
