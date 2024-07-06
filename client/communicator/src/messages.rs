@@ -120,7 +120,7 @@ impl From<StatusListMessage> for IncomingMessage {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct PauseMessage {
     #[serde(skip_serializing)]
@@ -128,8 +128,10 @@ pub(super) struct PauseMessage {
 }
 
 impl From<NiketsuPause> for NiketsuMessage {
-    fn from(_: NiketsuPause) -> Self {
-        Self::Pause(PauseMessage::default())
+    fn from(value: NiketsuPause) -> Self {
+        Self::Pause(PauseMessage {
+            username: value.actor,
+        })
     }
 }
 
@@ -142,7 +144,7 @@ impl From<PauseMessage> for IncomingMessage {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct StartMessage {
     #[serde(skip_serializing)]
@@ -150,8 +152,10 @@ pub(super) struct StartMessage {
 }
 
 impl From<NiketsuStart> for NiketsuMessage {
-    fn from(_: NiketsuStart) -> Self {
-        Self::Start(StartMessage::default())
+    fn from(value: NiketsuStart) -> Self {
+        Self::Start(StartMessage {
+            username: value.actor,
+        })
     }
 }
 
@@ -186,7 +190,7 @@ impl From<NiketsuPlaybackSpeed> for NiketsuMessage {
     fn from(value: NiketsuPlaybackSpeed) -> Self {
         Self::PlaybackSpeed(PlaybackSpeedMessage {
             speed: value.speed,
-            username: Default::default(),
+            username: value.actor,
         })
     }
 }
@@ -218,7 +222,7 @@ impl From<NiketsuSeek> for NiketsuMessage {
         Self::Seek(SeekMessage {
             filename: value.file,
             position: value.position,
-            username: Default::default(),
+            username: value.actor,
             desync: false,
         })
     }
@@ -249,7 +253,7 @@ impl From<NiketsuSelect> for NiketsuMessage {
     fn from(value: NiketsuSelect) -> Self {
         Self::Select(SelectMessage {
             filename: value.filename,
-            username: Default::default(),
+            username: value.actor,
             position: value.position,
         })
     }
@@ -278,7 +282,7 @@ impl From<NiketsuUserMessage> for NiketsuMessage {
     fn from(value: NiketsuUserMessage) -> Self {
         Self::UserMessage(UserMessageMessage {
             message: value.message,
-            username: Default::default(),
+            username: value.actor,
         })
     }
 }
@@ -321,7 +325,7 @@ impl From<NiketsuPlaylist> for NiketsuMessage {
     fn from(value: NiketsuPlaylist) -> Self {
         Self::Playlist(PlaylistMessage {
             playlist: value.playlist,
-            username: Default::default(),
+            username: value.actor,
         })
     }
 }
