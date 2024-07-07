@@ -4384,6 +4384,7 @@ dependencies = [
  "async-trait",
  "async-tungstenite",
  "bcrypt",
+ "enum_dispatch",
  "futures",
  "futures-timer",
  "im",

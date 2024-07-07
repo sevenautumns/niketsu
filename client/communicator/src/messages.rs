@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+use anyhow::Context;
 use arcstr::ArcStr;
 use im::Vector;
 use niketsu_core::communicator::*;
@@ -43,6 +44,23 @@ impl TryFrom<NiketsuMessage> for IncomingMessage {
             NiketsuMessage::Status(m) => Ok(m.into()),
             value => Err(value),
         }
+    }
+}
+
+impl TryInto<NiketsuMessage> for Vec<u8> {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> anyhow::Result<NiketsuMessage> {
+        let msg = std::str::from_utf8(&self).context("from utf8 failed")?;
+        Ok(serde_json::from_str::<NiketsuMessage>(&msg).context("serde json from_str failed")?)
+    }
+}
+
+impl TryInto<Vec<u8>> for NiketsuMessage {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> anyhow::Result<Vec<u8>> {
+        Ok(serde_json::to_vec(&self).context("serde json from_vec failed")?)
     }
 }
 

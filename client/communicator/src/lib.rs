@@ -27,23 +27,14 @@ impl WebsocketCommunicator {
                 .replace(task.await.expect("get p2p task failed"));
             self.connect_task.take();
         }
-        let sender = self.sender_receiver.as_mut().unwrap();
+        let Some(sender) = &mut self.sender_receiver else {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            bail!("No sender")
+        };
+
         loop {
             if let Some(msg) = sender.next().await {
-                info!("Got msg {msg:?}");
-                match std::str::from_utf8(&msg) {
-                    Ok(msg) => match serde_json::from_str::<NiketsuMessage>(&msg) {
-                        Ok(msg) => return Ok(msg),
-                        Err(e) => {
-                            error!("msg parse error: {e:?}");
-                            continue;
-                        }
-                    },
-                    Err(e) => {
-                        error!("from utf8 failed: {e:?}");
-                        continue;
-                    }
-                }
+                return Ok(msg);
             }
             bail!("Websocket ended")
         }
