@@ -19,7 +19,7 @@ pub mod heartbeat;
 pub mod logging;
 pub mod player;
 pub mod playlist;
-pub mod rooms;
+pub mod room;
 pub mod ui;
 pub mod user;
 pub mod util;

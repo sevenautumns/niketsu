@@ -13,7 +13,7 @@ use super::message::Message;
 use super::widget::chat::ChatWidgetState;
 use super::widget::database::DatabaseWidgetState;
 use super::widget::playlist::PlaylistWidgetState;
-use super::widget::rooms::RoomsWidgetState;
+use super::widget::rooms::UsersWidgetState;
 use super::widget::settings::SettingsWidgetState;
 use super::PreExistingTokioRuntime;
 use crate::message::{EventOccured, MessageHandler, ModelChanged};
@@ -24,7 +24,7 @@ pub struct ViewModel {
     pub model: UiModel,
     pub main: MainView,
     pub settings_widget_state: SettingsWidgetState,
-    pub rooms_widget_state: RoomsWidgetState,
+    pub users_widget_state: UsersWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
     pub chat_widget_statet: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
@@ -40,7 +40,7 @@ impl ViewModel {
         Self {
             model: flags.ui_model,
             settings_widget_state: settings,
-            rooms_widget_state: Default::default(),
+            users_widget_state: Default::default(),
             playlist_widget_state: Default::default(),
             chat_widget_statet: Default::default(),
             database_widget_state: Default::default(),
@@ -69,8 +69,8 @@ impl ViewModel {
         Theme::Dark
     }
 
-    pub fn get_rooms_widget_state(&self) -> &RoomsWidgetState {
-        &self.rooms_widget_state
+    pub fn get_rooms_widget_state(&self) -> &UsersWidgetState {
+        &self.users_widget_state
     }
 
     pub fn get_playlist_widget_state(&self) -> &PlaylistWidgetState {
@@ -95,8 +95,8 @@ impl ViewModel {
 
     pub fn update_from_inner_model(&mut self) {
         self.model
-            .room_list
-            .on_change(|rooms| self.rooms_widget_state.replace_rooms(rooms));
+            .user_list
+            .on_change(|rooms| self.users_widget_state.replace_users(rooms));
         self.model
             .playlist
             .on_change(|playlist| self.playlist_widget_state.replace_playlist(playlist));

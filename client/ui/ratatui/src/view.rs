@@ -38,7 +38,7 @@ use crate::widget::login::LoginWidgetState;
 use crate::widget::media::{MediaDirWidget, MediaDirWidgetState};
 use crate::widget::options::{OptionsWidget, OptionsWidgetState};
 use crate::widget::playlist::PlaylistWidgetState;
-use crate::widget::room::{RoomsWidget, RoomsWidgetState};
+use crate::widget::users::{UsersWidget, UsersWidgetState};
 use crate::widget::OverlayWidgetState;
 
 pub struct RatatuiView {
@@ -64,7 +64,7 @@ pub struct App {
     current_state: State,
     pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
-    pub rooms_widget_state: RoomsWidgetState,
+    pub users_widget_state: UsersWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
     pub command_input_widget: CommandInputWidgetState,
     pub chat_input_widget: ChatInputWidgetState,
@@ -92,7 +92,7 @@ impl App {
                 chat
             },
             database_widget_state: DatabaseWidgetState::default(),
-            rooms_widget_state: RoomsWidgetState::default(),
+            users_widget_state: UsersWidgetState::default(),
             playlist_widget_state: PlaylistWidgetState::default(),
             command_input_widget: CommandInputWidgetState::default(),
             chat_input_widget: ChatInputWidgetState::new(),
@@ -308,14 +308,14 @@ impl RatatuiView {
             self.app.chat_widget_state.update_cursor_latest();
         }
 
-        if self.model.room_list.changed() {
-            let rooms = self.model.room_list.get_inner();
-            self.app.rooms_widget_state.set_rooms(rooms);
+        if self.model.user_list.changed() {
+            let users = self.model.user_list.get_inner();
+            self.app.users_widget_state.set_user_list(users);
         }
 
         if self.model.user.changed() {
             let user = self.model.user.get_inner();
-            self.app.rooms_widget_state.set_user(user.clone());
+            self.app.users_widget_state.set_user(user.clone());
             self.app.chat_widget_state.set_user(user);
         }
 
@@ -363,9 +363,9 @@ impl RatatuiView {
         );
 
         f.render_stateful_widget(
-            RoomsWidget,
+            UsersWidget,
             vertical_right_chunks[1],
-            &mut app.rooms_widget_state,
+            &mut app.users_widget_state,
         );
 
         f.render_stateful_widget(

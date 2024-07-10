@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
-use log::{error, info, warn};
+use log::warn;
 use niketsu_core::communicator::*;
 use p2p::P2PClient;
 
@@ -33,6 +33,7 @@ impl WebsocketCommunicator {
         };
 
         loop {
+            //TODO: what?
             if let Some(msg) = sender.next().await {
                 return Ok(msg);
             }

@@ -15,7 +15,7 @@ use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
 use crate::playlist::Playlist;
-use crate::rooms::RoomList;
+use crate::room::UserList;
 use crate::user::UserStatus;
 
 #[cfg_attr(test, mockall::automock)]
@@ -158,20 +158,14 @@ impl From<NiketsuVideoStatus> for OutgoingMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NiketsuUserStatusList {
-    pub rooms: BTreeMap<String, BTreeSet<NiketsuUserStatus>>,
+    pub room_name: String,
+    pub users: BTreeSet<NiketsuUserStatus>,
 }
 
 impl EventHandler for NiketsuUserStatusList {
     fn handle(self, model: &mut CoreModel) {
         trace!("received user status list");
-        let rooms: BTreeMap<String, BTreeSet<UserStatus>> =
-            BTreeMap::from_iter(self.rooms.into_iter().map(|(r, u)| {
-                (
-                    r,
-                    BTreeSet::<UserStatus>::from_iter(u.into_iter().map(UserStatus::from)),
-                )
-            }));
-        model.ui.room_list(RoomList::from(rooms));
+        model.ui.user_list(UserList::from(self));
     }
 }
 

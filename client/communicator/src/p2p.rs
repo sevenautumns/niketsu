@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
@@ -15,10 +15,9 @@ use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
     dcutr, gossipsub, identify, identity, kad, noise, ping, relay, tcp, yamux, Multiaddr, PeerId,
-    StreamProtocol, SwarmBuilder,
+    StreamProtocol,
 };
 use log::{debug, error, info, warn};
-use niketsu_core::user::UserStatus;
 use serde::{Deserialize, Serialize};
 use tokio::{io, spawn};
 use uuid::Uuid;
@@ -135,9 +134,9 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
             return Ok(peer_id);
         } else {
             info!("Listening on relay");
+            self.listen_on(relay_addr.clone().with(Protocol::P2pCircuit))
+                .expect("Failed to listen on remote relay");
         }
-        self.listen_on(relay_addr.clone().with(Protocol::P2pCircuit))
-            .expect("Failed to listen on remote relay");
 
         Ok(*self.local_peer_id())
     }
@@ -376,7 +375,7 @@ impl fmt::Debug for ClientCommunicationHandler {
 }
 
 impl ClientCommunicationHandler {
-    fn handle_incoming_message(&mut self, peer_id: PeerId, msg: Vec<u8>) -> Result<()> {
+    fn handle_broadcast(&mut self, peer_id: PeerId, msg: Vec<u8>) -> Result<()> {
         let niketsu_msg = msg.try_into()?;
         if let NiketsuMessage::UserMessage(_) = niketsu_msg {
             return self
@@ -436,7 +435,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
                     "Received gossipsub message: '{}'\n with id: {id} from peer: {peer_id}",
                     String::from_utf8_lossy(&message.data),
                 );
-                if let Err(e) = self.handle_incoming_message(peer_id, message.data) {
+                if let Err(e) = self.handle_broadcast(peer_id, message.data) {
                     error!("Failed to handle incoming message: {e:?}");
                 }
             }
@@ -509,8 +508,7 @@ struct HostCommunicationHandler {
     relay: Multiaddr,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
-    room: String,
-    status_list: BTreeMap<String, BTreeSet<UserStatusMessage>>,
+    status_list: StatusListMessage,
     users: HashMap<PeerId, UserStatusMessage>,
 }
 
@@ -531,31 +529,22 @@ impl HostCommunicationHandler {
         message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
         room: String,
     ) -> Self {
-        let mut map: BTreeMap<String, BTreeSet<UserStatusMessage>> = BTreeMap::default();
-        map.insert(room.clone(), BTreeSet::default());
-
         Self {
             swarm,
             topic,
             relay,
             core_receiver,
             message_sender,
-            room,
-            status_list: map,
+            status_list: StatusListMessage {
+                room_name: room,
+                users: BTreeSet::default(),
+            },
             users: HashMap::default(),
         }
     }
 
     fn update_status_list(&mut self, status: UserStatusMessage) {
-        self.status_list.entry(self.room.clone()).and_modify(|set| {
-            set.insert(status);
-        });
-    }
-
-    fn get_status_list(&mut self) -> NiketsuMessage {
-        NiketsuMessage::StatusList(StatusListMessage {
-            rooms: self.status_list.clone(),
-        })
+        self.status_list.users.replace(status);
     }
 
     fn handle_incoming_message(&mut self, peer_id: PeerId, msg: Vec<u8>) -> Result<()> {
@@ -567,14 +556,14 @@ impl HostCommunicationHandler {
             self.users.insert(peer_id, status.clone());
             //TODO delete old username in case it exists
             self.update_status_list(status);
-            niketsu_msg = self.get_status_list();
+            niketsu_msg = NiketsuMessage::StatusList(self.status_list.clone());
         }
-        self.message_sender.send(niketsu_msg)?;
+        self.message_sender.send(niketsu_msg.clone())?;
         debug!("Publishing message from peer {peer_id:?} to gossipsub");
         self.swarm
             .behaviour_mut()
             .gossipsub
-            .publish(self.topic.clone(), msg)?;
+            .publish(self.topic.clone(), Vec::<u8>::try_from(niketsu_msg)?)?;
 
         Ok(())
     }
@@ -664,8 +653,10 @@ impl CommunicationHandler for HostCommunicationHandler {
         info!("host: {:?}", self.swarm.local_peer_id());
         if let NiketsuMessage::Status(status) = msg.clone() {
             //TODO What is the behavior, how to update user status/ready status?
+            info!("Status {:?}", status.clone());
             self.update_status_list(status);
-            let status_list = self.get_status_list();
+            let status_list = NiketsuMessage::StatusList(self.status_list.clone());
+            info!("Status list: {:?}", status_list.clone());
             self.message_sender.send(status_list.clone())?;
             req = status_list.try_into()?;
         }

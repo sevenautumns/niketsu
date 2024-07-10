@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -47,20 +47,20 @@ impl TryFrom<NiketsuMessage> for IncomingMessage {
     }
 }
 
-impl TryInto<NiketsuMessage> for Vec<u8> {
+impl TryFrom<NiketsuMessage> for Vec<u8> {
     type Error = anyhow::Error;
 
-    fn try_into(self) -> anyhow::Result<NiketsuMessage> {
-        let msg = std::str::from_utf8(&self).context("from utf8 failed")?;
-        Ok(serde_json::from_str::<NiketsuMessage>(&msg).context("serde json from_str failed")?)
+    fn try_from(value: NiketsuMessage) -> anyhow::Result<Vec<u8>> {
+        Ok(serde_json::to_vec(&value).context("serde json from_vec failed")?)
     }
 }
 
-impl TryInto<Vec<u8>> for NiketsuMessage {
+impl TryFrom<Vec<u8>> for NiketsuMessage {
     type Error = anyhow::Error;
 
-    fn try_into(self) -> anyhow::Result<Vec<u8>> {
-        Ok(serde_json::to_vec(&self).context("serde json from_vec failed")?)
+    fn try_from(value: Vec<u8>) -> anyhow::Result<NiketsuMessage> {
+        let msg = std::str::from_utf8(&value).context("from utf8 failed")?;
+        Ok(serde_json::from_str::<NiketsuMessage>(&msg).context("serde json from_str failed")?)
     }
 }
 
@@ -119,22 +119,21 @@ impl From<NiketsuVideoStatus> for NiketsuMessage {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct StatusListMessage {
-    pub(super) rooms: BTreeMap<String, BTreeSet<UserStatusMessage>>,
+    pub(super) room_name: String,
+    pub(super) users: BTreeSet<UserStatusMessage>,
 }
 
 impl From<StatusListMessage> for IncomingMessage {
     fn from(value: StatusListMessage) -> Self {
-        let rooms: BTreeMap<String, BTreeSet<NiketsuUserStatus>> = value
-            .rooms
-            .into_iter()
-            .map(|(name, room)| {
-                (
-                    name,
-                    room.into_iter().map(NiketsuUserStatus::from).collect(),
-                )
-            })
-            .collect();
-        NiketsuUserStatusList { rooms }.into()
+        NiketsuUserStatusList {
+            room_name: value.room_name,
+            users: value
+                .users
+                .into_iter()
+                .map(NiketsuUserStatus::from)
+                .collect(),
+        }
+        .into()
     }
 }
 
@@ -464,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_status_list_message_serialization() {
-        let mut rooms = BTreeMap::new();
+        let room_name = String::from("room");
         let mut users = BTreeSet::new();
         users.insert(UserStatusMessage {
             username: String::from("user1"),
@@ -474,12 +473,11 @@ mod tests {
             username: String::from("user2"),
             ready: false,
         });
-        rooms.insert(String::from("room1"), users);
-
-        let status_list_message = NiketsuMessage::StatusList(StatusListMessage { rooms });
+        let status_list_message =
+            NiketsuMessage::StatusList(StatusListMessage { room_name, users });
 
         let json_str = serde_json::to_string(&status_list_message).unwrap();
-        let expected_json = r#"{"type":"statusList","rooms":{"room1":[{"username":"user1","ready":true},{"username":"user2","ready":false}]}}"#;
+        let expected_json = r#"{"type":"statusList","room_name":"room","users":[{"username":"user1","ready":true},{"username":"user2","ready":false}]}"#;
 
         assert_eq!(json_str, expected_json);
     }
@@ -648,8 +646,7 @@ mod tests {
 
     #[test]
     fn test_status_list_message_deserialization() {
-        let json_str = r#"{"type":"statusList","rooms":{"room1":[{"username":"user1","ready":true},{"username":"user2","ready":false}]}}"#;
-        let mut expected_rooms = BTreeMap::new();
+        let json_str = r#"{"type":"statusList","room_name":"room","users":[{"username":"user1","ready":true},{"username":"user2","ready":false}]}"#;
         let mut users = BTreeSet::new();
         users.insert(UserStatusMessage {
             username: String::from("user1"),
@@ -659,10 +656,9 @@ mod tests {
             username: String::from("user2"),
             ready: false,
         });
-        expected_rooms.insert(String::from("room1"), users);
-
         let expected_status_list_message = NiketsuMessage::StatusList(StatusListMessage {
-            rooms: expected_rooms,
+            room_name: "room".to_string(),
+            users,
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();

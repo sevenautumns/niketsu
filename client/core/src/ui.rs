@@ -17,7 +17,7 @@ use super::{CoreModel, EventHandler};
 use crate::config::Config;
 use crate::file_database::FileStore;
 use crate::playlist::Playlist;
-use crate::rooms::RoomList;
+use crate::room::UserList;
 use crate::util::{Observed, RingBuffer};
 
 #[cfg_attr(test, mockall::automock)]
@@ -27,7 +27,7 @@ pub trait UserInterfaceTrait: std::fmt::Debug + Send {
     fn file_database(&mut self, db: FileStore);
     fn playlist(&mut self, playlist: Playlist);
     fn video_change(&mut self, video: Option<Video>);
-    fn room_list(&mut self, room_list: RoomList);
+    fn user_list(&mut self, user_list: UserList);
     fn user_update(&mut self, user: UserChange);
     fn player_message(&mut self, msg: PlayerMessage);
     fn username_change(&mut self, username: String);
@@ -259,7 +259,7 @@ impl UserInterface {
             file_database_status: Observed::<_>::default_with_notify(&notify),
             playlist: Observed::<_>::default_with_notify(&notify),
             playing_video: Observed::<_>::default_with_notify(&notify),
-            room_list: Observed::<_>::default_with_notify(&notify),
+            user_list: Observed::<_>::default_with_notify(&notify),
             user: Observed::<_>::new(user, &notify),
             messages: Observed::new(RingBuffer::new(1000), &notify),
             events: tx,
@@ -294,8 +294,8 @@ impl UserInterfaceTrait for UserInterface {
         self.model.playing_video.set(video);
     }
 
-    fn room_list(&mut self, room_list: RoomList) {
-        self.model.room_list.set(room_list);
+    fn user_list(&mut self, room_list: UserList) {
+        self.model.user_list.set(room_list);
     }
 
     fn user_update(&mut self, user: UserChange) {
@@ -327,7 +327,7 @@ pub struct UiModel {
     pub file_database_status: Observed<f32>,
     pub playlist: Observed<Playlist>,
     pub playing_video: Observed<Option<Video>>,
-    pub room_list: Observed<RoomList>,
+    pub user_list: Observed<UserList>,
     pub user: Observed<UserStatus>,
     pub messages: Observed<RingBuffer<PlayerMessage>>,
     pub events: MpscSender<UserInterfaceEvent>,
@@ -779,7 +779,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -805,7 +805,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -831,7 +831,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user.clone(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -854,7 +854,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -882,7 +882,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -906,7 +906,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -930,7 +930,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -962,7 +962,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
@@ -988,7 +988,7 @@ mod tests {
             file_database_status: Observed::new(0.0, &notify),
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
-            room_list: Observed::new(RoomList::default(), &notify),
+            user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,

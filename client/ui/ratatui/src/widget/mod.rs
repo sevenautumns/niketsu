@@ -1,5 +1,5 @@
 use ratatui::prelude::Rect;
-use ratatui::style::{Color, Modifier, Style, Styled, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, ListState, Widget};
 use tui_textarea::{Input, TextArea};
@@ -14,7 +14,7 @@ pub(crate) mod login;
 pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
-pub(crate) mod room;
+pub(crate) mod users;
 
 pub trait OverlayWidgetState {
     fn area(&self, r: Rect) -> Rect;

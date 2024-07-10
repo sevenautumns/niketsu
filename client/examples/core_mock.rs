@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -8,7 +7,7 @@ use chrono::Local;
 use log::info;
 use niketsu_core::file_database::{FileEntry, FileStore};
 use niketsu_core::playlist::{Playlist, Video};
-use niketsu_core::rooms::RoomList;
+use niketsu_core::room::UserList;
 use niketsu_core::ui::{
     MessageLevel, MessageSource, PlayerMessageInner, UserChange, UserInterfaceEvent,
     UserInterfaceTrait,
@@ -20,8 +19,7 @@ pub struct CoreMock<T: UserInterfaceTrait> {
     file_database_status: f32,
     file_database: FileStore,
     playlist: Playlist,
-    room_list: RoomList,
-    room_list_map: BTreeMap<String, BTreeSet<UserStatus>>,
+    user_list: UserList,
     user_change: UserChange,
 }
 
@@ -32,20 +30,16 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
             file_database_status: 0.0,
             file_database: FileStore::default(),
             playlist: Default::default(),
-            room_list: Default::default(),
-            room_list_map: Default::default(),
+            user_list: Default::default(),
             user_change: UserChange {
                 name: "ThisUser".to_string(),
                 ready: false,
             },
         };
-        mock.room_list_map.insert(
-            "Test".into(),
-            BTreeSet::from([UserStatus {
-                name: "ThisUser".into(),
-                ready: false,
-            }]),
-        );
+        mock.user_list.insert(UserStatus {
+            name: "ThisUser".into(),
+            ready: false,
+        });
         mock
     }
 
@@ -90,7 +84,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
         self.ui.file_database_status(self.file_database_status);
         self.ui.file_database(self.file_database.clone());
         self.ui.playlist(self.playlist.clone());
-        self.ui.room_list(self.room_list.clone());
+        self.ui.user_list(self.user_list.clone());
         self.ui.user_update(self.user_change.clone());
         self.send_player_message();
     }
@@ -111,7 +105,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
         self.change_file_database(i);
         self.change_playlist(i);
         if i % 10 == 0 || i % 15 == 0 {
-            self.change_room_list(i)
+            self.change_user_list(i)
         }
     }
 
@@ -137,24 +131,13 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
         self.playlist.push(Video::from(format!("file{i}").as_str()));
     }
 
-    fn change_room_list(&mut self, i: usize) {
+    fn change_user_list(&mut self, i: usize) {
         let ready = i % 2 == 0;
-        let room_name = match ready {
-            true => "Test".to_string(),
-            false => "NoTest".to_string(),
-        };
         let user = UserStatus {
             name: format!("User{i}"),
             ready,
         };
-        if let Some(bset) = self.room_list_map.get(&room_name) {
-            let mut new_room_list = bset.clone();
-            new_room_list.insert(user);
-            self.room_list_map.insert(room_name, new_room_list);
-        } else {
-            self.room_list_map.insert(room_name, BTreeSet::from([user]));
-        }
-        self.room_list = RoomList::from(self.room_list_map.clone());
+        self.user_list.insert(user);
     }
 }
 

@@ -32,7 +32,7 @@ impl EventHandler for Options {
                     KeyCode::Char('r') => {
                         view.model.user_ready_toggle();
                         //TODO needs to be changed once ready toggling works better
-                        view.app.rooms_widget_state.toggle_ready();
+                        view.app.users_widget_state.toggle_ready();
                         view.app.reset_overlay();
                     }
                     _ => {
