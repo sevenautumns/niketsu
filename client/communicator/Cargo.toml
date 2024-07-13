@@ -24,3 +24,4 @@ libp2p = { version = "0.53.2", features = [ "full" ] }
 futures-timer = "3.0"
 uuid = { version = "1.8.0",  features = [ "v4","fast-rng" ]}
 bcrypt = "0.15.1"
+fake = "2.9.2"

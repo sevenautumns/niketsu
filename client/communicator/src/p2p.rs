@@ -8,7 +8,10 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use bcrypt::{hash, DEFAULT_COST};
 use enum_dispatch::enum_dispatch;
+use fake::faker::company::en::Buzzword;
+use fake::Fake;
 use futures::StreamExt;
+use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ProtocolSupport};
@@ -22,8 +25,12 @@ use serde::{Deserialize, Serialize};
 use tokio::{io, spawn};
 use uuid::Uuid;
 
-use crate::messages::{NiketsuMessage, StatusListMessage, UserStatusMessage, VideoStatusMessage};
+use crate::messages::{
+    NiketsuMessage, StartMessage, StatusListMessage, UserStatusMessage, VideoStatusMessage,
+};
 
+//TODO: proper peer id for relay
+// 89.58.15.23
 const RELAY_ADDRESS: &str =
     "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN";
 
@@ -53,12 +60,11 @@ impl DerefMut for Behaviour {
     }
 }
 
-//TODO: Can probably be changed to NiketsuMessage
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct MessageRequest(Vec<u8>);
+struct MessageRequest(NiketsuMessage);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct MessageResponse(Vec<u8>);
+pub(crate) struct MessageResponse(NiketsuMessage);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct InitRequest {
@@ -282,7 +288,7 @@ impl P2PClient {
                     ),
                 })
             })?
-            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
             .build();
 
         let relay_addr =
@@ -306,6 +312,7 @@ impl P2PClient {
             Handler::Host(HostCommunicationHandler::new(
                 swarm,
                 topic,
+                host,
                 relay_addr.clone(),
                 core_receiver,
                 message_sender,
@@ -444,7 +451,9 @@ impl CommunicationHandler for ClientCommunicationHandler {
             )) => match message {
                 request_response::Message::Request { request, .. } => {
                     info!("Received direct message {:?}", request.clone());
-                    // let err = self.message_sender.send(request.0);
+                    if let Err(e) = self.message_sender.send(request.0) {
+                        error!("Failed to send direct message to core: {e:?}");
+                    }
                 }
                 request_response::Message::Response { .. } => info!("Received direct response"),
             },
@@ -452,10 +461,14 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 info!("Received connection from {local_addr:?}")
             }
             SwarmEvent::ConnectionClosed {
-                peer_id, endpoint, ..
+                peer_id,
+                endpoint,
+                cause,
+                ..
             } => {
-                if self.relay == (*endpoint.get_remote_address()) || peer_id == self.host {
-                    warn!("Connection of client to relay server or host closed: {endpoint:?}");
+                // client losing connection to relay might be fine
+                if peer_id == self.host {
+                    warn!("Connection of client to relay server or host closed: {endpoint:?} with cause: {cause:?}");
                     self.core_receiver.close();
                     //TODO panic
                 }
@@ -495,16 +508,51 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 self.swarm
                     .behaviour_mut()
                     .message_request_response
-                    .send_request(&self.host, MessageRequest { 0: req });
+                    .send_request(&self.host, MessageRequest { 0: msg });
             }
         }
         Ok(())
     }
 }
 
+trait Sender<T> {
+    fn send(&mut self, peer_id: &PeerId, msg: T);
+    fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: T) -> Result<()>;
+}
+
+impl Sender<NiketsuMessage> for Swarm<Behaviour> {
+    fn send(&mut self, peer_id: &PeerId, msg: NiketsuMessage) {
+        // ignores outbound id
+        self.behaviour_mut()
+            .message_request_response
+            .send_request(peer_id, MessageRequest { 0: msg });
+    }
+
+    fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()> {
+        // ignores message id and insufficient peer error
+
+        let res = self
+            .behaviour_mut()
+            .gossipsub
+            .publish(topic.clone(), Vec::<u8>::try_from(msg)?);
+
+        match res {
+            Ok(_) => Ok(()),
+            Err(e) => match e {
+                PublishError::InsufficientPeers => {
+                    debug!("Gossipsub insufficient peers. Publishing when no one is connected");
+                    Ok(())
+                }
+                err => return Err(anyhow::Error::from(err)),
+            },
+        }
+    }
+}
+
 struct HostCommunicationHandler {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
+    host: PeerId,
     relay: Multiaddr,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
@@ -524,6 +572,7 @@ impl HostCommunicationHandler {
     fn new(
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
+        host: PeerId,
         relay: Multiaddr,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
@@ -532,6 +581,7 @@ impl HostCommunicationHandler {
         Self {
             swarm,
             topic,
+            host,
             relay,
             core_receiver,
             message_sender,
@@ -543,28 +593,111 @@ impl HostCommunicationHandler {
         }
     }
 
-    fn update_status_list(&mut self, status: UserStatusMessage) {
-        self.status_list.users.replace(status);
+    fn send_init_status(&mut self, peer_id: PeerId) {
+        //TODO maybe unnecessary
+        if let Err(e) = self.swarm.try_broadcast(
+            self.topic.clone(),
+            NiketsuMessage::StatusList(self.status_list.clone()),
+        ) {
+            error!("Failed to broadcast status list: {e:?}");
+        }
+
+        //TODO send playlist and check username?
     }
 
-    fn handle_incoming_message(&mut self, peer_id: PeerId, msg: Vec<u8>) -> Result<()> {
-        //TODO if all are ready, cache full, etc. then start
-        //TODO if client sends username that already exists, f* him
-        let mut niketsu_msg: NiketsuMessage = msg.clone().try_into()?;
+    fn update_status(&mut self, status: UserStatusMessage, peer_id: PeerId) {
+        self.status_list.users.replace(status.clone());
+        self.users.insert(peer_id, status);
+    }
+
+    fn remove_peer(&mut self, status: &UserStatusMessage, peer_id: &PeerId) {
+        self.status_list.users.remove(status);
+        self.users.remove(peer_id);
+    }
+
+    //TODO caching?
+    fn all_users_ready(&self) -> bool {
+        self.status_list.users.iter().all(|u| u.ready)
+    }
+
+    fn roll_new_username(&self, username: String) -> String {
+        //TODO only needs to be applied once?
+        // check same user
+        let mut buzzword: String = format!("{username}_{}", Buzzword().fake::<String>());
+        while self.username_exists(buzzword.clone()) {
+            buzzword = format!("{username}_{}", Buzzword().fake::<String>());
+        }
+        buzzword
+    }
+
+    fn is_established_user(&self, peer_id: PeerId) -> bool {
+        self.users.get(&peer_id).is_some()
+    }
+
+    fn username_exists(&self, username: String) -> bool {
+        self.status_list
+            .users
+            .iter()
+            .any(|u| u.username == username)
+    }
+
+    fn handle_status(&mut self, status: UserStatusMessage, peer_id: PeerId) {
+        let mut new_status = status.clone();
+
+        if self.is_established_user(peer_id) {
+            if !self.username_exists(status.username.clone()) {
+                // user name change, remove old status and update user map
+                let users = self.users.clone(); // is there any other way to avoid mut/immut borrow?
+                let old_status = users.get(&peer_id).expect("User should exist");
+                self.remove_peer(&old_status, &peer_id);
+            }
+            // otherwise, typical user status update, only need to update map & list
+        } else {
+            // new user
+            if self.username_exists(status.username.clone()) {
+                // username needs to be force changed to avoid duplicate user names
+                let new_username = self.roll_new_username(status.username.clone());
+                new_status = UserStatusMessage {
+                    username: new_username,
+                    ready: status.ready,
+                };
+                self.swarm
+                    .send(&peer_id, NiketsuMessage::Status(new_status.clone()));
+            }
+        }
+
+        self.update_status(new_status, peer_id);
+    }
+
+    fn handle_all_users_ready(&mut self, peer_id: &PeerId) -> Result<()> {
+        if self.all_users_ready() {
+            debug!("All users area ready. Publishing start to gossipsub");
+            let mut start_msg = NiketsuMessage::Start(StartMessage {
+                username: "".to_string(),
+            });
+            if let Some(user) = self.users.get(&peer_id) {
+                start_msg = NiketsuMessage::Start(StartMessage {
+                    username: user.username.clone(),
+                });
+            }
+            self.message_sender.send(start_msg.clone())?;
+            self.swarm.try_broadcast(self.topic.clone(), start_msg)?;
+        }
+        Ok(())
+    }
+
+    fn handle_incoming_message(&mut self, peer_id: PeerId, msg: NiketsuMessage) -> Result<()> {
+        let mut niketsu_msg = msg;
         info!("Received message {:?}", niketsu_msg.clone());
         if let NiketsuMessage::Status(status) = niketsu_msg.clone() {
-            self.users.insert(peer_id, status.clone());
-            //TODO delete old username in case it exists
-            self.update_status_list(status);
+            self.handle_status(status.clone(), peer_id);
             niketsu_msg = NiketsuMessage::StatusList(self.status_list.clone());
         }
+        self.handle_all_users_ready(&peer_id)?;
+
         self.message_sender.send(niketsu_msg.clone())?;
         debug!("Publishing message from peer {peer_id:?} to gossipsub");
-        self.swarm
-            .behaviour_mut()
-            .gossipsub
-            .publish(self.topic.clone(), Vec::<u8>::try_from(niketsu_msg)?)?;
-
+        self.swarm.try_broadcast(self.topic.clone(), niketsu_msg)?;
         Ok(())
     }
 
@@ -625,6 +758,10 @@ impl CommunicationHandler for HostCommunicationHandler {
             SwarmEvent::IncomingConnection { local_addr, .. } => {
                 info!("Received connection from {local_addr:?}")
             }
+            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                info!("New client established connection {peer_id}");
+                self.send_init_status(peer_id);
+            }
             SwarmEvent::ConnectionClosed {
                 peer_id, endpoint, ..
             } => {
@@ -634,7 +771,18 @@ impl CommunicationHandler for HostCommunicationHandler {
                     //TODO panic
                 } else {
                     info!("User connection stopped and user removed from map");
-                    self.users.remove(&peer_id);
+                    let users = self.users.clone();
+                    let status = users
+                        .get(&peer_id)
+                        .expect("Connected peer should be included in lists");
+                    self.remove_peer(&status, &peer_id);
+                    let status_list = NiketsuMessage::StatusList(self.status_list.clone());
+                    if let Err(e) = self.message_sender.send(status_list.clone()) {
+                        error!("Failed to send status list to core: {e:?}");
+                    }
+                    if let Err(e) = self.swarm.try_broadcast(self.topic.clone(), status_list) {
+                        error!("Failed to broadcast status list: {e:?}");
+                    }
                 }
             }
             SwarmEvent::Dialing {
@@ -646,25 +794,22 @@ impl CommunicationHandler for HostCommunicationHandler {
     }
 
     async fn handle_message(&mut self, msg: NiketsuMessage) -> Result<()> {
-        //TODO some message need further preparations
-        //TODO maybe need to add peer addr manually
-        //TODO what about broadcasting as host?
-        let mut req: Vec<u8> = msg.clone().try_into()?;
-        info!("host: {:?}", self.swarm.local_peer_id());
-        if let NiketsuMessage::Status(status) = msg.clone() {
+        let mut niketsu_msg = msg.clone();
+        info!("host: {:?}", self.host);
+        if let NiketsuMessage::Status(status) = niketsu_msg.clone() {
             //TODO What is the behavior, how to update user status/ready status?
             info!("Status {:?}", status.clone());
-            self.update_status_list(status);
-            let status_list = NiketsuMessage::StatusList(self.status_list.clone());
-            info!("Status list: {:?}", status_list.clone());
-            self.message_sender.send(status_list.clone())?;
-            req = status_list.try_into()?;
+            let peer_id = self.host.clone();
+            self.update_status(status, peer_id);
+            self.handle_all_users_ready(&peer_id)?;
+
+            niketsu_msg = NiketsuMessage::StatusList(self.status_list.clone());
+            info!("Status list: {:?}", niketsu_msg.clone());
+            self.message_sender.send(niketsu_msg.clone())?;
         }
+        //TODO how to handle playlist?
         debug!("Publishing message to gossipsub: {msg:?}");
-        self.swarm
-            .behaviour_mut()
-            .gossipsub
-            .publish(self.topic.clone(), req)?;
+        self.swarm.try_broadcast(self.topic.clone(), niketsu_msg)?;
         Ok(())
     }
 }
