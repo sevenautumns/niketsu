@@ -29,11 +29,6 @@ use crate::messages::{
     NiketsuMessage, StartMessage, StatusListMessage, UserStatusMessage, VideoStatusMessage,
 };
 
-//TODO: proper peer id for relay
-// 89.58.15.23
-const RELAY_ADDRESS: &str =
-    "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN";
-
 #[derive(NetworkBehaviour)]
 struct Behaviour {
     relay_client: relay::client::Behaviour,
@@ -225,7 +220,7 @@ pub(crate) struct P2PClient {
 }
 
 impl P2PClient {
-    pub(crate) async fn new(room: String, password: String, secure: bool) -> Result<P2PClient> {
+    pub(crate) async fn new(relay: String, room: String, password: String) -> Result<P2PClient> {
         let key_pair = identity::Keypair::generate_ed25519();
 
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key_pair)
@@ -236,7 +231,6 @@ impl P2PClient {
                 yamux::Config::default,
             )?
             .with_quic()
-            .with_dns()?
             .with_relay_client(noise::Config::new, yamux::Config::default)?
             .with_behaviour(|keypair, relay_behaviour| {
                 let message_id_fn = |_message: &gossipsub::Message| {
@@ -291,8 +285,7 @@ impl P2PClient {
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
             .build();
 
-        let relay_addr =
-            Multiaddr::from_str(RELAY_ADDRESS).expect("Relay address could not be parsed");
+        let relay_addr = Multiaddr::from_str(&relay).expect("Relay address could not be parsed");
 
         let host: Host;
         match swarm

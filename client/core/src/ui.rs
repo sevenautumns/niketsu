@@ -94,7 +94,6 @@ impl EventHandler for VideoChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerChange {
     pub addr: String,
-    pub secure: bool,
     pub password: String,
     pub room: String,
 }
@@ -105,7 +104,6 @@ impl From<ServerChange> for EndpointInfo {
             room: value.room,
             password: value.password,
             addr: value.addr,
-            secure: value.secure,
         }
     }
 }
@@ -577,7 +575,6 @@ mod tests {
 
         let user = String::from("max");
         let addr = String::from("duckduckgo.com");
-        let secure = true;
         let password = String::from("passwd");
         let room = String::from("room1");
         let config = Config {
@@ -588,7 +585,6 @@ mod tests {
             addr: addr.clone(),
             password: password.clone(),
             room: room.clone(),
-            secure,
         };
 
         communicator
@@ -608,7 +604,6 @@ mod tests {
 
         let change = ServerChange {
             addr,
-            secure,
             password,
             room: room.clone(),
         };
@@ -938,12 +933,10 @@ mod tests {
         };
 
         let addr = String::from("duckduckgo.com");
-        let secure = true;
         let password = String::from("passwd");
         let room = String::from("room1");
         let request = ServerChange {
             addr,
-            secure,
             password,
             room,
         };

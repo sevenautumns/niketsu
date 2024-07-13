@@ -466,6 +466,7 @@ impl RatatuiView {
     }
 
     //TODO returning errors
+    // hidden feature
     pub fn parse_commands(&mut self, msg: String) {
         //TODO refactor
         let args: Vec<&str> = msg.split_whitespace().collect();
@@ -473,26 +474,17 @@ impl RatatuiView {
 
         match args {
             ["w", msg @ ..] | ["write", msg @ ..] => self.model.send_message(msg.concat()),
-            ["server-change", addr, secure, password, room]
-            | ["sc", addr, secure, password, room] => self.handle_server_change(
-                addr.to_string(),
-                secure,
-                password.to_string(),
-                room.to_string(),
-            ),
-            ["server-change", addr, secure, room] | ["sc", addr, secure, room] => self
-                .handle_server_change(
-                    addr.to_string(),
-                    secure,
-                    String::default(),
-                    room.to_string(),
-                ),
+            ["server-change", password, room] | ["sc", password, room] => self
+                .handle_server_change(self.config.addr(), password.to_string(), room.to_string()),
+            ["server-change", room] | ["sc", room] => {
+                self.handle_server_change(self.config.addr(), String::default(), room.to_string())
+            }
             ["username-change", username] | ["uc", username] => {
                 self.model.change_username(username.to_string())
             }
             ["toggle-ready"] | ["tr"] => self.model.user_ready_toggle(),
-            ["start-update"] => self.model.start_db_update(),
-            ["stop-update"] => self.model.stop_db_update(),
+            ["start-update"] | ["load"] => self.model.start_db_update(),
+            ["stop-update"] | ["stop"] => self.model.stop_db_update(),
             ["delete", filename] | ["d", filename] => self.remove(&Video::from(*filename)),
 
             ["move", filename, position] | ["mv", filename, position] => {
@@ -547,16 +539,7 @@ impl RatatuiView {
         self.model.change_db_paths(paths)
     }
 
-    pub fn save_config(
-        &mut self,
-        address: String,
-        secure: bool,
-        password: String,
-        room: String,
-        username: String,
-    ) {
-        self.config.url = address;
-        self.config.secure = secure;
+    pub fn save_config(&mut self, password: String, room: String, username: String) {
         self.config.password = password;
         self.config.room = room;
         self.config.username = username;
@@ -568,16 +551,9 @@ impl RatatuiView {
         _ = self.config.save();
     }
 
-    fn handle_server_change(&mut self, addr: String, secure: &str, password: String, room: String) {
-        let secure: bool = match secure {
-            "true" => true,
-            "false" => false,
-            _ => return,
-        };
-
+    fn handle_server_change(&mut self, addr: String, password: String, room: String) {
         self.model.change_server(ServerChange {
             addr,
-            secure,
             password,
             room,
         });

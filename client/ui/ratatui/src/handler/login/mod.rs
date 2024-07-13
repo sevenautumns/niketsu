@@ -20,13 +20,12 @@ impl EventHandler for Login {
                         view.app.reset_overlay();
                         let input = view.app.login_widget_state.collect_input();
                         view.model.change_server(ServerChange {
-                            addr: input.0.clone(),
-                            secure: input.1,
-                            password: input.2.clone(),
-                            room: input.3.clone(),
+                            addr: view.config.addr(),
+                            room: input.0.clone(),
+                            password: input.1.clone(),
                         });
-                        view.model.change_username(input.4.clone());
-                        view.save_config(input.0, input.1, input.2, input.3, input.4);
+                        view.model.change_username(input.2.clone());
+                        view.save_config(input.1, input.0, input.2);
                     }
                     _ => view.app.login_widget_state.input(*key),
                 }

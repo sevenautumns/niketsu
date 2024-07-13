@@ -9,7 +9,6 @@ use enum_dispatch::enum_dispatch;
 use im::Vector;
 use log::trace;
 use ordered_float::OrderedFloat;
-use url::Url;
 
 use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
@@ -31,21 +30,12 @@ pub struct EndpointInfo {
     pub addr: String,
     pub room: String,
     pub password: String,
-    pub secure: bool,
 }
 
 impl Display for EndpointInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO rework the interiors ?
-        if self.addr.contains("://") {
-            return f.write_str(&self.addr);
-        }
-        let prefix = if self.secure { "wss://" } else { "ws://" };
-        let addr = format!("{prefix}{}", self.addr);
-        match Url::parse(&addr) {
-            Ok(url) => f.write_str(url.as_str()),
-            Err(_) => f.write_str(&self.addr),
-        }
+        f.write_str(&self.addr)
     }
 }
 

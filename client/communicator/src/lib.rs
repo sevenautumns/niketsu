@@ -65,9 +65,9 @@ impl CommunicatorTrait for WebsocketCommunicator {
         let client = tokio::time::timeout(
             Duration::from_secs(5),
             P2PClient::new(
+                endpoint.addr.clone(),
                 endpoint.room.clone(),
                 endpoint.password.clone(),
-                endpoint.secure,
             ),
         );
         let connect_task = tokio::task::spawn(async move {

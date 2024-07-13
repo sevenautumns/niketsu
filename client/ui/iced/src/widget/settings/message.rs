@@ -32,7 +32,6 @@ pub enum SettingsWidgetMessage {
     AddPath,
     RoomInput,
     PasswordInput,
-    SecureCheckbox,
     AutoConnectCheckbox,
 }
 
@@ -78,8 +77,7 @@ impl SettingsWidgetMessageTrait for ConnectApplyClose {
         ApplyClose.handle(state, model);
         let config = state.config();
         model.change_server(ServerChange {
-            addr: config.url.clone(),
-            secure: config.secure,
+            addr: config.relay.clone(),
             password: config.password.clone(),
             room: config.room.clone(),
         });
@@ -134,7 +132,7 @@ pub struct UrlInput(pub String);
 
 impl SettingsWidgetMessageTrait for UrlInput {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
-        state.config.url = self.0;
+        state.config.relay = self.0;
     }
 }
 
@@ -184,15 +182,6 @@ pub struct PasswordInput(pub String);
 impl SettingsWidgetMessageTrait for PasswordInput {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
         state.config.password = self.0;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SecureCheckbox(pub bool);
-
-impl SettingsWidgetMessageTrait for SecureCheckbox {
-    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
-        state.config.secure = self.0;
     }
 }
 

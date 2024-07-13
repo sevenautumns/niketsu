@@ -5,7 +5,6 @@ use directories::ProjectDirs;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use url::Url;
 
 use crate::user::UserStatus;
 
@@ -16,16 +15,24 @@ pub struct Config {
     pub username: String,
     #[serde(default)]
     pub media_dirs: Vec<String>,
-    #[serde(default)]
-    pub url: String,
-    #[serde(default)]
-    pub secure: bool,
+    #[serde(default = "bootstrap_relay", skip_serializing_if = "is_default")]
+    pub relay: String,
     #[serde(default)]
     pub room: String,
     #[serde(default)]
     pub password: String,
     #[serde(default)]
     pub auto_connect: bool,
+}
+
+// TODO: look up on 89.58.15.23?
+fn bootstrap_relay() -> String {
+    "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
+        .to_string()
+}
+
+fn is_default(value: &String) -> bool {
+    *value == bootstrap_relay()
 }
 
 impl Config {
@@ -41,11 +48,8 @@ impl Config {
         }
     }
 
-    pub fn addr(&self) -> Result<Url> {
-        match self.secure {
-            true => Ok(Url::parse(&format!("wss://{}", self.url))?),
-            false => Ok(Url::parse(&format!("ws://{}", self.url))?),
-        }
+    pub fn addr(&self) -> String {
+        self.relay.clone()
     }
 
     pub fn load() -> Result<Self> {
