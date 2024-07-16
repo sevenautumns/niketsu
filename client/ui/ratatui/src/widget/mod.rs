@@ -157,8 +157,7 @@ impl From<(String, String)> for TextAreaWrapper {
 
 impl TextAreaWrapper {
     fn new(title: String, content: String) -> Self {
-        let text_area = Self::from((title.clone(), content));
-        text_area
+        Self::from((title.clone(), content))
     }
 
     fn highlight(&mut self, block_style: Style, cursor_style: Style) {

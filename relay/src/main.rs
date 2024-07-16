@@ -21,26 +21,23 @@
 
 #![doc = include_str!("../README.md")]
 
+use std::collections::HashMap;
+use std::error::Error;
+use std::net::{Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
+
 use async_std::sync::RwLock;
 use bcrypt::verify;
 use clap::Parser;
 use futures::executor::block_on;
 use futures::stream::StreamExt;
+use libp2p::core::multiaddr::Protocol;
+use libp2p::core::Multiaddr;
 use libp2p::request_response::{self, ProtocolSupport};
-use libp2p::{
-    core::multiaddr::Protocol,
-    core::Multiaddr,
-    identify, identity, noise, ping, relay,
-    swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux,
-};
-use libp2p::{tls, PeerId, StreamProtocol};
+use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
+use libp2p::{identify, identity, noise, ping, relay, tcp, tls, yamux, PeerId, StreamProtocol};
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::error::Error;
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn Error>> {
     pretty_env_logger::init();
@@ -203,10 +200,7 @@ struct InitRequest {
 
 impl InitRequest {
     fn verify(&self, password: String) -> bool {
-        match verify(password, &self.password) {
-            Err(_) => return false,
-            Ok(valid) => return valid,
-        }
+        verify(password, &self.password).unwrap_or(false)
     }
 }
 

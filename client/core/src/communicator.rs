@@ -9,6 +9,7 @@ use enum_dispatch::enum_dispatch;
 use im::Vector;
 use log::trace;
 use ordered_float::OrderedFloat;
+use serde::{Deserialize, Serialize};
 
 use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
@@ -43,39 +44,39 @@ impl EndpointInfo {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutgoingMessage {
-    VideoStatus(NiketsuVideoStatus),
-    Start(NiketsuStart),
-    Pause(NiketsuPause),
-    PlaybackSpeed(NiketsuPlaybackSpeed),
-    Seek(NiketsuSeek),
-    Select(NiketsuSelect),
-    UserMessage(NiketsuUserMessage),
-    Playlist(NiketsuPlaylist),
-    UserStatus(NiketsuUserStatus),
+    VideoStatus(VideoStatusMsg),
+    Start(StartMsg),
+    Pause(PauseMsg),
+    PlaybackSpeed(PlaybackSpeedMsg),
+    Seek(SeekMsg),
+    Select(SelectMsg),
+    UserMessage(UserMessageMsg),
+    Playlist(PlaylistMsg),
+    UserStatus(UserStatusMsg),
 }
 
 #[enum_dispatch(EventHandler)]
 #[derive(Clone, Debug)]
 pub enum IncomingMessage {
-    Connected(NiketsuConnected),
-    ConnectionError(NiketsuConnectionError),
-    UserStatusList(NiketsuUserStatusList),
-    Start(NiketsuStart),
-    Pause(NiketsuPause),
-    PlaybackSpeed(NiketsuPlaybackSpeed),
-    Seek(NiketsuSeek),
-    Select(NiketsuSelect),
-    UserMessage(NiketsuUserMessage),
-    ServerMessage(NiketsuServerMessage),
-    Playlist(NiketsuPlaylist),
-    UserStatus(NiketsuUserStatus),
+    Connected(ConnectedMsg),
+    ConnectionError(ConnectionErrorMsg),
+    UserStatusList(UserStatusListMsg),
+    Start(StartMsg),
+    Pause(PauseMsg),
+    PlaybackSpeed(PlaybackSpeedMsg),
+    Seek(SeekMsg),
+    Select(SelectMsg),
+    UserMessage(UserMessageMsg),
+    ServerMessage(ServerMessageMsg),
+    Playlist(PlaylistMsg),
+    UserStatus(UserStatusMsg),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct NiketsuConnected;
+pub struct ConnectedMsg;
 
-impl From<NiketsuConnected> for PlayerMessage {
-    fn from(_: NiketsuConnected) -> Self {
+impl From<ConnectedMsg> for PlayerMessage {
+    fn from(_: ConnectedMsg) -> Self {
         PlayerMessageInner {
             message: "connected to server".to_string(),
             source: MessageSource::Internal,
@@ -86,7 +87,7 @@ impl From<NiketsuConnected> for PlayerMessage {
     }
 }
 
-impl EventHandler for NiketsuConnected {
+impl EventHandler for ConnectedMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("server connection established");
         //TODO?
@@ -95,10 +96,10 @@ impl EventHandler for NiketsuConnected {
 }
 
 #[derive(Debug, Clone)]
-pub struct NiketsuConnectionError(pub String);
+pub struct ConnectionErrorMsg(pub String);
 
-impl From<NiketsuConnectionError> for PlayerMessage {
-    fn from(error: NiketsuConnectionError) -> Self {
+impl From<ConnectionErrorMsg> for PlayerMessage {
+    fn from(error: ConnectionErrorMsg) -> Self {
         PlayerMessageInner {
             message: format!("Connection Error: {}", error.0),
             source: MessageSource::Internal,
@@ -109,7 +110,7 @@ impl From<NiketsuConnectionError> for PlayerMessage {
     }
 }
 
-impl EventHandler for NiketsuConnectionError {
+impl EventHandler for ConnectionErrorMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("server connection established");
         //TODO?
@@ -117,9 +118,11 @@ impl EventHandler for NiketsuConnectionError {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct NiketsuVideoStatus {
+#[derive(Default, Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoStatusMsg {
     pub filename: Option<String>,
+    #[serde(with = "serde_millis")]
     pub position: Option<Duration>,
     pub speed: f64,
     pub paused: bool,
@@ -127,7 +130,7 @@ pub struct NiketsuVideoStatus {
     pub cache: bool,
 }
 
-impl PartialEq for NiketsuVideoStatus {
+impl PartialEq for VideoStatusMsg {
     fn eq(&self, other: &Self) -> bool {
         let speed_self = OrderedFloat(self.speed);
         let speed_other = OrderedFloat(self.speed);
@@ -138,34 +141,36 @@ impl PartialEq for NiketsuVideoStatus {
     }
 }
 
-impl Eq for NiketsuVideoStatus {}
+impl Eq for VideoStatusMsg {}
 
-impl From<NiketsuVideoStatus> for OutgoingMessage {
-    fn from(value: NiketsuVideoStatus) -> Self {
+impl From<VideoStatusMsg> for OutgoingMessage {
+    fn from(value: VideoStatusMsg) -> Self {
         Self::VideoStatus(value)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NiketsuUserStatusList {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UserStatusListMsg {
     pub room_name: String,
-    pub users: BTreeSet<NiketsuUserStatus>,
+    pub users: BTreeSet<UserStatus>,
 }
 
-impl EventHandler for NiketsuUserStatusList {
+impl EventHandler for UserStatusListMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received user status list");
         model.ui.user_list(UserList::from(self));
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NiketsuStart {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StartMsg {
     pub actor: String,
 }
 
-impl From<NiketsuStart> for PlayerMessage {
-    fn from(value: NiketsuStart) -> Self {
+impl From<StartMsg> for PlayerMessage {
+    fn from(value: StartMsg) -> Self {
         let actor = value.actor;
         PlayerMessageInner {
             message: format!("{actor} started playback"),
@@ -177,7 +182,7 @@ impl From<NiketsuStart> for PlayerMessage {
     }
 }
 
-impl EventHandler for NiketsuStart {
+impl EventHandler for StartMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received start");
         model.player.start();
@@ -185,19 +190,20 @@ impl EventHandler for NiketsuStart {
     }
 }
 
-impl From<NiketsuStart> for OutgoingMessage {
-    fn from(value: NiketsuStart) -> Self {
+impl From<StartMsg> for OutgoingMessage {
+    fn from(value: StartMsg) -> Self {
         Self::Start(value)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NiketsuPause {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PauseMsg {
     pub actor: String,
 }
 
-impl From<NiketsuPause> for PlayerMessage {
-    fn from(value: NiketsuPause) -> Self {
+impl From<PauseMsg> for PlayerMessage {
+    fn from(value: PauseMsg) -> Self {
         let actor = value.actor;
         PlayerMessageInner {
             message: format!("{actor} paused playback"),
@@ -209,7 +215,7 @@ impl From<NiketsuPause> for PlayerMessage {
     }
 }
 
-impl EventHandler for NiketsuPause {
+impl EventHandler for PauseMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received pause");
         model.player.pause();
@@ -217,19 +223,20 @@ impl EventHandler for NiketsuPause {
     }
 }
 
-impl From<NiketsuPause> for OutgoingMessage {
-    fn from(value: NiketsuPause) -> Self {
+impl From<PauseMsg> for OutgoingMessage {
+    fn from(value: PauseMsg) -> Self {
         Self::Pause(value)
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct NiketsuPlaybackSpeed {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackSpeedMsg {
     pub actor: String,
     pub speed: f64,
 }
 
-impl PartialEq for NiketsuPlaybackSpeed {
+impl PartialEq for PlaybackSpeedMsg {
     fn eq(&self, other: &Self) -> bool {
         let speed_self = OrderedFloat(self.speed);
         let speed_other = OrderedFloat(self.speed);
@@ -237,10 +244,10 @@ impl PartialEq for NiketsuPlaybackSpeed {
     }
 }
 
-impl Eq for NiketsuPlaybackSpeed {}
+impl Eq for PlaybackSpeedMsg {}
 
-impl From<NiketsuPlaybackSpeed> for PlayerMessage {
-    fn from(value: NiketsuPlaybackSpeed) -> Self {
+impl From<PlaybackSpeedMsg> for PlayerMessage {
+    fn from(value: PlaybackSpeedMsg) -> Self {
         let actor = value.actor;
         let speed = value.speed;
         PlayerMessageInner {
@@ -253,7 +260,7 @@ impl From<NiketsuPlaybackSpeed> for PlayerMessage {
     }
 }
 
-impl EventHandler for NiketsuPlaybackSpeed {
+impl EventHandler for PlaybackSpeedMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received speed change");
         model.player.set_speed(self.speed);
@@ -261,21 +268,23 @@ impl EventHandler for NiketsuPlaybackSpeed {
     }
 }
 
-impl From<NiketsuPlaybackSpeed> for OutgoingMessage {
-    fn from(value: NiketsuPlaybackSpeed) -> Self {
+impl From<PlaybackSpeedMsg> for OutgoingMessage {
+    fn from(value: PlaybackSpeedMsg) -> Self {
         Self::PlaybackSpeed(value)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NiketsuSeek {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SeekMsg {
     pub actor: String,
     pub file: String,
+    #[serde(with = "serde_millis")]
     pub position: Duration,
 }
 
-impl From<NiketsuSeek> for PlayerMessage {
-    fn from(value: NiketsuSeek) -> Self {
+impl From<SeekMsg> for PlayerMessage {
+    fn from(value: SeekMsg) -> Self {
         let actor = value.actor;
         let position = value.position;
         PlayerMessageInner {
@@ -288,7 +297,7 @@ impl From<NiketsuSeek> for PlayerMessage {
     }
 }
 
-impl EventHandler for NiketsuSeek {
+impl EventHandler for SeekMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received seek: {self:?}");
         let playlist_video = Video::from(self.file.as_str());
@@ -312,21 +321,23 @@ impl EventHandler for NiketsuSeek {
     }
 }
 
-impl From<NiketsuSeek> for OutgoingMessage {
-    fn from(value: NiketsuSeek) -> Self {
+impl From<SeekMsg> for OutgoingMessage {
+    fn from(value: SeekMsg) -> Self {
         Self::Seek(value)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NiketsuSelect {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectMsg {
     pub actor: String,
+    #[serde(with = "serde_millis")]
     pub position: Duration,
     pub filename: Option<String>,
 }
 
-impl From<NiketsuSelect> for PlayerMessage {
-    fn from(value: NiketsuSelect) -> Self {
+impl From<SelectMsg> for PlayerMessage {
+    fn from(value: SelectMsg) -> Self {
         let actor = value.actor;
         let message = if let Some(filename) = value.filename {
             format!("{actor} selected {filename}")
@@ -343,7 +354,7 @@ impl From<NiketsuSelect> for PlayerMessage {
     }
 }
 
-impl EventHandler for NiketsuSelect {
+impl EventHandler for SelectMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received select: {self:?}");
         let playlist_video = self.filename.as_ref().map(|f| Video::from(f.as_str()));
@@ -361,20 +372,21 @@ impl EventHandler for NiketsuSelect {
     }
 }
 
-impl From<NiketsuSelect> for OutgoingMessage {
-    fn from(value: NiketsuSelect) -> Self {
+impl From<SelectMsg> for OutgoingMessage {
+    fn from(value: SelectMsg) -> Self {
         Self::Select(value)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NiketsuUserMessage {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UserMessageMsg {
     pub actor: String,
     pub message: String,
 }
 
-impl From<NiketsuUserMessage> for PlayerMessage {
-    fn from(value: NiketsuUserMessage) -> Self {
+impl From<UserMessageMsg> for PlayerMessage {
+    fn from(value: UserMessageMsg) -> Self {
         let actor = value.actor;
         let message = value.message;
         PlayerMessageInner {
@@ -387,26 +399,27 @@ impl From<NiketsuUserMessage> for PlayerMessage {
     }
 }
 
-impl EventHandler for NiketsuUserMessage {
+impl EventHandler for UserMessageMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received user message: {self:?}");
         model.ui.player_message(PlayerMessage::from(self))
     }
 }
 
-impl From<NiketsuUserMessage> for OutgoingMessage {
-    fn from(value: NiketsuUserMessage) -> Self {
+impl From<UserMessageMsg> for OutgoingMessage {
+    fn from(value: UserMessageMsg) -> Self {
         Self::UserMessage(value)
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct NiketsuServerMessage {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerMessageMsg {
     pub message: String,
 }
 
-impl From<NiketsuServerMessage> for PlayerMessage {
-    fn from(value: NiketsuServerMessage) -> Self {
+impl From<ServerMessageMsg> for PlayerMessage {
+    fn from(value: ServerMessageMsg) -> Self {
         let message = value.message;
         PlayerMessageInner {
             message,
@@ -418,21 +431,22 @@ impl From<NiketsuServerMessage> for PlayerMessage {
     }
 }
 
-impl EventHandler for NiketsuServerMessage {
+impl EventHandler for ServerMessageMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received server message: {self:?}");
         model.ui.player_message(PlayerMessage::from(self))
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NiketsuPlaylist {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistMsg {
     pub actor: String,
     pub playlist: Vector<ArcStr>,
 }
 
-impl From<NiketsuPlaylist> for PlayerMessage {
-    fn from(value: NiketsuPlaylist) -> Self {
+impl From<PlaylistMsg> for PlayerMessage {
+    fn from(value: PlaylistMsg) -> Self {
         let actor = value.actor;
         PlayerMessageInner {
             message: format!("{actor} changed playlist"),
@@ -444,7 +458,7 @@ impl From<NiketsuPlaylist> for PlayerMessage {
     }
 }
 
-impl EventHandler for NiketsuPlaylist {
+impl EventHandler for PlaylistMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received playlist");
         let playlist = Playlist::from_iter(self.playlist.iter());
@@ -454,30 +468,26 @@ impl EventHandler for NiketsuPlaylist {
     }
 }
 
-impl From<NiketsuPlaylist> for OutgoingMessage {
-    fn from(value: NiketsuPlaylist) -> Self {
+impl From<PlaylistMsg> for OutgoingMessage {
+    fn from(value: PlaylistMsg) -> Self {
         Self::Playlist(value)
     }
 }
 
-#[derive(Debug, Clone, Eq)]
-pub struct NiketsuUserStatus {
-    pub ready: bool,
-    pub username: String,
-}
+pub type UserStatusMsg = UserStatus;
 
-impl EventHandler for NiketsuUserStatus {
+impl EventHandler for UserStatusMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("username changed by server");
-        model.config.username = self.username.clone();
-        model.ui.username_change(self.username.clone());
+        model.config.username.clone_from(&self.name);
+        model.ui.username_change(self.name.clone());
         model.ui.player_message(PlayerMessage::from(self));
     }
 }
 
-impl From<NiketsuUserStatus> for PlayerMessage {
-    fn from(value: NiketsuUserStatus) -> Self {
-        let name = value.username;
+impl From<UserStatus> for PlayerMessage {
+    fn from(value: UserStatus) -> Self {
+        let name = value.name;
         PlayerMessageInner {
             message: format!("Username changed to {name}"),
             source: MessageSource::Server,
@@ -488,34 +498,8 @@ impl From<NiketsuUserStatus> for PlayerMessage {
     }
 }
 
-impl From<NiketsuUserStatus> for OutgoingMessage {
-    fn from(value: NiketsuUserStatus) -> Self {
+impl From<UserStatus> for OutgoingMessage {
+    fn from(value: UserStatus) -> Self {
         Self::UserStatus(value)
-    }
-}
-
-impl From<NiketsuUserStatus> for UserStatus {
-    fn from(value: NiketsuUserStatus) -> Self {
-        Self {
-            name: value.username,
-            ready: value.ready,
-        }
-    }
-}
-
-impl PartialEq for NiketsuUserStatus {
-    fn eq(&self, other: &Self) -> bool {
-        self.username.eq(&other.username)
-    }
-}
-
-impl Ord for NiketsuUserStatus {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.username.cmp(&other.username)
-    }
-}
-impl PartialOrd for NiketsuUserStatus {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
     }
 }

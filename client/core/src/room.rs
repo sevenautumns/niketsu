@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
-pub(crate) use crate::{user::UserStatus, NiketsuUserStatusList};
+pub(crate) use crate::user::UserStatus;
+pub(crate) use crate::UserStatusListMsg;
 
 pub type RoomName = String;
 
@@ -44,11 +45,11 @@ impl UserList {
     }
 }
 
-impl From<NiketsuUserStatusList> for UserList {
-    fn from(value: NiketsuUserStatusList) -> Self {
+impl From<UserStatusListMsg> for UserList {
+    fn from(value: UserStatusListMsg) -> Self {
         Self {
             room: value.room_name,
-            list: value.users.into_iter().map(UserStatus::from).collect(),
+            list: value.users,
         }
     }
 }
@@ -69,8 +70,6 @@ impl<'a> Iterator for User<'a> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use crate::NiketsuUserStatus;
-
     use super::*;
 
     #[test]
@@ -112,12 +111,12 @@ mod tests {
         let mut btreeset = BTreeSet::new();
         let user_name = "User1".to_string();
 
-        btreeset.insert(NiketsuUserStatus {
-            username: "User 1".to_string(),
+        btreeset.insert(UserStatus {
+            name: "User1".to_string(),
             ready: true,
         });
 
-        let user_list: UserList = NiketsuUserStatusList {
+        let user_list: UserList = UserStatusListMsg {
             room_name: "room".to_string(),
             users: btreeset,
         }

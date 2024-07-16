@@ -1,11 +1,5 @@
-use std::collections::BTreeSet;
-use std::time::Duration;
-
 use anyhow::Context;
-use arcstr::ArcStr;
-use im::Vector;
 use niketsu_core::communicator::*;
-use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -14,17 +8,17 @@ use serde::{Deserialize, Serialize};
 pub(super) enum NiketsuMessage {
     Ping(PingMessage),
     Join(JoinMessage),
-    VideoStatus(VideoStatusMessage),
-    StatusList(StatusListMessage),
-    Pause(PauseMessage),
-    Start(StartMessage),
-    PlaybackSpeed(PlaybackSpeedMessage),
-    Seek(SeekMessage),
-    Select(SelectMessage),
-    UserMessage(UserMessageMessage),
-    ServerMessage(ServerMessageMessage),
-    Playlist(PlaylistMessage),
-    Status(UserStatusMessage),
+    VideoStatus(VideoStatusMsg),
+    StatusList(UserStatusListMsg),
+    Pause(PauseMsg),
+    Start(StartMsg),
+    PlaybackSpeed(PlaybackSpeedMsg),
+    Seek(SeekMsg),
+    Select(SelectMsg),
+    UserMessage(UserMessageMsg),
+    ServerMessage(ServerMessageMsg),
+    Playlist(PlaylistMsg),
+    Status(UserStatusMsg),
 }
 
 impl TryFrom<NiketsuMessage> for IncomingMessage {
@@ -51,7 +45,7 @@ impl TryFrom<NiketsuMessage> for Vec<u8> {
     type Error = anyhow::Error;
 
     fn try_from(value: NiketsuMessage) -> anyhow::Result<Vec<u8>> {
-        Ok(serde_json::to_vec(&value).context("serde json from_vec failed")?)
+        serde_json::to_vec(&value).context("serde json from_vec failed")
     }
 }
 
@@ -60,7 +54,7 @@ impl TryFrom<Vec<u8>> for NiketsuMessage {
 
     fn try_from(value: Vec<u8>) -> anyhow::Result<NiketsuMessage> {
         let msg = std::str::from_utf8(&value).context("from utf8 failed")?;
-        Ok(serde_json::from_str::<NiketsuMessage>(&msg).context("serde json from_str failed")?)
+        serde_json::from_str::<NiketsuMessage>(msg).context("serde json from_str failed")
     }
 }
 
@@ -78,320 +72,57 @@ pub(super) struct JoinMessage {
     pub(super) username: String,
 }
 
-#[derive(Default, Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct VideoStatusMessage {
-    pub(super) filename: Option<String>,
-    #[serde(with = "serde_millis")]
-    pub(super) position: Option<Duration>,
-    pub(super) speed: f64,
-    pub(super) paused: bool,
-    pub(super) file_loaded: bool,
-    pub(super) cache: bool,
-}
-
-impl PartialEq for VideoStatusMessage {
-    fn eq(&self, other: &Self) -> bool {
-        let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(self.speed);
-        self.filename.eq(&other.filename)
-            && self.position.eq(&other.position)
-            && speed_self.eq(&speed_other)
-            && self.paused.eq(&other.paused)
+impl From<VideoStatusMsg> for NiketsuMessage {
+    fn from(value: VideoStatusMsg) -> Self {
+        Self::VideoStatus(value)
     }
 }
 
-impl Eq for VideoStatusMessage {}
-
-impl From<NiketsuVideoStatus> for NiketsuMessage {
-    fn from(value: NiketsuVideoStatus) -> Self {
-        Self::VideoStatus(VideoStatusMessage {
-            filename: value.filename,
-            position: value.position,
-            speed: value.speed,
-            paused: value.paused,
-            file_loaded: value.file_loaded,
-            cache: value.cache,
-        })
+impl From<PauseMsg> for NiketsuMessage {
+    fn from(value: PauseMsg) -> Self {
+        Self::Pause(value)
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct StatusListMessage {
-    pub(super) room_name: String,
-    pub(super) users: BTreeSet<UserStatusMessage>,
-}
-
-impl From<StatusListMessage> for IncomingMessage {
-    fn from(value: StatusListMessage) -> Self {
-        NiketsuUserStatusList {
-            room_name: value.room_name,
-            users: value
-                .users
-                .into_iter()
-                .map(NiketsuUserStatus::from)
-                .collect(),
-        }
-        .into()
+impl From<StartMsg> for NiketsuMessage {
+    fn from(value: StartMsg) -> Self {
+        Self::Start(value)
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct PauseMessage {
-    pub(super) username: String,
-}
-
-impl From<NiketsuPause> for NiketsuMessage {
-    fn from(value: NiketsuPause) -> Self {
-        Self::Pause(PauseMessage {
-            username: value.actor,
-        })
+impl From<PlaybackSpeedMsg> for NiketsuMessage {
+    fn from(value: PlaybackSpeedMsg) -> Self {
+        Self::PlaybackSpeed(value)
     }
 }
 
-impl From<PauseMessage> for IncomingMessage {
-    fn from(value: PauseMessage) -> Self {
-        NiketsuPause {
-            actor: value.username,
-        }
-        .into()
+impl From<SeekMsg> for NiketsuMessage {
+    fn from(value: SeekMsg) -> Self {
+        Self::Seek(value)
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct StartMessage {
-    pub(super) username: String,
-}
-
-impl From<NiketsuStart> for NiketsuMessage {
-    fn from(value: NiketsuStart) -> Self {
-        Self::Start(StartMessage {
-            username: value.actor,
-        })
+impl From<SelectMsg> for NiketsuMessage {
+    fn from(value: SelectMsg) -> Self {
+        Self::Select(value)
     }
 }
 
-impl From<StartMessage> for IncomingMessage {
-    fn from(value: StartMessage) -> Self {
-        NiketsuStart {
-            actor: value.username,
-        }
-        .into()
+impl From<UserMessageMsg> for NiketsuMessage {
+    fn from(value: UserMessageMsg) -> Self {
+        Self::UserMessage(value)
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct PlaybackSpeedMessage {
-    pub(super) speed: f64,
-    pub(super) username: String,
-}
-
-impl PartialEq for PlaybackSpeedMessage {
-    fn eq(&self, other: &Self) -> bool {
-        let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(self.speed);
-        speed_self.eq(&speed_other) && self.username.eq(&other.username)
+impl From<PlaylistMsg> for NiketsuMessage {
+    fn from(value: PlaylistMsg) -> Self {
+        Self::Playlist(value)
     }
 }
 
-impl Eq for PlaybackSpeedMessage {}
-
-impl From<NiketsuPlaybackSpeed> for NiketsuMessage {
-    fn from(value: NiketsuPlaybackSpeed) -> Self {
-        Self::PlaybackSpeed(PlaybackSpeedMessage {
-            speed: value.speed,
-            username: value.actor,
-        })
-    }
-}
-
-impl From<PlaybackSpeedMessage> for IncomingMessage {
-    fn from(value: PlaybackSpeedMessage) -> Self {
-        NiketsuPlaybackSpeed {
-            actor: value.username,
-            speed: value.speed,
-        }
-        .into()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct SeekMessage {
-    pub(super) filename: String,
-    #[serde(with = "serde_millis")]
-    pub(super) position: Duration,
-    pub(super) username: String,
-    pub(super) desync: bool,
-}
-
-impl From<NiketsuSeek> for NiketsuMessage {
-    fn from(value: NiketsuSeek) -> Self {
-        Self::Seek(SeekMessage {
-            filename: value.file,
-            position: value.position,
-            username: value.actor,
-            desync: false,
-        })
-    }
-}
-
-impl From<SeekMessage> for IncomingMessage {
-    fn from(value: SeekMessage) -> Self {
-        NiketsuSeek {
-            position: value.position,
-            actor: value.username,
-            file: value.filename,
-        }
-        .into()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct SelectMessage {
-    pub(super) filename: Option<String>,
-    #[serde(with = "serde_millis")]
-    pub(super) position: Duration,
-    pub(super) username: String,
-}
-
-impl From<NiketsuSelect> for NiketsuMessage {
-    fn from(value: NiketsuSelect) -> Self {
-        Self::Select(SelectMessage {
-            filename: value.filename,
-            username: value.actor,
-            position: value.position,
-        })
-    }
-}
-
-impl From<SelectMessage> for IncomingMessage {
-    fn from(value: SelectMessage) -> Self {
-        NiketsuSelect {
-            actor: value.username,
-            filename: value.filename,
-            position: value.position,
-        }
-        .into()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct UserMessageMessage {
-    pub(super) message: String,
-    pub(super) username: String,
-}
-
-impl From<NiketsuUserMessage> for NiketsuMessage {
-    fn from(value: NiketsuUserMessage) -> Self {
-        Self::UserMessage(UserMessageMessage {
-            message: value.message,
-            username: value.actor,
-        })
-    }
-}
-
-impl From<UserMessageMessage> for IncomingMessage {
-    fn from(value: UserMessageMessage) -> Self {
-        NiketsuUserMessage {
-            actor: value.username,
-            message: value.message,
-        }
-        .into()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct ServerMessageMessage {
-    pub(super) message: String,
-    pub(super) error: bool,
-}
-
-impl From<ServerMessageMessage> for IncomingMessage {
-    fn from(value: ServerMessageMessage) -> Self {
-        NiketsuServerMessage {
-            message: value.message,
-        }
-        .into()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct PlaylistMessage {
-    pub(super) playlist: Vector<ArcStr>,
-    pub(super) username: String,
-}
-
-impl From<NiketsuPlaylist> for NiketsuMessage {
-    fn from(value: NiketsuPlaylist) -> Self {
-        Self::Playlist(PlaylistMessage {
-            playlist: value.playlist,
-            username: value.actor,
-        })
-    }
-}
-
-impl From<PlaylistMessage> for IncomingMessage {
-    fn from(value: PlaylistMessage) -> Self {
-        NiketsuPlaylist {
-            actor: value.username,
-            playlist: value.playlist,
-        }
-        .into()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct UserStatusMessage {
-    pub(super) username: String,
-    pub(super) ready: bool,
-}
-
-impl From<NiketsuUserStatus> for NiketsuMessage {
-    fn from(value: NiketsuUserStatus) -> Self {
-        Self::Status(UserStatusMessage {
-            username: value.username,
-            ready: value.ready,
-        })
-    }
-}
-
-impl From<UserStatusMessage> for NiketsuUserStatus {
-    fn from(value: UserStatusMessage) -> Self {
-        Self {
-            ready: value.ready,
-            username: value.username,
-        }
-    }
-}
-
-impl From<UserStatusMessage> for IncomingMessage {
-    fn from(value: UserStatusMessage) -> Self {
-        NiketsuUserStatus {
-            ready: value.ready,
-            username: value.username,
-        }
-        .into()
-    }
-}
-
-impl Ord for UserStatusMessage {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.username.cmp(&other.username)
-    }
-}
-impl PartialOrd for UserStatusMessage {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
+impl From<UserStatusMsg> for NiketsuMessage {
+    fn from(value: UserStatusMsg) -> Self {
+        Self::Status(value)
     }
 }
 
@@ -414,6 +145,12 @@ impl From<OutgoingMessage> for NiketsuMessage {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use std::collections::BTreeSet;
+    use std::time::Duration;
+
+    use arcstr::ArcStr;
+    use im::Vector;
+
     use crate::messages::*;
 
     #[test]
@@ -445,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_video_status_message_serialization() {
-        let video_status_message = NiketsuMessage::VideoStatus(VideoStatusMessage {
+        let video_status_message = NiketsuMessage::VideoStatus(VideoStatusMsg {
             filename: Some(String::from("video.mp4")),
             position: Some(Duration::from_secs(60)),
             speed: 1.0,
@@ -464,137 +201,137 @@ mod tests {
     fn test_status_list_message_serialization() {
         let room_name = String::from("room");
         let mut users = BTreeSet::new();
-        users.insert(UserStatusMessage {
-            username: String::from("user1"),
+        users.insert(UserStatusMsg {
+            name: String::from("user1"),
             ready: true,
         });
-        users.insert(UserStatusMessage {
-            username: String::from("user2"),
+        users.insert(UserStatusMsg {
+            name: String::from("user2"),
             ready: false,
         });
         let status_list_message =
-            NiketsuMessage::StatusList(StatusListMessage { room_name, users });
+            NiketsuMessage::StatusList(UserStatusListMsg { room_name, users });
 
         let json_str = serde_json::to_string(&status_list_message).unwrap();
-        let expected_json = r#"{"type":"statusList","room_name":"room","users":[{"username":"user1","ready":true},{"username":"user2","ready":false}]}"#;
+        let expected_json = r#"{"type":"statusList","roomName":"room","users":[{"name":"user1","ready":true},{"name":"user2","ready":false}]}"#;
 
         assert_eq!(json_str, expected_json);
     }
 
     #[test]
     fn test_pause_message_serialization() {
-        let pause_message = NiketsuMessage::Pause(PauseMessage {
-            username: String::from("user1"),
+        let pause_message = NiketsuMessage::Pause(PauseMsg {
+            actor: String::from("user1"),
         });
 
         let json_str = serde_json::to_string(&pause_message).unwrap();
-        let expected_json = r#"{"type":"pause"}"#;
+        let expected_json = r#"{"type":"pause","actor":"user1"}"#;
 
         assert_eq!(json_str, expected_json);
     }
 
     #[test]
     fn test_start_message_serialization() {
-        let start_message = NiketsuMessage::Start(StartMessage {
-            username: String::from("user1"),
+        let start_message = NiketsuMessage::Start(StartMsg {
+            actor: String::from("user1"),
         });
 
         let json_str = serde_json::to_string(&start_message).unwrap();
-        let expected_json = r#"{"type":"start"}"#;
+        let expected_json = r#"{"type":"start","actor":"user1"}"#;
 
         assert_eq!(json_str, expected_json);
     }
 
     #[test]
     fn test_playback_speed_message_serialization() {
-        let playback_speed_message = NiketsuMessage::PlaybackSpeed(PlaybackSpeedMessage {
+        let playback_speed_message = NiketsuMessage::PlaybackSpeed(PlaybackSpeedMsg {
             speed: 1.5,
-            username: String::from("user1"),
+            actor: String::from("user1"),
         });
 
         let json_str = serde_json::to_string(&playback_speed_message).unwrap();
-        let expected_json = r#"{"type":"playbackSpeed","speed":1.5}"#;
+        let expected_json = r#"{"type":"playbackSpeed","actor":"user1","speed":1.5}"#;
 
         assert_eq!(json_str, expected_json);
     }
 
     #[test]
     fn test_seek_message_serialization() {
-        let seek_message = NiketsuMessage::Seek(SeekMessage {
-            filename: String::from("video.mp4"),
+        let seek_message = NiketsuMessage::Seek(SeekMsg {
+            file: String::from("video.mp4"),
             position: Duration::from_secs(120),
-            username: String::from("user1"),
-            desync: false,
+            actor: String::from("user1"),
         });
 
         let json_str = serde_json::to_string(&seek_message).unwrap();
-        let expected_json = r#"{"type":"seek","filename":"video.mp4","position":120000}"#;
+        let expected_json =
+            r#"{"type":"seek","actor":"user1","file":"video.mp4","position":120000}"#;
 
         assert_eq!(json_str, expected_json);
     }
 
     #[test]
     fn test_select_message_serialization() {
-        let select_message = NiketsuMessage::Select(SelectMessage {
+        let select_message = NiketsuMessage::Select(SelectMsg {
             filename: Some(String::from("video.mp4")),
-            username: String::from("user1"),
+            actor: String::from("user1"),
             position: Duration::from_secs(60),
         });
 
         let json_str = serde_json::to_string(&select_message).unwrap();
-        let expected_json = r#"{"type":"select","filename":"video.mp4","position":60000}"#;
+        let expected_json =
+            r#"{"type":"select","actor":"user1","position":60000,"filename":"video.mp4"}"#;
 
         assert_eq!(json_str, expected_json);
     }
 
     #[test]
     fn test_user_message_message_serialization() {
-        let user_message_message = NiketsuMessage::UserMessage(UserMessageMessage {
+        let user_message_message = NiketsuMessage::UserMessage(UserMessageMsg {
             message: String::from("Hello, world!"),
-            username: String::from("user1"),
+            actor: String::from("user1"),
         });
 
         let json_str = serde_json::to_string(&user_message_message).unwrap();
-        let expected_json = r#"{"type":"userMessage","message":"Hello, world!"}"#;
+        let expected_json = r#"{"type":"userMessage","actor":"user1","message":"Hello, world!"}"#;
 
         assert_eq!(json_str, expected_json);
     }
 
     #[test]
     fn test_server_message_message_serialization() {
-        let server_message_message = NiketsuMessage::ServerMessage(ServerMessageMessage {
+        let server_message_message = NiketsuMessage::ServerMessage(ServerMessageMsg {
             message: String::from("Server error"),
-            error: true,
         });
 
         let json_str = serde_json::to_string(&server_message_message).unwrap();
-        let expected_json = r#"{"type":"serverMessage","message":"Server error","error":true}"#;
+        let expected_json = r#"{"type":"serverMessage","message":"Server error"}"#;
 
         assert_eq!(json_str, expected_json);
     }
 
     #[test]
     fn test_playlist_message_serialization() {
-        let playlist_message = NiketsuMessage::Playlist(PlaylistMessage {
+        let playlist_message = NiketsuMessage::Playlist(PlaylistMsg {
             playlist: Vector::from(vec![ArcStr::from("song1"), ArcStr::from("song2")]),
-            username: String::from("user1"),
+            actor: String::from("user1"),
         });
 
         let json_str = serde_json::to_string(&playlist_message).unwrap();
-        let expected_json = r#"{"type":"playlist","playlist":["song1","song2"]}"#;
+        let expected_json = r#"{"type":"playlist","actor":"user1","playlist":["song1","song2"]}"#;
 
         assert_eq!(json_str, expected_json);
     }
 
     #[test]
     fn test_user_status_message_serialization() {
-        let user_status_message = NiketsuMessage::Status(UserStatusMessage {
-            username: String::from("user1"),
+        let user_status_message = NiketsuMessage::Status(UserStatusMsg {
+            name: String::from("user1"),
             ready: true,
         });
 
         let json_str = serde_json::to_string(&user_status_message).unwrap();
-        let expected_json = r#"{"type":"status","username":"user1","ready":true}"#;
+        let expected_json = r#"{"type":"status","name":"user1","ready":true}"#;
 
         assert_eq!(json_str, expected_json);
     }
@@ -629,7 +366,7 @@ mod tests {
     #[test]
     fn test_video_status_message_deserialization() {
         let json_str = r#"{"type":"videoStatus","filename":"video.mp4","position":60000,"speed":1,"paused":false, "fileLoaded":true,"cache":false}"#;
-        let expected_video_status_message = NiketsuMessage::VideoStatus(VideoStatusMessage {
+        let expected_video_status_message = NiketsuMessage::VideoStatus(VideoStatusMsg {
             filename: Some(String::from("video.mp4")),
             position: Some(Duration::from_secs(60)),
             speed: 1.0,
@@ -645,17 +382,17 @@ mod tests {
 
     #[test]
     fn test_status_list_message_deserialization() {
-        let json_str = r#"{"type":"statusList","room_name":"room","users":[{"username":"user1","ready":true},{"username":"user2","ready":false}]}"#;
+        let json_str = r#"{"type":"statusList","roomName":"room","users":[{"name":"user1","ready":true},{"name":"user2","ready":false}]}"#;
         let mut users = BTreeSet::new();
-        users.insert(UserStatusMessage {
-            username: String::from("user1"),
+        users.insert(UserStatusMsg {
+            name: String::from("user1"),
             ready: true,
         });
-        users.insert(UserStatusMessage {
-            username: String::from("user2"),
+        users.insert(UserStatusMsg {
+            name: String::from("user2"),
             ready: false,
         });
-        let expected_status_list_message = NiketsuMessage::StatusList(StatusListMessage {
+        let expected_status_list_message = NiketsuMessage::StatusList(UserStatusListMsg {
             room_name: "room".to_string(),
             users,
         });
@@ -667,9 +404,9 @@ mod tests {
 
     #[test]
     fn test_pause_message_deserialization() {
-        let json_str = r#"{"type":"pause","username":"user1"}"#;
-        let expected_pause_message = NiketsuMessage::Pause(PauseMessage {
-            username: String::from("user1"),
+        let json_str = r#"{"type":"pause","actor":"user1"}"#;
+        let expected_pause_message = NiketsuMessage::Pause(PauseMsg {
+            actor: String::from("user1"),
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();
@@ -679,9 +416,9 @@ mod tests {
 
     #[test]
     fn test_start_message_deserialization() {
-        let json_str = r#"{"type":"start","username":"user1"}"#;
-        let expected_start_message = NiketsuMessage::Start(StartMessage {
-            username: String::from("user1"),
+        let json_str = r#"{"type":"start","actor":"user1"}"#;
+        let expected_start_message = NiketsuMessage::Start(StartMsg {
+            actor: String::from("user1"),
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();
@@ -691,10 +428,10 @@ mod tests {
 
     #[test]
     fn test_playback_speed_message_deserialization() {
-        let json_str = r#"{"type":"playbackSpeed","speed":1.5,"username":"user1"}"#;
-        let expected_playback_speed_message = NiketsuMessage::PlaybackSpeed(PlaybackSpeedMessage {
+        let json_str = r#"{"type":"playbackSpeed","speed":1.5,"actor":"user1"}"#;
+        let expected_playback_speed_message = NiketsuMessage::PlaybackSpeed(PlaybackSpeedMsg {
             speed: 1.5,
-            username: String::from("user1"),
+            actor: String::from("user1"),
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();
@@ -704,12 +441,11 @@ mod tests {
 
     #[test]
     fn test_seek_message_deserialization() {
-        let json_str = r#"{"type":"seek","filename":"video.mp4","position":120000,"username":"user1","desync":false}"#;
-        let expected_seek_message = NiketsuMessage::Seek(SeekMessage {
-            filename: String::from("video.mp4"),
+        let json_str = r#"{"type":"seek","file":"video.mp4","position":120000,"actor":"user1","desync":false}"#;
+        let expected_seek_message = NiketsuMessage::Seek(SeekMsg {
+            file: String::from("video.mp4"),
             position: Duration::from_secs(120),
-            username: String::from("user1"),
-            desync: false,
+            actor: String::from("user1"),
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();
@@ -720,10 +456,10 @@ mod tests {
     #[test]
     fn test_select_message_deserialization() {
         let json_str =
-            r#"{"type":"select","filename":"video.mp4","position":60000,"username":"user1"}"#;
-        let expected_select_message = NiketsuMessage::Select(SelectMessage {
+            r#"{"type":"select","filename":"video.mp4","position":60000,"actor":"user1"}"#;
+        let expected_select_message = NiketsuMessage::Select(SelectMsg {
             filename: Some(String::from("video.mp4")),
-            username: String::from("user1"),
+            actor: String::from("user1"),
             position: Duration::from_secs(60),
         });
 
@@ -734,10 +470,10 @@ mod tests {
 
     #[test]
     fn test_user_message_message_deserialization() {
-        let json_str = r#"{"type":"userMessage","message":"Hello, world!","username":"user1"}"#;
-        let expected_user_message_message = NiketsuMessage::UserMessage(UserMessageMessage {
+        let json_str = r#"{"type":"userMessage","message":"Hello, world!","actor":"user1"}"#;
+        let expected_user_message_message = NiketsuMessage::UserMessage(UserMessageMsg {
             message: String::from("Hello, world!"),
-            username: String::from("user1"),
+            actor: String::from("user1"),
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();
@@ -748,9 +484,8 @@ mod tests {
     #[test]
     fn test_server_message_message_deserialization() {
         let json_str = r#"{"type":"serverMessage","message":"Server error","error":true}"#;
-        let expected_server_message_message = NiketsuMessage::ServerMessage(ServerMessageMessage {
+        let expected_server_message_message = NiketsuMessage::ServerMessage(ServerMessageMsg {
             message: String::from("Server error"),
-            error: true,
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();
@@ -760,10 +495,10 @@ mod tests {
 
     #[test]
     fn test_playlist_message_deserialization() {
-        let json_str = r#"{"type":"playlist","playlist":["song1","song2"],"username":"user1"}"#;
-        let expected_playlist_message = NiketsuMessage::Playlist(PlaylistMessage {
+        let json_str = r#"{"type":"playlist","playlist":["song1","song2"],"actor":"user1"}"#;
+        let expected_playlist_message = NiketsuMessage::Playlist(PlaylistMsg {
             playlist: Vector::from(vec![ArcStr::from("song1"), ArcStr::from("song2")]),
-            username: String::from("user1"),
+            actor: String::from("user1"),
         });
 
         let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();
@@ -773,9 +508,9 @@ mod tests {
 
     #[test]
     fn test_user_status_message_deserialization() {
-        let json_str = r#"{"type":"status","username":"user1","ready":true}"#;
-        let expected_user_status_message = NiketsuMessage::Status(UserStatusMessage {
-            username: String::from("user1"),
+        let json_str = r#"{"type":"status","name":"user1","ready":true}"#;
+        let expected_user_status_message = NiketsuMessage::Status(UserStatusMsg {
+            name: String::from("user1"),
             ready: true,
         });
 

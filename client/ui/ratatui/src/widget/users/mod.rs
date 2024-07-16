@@ -83,11 +83,11 @@ impl StatefulWidget for UsersWidget {
                 };
                 let user_line = match u.ready {
                     true => ListItem::new(vec![Line::styled(
-                        format!("{name}"),
+                        name.to_string(),
                         Style::default().fg(Color::Green),
                     )]),
                     false => ListItem::new(vec![Line::styled(
-                        format!("{name}"),
+                        name.to_string(),
                         Style::default().fg(Color::Red),
                     )]),
                 };

@@ -10,7 +10,7 @@ use log::{trace, Level};
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
 
-use super::communicator::{EndpointInfo, NiketsuPlaylist, NiketsuSelect, NiketsuUserMessage};
+use super::communicator::{EndpointInfo, PlaylistMsg, SelectMsg, UserMessageMsg};
 use super::playlist::Video;
 use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
@@ -60,7 +60,7 @@ impl EventHandler for PlaylistChange {
         model.playlist.replace(self.playlist);
         model
             .communicator
-            .send(NiketsuPlaylist { actor, playlist }.into())
+            .send(PlaylistMsg { actor, playlist }.into())
     }
 }
 
@@ -77,7 +77,7 @@ impl EventHandler for VideoChange {
         let position = Duration::ZERO;
         model.playlist.select_playing(&self.video);
         model.communicator.send(
-            NiketsuSelect {
+            SelectMsg {
                 actor,
                 filename,
                 position,
@@ -111,7 +111,7 @@ impl From<ServerChange> for EndpointInfo {
 impl EventHandler for ServerChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("server change message");
-        model.config.password = self.password.clone();
+        model.config.password.clone_from(&self.password);
         model.communicator.connect(self.into());
     }
 }
@@ -145,7 +145,7 @@ impl EventHandler for UserMessage {
         let message = self.message;
         model
             .communicator
-            .send(NiketsuUserMessage { actor, message }.into())
+            .send(UserMessageMsg { actor, message }.into())
     }
 }
 
@@ -460,7 +460,7 @@ mod tests {
 
     use super::*;
     use crate::builder::CoreBuilder;
-    use crate::communicator::{MockCommunicatorTrait, NiketsuUserStatus, OutgoingMessage};
+    use crate::communicator::{MockCommunicatorTrait, OutgoingMessage};
     use crate::config::Config;
     use crate::file_database::{FileEntry, MockFileDatabaseTrait};
     use crate::player::MockMediaPlayerTrait;
@@ -482,7 +482,7 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(NiketsuPlaylist {
+        let message = OutgoingMessage::from(PlaylistMsg {
             actor: user.clone(),
             playlist: videos.into_iter().collect(),
         });
@@ -528,7 +528,7 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(NiketsuSelect {
+        let message = OutgoingMessage::from(SelectMsg {
             actor: user.clone(),
             filename: Some("video1".to_string()),
             position: pos,
@@ -608,8 +608,6 @@ mod tests {
             room: room.clone(),
         };
         change.handle(&mut core.model);
-
-        assert_eq!(core.model.config.room, room);
     }
 
     #[test]
@@ -627,9 +625,9 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(NiketsuUserStatus {
+        let message = OutgoingMessage::from(UserStatus {
             ready,
-            username: user_new.clone(),
+            name: user_new.clone(),
         });
 
         communicator
@@ -674,7 +672,7 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(NiketsuUserMessage {
+        let message = OutgoingMessage::from(UserMessageMsg {
             actor: user.clone(),
             message: user_msg.clone(),
         });

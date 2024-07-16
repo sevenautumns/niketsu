@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
-use std::ops::{Add, Deref, DerefMut};
+use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -21,14 +21,13 @@ use libp2p::{
     StreamProtocol,
 };
 use log::{debug, error, info, warn};
+use niketsu_core::communicator::{SeekMsg, StartMsg, UserStatusListMsg, VideoStatusMsg};
+use niketsu_core::user::UserStatus;
 use serde::{Deserialize, Serialize};
 use tokio::{io, spawn};
 use uuid::Uuid;
 
-use crate::messages::{
-    NiketsuMessage, SeekMessage, StartMessage, StatusListMessage, UserStatusMessage,
-    VideoStatusMessage,
-};
+use crate::messages::NiketsuMessage;
 
 const MAXIMUM_DELAY: u64 = 5;
 
@@ -324,7 +323,7 @@ impl P2PClient {
                 swarm,
                 topic,
                 host,
-                video_status: VideoStatusMessage::default(),
+                video_status: VideoStatusMsg::default(),
                 relay: relay_addr.clone(),
                 core_receiver,
                 message_sender,
@@ -369,7 +368,7 @@ struct ClientCommunicationHandler {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
     host: PeerId,
-    video_status: VideoStatusMessage,
+    video_status: VideoStatusMsg,
     relay: Multiaddr,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
@@ -409,7 +408,7 @@ impl ClientCommunicationHandler {
             .map_err(anyhow::Error::from)
     }
 
-    fn handle_video_status(&mut self, msg: VideoStatusMessage) -> Result<()> {
+    fn handle_video_status(&mut self, msg: VideoStatusMsg) -> Result<()> {
         //TODO consider rtt
         info!("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEE");
         if let (Some(self_status), Some(host_status)) = (self.video_status.position, msg.position) {
@@ -418,7 +417,7 @@ impl ClientCommunicationHandler {
                 bail!("Received position even though no file selected");
             }
 
-            if let Some(filename) = msg.filename.clone() {
+            if let Some(file) = msg.filename.clone() {
                 info!(
                     "My status: {:?}, host: {:?}",
                     self_status.clone(),
@@ -427,11 +426,10 @@ impl ClientCommunicationHandler {
                 if self_status > host_status.saturating_add(Duration::from_secs(MAXIMUM_DELAY)) {
                     info!("sending self seek");
                     // TODO slow down
-                    self.message_sender.send(NiketsuMessage::Seek(SeekMessage {
-                        filename,
+                    self.message_sender.send(NiketsuMessage::Seek(SeekMsg {
+                        file,
                         position: host_status,
-                        username: String::from(""),
-                        desync: true,
+                        actor: String::from(""),
                     }))?;
                 } else if self_status
                     < host_status.saturating_sub(Duration::from_secs(MAXIMUM_DELAY))
@@ -440,11 +438,10 @@ impl ClientCommunicationHandler {
                     // speed up?
                     self.swarm.send(
                         &self.host,
-                        NiketsuMessage::Seek(SeekMessage {
-                            filename,
+                        NiketsuMessage::Seek(SeekMsg {
+                            file,
                             position: self_status,
-                            username: String::from(""),
-                            desync: true,
+                            actor: String::from(""),
                         }),
                     );
                 }
@@ -584,7 +581,7 @@ impl Sender<NiketsuMessage> for Swarm<Behaviour> {
                     debug!("Gossipsub insufficient peers. Publishing when no one is connected");
                     Ok(())
                 }
-                err => return Err(anyhow::Error::from(err)),
+                err => Err(anyhow::Error::from(err)),
             },
         }
     }
@@ -597,8 +594,8 @@ struct HostCommunicationHandler {
     relay: Multiaddr,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
-    status_list: StatusListMessage,
-    users: HashMap<PeerId, UserStatusMessage>,
+    status_list: UserStatusListMsg,
+    users: HashMap<PeerId, UserStatus>,
 }
 
 impl fmt::Debug for HostCommunicationHandler {
@@ -626,7 +623,7 @@ impl HostCommunicationHandler {
             relay,
             core_receiver,
             message_sender,
-            status_list: StatusListMessage {
+            status_list: UserStatusListMsg {
                 room_name: room,
                 users: BTreeSet::default(),
             },
@@ -646,12 +643,12 @@ impl HostCommunicationHandler {
         //TODO send playlist and check username?
     }
 
-    fn update_status(&mut self, status: UserStatusMessage, peer_id: PeerId) {
+    fn update_status(&mut self, status: UserStatus, peer_id: PeerId) {
         self.status_list.users.replace(status.clone());
         self.users.insert(peer_id, status);
     }
 
-    fn remove_peer(&mut self, status: &UserStatusMessage, peer_id: &PeerId) {
+    fn remove_peer(&mut self, status: &UserStatus, peer_id: &PeerId) {
         self.status_list.users.remove(status);
         self.users.remove(peer_id);
     }
@@ -672,34 +669,31 @@ impl HostCommunicationHandler {
     }
 
     fn is_established_user(&self, peer_id: PeerId) -> bool {
-        self.users.get(&peer_id).is_some()
+        self.users.contains_key(&peer_id)
     }
 
-    fn username_exists(&self, username: String) -> bool {
-        self.status_list
-            .users
-            .iter()
-            .any(|u| u.username == username)
+    fn username_exists(&self, name: String) -> bool {
+        self.status_list.users.iter().any(|u| u.name == name)
     }
 
-    fn handle_status(&mut self, status: UserStatusMessage, peer_id: PeerId) {
+    fn handle_status(&mut self, status: UserStatus, peer_id: PeerId) {
         let mut new_status = status.clone();
 
         if self.is_established_user(peer_id) {
-            if !self.username_exists(status.username.clone()) {
+            if !self.username_exists(status.name.clone()) {
                 // user name change, remove old status and update user map
                 let users = self.users.clone(); // is there any other way to avoid mut/immut borrow?
                 let old_status = users.get(&peer_id).expect("User should exist");
-                self.remove_peer(&old_status, &peer_id);
+                self.remove_peer(old_status, &peer_id);
             }
             // otherwise, typical user status update, only need to update map & list
         } else {
             // new user
-            if self.username_exists(status.username.clone()) {
+            if self.username_exists(status.name.clone()) {
                 // username needs to be force changed to avoid duplicate user names
-                let new_username = self.roll_new_username(status.username.clone());
-                new_status = UserStatusMessage {
-                    username: new_username,
+                let new_username = self.roll_new_username(status.name.clone());
+                new_status = UserStatus {
+                    name: new_username,
                     ready: status.ready,
                 };
                 self.swarm
@@ -713,12 +707,12 @@ impl HostCommunicationHandler {
     fn handle_all_users_ready(&mut self, peer_id: &PeerId) -> Result<()> {
         if self.all_users_ready() {
             debug!("All users area ready. Publishing start to gossipsub");
-            let mut start_msg = NiketsuMessage::Start(StartMessage {
-                username: "".to_string(),
+            let mut start_msg = NiketsuMessage::Start(StartMsg {
+                actor: "".to_string(),
             });
-            if let Some(user) = self.users.get(&peer_id) {
-                start_msg = NiketsuMessage::Start(StartMessage {
-                    username: user.username.clone(),
+            if let Some(user) = self.users.get(peer_id) {
+                start_msg = NiketsuMessage::Start(StartMsg {
+                    actor: user.name.clone(),
                 });
             }
             self.message_sender.send(start_msg.clone())?;
@@ -824,7 +818,7 @@ impl CommunicationHandler for HostCommunicationHandler {
                     let status = users
                         .get(&peer_id)
                         .expect("Connected peer should be included in lists");
-                    self.remove_peer(&status, &peer_id);
+                    self.remove_peer(status, &peer_id);
                     let status_list = NiketsuMessage::StatusList(self.status_list.clone());
                     if let Err(e) = self.message_sender.send(status_list.clone()) {
                         error!("Failed to send status list to core: {e:?}");
@@ -848,7 +842,7 @@ impl CommunicationHandler for HostCommunicationHandler {
         if let NiketsuMessage::Status(status) = niketsu_msg.clone() {
             //TODO What is the behavior, how to update user status/ready status?
             info!("Status {:?}", status.clone());
-            let peer_id = self.host.clone();
+            let peer_id = self.host;
             self.update_status(status, peer_id);
             self.handle_all_users_ready(&peer_id)?;
 

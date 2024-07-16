@@ -461,7 +461,7 @@ mod tests {
 
         // Verify that the returned range contains the expected videos.
         assert_eq!(range_result.len(), 3);
-        assert_eq!(range_result.get(0), Some(&&video2));
+        assert_eq!(range_result.first(), Some(&&video2));
         assert_eq!(range_result.get(1), Some(&&video3));
         assert_eq!(range_result.get(2), Some(&&video4));
     }
