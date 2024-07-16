@@ -78,7 +78,7 @@ pub(super) struct JoinMessage {
     pub(super) username: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct VideoStatusMessage {
     pub(super) filename: Option<String>,
@@ -226,7 +226,6 @@ pub(super) struct SeekMessage {
     #[serde(with = "serde_millis")]
     pub(super) position: Duration,
     pub(super) username: String,
-    #[serde(skip_serializing)]
     pub(super) desync: bool,
 }
 

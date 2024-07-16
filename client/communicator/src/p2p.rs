@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
-use std::ops::{Deref, DerefMut};
+use std::ops::{Add, Deref, DerefMut};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -26,8 +26,11 @@ use tokio::{io, spawn};
 use uuid::Uuid;
 
 use crate::messages::{
-    NiketsuMessage, StartMessage, StatusListMessage, UserStatusMessage, VideoStatusMessage,
+    NiketsuMessage, SeekMessage, StartMessage, StatusListMessage, UserStatusMessage,
+    VideoStatusMessage,
 };
+
+const MAXIMUM_DELAY: u64 = 5;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -227,11 +230,14 @@ impl P2PClient {
             .with_tokio()
             .with_tcp(
                 tcp::Config::default().port_reuse(true).nodelay(true),
-                noise::Config::new,
+                (libp2p::tls::Config::new, libp2p::noise::Config::new),
                 yamux::Config::default,
             )?
             .with_quic()
-            .with_relay_client(noise::Config::new, yamux::Config::default)?
+            .with_relay_client(
+                (libp2p::tls::Config::new, noise::Config::new),
+                yamux::Config::default,
+            )?
             .with_behaviour(|keypair, relay_behaviour| {
                 let message_id_fn = |_message: &gossipsub::Message| {
                     let id = Uuid::new_v4();
@@ -271,14 +277,16 @@ impl P2PClient {
                             StreamProtocol::new("/niketsu-message/1"),
                             ProtocolSupport::Full,
                         )],
-                        request_response::Config::default(),
+                        request_response::Config::default()
+                            .with_request_timeout(Duration::from_secs(10)),
                     ),
                     init_request_response: request_response::cbor::Behaviour::new(
                         [(
                             StreamProtocol::new("/authorisation/1"),
                             ProtocolSupport::Full,
                         )],
-                        request_response::Config::default(),
+                        request_response::Config::default()
+                            .with_request_timeout(Duration::from_secs(5)),
                     ),
                 })
             })?
@@ -316,6 +324,7 @@ impl P2PClient {
                 swarm,
                 topic,
                 host,
+                video_status: VideoStatusMessage::default(),
                 relay: relay_addr.clone(),
                 core_receiver,
                 message_sender,
@@ -360,6 +369,7 @@ struct ClientCommunicationHandler {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
     host: PeerId,
+    video_status: VideoStatusMessage,
     relay: Multiaddr,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
@@ -400,7 +410,46 @@ impl ClientCommunicationHandler {
     }
 
     fn handle_video_status(&mut self, msg: VideoStatusMessage) -> Result<()> {
-        info!("Not yet implemented!");
+        //TODO consider rtt
+        info!("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEE");
+        if let (Some(self_status), Some(host_status)) = (self.video_status.position, msg.position) {
+            if self.video_status.filename.is_none() {
+                // some issue with playlist
+                bail!("Received position even though no file selected");
+            }
+
+            if let Some(filename) = msg.filename.clone() {
+                info!(
+                    "My status: {:?}, host: {:?}",
+                    self_status.clone(),
+                    host_status.clone(),
+                );
+                if self_status > host_status.saturating_add(Duration::from_secs(MAXIMUM_DELAY)) {
+                    info!("sending self seek");
+                    // TODO slow down
+                    self.message_sender.send(NiketsuMessage::Seek(SeekMessage {
+                        filename,
+                        position: host_status,
+                        username: String::from(""),
+                        desync: true,
+                    }))?;
+                } else if self_status
+                    < host_status.saturating_sub(Duration::from_secs(MAXIMUM_DELAY))
+                {
+                    info!("sending host seek");
+                    // speed up?
+                    self.swarm.send(
+                        &self.host,
+                        NiketsuMessage::Seek(SeekMessage {
+                            filename,
+                            position: self_status,
+                            username: String::from(""),
+                            desync: true,
+                        }),
+                    );
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -484,24 +533,23 @@ impl CommunicationHandler for ClientCommunicationHandler {
             self.swarm.local_peer_id()
         );
 
-        let req: Vec<u8> = msg.clone().try_into()?;
         match msg {
             NiketsuMessage::UserMessage(_) => {
                 debug!("Publishing message to gossipsub");
-                self.swarm
-                    .behaviour_mut()
-                    .gossipsub
-                    .publish(self.topic.clone(), req)?;
+                if let Err(e) = self.swarm.try_broadcast(self.topic.clone(), msg) {
+                    error!("Failed to broadcast user message: {e:?}");
+                }
             }
             NiketsuMessage::VideoStatus(vs) => {
-                debug!("Dropping video status of client {vs:?}");
+                self.video_status = vs;
+            }
+            NiketsuMessage::Seek(_) => {
+                debug!("Sending seek {:?}", msg.clone());
+                self.swarm.send(&self.host, msg);
             }
             _ => {
                 debug!("Sending message to host");
-                self.swarm
-                    .behaviour_mut()
-                    .message_request_response
-                    .send_request(&self.host, MessageRequest { 0: msg });
+                self.swarm.send(&self.host, msg);
             }
         }
         Ok(())
@@ -518,7 +566,7 @@ impl Sender<NiketsuMessage> for Swarm<Behaviour> {
         // ignores outbound id
         self.behaviour_mut()
             .message_request_response
-            .send_request(peer_id, MessageRequest { 0: msg });
+            .send_request(peer_id, MessageRequest(msg));
     }
 
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()> {
@@ -742,6 +790,14 @@ impl CommunicationHandler for HostCommunicationHandler {
                 request_response::Event::Message { peer, message, .. },
             )) => match message {
                 request_response::Message::Request { request, .. } => {
+                    debug!("Recieved request");
+                    debug!("Recieved request");
+                    debug!("Recieved request");
+                    debug!("Recieved request");
+                    debug!("Recieved request");
+                    debug!("Recieved request");
+                    debug!("Recieved request");
+                    debug!("Recieved request");
                     if let Err(e) = self.handle_incoming_message(peer, request.0) {
                         error!("Failed to handle incoming message: {e:?}");
                     }
@@ -800,6 +856,7 @@ impl CommunicationHandler for HostCommunicationHandler {
             info!("Status list: {:?}", niketsu_msg.clone());
             self.message_sender.send(niketsu_msg.clone())?;
         }
+
         //TODO how to handle playlist?
         debug!("Publishing message to gossipsub: {msg:?}");
         self.swarm.try_broadcast(self.topic.clone(), niketsu_msg)?;

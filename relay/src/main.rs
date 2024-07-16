@@ -34,7 +34,7 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux,
 };
-use libp2p::{PeerId, StreamProtocol};
+use libp2p::{tls, PeerId, StreamProtocol};
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -48,11 +48,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let local_key: identity::Keypair = generate_ed25519(opt.secret_key_seed);
 
+    //TODO build transport with short timeout
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(local_key)
         .with_async_std()
         .with_tcp(
             tcp::Config::default(),
-            noise::Config::new,
+            (tls::Config::new, noise::Config::new),
             yamux::Config::default,
         )?
         .with_quic()
@@ -127,6 +128,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                         n.remove(&peer_id);
                     }
                     info!("Connection closed by {peer_id:?}, cause {cause:?}");
+                    info!("room {r:?}")
+                }
+                SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+                    let mut n = map.write().await;
+                    let mut r = rooms.write().await;
+                    if let Some(pid) = peer_id {
+                        if let Some(room) = n.get(&pid) {
+                            r.remove(room);
+                            n.remove(&pid);
+                        }
+                    }
+                    info!("Connection closed by {peer_id:?}, cause {error:?}");
                     info!("room {r:?}")
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::InitRequestResponse(
