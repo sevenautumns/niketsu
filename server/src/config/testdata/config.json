@@ -1,1 +1,0 @@
-{"Config":"","host":"0.0.0.0","port":1111,"cert":"cert.pem","key":"key.pem","password":"1234","dbpath":"somedb/","dbupdateinterval":1,"dbwaittimeout":1,"debug":true}
