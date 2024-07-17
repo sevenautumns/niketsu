@@ -438,7 +438,7 @@ impl EventHandler for ServerMessageMsg {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaylistMsg {
     pub actor: String,

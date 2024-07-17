@@ -14,20 +14,23 @@ use futures::StreamExt;
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
 use libp2p::multiaddr::Protocol;
-use libp2p::request_response::{self, ProtocolSupport};
+use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
     dcutr, gossipsub, identify, identity, kad, noise, ping, relay, tcp, yamux, Multiaddr, PeerId,
     StreamProtocol,
 };
 use log::{debug, error, info, warn};
-use niketsu_core::communicator::{SeekMsg, StartMsg, UserStatusListMsg, VideoStatusMsg};
+use niketsu_core::communicator::{
+    PlaylistMsg, SeekMsg, StartMsg, UserStatusListMsg, VideoStatusMsg,
+};
+use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::user::UserStatus;
 use serde::{Deserialize, Serialize};
 use tokio::{io, spawn};
 use uuid::Uuid;
 
-use crate::messages::NiketsuMessage;
+use crate::messages::{NiketsuMessage, PingMessage};
 
 const MAXIMUM_DELAY: u64 = 5;
 
@@ -41,20 +44,6 @@ struct Behaviour {
     kademlia: kad::Behaviour<MemoryStore>,
     message_request_response: request_response::cbor::Behaviour<MessageRequest, MessageResponse>,
     init_request_response: request_response::cbor::Behaviour<InitRequest, InitResponse>,
-}
-
-impl Deref for Behaviour {
-    type Target = kad::Behaviour<MemoryStore>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.kademlia
-    }
-}
-
-impl DerefMut for Behaviour {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.kademlia
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,13 +122,13 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
             )
             .unwrap();
             self.behaviour_mut()
+                .kademlia
                 .add_address(&peer_id, "/dnsaddr/bootstrap.libp2p.io".parse()?);
             return Ok(peer_id);
-        } else {
-            info!("Listening on relay");
-            self.listen_on(relay_addr.clone().with(Protocol::P2pCircuit))
-                .expect("Failed to listen on remote relay");
         }
+        info!("Listening on relay");
+        self.listen_on(relay_addr.clone().with(Protocol::P2pCircuit))
+            .expect("Failed to listen on remote relay");
 
         Ok(*self.local_peer_id())
     }
@@ -223,6 +212,7 @@ pub(crate) struct P2PClient {
 
 impl P2PClient {
     pub(crate) async fn new(relay: String, room: String, password: String) -> Result<P2PClient> {
+        //TODO: more consistent keys to reconnect host
         let key_pair = identity::Keypair::generate_ed25519();
 
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key_pair)
@@ -319,15 +309,14 @@ impl P2PClient {
                 room,
             ))
         } else {
-            Handler::Client(ClientCommunicationHandler {
+            Handler::Client(ClientCommunicationHandler::new(
                 swarm,
                 topic,
                 host,
-                video_status: VideoStatusMsg::default(),
-                relay: relay_addr.clone(),
+                relay_addr.clone(),
                 core_receiver,
                 message_sender,
-            })
+            ))
         };
 
         let client = P2PClient {
@@ -372,6 +361,8 @@ struct ClientCommunicationHandler {
     relay: Multiaddr,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+    timer: tokio::time::Interval,
+    is_seeking: bool,
 }
 
 impl fmt::Debug for ClientCommunicationHandler {
@@ -384,6 +375,32 @@ impl fmt::Debug for ClientCommunicationHandler {
 }
 
 impl ClientCommunicationHandler {
+    fn new(
+        swarm: Swarm<Behaviour>,
+        topic: gossipsub::IdentTopic,
+        host: PeerId,
+        relay: Multiaddr,
+        core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
+        message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+    ) -> Self {
+        Self {
+            swarm,
+            topic,
+            host,
+            video_status: VideoStatusMsg::default(),
+            relay,
+            core_receiver,
+            message_sender,
+            timer: tokio::time::interval(Duration::from_secs(2)),
+            is_seeking: false,
+        }
+    }
+
+    fn send_ping(&mut self) {
+        self.swarm
+            .send(&self.host, NiketsuMessage::Ping(PingMessage::default()));
+    }
+
     fn handle_broadcast(&mut self, peer_id: PeerId, msg: Vec<u8>) -> Result<()> {
         let niketsu_msg = msg.try_into()?;
         if let NiketsuMessage::UserMessage(_) = niketsu_msg {
@@ -397,12 +414,17 @@ impl ClientCommunicationHandler {
             bail!("Received broadcast from non-host peer: {peer_id:?}")
         }
 
-        if let NiketsuMessage::VideoStatus(video_status) = niketsu_msg {
-            return self
-                .handle_video_status(video_status)
-                .map_err(anyhow::Error::from);
+        match niketsu_msg {
+            NiketsuMessage::VideoStatus(video_status) => {
+                return self
+                    .handle_video_status(video_status)
+                    .map_err(anyhow::Error::from);
+            }
+            NiketsuMessage::Seek(_) => {
+                self.is_seeking = true;
+            }
+            _ => {}
         }
-
         self.message_sender
             .send(niketsu_msg)
             .map_err(anyhow::Error::from)
@@ -410,7 +432,11 @@ impl ClientCommunicationHandler {
 
     fn handle_video_status(&mut self, msg: VideoStatusMsg) -> Result<()> {
         //TODO consider rtt
-        info!("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEE");
+        if self.is_seeking {
+            // can not determine actual position during client seek
+            return Ok(());
+        }
+
         if let (Some(self_status), Some(host_status)) = (self.video_status.position, msg.position) {
             if self.video_status.filename.is_none() {
                 // some issue with playlist
@@ -456,6 +482,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
     async fn run(&mut self) {
         loop {
             tokio::select! {
+                _ = self.timer.tick() => self.send_ping(),
                 event = self.swarm.select_next_some() => self.handle_event(event).await,
                 msg = self.core_receiver.recv() => match msg {
                     Some(msg) => {
@@ -464,7 +491,10 @@ impl CommunicationHandler for ClientCommunicationHandler {
                             error!("Handling message caused error {e:?}");
                         }
                     },
-                    None => continue, // channel closed?
+                    None => {
+                        debug!("Channel of core closed. Stopping p2p client event loop");
+                        break
+                    } // channel closed?
                 },
             }
         }
@@ -488,13 +518,27 @@ impl CommunicationHandler for ClientCommunicationHandler {
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
                 request_response::Event::Message { message, .. },
             )) => match message {
-                request_response::Message::Request { request, .. } => {
-                    info!("Received direct message {:?}", request.clone());
-                    if let Err(e) = self.message_sender.send(request.0) {
+                request_response::Message::Request {
+                    request, channel, ..
+                } => {
+                    //TODO refactor
+                    if let NiketsuMessage::Ping(p) = request.0 {
+                        info!("Received ping: {p:?}");
+                        if let Err(e) = self
+                            .swarm
+                            .send_response(channel, MessageResponse(NiketsuMessage::Ping(p)))
+                        {
+                            error!("Failed to respond to ping: {e:?}");
+                        }
+                    } else if let Err(e) = self.message_sender.send(request.0) {
                         error!("Failed to send direct message to core: {e:?}");
                     }
                 }
-                request_response::Message::Response { .. } => info!("Received direct response"),
+                request_response::Message::Response { response, .. } => {
+                    if let NiketsuMessage::Ping(p) = response.0 {
+                        info!("Received ping: {p:?}");
+                    }
+                }
             },
             SwarmEvent::IncomingConnection { local_addr, .. } => {
                 info!("Received connection from {local_addr:?}")
@@ -507,7 +551,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
             } => {
                 // client losing connection to relay might be fine
                 if peer_id == self.host {
-                    warn!("Connection of client to relay server or host closed: {endpoint:?} with cause: {cause:?}");
+                    warn!("Connection of client to relay server or host closed: {endpoint:?} with cause: {cause:?} from {peer_id:?} where host {:?}", self.host);
                     self.core_receiver.close();
                     //TODO panic
                 }
@@ -521,9 +565,6 @@ impl CommunicationHandler for ClientCommunicationHandler {
     }
 
     async fn handle_message(&mut self, msg: NiketsuMessage) -> Result<()> {
-        //TODO some message need further preparations
-        // maybe need to add peer addr manually
-        // what about broadcasting as host?
         debug!(
             "Handling core message {msg:?} for host {} of peer {}",
             self.host,
@@ -538,11 +579,10 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 }
             }
             NiketsuMessage::VideoStatus(vs) => {
-                self.video_status = vs;
-            }
-            NiketsuMessage::Seek(_) => {
-                debug!("Sending seek {:?}", msg.clone());
-                self.swarm.send(&self.host, msg);
+                if vs.position != self.video_status.position {
+                    self.is_seeking = false;
+                    self.video_status = vs;
+                }
             }
             _ => {
                 debug!("Sending message to host");
@@ -555,6 +595,11 @@ impl CommunicationHandler for ClientCommunicationHandler {
 
 trait Sender<T> {
     fn send(&mut self, peer_id: &PeerId, msg: T);
+    fn send_response(
+        &mut self,
+        channel: ResponseChannel<MessageResponse>,
+        rsp: MessageResponse,
+    ) -> Result<()>; // todo embed generic
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: T) -> Result<()>;
 }
 
@@ -564,6 +609,22 @@ impl Sender<NiketsuMessage> for Swarm<Behaviour> {
         self.behaviour_mut()
             .message_request_response
             .send_request(peer_id, MessageRequest(msg));
+    }
+
+    fn send_response(
+        &mut self,
+        channel: ResponseChannel<MessageResponse>,
+        rsp: MessageResponse,
+    ) -> Result<()> {
+        let res = self
+            .behaviour_mut()
+            .message_request_response
+            .send_response(channel, rsp);
+
+        match res {
+            Ok(_) => Ok(()),
+            Err(e) => bail!("Sending response failed: {e:?}"),
+        }
     }
 
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()> {
@@ -594,7 +655,9 @@ struct HostCommunicationHandler {
     relay: Multiaddr,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+    video_status: VideoStatusMsg,
     status_list: UserStatusListMsg,
+    playlist: PlaylistMsg,
     users: HashMap<PeerId, UserStatus>,
 }
 
@@ -602,6 +665,9 @@ impl fmt::Debug for HostCommunicationHandler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HostCommunicationHandler")
             .field("topic", &self.topic)
+            .field("host", &self.host)
+            .field("relay", &self.relay)
+            .field("status_list", &self.status_list)
             .finish()
     }
 }
@@ -627,20 +693,35 @@ impl HostCommunicationHandler {
                 room_name: room,
                 users: BTreeSet::default(),
             },
+            playlist: PlaylistMsg::default(),
             users: HashMap::default(),
+            video_status: VideoStatusMsg::default(),
         }
     }
 
-    fn send_init_status(&mut self, peer_id: PeerId) {
-        //TODO maybe unnecessary
-        if let Err(e) = self.swarm.try_broadcast(
-            self.topic.clone(),
-            NiketsuMessage::StatusList(self.status_list.clone()),
-        ) {
-            error!("Failed to broadcast status list: {e:?}");
+    fn send_init_status(&mut self, peer_id: PeerId) -> Result<()> {
+        self.swarm.send(
+            &peer_id,
+            NiketsuMessage::Playlist(niketsu_core::communicator::PlaylistMsg::from(
+                self.playlist.clone(),
+            )),
+        );
+
+        if let Some(position) = self.video_status.position {
+            self.swarm.send(
+                &peer_id,
+                NiketsuMessage::Select(niketsu_core::communicator::SelectMsg {
+                    actor: "host".to_string(), //TODO: change
+                    position,
+                    filename: self.video_status.filename.clone(),
+                }),
+            );
         }
 
-        //TODO send playlist and check username?
+        self.swarm.try_broadcast(
+            self.topic.clone(),
+            NiketsuMessage::StatusList(self.status_list.clone()),
+        )
     }
 
     fn update_status(&mut self, status: UserStatus, peer_id: PeerId) {
@@ -653,7 +734,7 @@ impl HostCommunicationHandler {
         self.users.remove(peer_id);
     }
 
-    //TODO caching?
+    //TODO: consider caching?
     fn all_users_ready(&self) -> bool {
         self.status_list.users.iter().all(|u| u.ready)
     }
@@ -721,14 +802,30 @@ impl HostCommunicationHandler {
         Ok(())
     }
 
-    fn handle_incoming_message(&mut self, peer_id: PeerId, msg: NiketsuMessage) -> Result<()> {
+    fn handle_incoming_message(
+        &mut self,
+        peer_id: PeerId,
+        msg: NiketsuMessage,
+        channel: ResponseChannel<MessageResponse>,
+    ) -> Result<()> {
         let mut niketsu_msg = msg;
         info!("Received message {:?}", niketsu_msg.clone());
-        if let NiketsuMessage::Status(status) = niketsu_msg.clone() {
-            self.handle_status(status.clone(), peer_id);
-            niketsu_msg = NiketsuMessage::StatusList(self.status_list.clone());
+        match niketsu_msg.clone() {
+            NiketsuMessage::Ping(ping) => {
+                return self
+                    .swarm
+                    .send_response(channel, MessageResponse(NiketsuMessage::Ping(ping)));
+            }
+            NiketsuMessage::Status(status) => {
+                self.handle_status(status.clone(), peer_id);
+                self.handle_all_users_ready(&peer_id)?;
+                niketsu_msg = NiketsuMessage::StatusList(self.status_list.clone());
+            }
+            NiketsuMessage::Playlist(playlist) => {
+                self.playlist = playlist;
+            }
+            _ => {}
         }
-        self.handle_all_users_ready(&peer_id)?;
 
         self.message_sender.send(niketsu_msg.clone())?;
         debug!("Publishing message from peer {peer_id:?} to gossipsub");
@@ -758,7 +855,7 @@ impl CommunicationHandler for HostCommunicationHandler {
                     },
                     None => {
                         debug!("Channel of core closed. Stopping p2p client event loop");
-                        continue
+                        break
                     },
                 },
             }
@@ -783,16 +880,10 @@ impl CommunicationHandler for HostCommunicationHandler {
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
                 request_response::Event::Message { peer, message, .. },
             )) => match message {
-                request_response::Message::Request { request, .. } => {
-                    debug!("Recieved request");
-                    debug!("Recieved request");
-                    debug!("Recieved request");
-                    debug!("Recieved request");
-                    debug!("Recieved request");
-                    debug!("Recieved request");
-                    debug!("Recieved request");
-                    debug!("Recieved request");
-                    if let Err(e) = self.handle_incoming_message(peer, request.0) {
+                request_response::Message::Request {
+                    request, channel, ..
+                } => {
+                    if let Err(e) = self.handle_incoming_message(peer, request.0, channel) {
                         error!("Failed to handle incoming message: {e:?}");
                     }
                 }
@@ -803,7 +894,9 @@ impl CommunicationHandler for HostCommunicationHandler {
             }
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 info!("New client established connection {peer_id}");
-                self.send_init_status(peer_id);
+                if let Err(e) = self.send_init_status(peer_id) {
+                    error!("Failed to send initial messages to client: {e:?}");
+                }
             }
             SwarmEvent::ConnectionClosed {
                 peer_id, endpoint, ..
@@ -839,19 +932,27 @@ impl CommunicationHandler for HostCommunicationHandler {
     async fn handle_message(&mut self, msg: NiketsuMessage) -> Result<()> {
         let mut niketsu_msg = msg.clone();
         info!("host: {:?}", self.host);
-        if let NiketsuMessage::Status(status) = niketsu_msg.clone() {
-            //TODO What is the behavior, how to update user status/ready status?
-            info!("Status {:?}", status.clone());
-            let peer_id = self.host;
-            self.update_status(status, peer_id);
-            self.handle_all_users_ready(&peer_id)?;
+        match niketsu_msg.clone() {
+            NiketsuMessage::Status(status) => {
+                //TODO What is the behavior, how to update user status/ready status?
+                info!("Status {:?}", status.clone());
+                let peer_id = self.host;
+                self.update_status(status, peer_id);
+                self.handle_all_users_ready(&peer_id)?;
 
-            niketsu_msg = NiketsuMessage::StatusList(self.status_list.clone());
-            info!("Status list: {:?}", niketsu_msg.clone());
-            self.message_sender.send(niketsu_msg.clone())?;
+                niketsu_msg = NiketsuMessage::StatusList(self.status_list.clone());
+                info!("Status list: {:?}", niketsu_msg.clone());
+                self.message_sender.send(niketsu_msg.clone())?;
+            }
+            NiketsuMessage::Playlist(playlist) => {
+                self.playlist = playlist;
+            }
+            NiketsuMessage::VideoStatus(status) => {
+                self.video_status = status;
+            }
+            _ => {}
         }
 
-        //TODO how to handle playlist?
         debug!("Publishing message to gossipsub: {msg:?}");
         self.swarm.try_broadcast(self.topic.clone(), niketsu_msg)?;
         Ok(())

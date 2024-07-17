@@ -1,6 +1,7 @@
 use anyhow::Context;
 use niketsu_core::communicator::*;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "type")]
@@ -62,6 +63,14 @@ impl TryFrom<Vec<u8>> for NiketsuMessage {
 #[serde(rename_all = "camelCase")]
 pub(super) struct PingMessage {
     uuid: String,
+}
+
+impl Default for PingMessage {
+    fn default() -> Self {
+        Self {
+            uuid: Uuid::new_v4().into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
