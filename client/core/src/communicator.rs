@@ -2,11 +2,9 @@ use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::time::Duration;
 
-use arcstr::ArcStr;
 use async_trait::async_trait;
 use chrono::Local;
 use enum_dispatch::enum_dispatch;
-use im::Vector;
 use log::trace;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
@@ -90,7 +88,9 @@ impl From<ConnectedMsg> for PlayerMessage {
 impl EventHandler for ConnectedMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("server connection established");
-        //TODO?
+        model
+            .communicator
+            .send(OutgoingMessage::from(model.config.status(model.ready)));
         model.ui.player_message(PlayerMessage::from(self));
     }
 }
@@ -442,7 +442,8 @@ impl EventHandler for ServerMessageMsg {
 #[serde(rename_all = "camelCase")]
 pub struct PlaylistMsg {
     pub actor: String,
-    pub playlist: Vector<ArcStr>,
+    #[serde(flatten)]
+    pub playlist: Playlist,
 }
 
 impl From<PlaylistMsg> for PlayerMessage {
@@ -461,9 +462,8 @@ impl From<PlaylistMsg> for PlayerMessage {
 impl EventHandler for PlaylistMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received playlist");
-        let playlist = Playlist::from_iter(self.playlist.iter());
-        model.playlist.replace(playlist.clone());
-        model.ui.playlist(playlist);
+        model.playlist.replace(self.playlist.clone());
+        model.ui.playlist(self.playlist.clone());
         model.ui.player_message(PlayerMessage::from(self))
     }
 }

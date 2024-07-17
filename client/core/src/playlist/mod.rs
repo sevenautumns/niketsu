@@ -4,6 +4,7 @@ use std::sync::Arc;
 use arcstr::ArcStr;
 use im::Vector;
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::file_database::FileStore;
@@ -20,8 +21,9 @@ pub trait PlaylistHandlerTrait: std::fmt::Debug + Send {
     fn replace(&mut self, playlist: Playlist);
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Video {
+    #[serde(flatten)]
     inner: Arc<VideoInner>,
 }
 
@@ -40,7 +42,7 @@ impl From<VideoInner> for Video {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VideoInner {
     File(ArcStr),
     Url(Url),
@@ -107,7 +109,7 @@ impl From<&ArcStr> for VideoInner {
     }
 }
 
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Playlist {
     list: Vector<Video>,
 }

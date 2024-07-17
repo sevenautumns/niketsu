@@ -148,8 +148,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::time::Duration;
 
-    use arcstr::ArcStr;
-    use im::Vector;
+    use niketsu_core::playlist::Playlist;
 
     use crate::messages::*;
 
@@ -313,12 +312,12 @@ mod tests {
     #[test]
     fn test_playlist_message_serialization() {
         let playlist_message = NiketsuMessage::Playlist(PlaylistMsg {
-            playlist: Vector::from(vec![ArcStr::from("song1"), ArcStr::from("song2")]),
+            playlist: Playlist::from_iter(vec!["song1", "http://song2"]),
             actor: String::from("user1"),
         });
 
         let json_str = serde_json::to_string(&playlist_message).unwrap();
-        let expected_json = r#"{"type":"playlist","actor":"user1","playlist":["song1","song2"]}"#;
+        let expected_json = r#"{"type":"playlist","actor":"user1","list":[{"File":"song1"},{"Url":"http://song2/"}]}"#;
 
         assert_eq!(json_str, expected_json);
     }
@@ -495,9 +494,9 @@ mod tests {
 
     #[test]
     fn test_playlist_message_deserialization() {
-        let json_str = r#"{"type":"playlist","playlist":["song1","song2"],"actor":"user1"}"#;
+        let json_str = r#"{"type":"playlist","actor":"user1","list":[{"File":"song1"},{"Url":"http://song2/"}]}"#;
         let expected_playlist_message = NiketsuMessage::Playlist(PlaylistMsg {
-            playlist: Vector::from(vec![ArcStr::from("song1"), ArcStr::from("song2")]),
+            playlist: Playlist::from_iter(vec!["song1", "http://song2"]),
             actor: String::from("user1"),
         });
 

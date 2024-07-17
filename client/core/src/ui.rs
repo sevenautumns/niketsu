@@ -55,7 +55,7 @@ impl EventHandler for PlaylistChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("playlist change message");
         let actor = model.config.username.clone();
-        let playlist = self.playlist.iter().map(|v| v.as_str().into()).collect();
+        let playlist = self.playlist.clone();
 
         model.playlist.replace(self.playlist);
         model
@@ -454,7 +454,6 @@ impl UiModel {
 mod tests {
     use std::time::Duration;
 
-    use arcstr::ArcStr;
     use mockall::predicate::{always, eq};
     use tokio::sync::Notify;
 
@@ -476,15 +475,14 @@ mod tests {
         let mut playlist_handler = MockPlaylistHandlerTrait::default();
 
         let user = String::from("max");
-        let videos: [ArcStr; 2] = ["video1".into(), "video2".into()];
-        let playlist = Playlist::from_iter(videos.iter());
+        let playlist = Playlist::from_iter(["video1", "video2"]);
         let config = Config {
             username: user.clone(),
             ..Default::default()
         };
         let message = OutgoingMessage::from(PlaylistMsg {
             actor: user.clone(),
-            playlist: videos.into_iter().collect(),
+            playlist: playlist.clone(),
         });
 
         playlist_handler
