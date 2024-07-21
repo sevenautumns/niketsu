@@ -17,7 +17,7 @@ use super::{CoreModel, EventHandler};
 use crate::config::Config;
 use crate::file_database::FileStore;
 use crate::playlist::Playlist;
-use crate::room::UserList;
+use crate::room::{RoomName, UserList};
 use crate::util::{Observed, RingBuffer};
 
 #[cfg_attr(test, mockall::automock)]
@@ -95,7 +95,7 @@ impl EventHandler for VideoChange {
 pub struct ServerChange {
     pub addr: String,
     pub password: String,
-    pub room: String,
+    pub room: RoomName,
 }
 
 impl From<ServerChange> for EndpointInfo {
@@ -574,7 +574,7 @@ mod tests {
         let user = String::from("max");
         let addr = String::from("duckduckgo.com");
         let password = String::from("passwd");
-        let room = String::from("room1");
+        let room = arcstr::literal!("room1");
         let config = Config {
             username: user.clone(),
             ..Default::default()
@@ -930,7 +930,7 @@ mod tests {
 
         let addr = String::from("duckduckgo.com");
         let password = String::from("passwd");
-        let room = String::from("room1");
+        let room = arcstr::literal!("room1");
         let request = ServerChange {
             addr,
             password,

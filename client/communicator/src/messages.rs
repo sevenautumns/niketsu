@@ -158,6 +158,7 @@ mod tests {
     use std::time::Duration;
 
     use niketsu_core::playlist::Playlist;
+    use niketsu_core::room::RoomName;
 
     use crate::messages::*;
 
@@ -207,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_status_list_message_serialization() {
-        let room_name = String::from("room");
+        let room_name = RoomName::from("room");
         let mut users = BTreeSet::new();
         users.insert(UserStatusMsg {
             name: String::from("user1"),
@@ -326,7 +327,7 @@ mod tests {
         });
 
         let json_str = serde_json::to_string(&playlist_message).unwrap();
-        let expected_json = r#"{"type":"playlist","actor":"user1","list":[{"File":"song1"},{"Url":"http://song2/"}]}"#;
+        let expected_json = r#"{"type":"playlist","actor":"user1","playlist":[{"File":"song1"},{"Url":"http://song2/"}]}"#;
 
         assert_eq!(json_str, expected_json);
     }
@@ -401,7 +402,7 @@ mod tests {
             ready: false,
         });
         let expected_status_list_message = NiketsuMessage::StatusList(UserStatusListMsg {
-            room_name: "room".to_string(),
+            room_name: "room".into(),
             users,
         });
 
@@ -503,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_playlist_message_deserialization() {
-        let json_str = r#"{"type":"playlist","actor":"user1","list":[{"File":"song1"},{"Url":"http://song2/"}]}"#;
+        let json_str = r#"{"type":"playlist","actor":"user1","playlist":[{"File":"song1"},{"Url":"http://song2/"}]}"#;
         let expected_playlist_message = NiketsuMessage::Playlist(PlaylistMsg {
             playlist: Playlist::from_iter(vec!["song1", "http://song2"]),
             actor: String::from("user1"),

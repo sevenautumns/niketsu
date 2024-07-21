@@ -1,8 +1,10 @@
 use config::Config;
+use directories::ProjectDirs;
 use enum_dispatch::enum_dispatch;
 use futures::future::OptionFuture;
 use log::{info, trace};
 use logging::ChatLogger;
+use once_cell::sync::Lazy;
 use playlist::PlaylistHandlerTrait;
 
 use self::communicator::*;
@@ -23,6 +25,9 @@ pub mod room;
 pub mod ui;
 pub mod user;
 pub mod util;
+
+pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =
+    Lazy::new(|| ProjectDirs::from("de", "autumnal", "niketsu"));
 
 #[enum_dispatch]
 pub trait EventHandler {

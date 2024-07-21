@@ -4,6 +4,7 @@ use enum_dispatch::enum_dispatch;
 use iced::Command;
 use niketsu_core::config::Config;
 use niketsu_core::log;
+use niketsu_core::room::RoomName;
 use niketsu_core::ui::{ServerChange, UiModel};
 
 use super::SettingsWidgetState;
@@ -168,7 +169,7 @@ impl SettingsWidgetMessageTrait for AddPath {
 }
 
 #[derive(Debug, Clone)]
-pub struct RoomInput(pub String);
+pub struct RoomInput(pub RoomName);
 
 impl SettingsWidgetMessageTrait for RoomInput {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
