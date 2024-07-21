@@ -1,6 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
-use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -25,6 +24,7 @@ use niketsu_core::communicator::{
     PlaylistMsg, SeekMsg, StartMsg, UserStatusListMsg, VideoStatusMsg,
 };
 use niketsu_core::playlist::{Playlist, Video};
+use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
 use serde::{Deserialize, Serialize};
 use tokio::{io, spawn};
@@ -55,19 +55,19 @@ pub(crate) struct MessageResponse(NiketsuMessage);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct InitRequest {
     // should be hashed when listening
-    room: String,
+    room: RoomName,
     password: String,
 }
 
 impl InitRequest {
-    fn new(room: String, password: String) -> Self {
+    fn new(room: RoomName, password: String) -> Self {
         Self {
             room,
             password: hash(password, DEFAULT_COST).expect("Failed to hash password"),
         }
     }
 
-    fn new_without_hash(room: String, password: String) -> Self {
+    fn new_without_hash(room: RoomName, password: String) -> Self {
         Self { room, password }
     }
 }
@@ -83,14 +83,14 @@ trait SwarmRelayConnection {
     async fn establish_conection(
         &mut self,
         relay_addr: Multiaddr,
-        room: String,
+        room: RoomName,
         password: String,
     ) -> Result<Host>;
-    async fn identify_loop(&mut self, room: String, password: String) -> Option<PeerId>;
+    async fn identify_loop(&mut self, room: RoomName, password: String) -> Option<PeerId>;
     async fn identify_relay(
         &mut self,
         relay_addr: Multiaddr,
-        room: String,
+        room: RoomName,
         password: String,
     ) -> Result<Option<PeerId>>;
 }
@@ -102,7 +102,7 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
     async fn establish_conection(
         &mut self,
         relay_addr: Multiaddr,
-        room: String,
+        room: RoomName,
         password: String,
     ) -> Result<Host> {
         self.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
@@ -133,7 +133,7 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
         Ok(*self.local_peer_id())
     }
 
-    async fn identify_loop(&mut self, room: String, password: String) -> Option<PeerId> {
+    async fn identify_loop(&mut self, room: RoomName, password: String) -> Option<PeerId> {
         let mut host_peer_id: Option<PeerId> = None;
         let mut learned_observed_addr = false;
         let mut told_relay_observed_addr = false;
@@ -188,7 +188,7 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
     async fn identify_relay(
         &mut self,
         relay_addr: Multiaddr,
-        room: String,
+        room: RoomName,
         password: String,
     ) -> Result<Option<PeerId>> {
         info!("Dialing relay for identify exchange");
@@ -211,7 +211,7 @@ pub(crate) struct P2PClient {
 }
 
 impl P2PClient {
-    pub(crate) async fn new(relay: String, room: String, password: String) -> Result<P2PClient> {
+    pub(crate) async fn new(relay: String, room: RoomName, password: String) -> Result<P2PClient> {
         //TODO: more consistent keys to reconnect host
         let key_pair = identity::Keypair::generate_ed25519();
 
@@ -680,7 +680,7 @@ impl HostCommunicationHandler {
         relay: Multiaddr,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
-        room: String,
+        room: RoomName,
     ) -> Self {
         Self {
             swarm,
@@ -700,12 +700,8 @@ impl HostCommunicationHandler {
     }
 
     fn send_init_status(&mut self, peer_id: PeerId) -> Result<()> {
-        self.swarm.send(
-            &peer_id,
-            NiketsuMessage::Playlist(niketsu_core::communicator::PlaylistMsg::from(
-                self.playlist.clone(),
-            )),
-        );
+        self.swarm
+            .send(&peer_id, NiketsuMessage::Playlist(self.playlist.clone()));
 
         if let Some(position) = self.video_status.position {
             self.swarm.send(

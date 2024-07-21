@@ -1,15 +1,18 @@
+use serde::{Deserialize, Serialize};
+
 use super::PlaylistHandlerTrait;
 use crate::playlist::{Playlist, Video};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct PlaylistHandler {
     playing: Option<usize>,
+    #[serde(flatten)]
     playlist: Playlist,
 }
 
 impl PlaylistHandlerTrait for PlaylistHandler {
     fn get_current_video(&self) -> Option<Video> {
-        self.playlist.list.get(self.playing?).cloned()
+        self.playlist.playlist.get(self.playing?).cloned()
     }
 
     fn advance_to_next(&mut self) -> Option<Video> {

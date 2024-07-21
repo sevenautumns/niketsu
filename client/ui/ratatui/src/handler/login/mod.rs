@@ -1,4 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
+use niketsu_core::room::RoomName;
 use niketsu_core::ui::ServerChange;
 
 use super::EventHandler;
@@ -19,13 +20,14 @@ impl EventHandler for Login {
                     KeyCode::Enter => {
                         view.app.reset_overlay();
                         let input = view.app.login_widget_state.collect_input();
+                        let room = RoomName::from(input.0);
                         view.model.change_server(ServerChange {
                             addr: view.config.addr(),
-                            room: input.0.clone(),
+                            room: room.clone(),
                             password: input.1.clone(),
                         });
                         view.model.change_username(input.2.clone());
-                        view.save_config(input.1, input.0, input.2);
+                        view.save_config(input.1, room, input.2);
                     }
                     _ => view.app.login_widget_state.input(*key),
                 }

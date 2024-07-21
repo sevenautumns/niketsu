@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
 
+use arcstr::ArcStr;
+
 pub(crate) use crate::user::UserStatus;
 pub(crate) use crate::UserStatusListMsg;
 
-pub type RoomName = String;
+pub type RoomName = ArcStr;
 
 #[derive(Debug, Clone, Default)]
 pub struct UserList {
@@ -117,7 +119,7 @@ mod tests {
         });
 
         let user_list: UserList = UserStatusListMsg {
-            room_name: "room".to_string(),
+            room_name: arcstr::literal!("room"),
             users: btreeset,
         }
         .into();

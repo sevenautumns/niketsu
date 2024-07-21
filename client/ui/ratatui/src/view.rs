@@ -18,6 +18,7 @@ use gag::Gag;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::playlist::Video;
+use niketsu_core::room::RoomName;
 use niketsu_core::ui::{ServerChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
@@ -52,7 +53,7 @@ enum LoopControl {
     Break,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub enum Mode {
     #[default]
     Normal,
@@ -118,13 +119,13 @@ impl App {
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
-        self.prev_mode = Some(self.mode.clone());
+        self.prev_mode = Some(self.mode);
         self.mode = mode;
     }
 
     pub fn reset_overlay(&mut self) {
         self.current_overlay_state = None;
-        if let Some(mode) = self.prev_mode.clone() {
+        if let Some(mode) = self.prev_mode {
             self.mode = mode;
         } else {
             self.mode = Mode::Normal;
@@ -280,51 +281,38 @@ impl RatatuiView {
     }
 
     fn handle_notify(&mut self) {
-        if self.model.file_database_status.changed() {
-            let file_db_status = self.model.file_database_status.get_inner();
+        self.model.file_database_status.on_change(|status| {
             self.app
                 .database_widget_state
-                .set_file_database_status((file_db_status * 100.0) as u16);
-        }
+                .set_file_database_status((status * 100.0) as u16);
+        });
 
-        if self.model.file_database.changed() {
-            let file_db = self.model.file_database.get_inner();
-            self.app
-                .database_widget_state
-                .set_file_database(file_db.clone());
-            self.app
-                .fuzzy_search_widget_state
-                .set_file_database(file_db);
-        }
+        self.model.file_database.on_change(|db| {
+            self.app.database_widget_state.set_file_database(db.clone());
+            self.app.fuzzy_search_widget_state.set_file_database(db);
+        });
 
-        if self.model.playlist.changed() {
-            let playlist = self.model.playlist.get_inner();
+        self.model.playlist.on_change(|playlist| {
             self.app.playlist_widget_state.set_playlist(playlist);
-        }
+        });
 
-        if self.model.messages.changed() {
-            let messages = self.model.messages.get_inner().iter().cloned().collect();
+        self.model.messages.on_change_arc(|messages| {
             self.app.chat_widget_state.set_messages(messages);
             self.app.chat_widget_state.update_cursor_latest();
-        }
+        });
 
-        if self.model.user_list.changed() {
-            let users = self.model.user_list.get_inner();
+        self.model.user_list.on_change(|users| {
             self.app.users_widget_state.set_user_list(users);
-        }
+        });
 
-        if self.model.user.changed() {
-            let user = self.model.user.get_inner();
+        self.model.user.on_change(|user| {
             self.app.users_widget_state.set_user(user.clone());
             self.app.chat_widget_state.set_user(user);
-        }
+        });
 
-        if self.model.playing_video.changed() {
-            let playing_video = self.model.playing_video.get_inner();
-            self.app
-                .playlist_widget_state
-                .set_playing_video(playing_video);
-        }
+        self.model.playing_video.on_change(|video| {
+            self.app.playlist_widget_state.set_playing_video(video);
+        });
     }
 
     fn render(f: &mut Frame, app: &mut App) {
@@ -475,10 +463,16 @@ impl RatatuiView {
         match args {
             ["w", msg @ ..] | ["write", msg @ ..] => self.model.send_message(msg.concat()),
             ["server-change", password, room] | ["sc", password, room] => self
-                .handle_server_change(self.config.addr(), password.to_string(), room.to_string()),
-            ["server-change", room] | ["sc", room] => {
-                self.handle_server_change(self.config.addr(), String::default(), room.to_string())
-            }
+                .handle_server_change(
+                    self.config.addr(),
+                    password.to_string(),
+                    RoomName::from(*room),
+                ),
+            ["server-change", room] | ["sc", room] => self.handle_server_change(
+                self.config.addr(),
+                String::default(),
+                RoomName::from(*room),
+            ),
             ["username-change", username] | ["uc", username] => {
                 self.model.change_username(username.to_string())
             }
@@ -539,7 +533,7 @@ impl RatatuiView {
         self.model.change_db_paths(paths)
     }
 
-    pub fn save_config(&mut self, password: String, room: String, username: String) {
+    pub fn save_config(&mut self, password: String, room: RoomName, username: String) {
         self.config.password = password;
         self.config.room = room;
         self.config.username = username;
@@ -551,7 +545,7 @@ impl RatatuiView {
         _ = self.config.save();
     }
 
-    fn handle_server_change(&mut self, addr: String, password: String, room: String) {
+    fn handle_server_change(&mut self, addr: String, password: String, room: RoomName) {
         self.model.change_server(ServerChange {
             addr,
             password,

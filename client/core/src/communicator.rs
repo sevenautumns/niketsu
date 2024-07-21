@@ -13,7 +13,7 @@ use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
 use crate::playlist::Playlist;
-use crate::room::UserList;
+use crate::room::{RoomName, UserList};
 use crate::user::UserStatus;
 
 #[cfg_attr(test, mockall::automock)]
@@ -27,7 +27,7 @@ pub trait CommunicatorTrait: std::fmt::Debug + Send {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EndpointInfo {
     pub addr: String,
-    pub room: String,
+    pub room: RoomName,
     pub password: String,
 }
 
@@ -152,7 +152,7 @@ impl From<VideoStatusMsg> for OutgoingMessage {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UserStatusListMsg {
-    pub room_name: String,
+    pub room_name: RoomName,
     pub users: BTreeSet<UserStatus>,
 }
 

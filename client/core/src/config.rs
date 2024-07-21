@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
 use anyhow::{bail, Result};
-use directories::ProjectDirs;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
+use crate::room::RoomName;
 use crate::user::UserStatus;
+use crate::PROJECT_DIRS;
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
@@ -18,7 +19,7 @@ pub struct Config {
     #[serde(default = "bootstrap_relay", skip_serializing_if = "is_default")]
     pub relay: String,
     #[serde(default)]
-    pub room: String,
+    pub room: RoomName,
     #[serde(default)]
     pub password: String,
     #[serde(default)]
@@ -37,8 +38,7 @@ fn is_default(value: &String) -> bool {
 
 impl Config {
     fn file_path() -> Result<PathBuf> {
-        let path =
-            ProjectDirs::from("de", "autumnal", "niketsu").map(|p| p.config_dir().to_path_buf());
+        let path = PROJECT_DIRS.as_ref().map(|p| p.config_dir().to_path_buf());
         match path {
             Some(mut path) => {
                 path.push("config.toml");

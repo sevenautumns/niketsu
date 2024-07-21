@@ -105,10 +105,9 @@ impl<'a> SettingsWidget<'a> {
                     )
                     .push(
                         Column::new()
-                            .push(
-                                TextInput::new("Room", &state.config.room)
-                                    .on_input(|u| SettingsWidgetMessage::from(RoomInput(u)).into()),
-                            )
+                            .push(TextInput::new("Room", &state.config.room).on_input(|u| {
+                                SettingsWidgetMessage::from(RoomInput(u.into())).into()
+                            }))
                             .push(
                                 TextInput::new("Password", &state.config.password)
                                     .on_input(|u| {
