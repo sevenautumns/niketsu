@@ -107,6 +107,7 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
     ) -> Result<Host> {
         self.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
         self.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+
         let host_peer_id = self
             .identify_relay(relay_addr.clone(), room, password)
             .await;
@@ -124,8 +125,10 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
             self.behaviour_mut()
                 .kademlia
                 .add_address(&peer_id, "/dnsaddr/bootstrap.libp2p.io".parse()?);
+
             return Ok(peer_id);
         }
+
         info!("Listening on relay");
         self.listen_on(relay_addr.clone().with(Protocol::P2pCircuit))
             .expect("Failed to listen on remote relay");
@@ -219,14 +222,12 @@ impl P2PClient {
             .with_tokio()
             .with_tcp(
                 tcp::Config::default().port_reuse(true).nodelay(true),
-                (libp2p::tls::Config::new, libp2p::noise::Config::new),
+                libp2p::noise::Config::new,
                 yamux::Config::default,
             )?
             .with_quic()
-            .with_relay_client(
-                (libp2p::tls::Config::new, noise::Config::new),
-                yamux::Config::default,
-            )?
+            .with_dns()?
+            .with_relay_client(noise::Config::new, yamux::Config::default)?
             .with_behaviour(|keypair, relay_behaviour| {
                 let message_id_fn = |_message: &gossipsub::Message| {
                     let id = Uuid::new_v4();
@@ -275,7 +276,7 @@ impl P2PClient {
                             ProtocolSupport::Full,
                         )],
                         request_response::Config::default()
-                            .with_request_timeout(Duration::from_secs(5)),
+                            .with_request_timeout(Duration::from_secs(10)),
                     ),
                 })
             })?
@@ -292,6 +293,7 @@ impl P2PClient {
             Err(e) => panic!("{e:?}"),
             Ok(h) => host = h,
         }
+        info!("Starting client with peer id: {:?}", *swarm.local_peer_id());
 
         let topic = gossipsub::IdentTopic::new(format!("{room}|{password}"));
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
@@ -502,6 +504,16 @@ impl CommunicationHandler for ClientCommunicationHandler {
 
     async fn handle_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         match event {
+            SwarmEvent::Behaviour(BehaviourEvent::Dcutr(dcutr::Event {
+                remote_peer_id,
+                result,
+            })) => {
+                error!("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\nFished dcutr result {result:?} from {remote_peer_id:?}");
+                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source: peer_id,
                 message_id: id,
@@ -550,11 +562,11 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 ..
             } => {
                 // client losing connection to relay might be fine
-                if peer_id == self.host {
-                    warn!("Connection of client to relay server or host closed: {endpoint:?} with cause: {cause:?} from {peer_id:?} where host {:?}", self.host);
-                    self.core_receiver.close();
-                    //TODO panic
-                }
+                warn!("Connection of client to host closed: {endpoint:?} with cause: {cause:?} from {peer_id:?} where host {:?}", self.host);
+                // if peer_id == self.host && *endpoint.get_remote_address() != self.relay {
+                //     self.core_receiver.close();
+                //     //TODO panic
+                // }
             }
             SwarmEvent::Dialing {
                 peer_id: Some(peer_id),
@@ -860,6 +872,16 @@ impl CommunicationHandler for HostCommunicationHandler {
 
     async fn handle_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         match event {
+            SwarmEvent::Behaviour(BehaviourEvent::Dcutr(dcutr::Event {
+                remote_peer_id,
+                result,
+            })) => {
+                error!("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\nFished dcutr result {result:?} from {remote_peer_id:?}");
+                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source: peer_id,
                 message_id: id,
@@ -898,22 +920,23 @@ impl CommunicationHandler for HostCommunicationHandler {
                 peer_id, endpoint, ..
             } => {
                 if self.relay == (*endpoint.get_remote_address()) {
-                    warn!("Connection of client to relay server or host closed: {endpoint:?}");
+                    warn!("Connection of host to relay server closed: {endpoint:?}");
                     self.core_receiver.close();
                     //TODO panic
                 } else {
                     info!("User connection stopped and user removed from map");
                     let users = self.users.clone();
-                    let status = users
-                        .get(&peer_id)
-                        .expect("Connected peer should be included in lists");
-                    self.remove_peer(status, &peer_id);
-                    let status_list = NiketsuMessage::StatusList(self.status_list.clone());
-                    if let Err(e) = self.message_sender.send(status_list.clone()) {
-                        error!("Failed to send status list to core: {e:?}");
-                    }
-                    if let Err(e) = self.swarm.try_broadcast(self.topic.clone(), status_list) {
-                        error!("Failed to broadcast status list: {e:?}");
+                    if let Some(status) = users.get(&peer_id) {
+                        self.remove_peer(status, &peer_id);
+                        let status_list = NiketsuMessage::StatusList(self.status_list.clone());
+                        if let Err(e) = self.message_sender.send(status_list.clone()) {
+                            error!("Failed to send status list to core: {e:?}");
+                        }
+                        if let Err(e) = self.swarm.try_broadcast(self.topic.clone(), status_list) {
+                            error!("Failed to broadcast status list: {e:?}");
+                        }
+                    } else {
+                        error!("Expected peer to be included in list");
                     }
                 }
             }

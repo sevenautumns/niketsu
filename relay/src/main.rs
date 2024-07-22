@@ -36,7 +36,7 @@ use libp2p::core::Multiaddr;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{identify, identity, noise, ping, relay, tcp, tls, yamux, PeerId, StreamProtocol};
-use log::info;
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_async_std()
         .with_tcp(
             tcp::Config::default(),
-            (tls::Config::new, noise::Config::new),
+            noise::Config::new,
             yamux::Config::default,
         )?
         .with_quic()
@@ -71,9 +71,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         })?
         .build();
 
-    info!("peer-id: {:?}", swarm.local_peer_id());
-
-    // Listen on all interfaces
     let listen_addr_tcp = Multiaddr::empty()
         .with(match opt.use_ipv6 {
             Some(true) => Protocol::from(Ipv6Addr::UNSPECIFIED),
@@ -90,6 +87,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with(Protocol::Udp(opt.port))
         .with(Protocol::QuicV1);
     swarm.listen_on(listen_addr_quic)?;
+    info!("Finished initialization. Now receiving requests");
 
     let open_rooms: Arc<RwLock<HashMap<String, (PeerId, InitRequest)>>> =
         Arc::new(RwLock::new(HashMap::new()));
@@ -104,40 +102,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                     info: identify::Info { observed_addr, .. },
                     ..
                 })) => {
-                    info!("Added external node");
+                    debug!("Added external node");
                     swarm.add_external_address(observed_addr.clone());
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Ping(ping::Event {
-                    peer,
-                    connection,
-                    result,
-                })) => {
-                    info!("Received ping from {peer:?} of connection {connection:?} with result {result:?}")
-                }
-                SwarmEvent::NewListenAddr { address, .. } => {
-                    info!("Listening on {address:?}");
-                }
                 SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                    let mut n = map.write().await;
+                    debug!("Connection closed due to {cause:?}");
+                    let mut m = map.write().await;
                     let mut r = rooms.write().await;
-                    if let Some(room) = n.get(&peer_id) {
+                    if let Some(room) = m.get(&peer_id) {
                         r.remove(room);
-                        n.remove(&peer_id);
+                        m.remove(&peer_id);
                     }
-                    info!("Connection closed by {peer_id:?}, cause {cause:?}");
-                    info!("room {r:?}")
                 }
                 SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                    let mut n = map.write().await;
+                    let mut m = map.write().await;
                     let mut r = rooms.write().await;
                     if let Some(pid) = peer_id {
-                        if let Some(room) = n.get(&pid) {
+                        if let Some(room) = m.get(&pid) {
                             r.remove(room);
-                            n.remove(&pid);
+                            m.remove(&pid);
                         }
                     }
-                    info!("Connection closed by {peer_id:?}, cause {error:?}");
-                    info!("room {r:?}")
+                    debug!("Outgoing connection closed due to {error:?}");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::InitRequestResponse(
                     request_response::Event::Message { peer, message },
@@ -145,26 +131,26 @@ fn main() -> Result<(), Box<dyn Error>> {
                     request_response::Message::Request {
                         request, channel, ..
                     } => {
-                        info!("Received request from client: {request:?}");
+                        debug!("Received request from client");
                         let mut r = rooms.write().await;
-                        info!("room: {r:?}");
                         let mut status: u8 = 0;
                         let mut peer_id: Option<PeerId> = None;
                         if let Some((pid, req)) = r.get(request.room.as_str()) {
                             if req.verify(request.password) {
                                 // host is available and password is correct
-                                info!("verified password. returning {pid:?}");
-                                peer_id = Some(*pid);
+                                if *pid != peer {
+                                    debug!("Verified password. Returning pid");
+                                    peer_id = Some(*pid);
+                                }
                             } else {
-                                info!("auth failed");
-                                // auth failed
+                                debug!("Auth failed");
                                 status = 1;
                             }
                         } else {
                             // else no error and query client will be host
-                            info!("Creating new room for {peer:?}");
-                            let mut n = map.write().await;
-                            n.insert(peer, request.room.clone());
+                            debug!("Creating new room");
+                            let mut m = map.write().await;
+                            m.insert(peer, request.room.clone());
                             r.insert(request.room.clone(), (peer, request));
                         }
                         swarm
@@ -174,7 +160,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             .unwrap_or_default();
                     }
                     request_response::Message::Response { .. } => {
-                        info!("Received init response. This should not happen")
+                        debug!("Received init response. This should not happen")
                     }
                 },
                 _ => {}
