@@ -32,8 +32,6 @@ use uuid::Uuid;
 
 use crate::messages::{NiketsuMessage, PingMessage};
 
-const MAXIMUM_DELAY: u64 = 5;
-
 #[derive(NetworkBehaviour)]
 struct Behaviour {
     relay_client: relay::client::Behaviour,
@@ -359,12 +357,46 @@ struct ClientCommunicationHandler {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
     host: PeerId,
-    video_status: VideoStatusMsg,
     relay: Multiaddr,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
     timer: tokio::time::Interval,
+    video_status: VideoStatusMsg,
     is_seeking: bool,
+    delay_handler: DelayHandler,
+}
+
+//TODO: keep track of rtt for a certain duration to determine jitter, variance, etc.
+#[derive(Default)]
+struct DelayHandler {
+    ping_map: HashMap<Uuid, tokio::time::Instant>,
+    rtt: tokio::time::Duration,
+}
+
+impl DelayHandler {
+    fn insert(&mut self, uuid: Uuid) -> Option<tokio::time::Instant> {
+        let now = tokio::time::Instant::now();
+        self.ping_map.insert(uuid, now)
+    }
+
+    fn update(&mut self, uuid: Uuid) -> Result<()> {
+        let now = tokio::time::Instant::now();
+        if let Some(prev_time) = self.ping_map.get(&uuid) {
+            let diff = now.checked_duration_since(*prev_time);
+            if let Some(d) = diff {
+                self.rtt = self.rtt.mul_f64(0.8) + d.mul_f64(0.2);
+            } else {
+                bail!("Failed to determine duration since last ping");
+            }
+            Ok(())
+        } else {
+            bail!("Received ping response for uuid that is not available");
+        }
+    }
+
+    fn delay(&mut self) -> tokio::time::Duration {
+        self.rtt.div_f64(2.0)
+    }
 }
 
 impl fmt::Debug for ClientCommunicationHandler {
@@ -389,18 +421,28 @@ impl ClientCommunicationHandler {
             swarm,
             topic,
             host,
-            video_status: VideoStatusMsg::default(),
             relay,
             core_receiver,
             message_sender,
             timer: tokio::time::interval(Duration::from_secs(2)),
+            video_status: VideoStatusMsg::default(),
             is_seeking: false,
+            delay_handler: DelayHandler::default(),
         }
     }
 
     fn send_ping(&mut self) {
-        self.swarm
-            .send(&self.host, NiketsuMessage::Ping(PingMessage::default()));
+        let uuid = Uuid::new_v4();
+        self.delay_handler.insert(uuid);
+        self.swarm.send(
+            &self.host,
+            NiketsuMessage::Ping(PingMessage { uuid: uuid.into() }),
+        );
+    }
+
+    fn handle_ping(&mut self, ping_msg: PingMessage) -> Result<()> {
+        self.delay_handler
+            .update(Uuid::from_str(ping_msg.uuid.as_str())?)
     }
 
     fn handle_broadcast(&mut self, peer_id: PeerId, msg: Vec<u8>) -> Result<()> {
@@ -445,25 +487,30 @@ impl ClientCommunicationHandler {
                 bail!("Received position even though no file selected");
             }
 
+            //TODO clean up
             if let Some(file) = msg.filename.clone() {
-                info!(
+                debug!(
                     "My status: {:?}, host: {:?}",
                     self_status.clone(),
                     host_status.clone(),
                 );
-                if self_status > host_status.saturating_add(Duration::from_secs(MAXIMUM_DELAY)) {
-                    info!("sending self seek");
-                    // TODO slow down
+                if self_status
+                    > host_status
+                        .saturating_add(Duration::from_secs(5))
+                        .saturating_add(self.delay_handler.delay())
+                {
+                    debug!("Sending self seek");
                     self.message_sender.send(NiketsuMessage::Seek(SeekMsg {
                         file,
                         position: host_status,
                         actor: String::from(""),
                     }))?;
                 } else if self_status
-                    < host_status.saturating_sub(Duration::from_secs(MAXIMUM_DELAY))
+                    < host_status.saturating_sub(
+                        Duration::from_secs(5).saturating_add(self.delay_handler.delay()),
+                    )
                 {
-                    info!("sending host seek");
-                    // speed up?
+                    debug!("Sending host seek");
                     self.swarm.send(
                         &self.host,
                         NiketsuMessage::Seek(SeekMsg {
@@ -549,6 +596,9 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 request_response::Message::Response { response, .. } => {
                     if let NiketsuMessage::Ping(p) = response.0 {
                         info!("Received ping: {p:?}");
+                        if let Err(e) = self.handle_ping(p) {
+                            error!("Failed to handle ping: {e:?}");
+                        }
                     }
                 }
             },

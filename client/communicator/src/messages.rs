@@ -62,15 +62,7 @@ impl TryFrom<Vec<u8>> for NiketsuMessage {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct PingMessage {
-    uuid: String,
-}
-
-impl Default for PingMessage {
-    fn default() -> Self {
-        Self {
-            uuid: Uuid::new_v4().into(),
-        }
-    }
+    pub(super) uuid: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
