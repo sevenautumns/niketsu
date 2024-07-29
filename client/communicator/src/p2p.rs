@@ -529,19 +529,9 @@ impl CommunicationHandler for ClientCommunicationHandler {
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
                 request_response::Event::Message { message, .. },
             )) => match message {
-                request_response::Message::Request {
-                    request, channel, ..
-                } => {
+                request_response::Message::Request { request, .. } => {
                     //TODO refactor
-                    if let NiketsuMessage::Ping(p) = request.0 {
-                        info!("Received ping: {p:?}");
-                        if let Err(e) = self
-                            .swarm
-                            .send_response(channel, MessageResponse(NiketsuMessage::Ping(p)))
-                        {
-                            error!("Failed to respond to ping: {e:?}");
-                        }
-                    } else if let Err(e) = self.message_sender.send(request.0) {
+                    if let Err(e) = self.message_sender.send(request.0) {
                         error!("Failed to send direct message to core: {e:?}");
                     }
                 }
@@ -822,11 +812,6 @@ impl HostCommunicationHandler {
         let mut niketsu_msg = msg;
         info!("Received message {:?}", niketsu_msg.clone());
         match niketsu_msg.clone() {
-            NiketsuMessage::Ping(ping) => {
-                return self
-                    .swarm
-                    .send_response(channel, MessageResponse(NiketsuMessage::Ping(ping)));
-            }
             NiketsuMessage::Status(status) => {
                 self.handle_status(status.clone(), peer_id);
                 self.handle_all_users_ready(&peer_id)?;

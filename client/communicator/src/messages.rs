@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
 pub(super) enum NiketsuMessage {
-    Ping(PingMessage),
     Join(JoinMessage),
     VideoStatus(VideoStatusMsg),
     StatusList(UserStatusListMsg),
@@ -58,12 +57,6 @@ impl TryFrom<Vec<u8>> for NiketsuMessage {
         let msg = std::str::from_utf8(&value).context("from utf8 failed")?;
         serde_json::from_str::<NiketsuMessage>(msg).context("serde json from_str failed")
     }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct PingMessage {
-    pub(super) uuid: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -154,18 +147,6 @@ mod tests {
     use niketsu_core::room::RoomName;
 
     use crate::messages::*;
-
-    #[test]
-    fn test_ping_message_serialization() {
-        let ping_message = NiketsuMessage::Ping(PingMessage {
-            uuid: String::from("some_uuid"),
-        });
-
-        let json_str = serde_json::to_string(&ping_message).unwrap();
-        let expected_json = r#"{"type":"ping","uuid":"some_uuid"}"#;
-
-        assert_eq!(json_str, expected_json);
-    }
 
     #[test]
     fn test_join_message_serialization() {
@@ -336,18 +317,6 @@ mod tests {
         let expected_json = r#"{"type":"status","name":"user1","ready":true}"#;
 
         assert_eq!(json_str, expected_json);
-    }
-
-    #[test]
-    fn test_ping_message_deserialization() {
-        let json_str = r#"{"type":"ping","uuid":"some_uuid"}"#;
-        let expected_ping_message = NiketsuMessage::Ping(PingMessage {
-            uuid: String::from("some_uuid"),
-        });
-
-        let deserialized_message: NiketsuMessage = serde_json::from_str(json_str).unwrap();
-
-        assert_eq!(deserialized_message, expected_ping_message);
     }
 
     #[test]
