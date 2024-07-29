@@ -29,15 +29,14 @@ use serde::{Deserialize, Serialize};
 use tokio::{io, spawn};
 use uuid::Uuid;
 
-use crate::messages::{NiketsuMessage, PingMessage};
-use crate::Connection;
+use crate::messages::NiketsuMessage;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
     relay_client: relay::client::Behaviour,
-    ping: ping::Behaviour,
     identify: identify::Behaviour,
     dcutr: dcutr::Behaviour,
+    ping: ping::Behaviour,
     gossipsub: gossipsub::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
     message_request_response: request_response::cbor::Behaviour<MessageRequest, MessageResponse>,
@@ -245,7 +244,9 @@ impl P2PClient {
 
                 Ok(Behaviour {
                     relay_client: relay_behaviour,
-                    ping: ping::Behaviour::new(ping::Config::new()),
+                    ping: ping::Behaviour::new(
+                        ping::Config::new().with_interval(Duration::from_secs(1)),
+                    ),
                     identify: identify::Behaviour::new(identify::Config::new(
                         "/identify/1".to_string(),
                         keypair.public(),
@@ -360,43 +361,9 @@ struct ClientCommunicationHandler {
     relay: Multiaddr,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
-    timer: tokio::time::Interval,
     video_status: VideoStatusMsg,
     is_seeking: bool,
-    delay_handler: DelayHandler,
-}
-
-//TODO: keep track of rtt for a certain duration to determine jitter, variance, etc.
-#[derive(Default)]
-struct DelayHandler {
-    ping_map: HashMap<Uuid, tokio::time::Instant>,
-    rtt: tokio::time::Duration,
-}
-
-impl DelayHandler {
-    fn insert(&mut self, uuid: Uuid) -> Option<tokio::time::Instant> {
-        let now = tokio::time::Instant::now();
-        self.ping_map.insert(uuid, now)
-    }
-
-    fn update(&mut self, uuid: Uuid) -> Result<()> {
-        let now = tokio::time::Instant::now();
-        if let Some(prev_time) = self.ping_map.get(&uuid) {
-            let diff = now.checked_duration_since(*prev_time);
-            if let Some(d) = diff {
-                self.rtt = self.rtt.mul_f64(0.8) + d.mul_f64(0.2);
-            } else {
-                bail!("Failed to determine duration since last ping");
-            }
-            Ok(())
-        } else {
-            bail!("Received ping response for uuid that is not available");
-        }
-    }
-
-    fn delay(&mut self) -> tokio::time::Duration {
-        self.rtt.div_f64(2.0)
-    }
+    delay: Duration,
 }
 
 impl fmt::Debug for ClientCommunicationHandler {
@@ -424,25 +391,10 @@ impl ClientCommunicationHandler {
             relay,
             core_receiver,
             message_sender,
-            timer: tokio::time::interval(Duration::from_secs(2)),
             video_status: VideoStatusMsg::default(),
             is_seeking: false,
-            delay_handler: DelayHandler::default(),
+            delay: Duration::default(),
         }
-    }
-
-    fn send_ping(&mut self) {
-        let uuid = Uuid::new_v4();
-        self.delay_handler.insert(uuid);
-        self.swarm.send(
-            &self.host,
-            NiketsuMessage::Ping(PingMessage { uuid: uuid.into() }),
-        );
-    }
-
-    fn handle_ping(&mut self, ping_msg: PingMessage) -> Result<()> {
-        self.delay_handler
-            .update(Uuid::from_str(ping_msg.uuid.as_str())?)
     }
 
     fn handle_broadcast(&mut self, peer_id: PeerId, msg: Vec<u8>) -> Result<()> {
@@ -497,7 +449,7 @@ impl ClientCommunicationHandler {
                 if self_status
                     > host_status
                         .saturating_add(Duration::from_secs(5))
-                        .saturating_add(self.delay_handler.delay())
+                        .saturating_add(self.delay)
                 {
                     debug!("Sending self seek");
                     self.message_sender.send(NiketsuMessage::Seek(SeekMsg {
@@ -506,9 +458,7 @@ impl ClientCommunicationHandler {
                         actor: String::from(""),
                     }))?;
                 } else if self_status
-                    < host_status.saturating_sub(
-                        Duration::from_secs(5).saturating_add(self.delay_handler.delay()),
-                    )
+                    < host_status.saturating_sub(Duration::from_secs(5).saturating_add(self.delay))
                 {
                     debug!("Sending host seek");
                     self.swarm.send(
@@ -531,7 +481,6 @@ impl CommunicationHandler for ClientCommunicationHandler {
     async fn run(&mut self) {
         loop {
             tokio::select! {
-                _ = self.timer.tick() => self.send_ping(),
                 event = self.swarm.select_next_some() => self.handle_event(event).await,
                 msg = self.core_receiver.recv() => match msg {
                     Some(msg) => {
@@ -551,6 +500,13 @@ impl CommunicationHandler for ClientCommunicationHandler {
 
     async fn handle_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         match event {
+            SwarmEvent::Behaviour(BehaviourEvent::Ping(ping::Event { result, .. })) => {
+                debug!("Received ping!");
+                match result {
+                    Ok(d) => self.delay = d,
+                    Err(e) => warn!("Failed to get ping rtt: {e:?}"),
+                }
+            }
             SwarmEvent::Behaviour(BehaviourEvent::Dcutr(dcutr::Event {
                 remote_peer_id,
                 result,
@@ -589,14 +545,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
                         error!("Failed to send direct message to core: {e:?}");
                     }
                 }
-                request_response::Message::Response { response, .. } => {
-                    if let NiketsuMessage::Ping(p) = response.0 {
-                        info!("Received ping: {p:?}");
-                        if let Err(e) = self.handle_ping(p) {
-                            error!("Failed to handle ping: {e:?}");
-                        }
-                    }
-                }
+                request_response::Message::Response { .. } => {}
             },
             SwarmEvent::ConnectionEstablished { .. } => {
                 if let Err(e) = self
@@ -937,11 +886,7 @@ impl CommunicationHandler for HostCommunicationHandler {
                 remote_peer_id,
                 result,
             })) => {
-                error!("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\nFished dcutr result {result:?} from {remote_peer_id:?}");
-                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                error!("Fished dcutr result {result:?} from {remote_peer_id:?}");
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source: peer_id,
