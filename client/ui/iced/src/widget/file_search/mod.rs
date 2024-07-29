@@ -1,9 +1,9 @@
 use std::time::Instant;
 
+use iced::keyboard::key::Named;
 use iced::widget::scrollable::Id;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
 use iced::{Element, Length, Renderer, Theme};
-use iced_futures::core::Widget;
 use niketsu_core::file_database::fuzzy::{FuzzyResult, FuzzySearch};
 
 use self::message::{
@@ -46,6 +46,7 @@ impl<'a> FileSearchWidget<'a> {
                     .into(),
             );
         }
+        let has_results = !results.is_empty();
         let results = Column::with_children(results).width(Length::Fill);
         let input = TextInput::new("Search Query", &state.query)
             .on_input(|query| FileSearchWidgetMessage::from(Input { query }).into())
@@ -62,7 +63,7 @@ impl<'a> FileSearchWidget<'a> {
             .style(ResultButton::not_ready());
         let top_row = Row::new().push(input).push(close_button).spacing(5);
         let mut base = Column::new().push(top_row).padding(5);
-        if !results.children().is_empty() {
+        if has_results {
             base = base
                 // TODO scroll with selection
                 .push(Scrollable::new(results).id(Id::new("search")))
@@ -77,21 +78,20 @@ impl<'a> FileSearchWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
-    fn width(&self) -> iced::Length {
-        self.button.as_widget().width()
-    }
-
-    fn height(&self) -> iced::Length {
-        self.button.as_widget().height()
+impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'a> {
+    fn size(&self) -> iced::Size<Length> {
+        self.button.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.button.as_widget().layout(renderer, limits)
+        self.button
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -175,25 +175,22 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
                     shell.publish(FileSearchWidgetMessage::from(Close).into());
                 }
             }
-            if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key_code,
-                modifiers: _,
-            }) = event
+            if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { ref key, .. }) = event
             {
-                match key_code {
-                    iced::keyboard::KeyCode::Up => {
+                match key {
+                    iced::keyboard::Key::Named(Named::ArrowUp) => {
                         let index = (self.state.cursor_index + self.state.results.len() - 1)
                             .checked_rem(self.state.results.len())
                             .unwrap_or_default();
                         shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
                     }
-                    iced::keyboard::KeyCode::Down => {
+                    iced::keyboard::Key::Named(Named::ArrowDown) => {
                         let index = (self.state.cursor_index + 1)
                             .checked_rem(self.state.results.len())
                             .unwrap_or_default();
                         shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
                     }
-                    iced::keyboard::KeyCode::Enter => {
+                    iced::keyboard::Key::Named(Named::Enter) => {
                         shell.publish(
                             FileSearchWidgetMessage::from(Insert {
                                 index: self.state.cursor_index,
@@ -201,7 +198,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
                             .into(),
                         );
                     }
-                    iced::keyboard::KeyCode::Escape => {
+                    iced::keyboard::Key::Named(Named::Escape) => {
                         shell.publish(FileSearchWidgetMessage::from(Close).into());
                     }
                     _ => {}
@@ -230,12 +227,13 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
     fn overlay<'b>(
         &'b mut self,
         state: &'b mut iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'_>,
+        _layout: iced::advanced::Layout<'_>,
         _renderer: &Renderer,
-    ) -> Option<iced::advanced::overlay::Element<'b, Message, Renderer>> {
+        _translation: iced::Vector,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
         if self.state.active {
             return Some(iced::advanced::overlay::Element::new(
-                layout.position(),
+                // layout.position(),
                 Box::new(ElementOverlay {
                     tree: &mut state.children[1],
                     content: &mut self.base,

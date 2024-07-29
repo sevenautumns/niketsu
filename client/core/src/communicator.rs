@@ -511,7 +511,7 @@ pub struct NiketsuUserStatus {
 impl EventHandler for NiketsuUserStatus {
     fn handle(self, model: &mut CoreModel) {
         trace!("username changed by server");
-        model.config.username = self.username.clone();
+        model.config.username.clone_from(&self.username);
         model.ui.username_change(self.username.clone());
         model.ui.player_message(PlayerMessage::from(self));
     }

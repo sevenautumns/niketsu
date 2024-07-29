@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use iced::advanced::widget::Tree;
 use iced::event::Status;
 use iced::mouse::Cursor;
 use iced::widget::scrollable::{Id, RelativeOffset};
@@ -27,7 +28,7 @@ impl<'a> ChatWidget<'a> {
             .width(Length::Fill)
             .width(Length::Fill);
 
-        let msgs = state.messages.iter().map(|m| m.to_text()).collect();
+        let msgs: Vec<_> = state.messages.iter().map(|m| m.to_text()).collect();
         let messages = Container::new(
             Scrollable::new(Column::with_children(msgs))
                 .width(Length::Fill)
@@ -56,21 +57,20 @@ impl<'a> ChatWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for ChatWidget<'a> {
-    fn width(&self) -> Length {
-        self.base.as_widget().width()
-    }
-
-    fn height(&self) -> Length {
-        self.base.as_widget().height()
+impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for ChatWidget<'a> {
+    fn size(&self) -> iced::Size<Length> {
+        self.base.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.base.as_widget().layout(renderer, limits)
+        self.base
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -94,11 +94,11 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for ChatWidget<'a> {
         );
     }
 
-    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
+    fn children(&self) -> Vec<Tree> {
         vec![iced::advanced::widget::Tree::new(&self.base)]
     }
 
-    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
+    fn diff(&self, tree: &mut Tree) {
         tree.diff_children(std::slice::from_ref(&self.base))
     }
 
@@ -196,11 +196,11 @@ impl ChatWidgetState {
 }
 
 pub trait PlayerMessageExt {
-    fn to_text<'a>(&self) -> Element<'a, Message, Renderer>;
+    fn to_text<'a>(&self) -> Element<'a, Message>;
 }
 
 impl PlayerMessageExt for PlayerMessage {
-    fn to_text<'a>(&self) -> Element<'a, Message, Renderer> {
+    fn to_text<'a>(&self) -> Element<'a, Message> {
         let when = self.timestamp.format("[%H:%M:%S]").to_string();
         let message = &self.message;
 

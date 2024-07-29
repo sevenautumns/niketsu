@@ -49,7 +49,7 @@ impl ViewModel {
         }
     }
 
-    pub fn view(&self) -> Element<'_, Message, Renderer<Theme>> {
+    pub fn view(&self) -> Element<'_, Message, Theme, Renderer> {
         self.main.view(self)
     }
 
@@ -164,7 +164,7 @@ impl Application for View {
         self.view_model.update(message)
     }
 
-    fn view(&self) -> Element<'_, Self::Message, Renderer<Self::Theme>> {
+    fn view(&self) -> Element<'_, Self::Message, Self::Theme, Renderer> {
         self.view_model.view()
     }
 
@@ -185,7 +185,7 @@ impl Application for View {
             },
         );
 
-        let ready_subscription = iced::subscription::events().map(|e| EventOccured(e).into());
+        let ready_subscription = iced::event::listen().map(|e| EventOccured(e).into());
 
         iced::subscription::Subscription::batch([notify_subscription, ready_subscription])
     }

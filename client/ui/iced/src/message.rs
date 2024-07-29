@@ -1,5 +1,6 @@
 use enum_dispatch::enum_dispatch;
-use iced::keyboard::KeyCode;
+use iced::keyboard::key::Named;
+use iced::keyboard::Key;
 use iced::{Command, Event};
 
 use super::main_window::message::MainMessage;
@@ -46,12 +47,8 @@ pub struct EventOccured(pub Event);
 
 impl MessageHandler for EventOccured {
     fn handle(self, model: &mut ViewModel) -> Command<Message> {
-        if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
-            key_code,
-            modifiers: _,
-        }) = self.0
-        {
-            if key_code == KeyCode::Space {
+        if let Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) = self.0 {
+            if key == Key::Named(Named::Space) {
                 model.model.user_ready_toggle();
             }
         }

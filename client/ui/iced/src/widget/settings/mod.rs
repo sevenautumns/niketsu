@@ -1,3 +1,5 @@
+use iced::keyboard::key::Named;
+use iced::keyboard::Key;
 use iced::widget::{
     row, Button, Checkbox, Column, Container, Row, Scrollable, Space, Text, TextInput,
 };
@@ -118,11 +120,12 @@ impl<'a> SettingsWidget<'a> {
                                     )
                                     .push(
                                         Container::new(
-                                            Checkbox::new("Secure", state.config.secure, |b| {
-                                                SettingsWidgetMessage::from(SecureCheckbox(b))
-                                                    .into()
-                                            })
-                                            .spacing(SPACING),
+                                            Checkbox::new("Secure", state.config.secure)
+                                                .on_toggle(|b| {
+                                                    SettingsWidgetMessage::from(SecureCheckbox(b))
+                                                        .into()
+                                                })
+                                                .spacing(SPACING),
                                         )
                                         .center_y()
                                         .height(text_size + 15.0),
@@ -134,7 +137,7 @@ impl<'a> SettingsWidget<'a> {
                                     .on_input(|u| {
                                         SettingsWidgetMessage::from(PasswordInput(u)).into()
                                     })
-                                    .password(),
+                                    .secure(true),
                             )
                             .push(
                                 TextInput::new("Username", &state.config.username).on_input(|u| {
@@ -147,10 +150,12 @@ impl<'a> SettingsWidget<'a> {
                             )
                             .push(
                                 Container::new(
-                                    Checkbox::new("", state.config.auto_connect, |b| {
-                                        SettingsWidgetMessage::from(AutoConnectCheckbox(b)).into()
-                                    })
-                                    .spacing(SPACING),
+                                    Checkbox::new("", state.config.auto_connect)
+                                        .on_toggle(|b| {
+                                            SettingsWidgetMessage::from(AutoConnectCheckbox(b))
+                                                .into()
+                                        })
+                                        .spacing(SPACING),
                                 )
                                 .center_y()
                                 .height(text_size + 15.0),
@@ -244,21 +249,20 @@ impl<'a> SettingsWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
-    fn width(&self) -> iced::Length {
-        self.button.as_widget().width()
-    }
-
-    fn height(&self) -> iced::Length {
-        self.button.as_widget().height()
+impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for SettingsWidget<'a> {
+    fn size(&self) -> iced::Size<Length> {
+        self.button.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.button.as_widget().layout(renderer, limits)
+        self.button
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -342,12 +346,9 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
                     shell.publish(SettingsWidgetMessage::from(Abort).into());
                 }
             }
-            if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key_code,
-                modifiers: _,
-            }) = event
+            if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { ref key, .. }) = event
             {
-                if key_code == iced::keyboard::KeyCode::Escape {
+                if matches!(key, Key::Named(Named::Escape)) {
                     shell.publish(SettingsWidgetMessage::from(Abort).into());
                 }
             }
@@ -368,21 +369,21 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
     fn overlay<'b>(
         &'b mut self,
         state: &'b mut iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'_>,
+        _layout: iced::advanced::Layout<'_>,
         _renderer: &Renderer,
-    ) -> Option<iced::advanced::overlay::Element<'b, Message, Renderer>> {
+        _translation: iced::Vector,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
         if self.state.active {
-            return Some(iced::advanced::overlay::Element::new(
-                layout.position(),
-                Box::new(ElementOverlay {
+            return Some(iced::advanced::overlay::Element::new(Box::new(
+                ElementOverlay {
                     tree: &mut state.children[1],
                     content: &mut self.base,
                     config: ElementOverlayConfig {
                         max_width: Some(MAX_WIDTH),
                         ..Default::default()
                     },
-                }),
-            ));
+                },
+            )));
         }
         None
     }

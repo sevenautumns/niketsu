@@ -137,7 +137,7 @@ impl EventHandler for RoomChange {
         let room = self.room;
         let username = model.config.username.clone();
         let password = model.config.password.clone();
-        model.config.room = room.clone();
+        model.config.room.clone_from(&room);
         model.communicator.send(
             NiketsuJoin {
                 password,
