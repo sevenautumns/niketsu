@@ -21,9 +21,8 @@ use libp2p::{
 };
 use log::{debug, error, info, warn};
 use niketsu_core::communicator::{
-    PlaylistMsg, SeekMsg, StartMsg, UserStatusListMsg, VideoStatusMsg,
+    ConnectedMsg, PlaylistMsg, SeekMsg, StartMsg, UserStatusListMsg, VideoStatusMsg,
 };
-use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
 use serde::{Deserialize, Serialize};
@@ -31,6 +30,7 @@ use tokio::{io, spawn};
 use uuid::Uuid;
 
 use crate::messages::{NiketsuMessage, PingMessage};
+use crate::Connection;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -555,11 +555,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 remote_peer_id,
                 result,
             })) => {
-                error!("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\nFished dcutr result {result:?} from {remote_peer_id:?}");
-                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-                error!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                error!("Fished dcutr result {result:?} from {remote_peer_id:?}");
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source: peer_id,
@@ -602,6 +598,14 @@ impl CommunicationHandler for ClientCommunicationHandler {
                     }
                 }
             },
+            SwarmEvent::ConnectionEstablished { .. } => {
+                if let Err(e) = self
+                    .message_sender
+                    .send(NiketsuMessage::Connection(ConnectedMsg.into()))
+                {
+                    warn!("Failed to send connected message to core: {e:?}");
+                }
+            }
             SwarmEvent::IncomingConnection { local_addr, .. } => {
                 info!("Received connection from {local_addr:?}")
             }
@@ -901,6 +905,13 @@ impl HostCommunicationHandler {
 #[async_trait]
 impl CommunicationHandler for HostCommunicationHandler {
     async fn run(&mut self) {
+        if let Err(e) = self
+            .message_sender
+            .send(NiketsuMessage::Connection(ConnectedMsg.into()))
+        {
+            warn!("Failed to send connected message to core: {e:?}");
+        }
+
         loop {
             tokio::select! {
                 event = self.swarm.select_next_some() => self.handle_event(event).await,

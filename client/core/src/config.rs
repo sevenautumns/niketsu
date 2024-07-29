@@ -28,7 +28,7 @@ pub struct Config {
 
 // TODO: look up on 89.58.15.23?
 fn bootstrap_relay() -> String {
-    "/ip4/89.58.15.23/udp/7766/quic-v1/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
+    "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
         .to_string()
 }
 

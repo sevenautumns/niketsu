@@ -70,7 +70,7 @@ pub enum IncomingMessage {
     UserStatus(UserStatusMsg),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ConnectedMsg;
 
 impl From<ConnectedMsg> for PlayerMessage {

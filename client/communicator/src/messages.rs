@@ -1,7 +1,6 @@
 use anyhow::Context;
 use niketsu_core::communicator::*;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "type")]
@@ -20,6 +19,7 @@ pub(super) enum NiketsuMessage {
     ServerMessage(ServerMessageMsg),
     Playlist(PlaylistMsg),
     Status(UserStatusMsg),
+    Connection(ConnectedMsg),
 }
 
 impl TryFrom<NiketsuMessage> for IncomingMessage {
@@ -37,6 +37,7 @@ impl TryFrom<NiketsuMessage> for IncomingMessage {
             NiketsuMessage::ServerMessage(m) => Ok(m.into()),
             NiketsuMessage::Playlist(m) => Ok(m.into()),
             NiketsuMessage::Status(m) => Ok(m.into()),
+            NiketsuMessage::Connection(m) => Ok(m.into()),
             value => Err(value),
         }
     }

@@ -41,7 +41,6 @@ impl Connection {
                 },
                 Connection::Connecting(c) => {
                     *self = c.await;
-                    return ConnectedMsg.into();
                 }
                 Connection::Disconnected(d) => *self = d.reconnect(endpoint).await,
             }
