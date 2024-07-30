@@ -117,17 +117,16 @@ impl PlayerPositionChange {
 impl EventHandler for PlayerPositionChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("player position change");
-        let Some(playing) = model.player.playing_video() else {
+        let Some(video) = model.player.playing_video() else {
             return;
         };
-        let file = playing.as_str().to_string();
         let actor = model.config.username.clone();
         let position = self.pos;
 
         model.communicator.send(
             SeekMsg {
                 actor,
-                file,
+                video,
                 position,
             }
             .into(),
@@ -164,9 +163,9 @@ impl EventHandler for PlayerFileEnd {
     fn handle(self, model: &mut CoreModel) {
         trace!("player file end");
         // TODO refactor
-        let mut filename = None;
+        let mut video = None;
         if let Some(next) = model.playlist.advance_to_next() {
-            filename = Some(next.as_str().to_string());
+            video = Some(next.clone());
             model
                 .player
                 .load_video(next.clone(), Duration::ZERO, model.database.all_files());
@@ -180,7 +179,7 @@ impl EventHandler for PlayerFileEnd {
         model.communicator.send(
             SelectMsg {
                 actor,
-                filename,
+                video,
                 position,
             }
             .into(),

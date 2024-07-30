@@ -17,6 +17,7 @@ use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
 use crate::config::Config;
 use crate::file_database::FileStore;
+use crate::playlist::file::PlaylistBrowser;
 use crate::playlist::Playlist;
 use crate::room::{RoomName, UserList};
 use crate::util::{Observed, RingBuffer};
@@ -59,6 +60,7 @@ impl EventHandler for PlaylistChange {
         let playlist = self.playlist.clone();
 
         model.playlist.replace(self.playlist);
+        PlaylistBrowser::save(&model.config.room, &model.playlist);
         model
             .communicator
             .send(PlaylistMsg { actor, playlist }.into())
@@ -74,13 +76,13 @@ impl EventHandler for VideoChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video change message");
         let actor = model.config.username.clone();
-        let filename = Some(self.video.as_str().to_string());
+        let video = Some(self.video.clone());
         let position = Duration::ZERO;
         model.playlist.select_playing(&self.video);
         model.communicator.send(
             SelectMsg {
                 actor,
-                filename,
+                video,
                 position,
             }
             .into(),
@@ -464,16 +466,14 @@ mod tests {
     use crate::config::Config;
     use crate::file_database::{FileEntry, MockFileDatabaseTrait};
     use crate::player::MockMediaPlayerTrait;
-    use crate::playlist::MockPlaylistHandlerTrait;
     use crate::util::Observed;
 
-    #[test]
-    fn test_playlist_change() {
+    #[tokio::test]
+    async fn test_playlist_change() {
         let mut communicator = MockCommunicatorTrait::default();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let mut playlist_handler = MockPlaylistHandlerTrait::default();
 
         let user = String::from("max");
         let playlist = Playlist::from_iter(["video1", "video2"]);
@@ -486,11 +486,6 @@ mod tests {
             playlist: playlist.clone(),
         });
 
-        playlist_handler
-            .expect_replace()
-            .with(eq(playlist.clone()))
-            .once()
-            .return_const(());
         communicator
             .expect_send()
             .with(eq(message))
@@ -501,7 +496,6 @@ mod tests {
             .communicator(Box::new(communicator))
             .player(Box::new(player))
             .ui(Box::new(ui))
-            .playlist(Box::new(playlist_handler))
             .file_database(Box::new(file_database))
             .config(config)
             .build();
@@ -516,7 +510,6 @@ mod tests {
         let mut player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
-        let mut playlist_handler = MockPlaylistHandlerTrait::default();
 
         let user = String::from("max");
         let video = Video::from("video1");
@@ -529,17 +522,12 @@ mod tests {
         };
         let message = OutgoingMessage::from(SelectMsg {
             actor: user.clone(),
-            filename: Some("video1".to_string()),
+            video: Some(video.clone()),
             position: pos,
         });
 
         file_database.expect_all_files().return_const(file_store);
         player.expect_get_speed().return_const(1.1);
-        playlist_handler
-            .expect_select_playing()
-            .with(eq(video.clone()))
-            .once()
-            .return_const(());
         player
             .expect_load_video()
             .with(eq(video.clone()), eq(pos), always())
@@ -556,7 +544,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .playlist(Box::new(playlist_handler))
             .config(config)
             .build();
 
@@ -570,7 +557,6 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let playlist_handler = MockPlaylistHandlerTrait::default();
 
         let user = String::from("max");
         let addr = String::from("duckduckgo.com");
@@ -597,7 +583,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .playlist(Box::new(playlist_handler))
             .config(config)
             .build();
 
@@ -615,7 +600,6 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let playlist_handler = MockPlaylistHandlerTrait::default();
 
         let user = String::from("max");
         let user_new = String::from("moritz");
@@ -640,7 +624,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .playlist(Box::new(playlist_handler))
             .config(config)
             .build();
 
@@ -663,7 +646,6 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let playlist_handler = MockPlaylistHandlerTrait::default();
 
         let user = String::from("max");
         let user_msg = String::from("hello world!");
@@ -687,7 +669,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .playlist(Box::new(playlist_handler))
             .config(config)
             .build();
 
@@ -701,7 +682,6 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
-        let playlist_handler = MockPlaylistHandlerTrait::default();
 
         let config = Config::default();
 
@@ -713,7 +693,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .playlist(Box::new(playlist_handler))
             .config(config)
             .build();
 
@@ -730,7 +709,6 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
-        let playlist_handler = MockPlaylistHandlerTrait::default();
 
         let paths = vec!["/videos".into(), "/music".into()];
         let paths_clone = paths.clone();
@@ -749,7 +727,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .playlist(Box::new(playlist_handler))
             .config(config)
             .build();
 

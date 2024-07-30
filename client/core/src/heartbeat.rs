@@ -34,7 +34,7 @@ pub struct Heartbeat;
 impl EventHandler for Heartbeat {
     fn handle(self, model: &mut CoreModel) {
         trace!("heartbeat");
-        let filename = model.player.playing_video().map(|v| v.as_str().to_string());
+        let video = model.player.playing_video();
         let position = model.player.get_position();
         let speed = model.player.get_speed();
         let paused = model.player.is_paused().unwrap_or(true);
@@ -42,7 +42,7 @@ impl EventHandler for Heartbeat {
         let file_loaded = model.player.video_loaded();
         model.communicator.send(
             VideoStatusMsg {
-                filename,
+                video,
                 position,
                 speed,
                 paused,
@@ -56,7 +56,6 @@ impl EventHandler for Heartbeat {
 
 #[cfg(test)]
 mod tests {
-    use arcstr::ArcStr;
     use mockall::predicate::eq;
     use tokio::time::timeout;
 
@@ -66,7 +65,7 @@ mod tests {
     use crate::config::Config;
     use crate::file_database::MockFileDatabaseTrait;
     use crate::player::MockMediaPlayerTrait;
-    use crate::playlist::{MockPlaylistHandlerTrait, Video, VideoInner};
+    use crate::playlist::Video;
     use crate::ui::MockUserInterfaceTrait;
 
     #[tokio::test]
@@ -89,16 +88,15 @@ mod tests {
         let mut player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let playlist_handler = MockPlaylistHandlerTrait::default();
 
-        let video = ArcStr::from("video2");
+        let video = Video::from("video2");
         let position = Some(Duration::from_secs(15));
         let speed = 1.5;
         let paused = true;
         let config = Config::default();
         let cache = true;
         let message = OutgoingMessage::from(VideoStatusMsg {
-            filename: Some(video.to_string()),
+            video: Some(video.clone()),
             position,
             speed,
             paused,
@@ -106,9 +104,7 @@ mod tests {
             cache,
         });
 
-        player
-            .expect_playing_video()
-            .return_const::<Video>(VideoInner::File(video).into());
+        player.expect_playing_video().return_const::<Video>(video);
         player.expect_get_position().return_const(position);
         player.expect_get_speed().return_const(speed);
         player.expect_is_paused().return_const(paused);
@@ -124,7 +120,6 @@ mod tests {
             .communicator(Box::new(communicator))
             .player(Box::new(player))
             .ui(Box::new(ui))
-            .playlist(Box::new(playlist_handler))
             .file_database(Box::new(file_database))
             .config(config)
             .build();

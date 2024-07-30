@@ -18,7 +18,7 @@ static TIMESTAMP: Lazy<String> = Lazy::new(|| Local::now().format("%Y-%m-%d_%H%M
 
 static SAVE_PERMIT: Semaphore = Semaphore::const_new(1);
 
-static EXTENSION: &str = "yaml";
+const EXTENSION: &str = "yaml";
 
 pub struct PlaylistBrowser {}
 
@@ -41,7 +41,7 @@ impl PlaylistBrowser {
             .ok()
     }
 
-    async fn get_first(room: RoomName) -> Option<PlaylistHandler> {
+    pub async fn get_first(room: &RoomName) -> Option<PlaylistHandler> {
         let mut paths = Self::get_all_paths_for_room(room).await;
         paths.sort_by_cached_key(|path| path.file_name().map(OsStr::to_os_string));
         for path in paths.iter().rev() {
@@ -53,7 +53,7 @@ impl PlaylistBrowser {
         None
     }
 
-    pub async fn get_all_paths_for_room(room: RoomName) -> Vec<PathBuf> {
+    pub async fn get_all_paths_for_room(room: &RoomName) -> Vec<PathBuf> {
         let mut names = vec![];
         let Some(playlist_folder) = Self::get_playlist_folder() else {
             return vec![];
@@ -78,7 +78,7 @@ impl PlaylistBrowser {
         names
     }
 
-    pub async fn get_all_for_room(room: RoomName) -> Vec<PlaylistHandler> {
+    pub async fn get_all_for_room(room: &RoomName) -> Vec<PlaylistHandler> {
         let mut paths = Self::get_all_paths_for_room(room).await;
         paths.sort_by_cached_key(|path| path.file_name().map(OsStr::to_os_string));
         let mut handlers = Vec::with_capacity(paths.len());
@@ -116,7 +116,7 @@ impl PlaylistBrowser {
             else {
                 continue;
             };
-            let playlists = Self::get_all_for_room(room.clone()).await;
+            let playlists = Self::get_all_for_room(&room).await;
             if !playlists.is_empty() {
                 rooms.insert(room, playlists);
             }

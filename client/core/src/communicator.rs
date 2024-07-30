@@ -13,6 +13,7 @@ use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
 use crate::player::MediaPlayerTrait;
+use crate::playlist::file::PlaylistBrowser;
 use crate::playlist::Playlist;
 use crate::room::{RoomName, UserList};
 use crate::user::UserStatus;
@@ -123,7 +124,7 @@ impl EventHandler for ConnectionErrorMsg {
 #[derive(Default, Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoStatusMsg {
-    pub filename: Option<String>,
+    pub video: Option<Video>,
     #[serde(with = "serde_millis")]
     pub position: Option<Duration>,
     pub speed: f64,
@@ -137,7 +138,7 @@ impl PartialEq for VideoStatusMsg {
         let speed_self = OrderedFloat(self.speed);
         let speed_other = OrderedFloat(self.speed);
         speed_self.eq(&speed_other)
-            && self.filename.eq(&other.filename)
+            && self.video.eq(&other.video)
             && self.position.eq(&other.position)
             && self.paused.eq(&other.paused)
     }
@@ -148,8 +149,8 @@ impl Eq for VideoStatusMsg {}
 impl EventHandler for VideoStatusMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received video status for reconciliation");
-        let (Some(pos), Some(_)) = (self.position, self.filename) else {
-            trace!("video status sent without position or filename");
+        let (Some(pos), Some(_)) = (self.position, self.video) else {
+            trace!("video status sent without position or video");
             return;
         };
         model.player.reconcile(pos)
@@ -291,7 +292,7 @@ impl From<PlaybackSpeedMsg> for OutgoingMessage {
 #[serde(rename_all = "camelCase")]
 pub struct SeekMsg {
     pub actor: String,
-    pub file: String,
+    pub video: Video,
     #[serde(with = "serde_millis")]
     pub position: Duration,
 }
@@ -313,7 +314,7 @@ impl From<SeekMsg> for PlayerMessage {
 impl EventHandler for SeekMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received seek: {self:?}");
-        let playlist_video = Video::from(self.file.as_str());
+        let playlist_video = Video::from(self.video.as_str());
         model.playlist.select_playing(&playlist_video);
         // TODO make this more readable
         if model
@@ -346,14 +347,14 @@ pub struct SelectMsg {
     pub actor: String,
     #[serde(with = "serde_millis")]
     pub position: Duration,
-    pub filename: Option<String>,
+    pub video: Option<Video>,
 }
 
 impl From<SelectMsg> for PlayerMessage {
     fn from(value: SelectMsg) -> Self {
         let actor = value.actor;
-        let message = if let Some(filename) = value.filename {
-            format!("{actor} selected {filename}")
+        let message = if let Some(video) = value.video {
+            format!("{actor} selected {video:?}")
         } else {
             format!("{actor} unselected video")
         };
@@ -370,7 +371,7 @@ impl From<SelectMsg> for PlayerMessage {
 impl EventHandler for SelectMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received select: {self:?}");
-        let playlist_video = self.filename.as_ref().map(|f| Video::from(f.as_str()));
+        let playlist_video = self.video.as_ref().map(|f| Video::from(f.as_str()));
         if let Some(playlist_video) = playlist_video.clone() {
             model.playlist.select_playing(&playlist_video);
             model
@@ -476,6 +477,7 @@ impl EventHandler for PlaylistMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received playlist");
         model.playlist.replace(self.playlist.clone());
+        PlaylistBrowser::save(&model.config.room, &model.playlist);
         model.ui.playlist(self.playlist.clone());
         model.ui.player_message(PlayerMessage::from(self))
     }

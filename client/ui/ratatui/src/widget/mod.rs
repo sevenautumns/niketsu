@@ -205,7 +205,7 @@ impl TextAreaWrapper {
         self
     }
 
-    fn into_masked(&mut self, placeholder_text: &str) -> &mut Self {
+    fn as_masked(&mut self, placeholder_text: &str) -> &mut Self {
         self.inner.set_placeholder_text(placeholder_text);
         self.inner.set_mask_char('\u{2022}');
         self

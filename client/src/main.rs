@@ -8,7 +8,6 @@ use niketsu_core::builder::CoreBuilder;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::FileDatabase;
 use niketsu_core::logging::setup_logger;
-use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::ui::UserInterfaceTrait;
 use niketsu_mpv::Mpv;
 
@@ -51,7 +50,6 @@ async fn main() -> Result<()> {
         .player(Box::new(player))
         .communicator(Box::new(communicator))
         .file_database(Box::new(file_database))
-        .playlist(Box::<PlaylistHandler>::default())
         .chat_logger(chat_logger)
         .config(config)
         .build();

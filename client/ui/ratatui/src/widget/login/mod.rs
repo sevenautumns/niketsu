@@ -127,7 +127,7 @@ impl StatefulWidget for LoginWidget {
         let password_field = state
             .password_field
             .set_default_style()
-            .into_masked("Enter your password");
+            .as_masked("Enter your password");
         let username_field = state
             .username_field
             .set_default_style()

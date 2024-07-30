@@ -13,6 +13,7 @@ use crate::PROJECT_DIRS;
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 pub struct Config {
     #[serde(default = "whoami::username")]
+    // TODO make this into an ArcStr
     pub username: String,
     #[serde(default)]
     pub media_dirs: Vec<String>,
