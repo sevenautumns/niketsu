@@ -461,7 +461,7 @@ impl ClientCommunicationHandler {
                     < host_status.saturating_sub(Duration::from_secs(5).saturating_add(self.delay))
                 {
                     debug!("Sending host seek");
-                    self.swarm.send(
+                    self.swarm.send_request(
                         &self.host,
                         NiketsuMessage::Seek(SeekMsg {
                             file,
@@ -591,25 +591,21 @@ impl CommunicationHandler for ClientCommunicationHandler {
             }
             _ => {
                 debug!("Sending message to host");
-                self.swarm.send(&self.host, msg);
+                self.swarm.send_request(&self.host, msg);
             }
         }
         Ok(())
     }
 }
 
-trait Sender<T> {
-    fn send(&mut self, peer_id: &PeerId, msg: T);
-    fn send_response(
-        &mut self,
-        channel: ResponseChannel<MessageResponse>,
-        rsp: MessageResponse,
-    ) -> Result<()>; // todo embed generic
+trait Sender<T, TResponse> {
+    fn send_request(&mut self, peer_id: &PeerId, msg: T);
+    fn send_response(&mut self, channel: ResponseChannel<TResponse>, rsp: TResponse) -> Result<()>;
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: T) -> Result<()>;
 }
 
-impl Sender<NiketsuMessage> for Swarm<Behaviour> {
-    fn send(&mut self, peer_id: &PeerId, msg: NiketsuMessage) {
+impl Sender<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
+    fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) {
         // ignores outbound id
         self.behaviour_mut()
             .message_request_response
@@ -706,10 +702,10 @@ impl HostCommunicationHandler {
 
     fn send_init_status(&mut self, peer_id: PeerId) -> Result<()> {
         self.swarm
-            .send(&peer_id, NiketsuMessage::Playlist(self.playlist.clone()));
+            .send_request(&peer_id, NiketsuMessage::Playlist(self.playlist.clone()));
 
         if let Some(position) = self.video_status.position {
-            self.swarm.send(
+            self.swarm.send_request(
                 &peer_id,
                 NiketsuMessage::Select(niketsu_core::communicator::SelectMsg {
                     actor: "host".to_string(), //TODO: change
@@ -779,7 +775,7 @@ impl HostCommunicationHandler {
                     ready: status.ready,
                 };
                 self.swarm
-                    .send(&peer_id, NiketsuMessage::Status(new_status.clone()));
+                    .send_request(&peer_id, NiketsuMessage::Status(new_status.clone()));
             }
         }
 

@@ -35,7 +35,7 @@ use libp2p::core::multiaddr::Protocol;
 use libp2p::core::Multiaddr;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
-use libp2p::{identify, identity, noise, ping, relay, tcp, tls, yamux, PeerId, StreamProtocol};
+use libp2p::{identify, identity, noise, ping, relay, tcp, yamux, PeerId, StreamProtocol};
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
 
