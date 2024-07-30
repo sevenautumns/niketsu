@@ -4,10 +4,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use log::trace;
 
+use super::MediaPlayerTrait;
 use crate::playlist::Video;
 use crate::{FileStore, MediaPlayerEvent, PlayerPositionChange};
-
-use super::MediaPlayerTrait;
 
 const MAXIMUM_DELAY: Duration = Duration::from_secs(5);
 

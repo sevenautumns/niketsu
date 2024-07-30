@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use super::PlaylistHandlerTrait;
 use crate::playlist::{Playlist, Video};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -10,33 +9,33 @@ pub struct PlaylistHandler {
     playlist: Playlist,
 }
 
-impl PlaylistHandlerTrait for PlaylistHandler {
-    fn get_current_video(&self) -> Option<Video> {
+impl PlaylistHandler {
+    pub fn get_current_video(&self) -> Option<Video> {
         self.playlist.playlist.get(self.playing?).cloned()
     }
 
-    fn advance_to_next(&mut self) -> Option<Video> {
+    pub fn advance_to_next(&mut self) -> Option<Video> {
         if let Some(playing) = self.playing.as_mut() {
             *playing += 1
         }
         self.get_current_video()
     }
 
-    fn select_playing(&mut self, video: &Video) {
+    pub fn select_playing(&mut self, video: &Video) {
         if let Some(index) = self.playlist.find(video) {
             self.playing = Some(index);
         }
     }
 
-    fn unload_playing(&mut self) {
+    pub fn unload_playing(&mut self) {
         self.playing = None
     }
 
-    fn get_playlist(&self) -> Playlist {
+    pub fn get_playlist(&self) -> Playlist {
         self.playlist.clone()
     }
 
-    fn replace(&mut self, playlist: Playlist) {
+    pub fn replace(&mut self, playlist: Playlist) {
         let playing = self.get_current_video();
         self.playlist = playlist;
         if let Some(playing) = playing {

@@ -12,16 +12,6 @@ use crate::file_database::FileStore;
 pub mod file;
 pub mod handler;
 
-#[cfg_attr(test, mockall::automock)]
-pub trait PlaylistHandlerTrait: std::fmt::Debug + Send {
-    fn get_current_video(&self) -> Option<Video>;
-    fn advance_to_next(&mut self) -> Option<Video>;
-    fn select_playing(&mut self, video: &Video);
-    fn unload_playing(&mut self);
-    fn get_playlist(&self) -> Playlist;
-    fn replace(&mut self, playlist: Playlist);
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Video {
     #[serde(flatten)]

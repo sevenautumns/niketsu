@@ -6,7 +6,7 @@ use log::{info, trace};
 use logging::ChatLogger;
 use once_cell::sync::Lazy;
 use player::wrapper::MediaPlayerWrapper;
-use playlist::PlaylistHandlerTrait;
+use playlist::handler::PlaylistHandler;
 
 use self::communicator::*;
 use self::file_database::*;
@@ -41,7 +41,7 @@ pub struct CoreModel {
     pub player: MediaPlayerWrapper,
     pub ui: Box<dyn UserInterfaceTrait>,
     pub database: Box<dyn FileDatabaseTrait>,
-    pub playlist: Box<dyn PlaylistHandlerTrait>,
+    pub playlist: PlaylistHandler,
     chat_logger: Option<ChatLogger>,
     pub config: Config,
     pub ready: bool,
@@ -67,7 +67,7 @@ impl Core {
         let room = self.model.config.room.clone();
         let password = self.model.config.password.clone();
         let endpoint = EndpointInfo {
-            room,
+            room: room.clone(),
             password,
             addr,
         };
@@ -99,7 +99,7 @@ impl Core {
                     trace!("handle database event");
                     db.handle(&mut self.model);
                 }
-                Some(Some(message)) = OptionFuture::from(self.model.chat_logger.as_mut().map(|l| l.recv())) => {
+                Some(Some(message)) = OptionFuture::from(self.model.chat_logger.as_mut().map(ChatLogger::recv)) => {
                     self.model.ui.player_message(message)
                 }
             }
