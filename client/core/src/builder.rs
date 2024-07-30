@@ -4,7 +4,7 @@ use crate::communicator::CommunicatorTrait;
 use crate::config::Config;
 use crate::file_database::FileDatabaseTrait;
 use crate::logging::ChatLogger;
-use crate::player::wrapper::MediaPlayer;
+use crate::player::wrapper::MediaPlayerWrapper;
 use crate::player::MediaPlayerTrait;
 use crate::playlist::PlaylistHandlerTrait;
 use crate::ui::UserInterfaceTrait;
@@ -28,7 +28,7 @@ impl From<CoreBuilder> for CoreModel {
         Self {
             communicator: builder.communicator,
             database: builder.file_database,
-            player: MediaPlayer::new(builder.player),
+            player: MediaPlayerWrapper::new(builder.player),
             ui: builder.ui,
             config: builder.config,
             playlist: builder.playlist,

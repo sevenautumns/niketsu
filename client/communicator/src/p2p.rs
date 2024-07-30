@@ -21,7 +21,7 @@ use libp2p::{
 };
 use log::{debug, error, info, warn};
 use niketsu_core::communicator::{
-    ConnectedMsg, PlaylistMsg, SeekMsg, StartMsg, UserStatusListMsg, VideoStatusMsg,
+    ConnectedMsg, PlaylistMsg, StartMsg, UserStatusListMsg, VideoStatusMsg,
 };
 use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
@@ -412,9 +412,7 @@ impl ClientCommunicationHandler {
 
         match niketsu_msg {
             NiketsuMessage::VideoStatus(video_status) => {
-                return self
-                    .handle_video_status(video_status)
-                    .map_err(anyhow::Error::from);
+                return self.handle_video_status(video_status)
             }
             NiketsuMessage::Seek(_) => {
                 self.is_seeking = true;
@@ -426,53 +424,21 @@ impl ClientCommunicationHandler {
             .map_err(anyhow::Error::from)
     }
 
-    fn handle_video_status(&mut self, msg: VideoStatusMsg) -> Result<()> {
-        //TODO consider rtt
+    fn handle_video_status(&mut self, mut msg: VideoStatusMsg) -> Result<()> {
         if self.is_seeking {
-            // can not determine actual position during client seek
+            debug!("can not determine client position during seek");
             return Ok(());
         }
 
-        if let (Some(self_status), Some(host_status)) = (self.video_status.position, msg.position) {
-            if self.video_status.filename.is_none() {
-                // some issue with playlist
-                bail!("Received position even though no file selected");
-            }
+        let Some(pos) = msg.position else {
+            debug!("do not handle video status without position");
+            return Ok(());
+        };
 
-            //TODO clean up
-            if let Some(file) = msg.filename.clone() {
-                debug!(
-                    "My status: {:?}, host: {:?}",
-                    self_status.clone(),
-                    host_status.clone(),
-                );
-                if self_status
-                    > host_status
-                        .saturating_add(Duration::from_secs(5))
-                        .saturating_add(self.delay)
-                {
-                    debug!("Sending self seek");
-                    self.message_sender.send(NiketsuMessage::Seek(SeekMsg {
-                        file,
-                        position: host_status,
-                        actor: String::from(""),
-                    }))?;
-                } else if self_status
-                    < host_status.saturating_sub(Duration::from_secs(5).saturating_add(self.delay))
-                {
-                    debug!("Sending host seek");
-                    self.swarm.send_request(
-                        &self.host,
-                        NiketsuMessage::Seek(SeekMsg {
-                            file,
-                            position: self_status,
-                            actor: String::from(""),
-                        }),
-                    );
-                }
-            }
-        }
-        Ok(())
+        msg.position = Some(pos + self.delay.div_f64(2.0));
+        self.message_sender
+            .send(msg.into())
+            .map_err(anyhow::Error::from)
     }
 }
 

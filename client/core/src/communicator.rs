@@ -56,6 +56,7 @@ pub enum OutgoingMessage {
 #[enum_dispatch(EventHandler)]
 #[derive(Clone, Debug)]
 pub enum IncomingMessage {
+    VideoStatus(VideoStatusMsg),
     Connected(ConnectedMsg),
     ConnectionError(ConnectionErrorMsg),
     UserStatusList(UserStatusListMsg),
@@ -142,6 +143,17 @@ impl PartialEq for VideoStatusMsg {
 }
 
 impl Eq for VideoStatusMsg {}
+
+impl EventHandler for VideoStatusMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!("received video status for reconciliation");
+        let (Some(pos), Some(_)) = (self.position, self.filename) else {
+            trace!("video status sent without position or filename");
+            return;
+        };
+        model.player.reconcile(pos)
+    }
+}
 
 impl From<VideoStatusMsg> for OutgoingMessage {
     fn from(value: VideoStatusMsg) -> Self {

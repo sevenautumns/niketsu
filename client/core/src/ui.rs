@@ -11,6 +11,7 @@ use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as Mp
 use tokio::sync::Notify;
 
 use super::communicator::{EndpointInfo, PlaylistMsg, SelectMsg, UserMessageMsg};
+use super::player::MediaPlayerTrait;
 use super::playlist::Video;
 use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
