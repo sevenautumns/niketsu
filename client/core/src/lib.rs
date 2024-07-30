@@ -5,6 +5,7 @@ use futures::future::OptionFuture;
 use log::{info, trace};
 use logging::ChatLogger;
 use once_cell::sync::Lazy;
+use player::wrapper::MediaPlayer;
 use playlist::PlaylistHandlerTrait;
 
 use self::communicator::*;
@@ -37,7 +38,7 @@ pub trait EventHandler {
 #[derive(Debug)]
 pub struct CoreModel {
     pub communicator: Box<dyn CommunicatorTrait>,
-    pub player: Box<dyn MediaPlayerTrait>,
+    pub player: MediaPlayer,
     pub ui: Box<dyn UserInterfaceTrait>,
     pub database: Box<dyn FileDatabaseTrait>,
     pub playlist: Box<dyn PlaylistHandlerTrait>,

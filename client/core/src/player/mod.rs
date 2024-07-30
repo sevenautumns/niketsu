@@ -12,6 +12,8 @@ use super::playlist::Video;
 use super::{CoreModel, EventHandler};
 use crate::file_database::FileStore;
 
+pub mod wrapper;
+
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait MediaPlayerTrait: std::fmt::Debug + Send {
