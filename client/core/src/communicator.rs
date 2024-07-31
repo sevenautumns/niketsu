@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
+use crate::player::MediaPlayerTrait;
 use crate::playlist::Playlist;
 use crate::room::{RoomName, UserList};
 use crate::user::UserStatus;

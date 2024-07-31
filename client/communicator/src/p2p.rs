@@ -13,7 +13,7 @@ use futures::StreamExt;
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
 use libp2p::multiaddr::Protocol;
-use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
+use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
     dcutr, gossipsub, identify, identity, kad, noise, ping, relay, tcp, yamux, Multiaddr, PeerId,
@@ -477,7 +477,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 remote_peer_id,
                 result,
             })) => {
-                error!("Fished dcutr result {result:?} from {remote_peer_id:?}");
+                error!("dcutr result {result:?} from {remote_peer_id:?}");
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source: peer_id,
@@ -566,7 +566,6 @@ impl CommunicationHandler for ClientCommunicationHandler {
 
 trait Sender<T, TResponse> {
     fn send_request(&mut self, peer_id: &PeerId, msg: T);
-    fn send_response(&mut self, channel: ResponseChannel<TResponse>, rsp: TResponse) -> Result<()>;
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: T) -> Result<()>;
 }
 
@@ -576,22 +575,6 @@ impl Sender<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
         self.behaviour_mut()
             .message_request_response
             .send_request(peer_id, MessageRequest(msg));
-    }
-
-    fn send_response(
-        &mut self,
-        channel: ResponseChannel<MessageResponse>,
-        rsp: MessageResponse,
-    ) -> Result<()> {
-        let res = self
-            .behaviour_mut()
-            .message_request_response
-            .send_response(channel, rsp);
-
-        match res {
-            Ok(_) => Ok(()),
-            Err(e) => bail!("Sending response failed: {e:?}"),
-        }
     }
 
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()> {
@@ -765,12 +748,7 @@ impl HostCommunicationHandler {
         Ok(())
     }
 
-    fn handle_incoming_message(
-        &mut self,
-        peer_id: PeerId,
-        msg: NiketsuMessage,
-        channel: ResponseChannel<MessageResponse>,
-    ) -> Result<()> {
+    fn handle_incoming_message(&mut self, peer_id: PeerId, msg: NiketsuMessage) -> Result<()> {
         let mut niketsu_msg = msg;
         info!("Received message {:?}", niketsu_msg.clone());
         match niketsu_msg.clone() {
@@ -791,7 +769,7 @@ impl HostCommunicationHandler {
         Ok(())
     }
 
-    fn handle_broadcast(&mut self, peer_id: PeerId, msg: Vec<u8>) -> Result<()> {
+    fn handle_broadcast(&mut self, msg: Vec<u8>) -> Result<()> {
         let niketsu_msg = msg.try_into()?;
         self.message_sender.send(niketsu_msg)?;
         Ok(())
@@ -833,7 +811,7 @@ impl CommunicationHandler for HostCommunicationHandler {
                 remote_peer_id,
                 result,
             })) => {
-                error!("Fished dcutr result {result:?} from {remote_peer_id:?}");
+                error!("dcutr result {result:?} from {remote_peer_id:?}");
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source: peer_id,
@@ -844,17 +822,15 @@ impl CommunicationHandler for HostCommunicationHandler {
                     "Got message: '{}'\n with id: {id} from peer: {peer_id}",
                     String::from_utf8_lossy(&message.data),
                 );
-                if let Err(e) = self.handle_broadcast(peer_id, message.data) {
+                if let Err(e) = self.handle_broadcast(message.data) {
                     error!("Failed to handle incoming message: {e:?}");
                 }
             }
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
                 request_response::Event::Message { peer, message, .. },
             )) => match message {
-                request_response::Message::Request {
-                    request, channel, ..
-                } => {
-                    if let Err(e) = self.handle_incoming_message(peer, request.0, channel) {
+                request_response::Message::Request { request, .. } => {
+                    if let Err(e) = self.handle_incoming_message(peer, request.0) {
                         error!("Failed to handle incoming message: {e:?}");
                     }
                 }

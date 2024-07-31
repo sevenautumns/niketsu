@@ -13,6 +13,10 @@ const MAXIMUM_DELAY: Duration = Duration::from_secs(5);
 
 const MINIMUM_DELAY: Duration = Duration::from_secs(1);
 
+const MAXIMUM_SPEED_DIFF: f64 = 0.05;
+
+const MINIMUM_SPEED_DIFF: f64 = 0.02;
+
 #[derive(Debug)]
 pub struct MediaPlayerWrapper {
     player: Box<dyn MediaPlayerTrait>,
@@ -25,7 +29,7 @@ impl MediaPlayerWrapper {
     pub fn new(player: Box<dyn MediaPlayerTrait>) -> Self {
         Self {
             player,
-            host_speed: 0.0,
+            host_speed: 1.0,
             events: Default::default(),
         }
     }
@@ -36,29 +40,43 @@ impl MediaPlayerWrapper {
         };
 
         //TODO refactor
+        // flexible delay based on current speed
         let current_speed = self.player.get_speed();
+        let min_delay = MINIMUM_DELAY.mul_f64(self.host_speed);
+        let max_delay = MAXIMUM_DELAY.mul_f64(self.host_speed);
+
         match current_pos {
-            d if d <= pos.saturating_add(MINIMUM_DELAY)
-                && d >= pos.saturating_sub(MINIMUM_DELAY) =>
-            {
+            d if d <= pos.saturating_add(min_delay) && d >= pos.saturating_sub(min_delay) => {
                 if current_speed != self.host_speed {
                     self.player.set_speed(self.host_speed);
                 }
             }
-            d if d >= pos.saturating_add(MAXIMUM_DELAY) => {
-                self.player.set_position(pos.saturating_add(MAXIMUM_DELAY));
+            d if d >= pos.saturating_add(max_delay) => {
+                self.player.set_position(pos);
             }
-            d if d <= pos.saturating_add(MAXIMUM_DELAY) => self
+            d if d <= pos.saturating_sub(max_delay) => self
                 .events
                 .push_back(PlayerPositionChange { pos: d }.into()),
-            d if d > pos.saturating_add(MINIMUM_DELAY) => {
-                //slowdown
-            }
-            d if d < pos.saturating_sub(MINIMUM_DELAY) => {
-                //slowup
+            d if d > pos.saturating_add(min_delay) || d < pos.saturating_sub(min_delay) => {
+                self.stepwise_speed_change(d, pos)
             }
             _ => trace!("position should not be possible"),
         }
+    }
+
+    fn stepwise_speed_change(&mut self, client_pos: Duration, host_pos: Duration) {
+        let speed_increase: f64;
+
+        if host_pos > client_pos {
+            let diff = host_pos.saturating_sub(client_pos);
+            speed_increase = diff.as_secs_f64() * (MAXIMUM_SPEED_DIFF - MINIMUM_SPEED_DIFF) / 4.0;
+        } else {
+            let diff = host_pos.saturating_sub(client_pos);
+            speed_increase =
+                (-1.0) * diff.as_secs_f64() * (MAXIMUM_SPEED_DIFF - MINIMUM_SPEED_DIFF) / 4.0;
+        }
+        self.player
+            .set_speed(self.host_speed * (1.0 + speed_increase));
     }
 }
 
@@ -77,8 +95,9 @@ impl MediaPlayerTrait for MediaPlayerWrapper {
     }
 
     fn set_speed(&mut self, speed: f64) {
+        let diff = self.host_speed - self.player.get_speed();
         self.host_speed = speed;
-        self.player.set_speed(speed)
+        self.player.set_speed(speed + diff)
     }
 
     fn get_speed(&self) -> f64 {

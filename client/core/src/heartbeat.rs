@@ -4,6 +4,7 @@ use log::trace;
 use tokio::time::Interval;
 
 use super::communicator::VideoStatusMsg;
+use super::player::MediaPlayerTrait;
 use super::{CoreModel, EventHandler};
 
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);

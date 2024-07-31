@@ -37,6 +37,7 @@ impl TryFrom<NiketsuMessage> for IncomingMessage {
             NiketsuMessage::Playlist(m) => Ok(m.into()),
             NiketsuMessage::Status(m) => Ok(m.into()),
             NiketsuMessage::Connection(m) => Ok(m.into()),
+            NiketsuMessage::VideoStatus(m) => Ok(m.into()),
             value => Err(value),
         }
     }

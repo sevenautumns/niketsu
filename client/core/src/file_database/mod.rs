@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 
 use self::fuzzy::FuzzySearch;
 use self::updater::FileDatabaseUpdater;
+use super::player::MediaPlayerTrait;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
 
