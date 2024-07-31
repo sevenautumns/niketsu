@@ -114,7 +114,7 @@ mod tests {
         let user_name = "User1".to_string();
 
         btreeset.insert(UserStatus {
-            name: "User1".to_string(),
+            name: arcstr::literal!("User1"),
             ready: true,
         });
 

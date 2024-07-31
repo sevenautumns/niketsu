@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::time::Duration;
 
+use arcstr::ArcStr;
 use async_trait::async_trait;
 use chrono::Local;
 use enum_dispatch::enum_dispatch;
@@ -180,7 +181,7 @@ impl EventHandler for UserStatusListMsg {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StartMsg {
-    pub actor: String,
+    pub actor: ArcStr,
 }
 
 impl From<StartMsg> for PlayerMessage {
@@ -213,7 +214,7 @@ impl From<StartMsg> for OutgoingMessage {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PauseMsg {
-    pub actor: String,
+    pub actor: ArcStr,
 }
 
 impl From<PauseMsg> for PlayerMessage {
@@ -246,7 +247,7 @@ impl From<PauseMsg> for OutgoingMessage {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaybackSpeedMsg {
-    pub actor: String,
+    pub actor: ArcStr,
     pub speed: f64,
 }
 
@@ -291,7 +292,7 @@ impl From<PlaybackSpeedMsg> for OutgoingMessage {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SeekMsg {
-    pub actor: String,
+    pub actor: ArcStr,
     pub video: Video,
     #[serde(with = "serde_millis")]
     pub position: Duration,
@@ -344,7 +345,7 @@ impl From<SeekMsg> for OutgoingMessage {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectMsg {
-    pub actor: String,
+    pub actor: ArcStr,
     #[serde(with = "serde_millis")]
     pub position: Duration,
     pub video: Option<Video>,
@@ -395,7 +396,7 @@ impl From<SelectMsg> for OutgoingMessage {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UserMessageMsg {
-    pub actor: String,
+    pub actor: ArcStr,
     pub message: String,
 }
 
@@ -455,7 +456,7 @@ impl EventHandler for ServerMessageMsg {
 #[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaylistMsg {
-    pub actor: String,
+    pub actor: ArcStr,
     #[serde(flatten)]
     pub playlist: Playlist,
 }

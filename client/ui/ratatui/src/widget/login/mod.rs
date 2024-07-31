@@ -32,7 +32,7 @@ impl LoginWidgetState {
         Self {
             current_state: State::default(),
             password_field: TextAreaWrapper::new("Password".into(), config.password.clone()),
-            username_field: TextAreaWrapper::new("Username".into(), config.username.clone()),
+            username_field: TextAreaWrapper::new("Username".into(), config.username.to_string()),
             room_field: TextAreaWrapper::new("Room".into(), config.room.to_string()),
             style: Style::default().cyan(),
         }

@@ -32,7 +32,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
             playlist: Default::default(),
             user_list: Default::default(),
             user_change: UserChange {
-                name: "ThisUser".to_string(),
+                name: arcstr::literal!("ThisUser"),
                 ready: false,
             },
         };
@@ -70,7 +70,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
             UserInterfaceEvent::UserMessage(m) => self.ui.player_message(
                 PlayerMessageInner {
                     message: m.message,
-                    source: MessageSource::UserMessage("SomeUser".to_string()),
+                    source: MessageSource::UserMessage(arcstr::literal!("SomeUser")),
                     level: MessageLevel::Normal,
                     timestamp: Local::now(),
                 }
@@ -92,7 +92,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
     fn send_player_message(&mut self) {
         let msg = PlayerMessageInner {
             message: "Message".to_string(),
-            source: MessageSource::UserMessage("ExternalUser".to_string()),
+            source: MessageSource::UserMessage(arcstr::literal!("ExternalUser")),
             level: MessageLevel::Normal,
             timestamp: Local::now(),
         }
@@ -134,7 +134,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
     fn change_user_list(&mut self, i: usize) {
         let ready = i % 2 == 0;
         let user = UserStatus {
-            name: format!("User{i}"),
+            name: arcstr::format!("User{i}"),
             ready,
         };
         self.user_list.insert(user);
