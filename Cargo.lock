@@ -4374,6 +4374,7 @@ name = "niketsu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arcstr",
  "chrono",
  "clap",
  "clap_complete",
@@ -4498,6 +4499,7 @@ name = "niketsu-ratatui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arcstr",
  "async-trait",
  "copypasta",
  "crossterm",

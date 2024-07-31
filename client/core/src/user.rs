@@ -1,3 +1,4 @@
+use arcstr::ArcStr;
 use serde::{Deserialize, Serialize};
 
 use super::ui::UserChange;
@@ -5,7 +6,7 @@ use super::ui::UserChange;
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UserStatus {
-    pub name: String,
+    pub name: ArcStr,
     pub ready: bool,
 }
 
@@ -38,9 +39,9 @@ impl PartialEq for UserStatus {
     }
 }
 
-impl PartialEq<String> for UserStatus {
-    fn eq(&self, name: &String) -> bool {
-        self.name.eq(name)
+impl<T: AsRef<str>> PartialEq<T> for UserStatus {
+    fn eq(&self, name: &T) -> bool {
+        self.name.eq(name.as_ref())
     }
 }
 

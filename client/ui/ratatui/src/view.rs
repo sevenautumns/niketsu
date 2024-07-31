@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use arcstr::ArcStr;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEventKind,
@@ -474,7 +475,7 @@ impl RatatuiView {
                 RoomName::from(*room),
             ),
             ["username-change", username] | ["uc", username] => {
-                self.model.change_username(username.to_string())
+                self.model.change_username(username.to_string().into())
             }
             ["toggle-ready"] | ["tr"] => self.model.user_ready_toggle(),
             ["start-update"] | ["load"] => self.model.start_db_update(),
@@ -533,7 +534,7 @@ impl RatatuiView {
         self.model.change_db_paths(paths)
     }
 
-    pub fn save_config(&mut self, password: String, room: RoomName, username: String) {
+    pub fn save_config(&mut self, password: String, room: RoomName, username: ArcStr) {
         self.config.password = password;
         self.config.room = room;
         self.config.username = username;

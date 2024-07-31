@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{bail, Result};
+use arcstr::ArcStr;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -12,9 +13,8 @@ use crate::PROJECT_DIRS;
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 pub struct Config {
-    #[serde(default = "whoami::username")]
-    // TODO make this into an ArcStr
-    pub username: String,
+    #[serde(default = "get_username")]
+    pub username: ArcStr,
     #[serde(default)]
     pub media_dirs: Vec<String>,
     #[serde(default = "bootstrap_relay", skip_serializing_if = "is_default")]
@@ -25,6 +25,10 @@ pub struct Config {
     pub password: String,
     #[serde(default)]
     pub auto_connect: bool,
+}
+
+fn get_username() -> ArcStr {
+    whoami::username().into()
 }
 
 // TODO: look up on 89.58.15.23?

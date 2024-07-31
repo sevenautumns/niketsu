@@ -8,6 +8,7 @@ niketsu-core.path = "../../core"
 anyhow.workspace = true
 log.workspace = true
 tokio.workspace = true
+arcstr.workspace = true
 futures = "0.3"
 async-trait = "0.1"
 ratatui = { version = "0.27", features = ["all-widgets"] }

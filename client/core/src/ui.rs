@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use arcstr::ArcStr;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use enum_dispatch::enum_dispatch;
@@ -32,7 +33,7 @@ pub trait UserInterfaceTrait: std::fmt::Debug + Send {
     fn user_list(&mut self, user_list: UserList);
     fn user_update(&mut self, user: UserChange);
     fn player_message(&mut self, msg: PlayerMessage);
-    fn username_change(&mut self, username: String);
+    fn username_change(&mut self, username: ArcStr);
 
     async fn event(&mut self) -> UserInterfaceEvent;
 }
@@ -121,7 +122,7 @@ impl EventHandler for ServerChange {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserChange {
-    pub name: String,
+    pub name: ArcStr,
     pub ready: bool,
 }
 
@@ -182,8 +183,8 @@ pub struct PlayerMessageInner {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageSource {
-    UserMessage(String),
-    UserAction(String),
+    UserMessage(ArcStr),
+    UserAction(ArcStr),
     Server,
     Internal,
 }
@@ -311,7 +312,7 @@ impl UserInterfaceTrait for UserInterface {
         });
     }
 
-    fn username_change(&mut self, username: String) {
+    fn username_change(&mut self, username: ArcStr) {
         let mut user = self.model.user.get_inner();
         user.name = username;
         self.model.user.set(user)
@@ -351,7 +352,7 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn change_username(&self, name: String) {
+    pub fn change_username(&self, name: ArcStr) {
         trace!("change username");
         let mut user = self.user.get_inner();
         user.name = name;
@@ -475,7 +476,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
 
-        let user = String::from("max");
+        let user = arcstr::literal!("max");
         let playlist = Playlist::from_iter(["video1", "video2"]);
         let config = Config {
             username: user.clone(),
@@ -511,7 +512,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
 
-        let user = String::from("max");
+        let user = arcstr::literal!("max");
         let video = Video::from("video1");
         let file = FileEntry::new("video1".into(), "/video1".into(), None);
         let file_store = FileStore::from_iter([file.clone()]);
@@ -558,7 +559,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
 
-        let user = String::from("max");
+        let user = arcstr::literal!("max");
         let addr = String::from("duckduckgo.com");
         let password = String::from("passwd");
         let room = arcstr::literal!("room1");
@@ -601,8 +602,8 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
 
-        let user = String::from("max");
-        let user_new = String::from("moritz");
+        let user = arcstr::literal!("max");
+        let user_new = arcstr::literal!("moritz");
         let ready = true;
         let config = Config {
             username: user.clone(),
@@ -647,7 +648,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
 
-        let user = String::from("max");
+        let user = arcstr::literal!("max");
         let user_msg = String::from("hello world!");
         let config = Config {
             username: user.clone(),
@@ -740,7 +741,7 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
-            name: "TestUser".to_string(),
+            name: arcstr::literal!("TestUser"),
             ready: false,
         };
         let ui_model = UiModel {
@@ -766,7 +767,7 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
-            name: "TestUser".to_string(),
+            name: arcstr::literal!("TestUser"),
             ready: false,
         };
         let ui_model = UiModel {
@@ -781,7 +782,7 @@ mod tests {
             notify: Arc::new(Notify::new()),
         };
 
-        ui_model.change_username("NewName".to_string());
+        ui_model.change_username(arcstr::literal!("NewName"));
 
         let user = ui_model.user.get_inner();
         assert_eq!(user.name, "NewName");
@@ -792,7 +793,7 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
-            name: "TestUser".to_string(),
+            name: arcstr::literal!("TestUser"),
             ready: false,
         };
         let ui_model = UiModel {

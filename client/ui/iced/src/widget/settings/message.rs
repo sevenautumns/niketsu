@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use arcstr::ArcStr;
 use enum_dispatch::enum_dispatch;
 use iced::Command;
 use niketsu_core::config::Config;
@@ -120,7 +121,7 @@ impl SettingsWidgetMessageTrait for ApplyCloseSave {
 }
 
 #[derive(Debug, Clone)]
-pub struct UsernameInput(pub String);
+pub struct UsernameInput(pub ArcStr);
 
 impl SettingsWidgetMessageTrait for UsernameInput {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {

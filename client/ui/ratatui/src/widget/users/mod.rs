@@ -78,7 +78,7 @@ impl StatefulWidget for UsersWidget {
             .iter()
             .map(|u| {
                 let name = match u.eq(&state.user) {
-                    true => format!("{} (me)", u.name),
+                    true => arcstr::format!("{} (me)", u.name),
                     false => u.name.clone(),
                 };
                 let user_line = match u.ready {

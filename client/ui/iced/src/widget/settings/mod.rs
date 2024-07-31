@@ -115,11 +115,9 @@ impl<'a> SettingsWidget<'a> {
                                     })
                                     .password(),
                             )
-                            .push(
-                                TextInput::new("Username", &state.config.username).on_input(|u| {
-                                    SettingsWidgetMessage::from(UsernameInput(u)).into()
-                                }),
-                            )
+                            .push(TextInput::new("Username", &state.config.username).on_input(
+                                |u| SettingsWidgetMessage::from(UsernameInput(u.into())).into(),
+                            ))
                             .push(
                                 Container::new(
                                     Checkbox::new("", state.config.auto_connect, |b| {

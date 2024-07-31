@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use arcstr::ArcStr;
 use async_trait::async_trait;
 use bcrypt::{hash, DEFAULT_COST};
 use enum_dispatch::enum_dispatch;
@@ -639,12 +640,12 @@ impl HostCommunicationHandler {
                 users: BTreeSet::default(),
             },
             playlist: PlaylistMsg {
-                actor: "host".to_string(),
+                actor: arcstr::literal!("host"),
                 playlist: playlist_handler.get_playlist(),
             },
             users: HashMap::default(),
             select: SelectMsg {
-                actor: "host".to_string(),
+                actor: arcstr::literal!("host"),
                 position: Duration::default(),
                 video: playlist_handler.get_current_video(),
             },
@@ -679,12 +680,12 @@ impl HostCommunicationHandler {
         self.status_list.users.iter().all(|u| u.ready)
     }
 
-    fn roll_new_username(&self, username: String) -> String {
+    fn roll_new_username(&self, username: ArcStr) -> ArcStr {
         //TODO only needs to be applied once?
         // check same user
-        let mut buzzword: String = format!("{username}_{}", Buzzword().fake::<String>());
+        let mut buzzword = arcstr::format!("{username}_{}", Buzzword().fake::<String>());
         while self.username_exists(buzzword.clone()) {
-            buzzword = format!("{username}_{}", Buzzword().fake::<String>());
+            buzzword = arcstr::format!("{username}_{}", Buzzword().fake::<String>());
         }
         buzzword
     }
@@ -693,7 +694,7 @@ impl HostCommunicationHandler {
         self.users.contains_key(&peer_id)
     }
 
-    fn username_exists(&self, name: String) -> bool {
+    fn username_exists(&self, name: ArcStr) -> bool {
         self.status_list.users.iter().any(|u| u.name == name)
     }
 
@@ -729,7 +730,7 @@ impl HostCommunicationHandler {
         if self.all_users_ready() {
             debug!("All users area ready. Publishing start to gossipsub");
             let mut start_msg = NiketsuMessage::Start(StartMsg {
-                actor: "".to_string(),
+                actor: arcstr::literal!(""),
             });
             if let Some(user) = self.users.get(peer_id) {
                 start_msg = NiketsuMessage::Start(StartMsg {

@@ -1,3 +1,4 @@
+use arcstr::ArcStr;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use niketsu_core::room::RoomName;
 use niketsu_core::ui::ServerChange;
@@ -26,8 +27,9 @@ impl EventHandler for Login {
                             room: room.clone(),
                             password: input.1.clone(),
                         });
-                        view.model.change_username(input.2.clone());
-                        view.save_config(input.1, room, input.2);
+                        let username: ArcStr = input.2.into();
+                        view.model.change_username(username.clone());
+                        view.save_config(input.1, room, username.clone());
                     }
                     _ => view.app.login_widget_state.input(*key),
                 }
