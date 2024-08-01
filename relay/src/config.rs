@@ -1,43 +1,25 @@
 use std::path::PathBuf;
 
 use anyhow::{bail, Result};
-use arcstr::ArcStr;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
-use crate::room::RoomName;
-use crate::user::UserStatus;
-use crate::PROJECT_DIRS;
+use crate::cli::PROJECT_DIRS;
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 pub struct Config {
-    #[serde(default = "get_username")]
-    pub username: ArcStr,
     #[serde(default)]
-    pub media_dirs: Vec<String>,
-    #[serde(default = "bootstrap_relay", skip_serializing_if = "is_default")]
-    pub relay: String,
+    pub ipv6: bool,
     #[serde(default)]
-    pub room: RoomName,
-    #[serde(default)]
-    pub password: String,
-    #[serde(default)]
-    pub auto_connect: bool,
+    pub keypair: Option<Vec<u8>>,
+    #[serde(default = "default_port")]
+    pub port: u16,
 }
 
-fn get_username() -> ArcStr {
-    whoami::username().into()
-}
-
-fn bootstrap_relay() -> String {
-    "/ip4/89.58.15.23/udp/7766/quic-v1/p2p/12D3KooWQQmVRZaFW3pSPWrgujk5Ldtkzwqdb4rzTWeQfqYpE74A"
-        .to_string()
-}
-
-fn is_default(value: &String) -> bool {
-    *value == bootstrap_relay()
+fn default_port() -> u16 {
+    7766
 }
 
 impl Config {
@@ -52,10 +34,6 @@ impl Config {
         }
     }
 
-    pub fn addr(&self) -> String {
-        self.relay.clone()
-    }
-
     pub fn load() -> Result<Self> {
         debug!("load config");
         let path = Self::file_path()?;
@@ -66,7 +44,11 @@ impl Config {
     pub fn load_or_default() -> Self {
         Self::load().unwrap_or_else(|e| {
             warn!("no config loaded: {e:?}");
-            Default::default()
+            Config {
+                ipv6: false,
+                keypair: None,
+                port: default_port(),
+            }
         })
     }
 
@@ -77,12 +59,5 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
         Ok(std::fs::write(path, toml::to_string(self)?)?)
-    }
-
-    pub(crate) fn status(&self, ready: bool) -> UserStatus {
-        UserStatus {
-            name: self.username.clone(),
-            ready,
-        }
     }
 }
