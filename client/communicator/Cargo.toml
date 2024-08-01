@@ -20,7 +20,7 @@ tokio-native-tls = "0.3"
 futures = "0.3"
 async-trait = "0.1"
 enum_dispatch.workspace = true
-libp2p = { version = "0.53.2", features = [ "full" ] }
+libp2p = { version = "0.53.2", features = [ "dcutr", "dns", "gossipsub", "identify", "kad", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde" ] }
 futures-timer = "3.0"
 uuid = { version = "1.8.0",  features = [ "v4","fast-rng" ]}
 bcrypt = "0.15.1"

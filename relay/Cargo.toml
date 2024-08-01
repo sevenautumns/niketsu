@@ -20,7 +20,7 @@ async-std = { version = "1.12", features = ["attributes"] }
 anyhow.workspace = true
 async-trait = "0.1"
 futures = "0.3.30"
-libp2p = { version = "0.53.2", features = [ "identify", "noise", "ping", "relay", "tcp", "yamux" ] }
+libp2p = { version = "0.53.2", features = [ "async-std", "noise", "macros", "ping", "tcp", "identify", "yamux", "relay", "quic", "serde", "cbor", "request-response", "macros" ] }
 log.workspace = true
 bcrypt = "0.15.1"
 directories.workspace = true
