@@ -317,6 +317,7 @@ impl EventHandler for SeekMsg {
         trace!("received seek: {self:?}");
         let playlist_video = Video::from(self.video.as_str());
         model.playlist.select_playing(&playlist_video);
+        PlaylistBrowser::save(&model.config.room, &model.playlist);
         // TODO make this more readable
         if model
             .player
@@ -375,11 +376,13 @@ impl EventHandler for SelectMsg {
         let playlist_video = self.video.as_ref().map(|f| Video::from(f.as_str()));
         if let Some(playlist_video) = playlist_video.clone() {
             model.playlist.select_playing(&playlist_video);
+            PlaylistBrowser::save(&model.config.room, &model.playlist);
             model
                 .player
                 .load_video(playlist_video, self.position, model.database.all_files());
         } else {
             model.playlist.unload_playing();
+            PlaylistBrowser::save(&model.config.room, &model.playlist);
             model.player.unload_video();
         }
         model.ui.video_change(playlist_video);
