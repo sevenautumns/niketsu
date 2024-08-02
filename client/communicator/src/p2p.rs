@@ -628,6 +628,17 @@ impl HostCommunicationHandler {
         room: RoomName,
         playlist_handler: PlaylistHandler,
     ) -> Self {
+        let playlist = PlaylistMsg {
+            actor: arcstr::literal!("host"),
+            playlist: playlist_handler.get_playlist(),
+        };
+        let select = SelectMsg {
+            actor: arcstr::literal!("host"),
+            position: Duration::default(),
+            video: playlist_handler.get_current_video(),
+        };
+        message_sender.send(playlist.clone().into()).ok();
+        message_sender.send(select.clone().into()).ok();
         Self {
             swarm,
             topic,
@@ -639,16 +650,9 @@ impl HostCommunicationHandler {
                 room_name: room,
                 users: BTreeSet::default(),
             },
-            playlist: PlaylistMsg {
-                actor: arcstr::literal!("host"),
-                playlist: playlist_handler.get_playlist(),
-            },
+            playlist,
             users: HashMap::default(),
-            select: SelectMsg {
-                actor: arcstr::literal!("host"),
-                position: Duration::default(),
-                video: playlist_handler.get_current_video(),
-            },
+            select,
         }
     }
 

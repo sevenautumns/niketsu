@@ -80,6 +80,7 @@ impl EventHandler for VideoChange {
         let video = Some(self.video.clone());
         let position = Duration::ZERO;
         model.playlist.select_playing(&self.video);
+        PlaylistBrowser::save(&model.config.room, &model.playlist);
         model.communicator.send(
             SelectMsg {
                 actor,
