@@ -335,7 +335,7 @@ impl P2PClient {
     }
 
     pub(crate) fn send(&self, msg: NiketsuMessage) -> Result<()> {
-        info!("Sending message {msg:?}");
+        debug!("Sending message {msg:?}");
         Ok(self.sender.send(msg)?)
     }
 }
@@ -474,7 +474,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 remote_peer_id,
                 result,
             })) => {
-                error!("dcutr result {result:?} from {remote_peer_id:?}");
+                info!("dcutr result {result:?} from {remote_peer_id:?}");
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source: peer_id,
@@ -760,6 +760,7 @@ impl HostCommunicationHandler {
                 self.playlist = playlist;
             }
             NiketsuMessage::Select(select) => {
+                self.handle_all_users_ready(&peer_id)?;
                 self.select = select;
             }
             _ => {}
@@ -810,7 +811,7 @@ impl CommunicationHandler for HostCommunicationHandler {
                 remote_peer_id,
                 result,
             })) => {
-                error!("dcutr result {result:?} from {remote_peer_id:?}");
+                info!("dcutr result {result:?} from {remote_peer_id:?}");
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source: peer_id,
@@ -848,9 +849,8 @@ impl CommunicationHandler for HostCommunicationHandler {
                 peer_id, endpoint, ..
             } => {
                 if self.relay == (*endpoint.get_remote_address()) {
-                    warn!("Connection of host to relay server closed: {endpoint:?}");
+                    error!("Connection of host to relay server closed: {endpoint:?}");
                     self.core_receiver.close();
-                    //TODO panic
                 } else {
                     info!("User connection stopped and user removed from map");
                     let users = self.users.clone();
