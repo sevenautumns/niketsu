@@ -140,13 +140,13 @@ impl Disconnected {
 }
 
 #[derive(Debug, Default)]
-pub struct WebsocketCommunicator {
+pub struct P2PCommunicator {
     connection: Connection,
     endpoint: Option<EndpointInfo>,
 }
 
 #[async_trait]
-impl CommunicatorTrait for WebsocketCommunicator {
+impl CommunicatorTrait for P2PCommunicator {
     fn connect(&mut self, endpoint: EndpointInfo) {
         self.endpoint.replace(endpoint.clone());
         self.connection = Connection::Connecting(Connecting::new(endpoint))
