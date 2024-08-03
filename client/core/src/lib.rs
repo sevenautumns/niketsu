@@ -63,7 +63,7 @@ impl Core {
     }
 
     pub async fn auto_connect(&mut self) {
-        let addr = self.model.config.relay.clone();
+        let addr = self.model.config.addr();
         let room = self.model.config.room.clone();
         let password = self.model.config.password.clone();
         let endpoint = EndpointInfo {
