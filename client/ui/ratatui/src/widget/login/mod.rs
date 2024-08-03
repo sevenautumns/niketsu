@@ -122,16 +122,16 @@ impl StatefulWidget for LoginWidget {
 
         let room_field = state
             .room_field
-            .set_default_style()
-            .placeholder("Enter the room");
+            .with_default_style()
+            .with_placeholder("Enter the room");
         let password_field = state
             .password_field
-            .set_default_style()
-            .as_masked("Enter your password");
+            .with_default_style()
+            .with_mask("Enter your password");
         let username_field = state
             .username_field
-            .set_default_style()
-            .placeholder("Enter your username");
+            .with_default_style()
+            .with_placeholder("Enter your username");
 
         let style = state.style;
         match state.current_state {

@@ -50,7 +50,7 @@ impl StatefulWidget for ChatInputWidget {
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let mut input_block = state.input_field.clone();
-        input_block.set_block(
+        input_block.with_block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Message here")

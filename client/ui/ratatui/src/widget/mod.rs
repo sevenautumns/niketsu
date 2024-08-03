@@ -130,7 +130,7 @@ impl Default for TextAreaWrapper {
             inner: TextArea::default(),
             title: Default::default(),
         };
-        wrapper.set_default_style();
+        wrapper.with_default_style();
         wrapper
     }
 }
@@ -150,7 +150,7 @@ impl From<(String, String)> for TextAreaWrapper {
             inner: TextArea::new(vec![value.1]),
             title: Some(value.0),
         };
-        text_area.set_block_style(Style::default());
+        text_area.with_block_style(Style::default());
         text_area
     }
 }
@@ -163,20 +163,29 @@ impl TextAreaWrapper {
     fn highlight(&mut self, block_style: Style, cursor_style: Style) {
         self.inner.set_style(Style::default().gray());
         self.inner.set_cursor_style(cursor_style);
-        self.set_block_style(block_style);
+        self.with_block_style(block_style);
     }
 
-    fn set_default_style(&mut self) -> &mut Self {
+    fn with_default_style(&mut self) -> &mut Self {
         self.inner.set_tab_length(2);
         self.inner
             .set_style(Style::default().fg(Color::Gray).add_modifier(Modifier::DIM));
         self.inner.set_cursor_line_style(Style::default());
         self.inner.set_cursor_style(Style::default());
-        self.set_block_style(Style::default().gray());
+        self.with_block_style(Style::default().gray());
         self
     }
 
-    fn set_block_style(&mut self, style: Style) {
+    fn with_white_style(&mut self) -> &mut Self {
+        self.inner.set_tab_length(2);
+        self.inner.set_style(Style::default().fg(Color::Gray));
+        self.inner.set_cursor_line_style(Style::default());
+        self.inner.set_cursor_style(Style::default());
+        self.with_block_style(Style::default().gray());
+        self
+    }
+
+    fn with_block_style(&mut self, style: Style) {
         let block = self.inner.block();
         let title = self.title.clone();
 
@@ -192,7 +201,7 @@ impl TextAreaWrapper {
         }
     }
 
-    fn set_block(&mut self, block: Block<'static>) -> &mut Self {
+    fn with_block(&mut self, block: Block<'static>) -> &mut Self {
         match self.title.clone() {
             Some(t) => self.inner.set_block(block.title(t)),
             _ => self.inner.set_block(block),
@@ -200,12 +209,12 @@ impl TextAreaWrapper {
         self
     }
 
-    fn placeholder(&mut self, placeholder_text: &str) -> &mut Self {
+    fn with_placeholder(&mut self, placeholder_text: &str) -> &mut Self {
         self.inner.set_placeholder_text(placeholder_text);
         self
     }
 
-    fn as_masked(&mut self, placeholder_text: &str) -> &mut Self {
+    fn with_mask(&mut self, placeholder_text: &str) -> &mut Self {
         self.inner.set_placeholder_text(placeholder_text);
         self.inner.set_mask_char('\u{2022}');
         self
