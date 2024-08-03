@@ -52,8 +52,11 @@ pub struct Relay {
 }
 
 pub fn new(config: Config) -> Result<Relay> {
-    //TODO build transport with short timeout
     let keypair = Keypair::from_protobuf_encoding(config.keypair.unwrap().as_slice())?;
+    let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
+    quic_config.handshake_timeout = Duration::from_secs(10);
+    quic_config.max_idle_timeout = 5 * 1000;
+
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_async_std()
         .with_tcp(
@@ -61,7 +64,7 @@ pub fn new(config: Config) -> Result<Relay> {
             noise::Config::new,
             yamux::Config::default,
         )?
-        .with_quic()
+        .with_quic_config(|_| quic_config)
         .with_behaviour(|key| Behaviour {
             relay: relay::Behaviour::new(
                 key.public().to_peer_id(),
@@ -69,8 +72,8 @@ pub fn new(config: Config) -> Result<Relay> {
             ),
             ping: ping::Behaviour::new(
                 ping::Config::new()
-                    .with_timeout(Duration::from_secs(2))
-                    .with_interval(Duration::from_secs(1)),
+                    .with_timeout(Duration::from_secs(5))
+                    .with_interval(Duration::from_secs(2)),
             ),
             identify: identify::Behaviour::new(identify::Config::new(
                 "/identify/1".to_string(),
@@ -84,7 +87,7 @@ pub fn new(config: Config) -> Result<Relay> {
                 request_response::Config::default(),
             ),
         })?
-        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(2)))
+        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
         .build();
 
     let listen_addr_tcp = Multiaddr::empty()

@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use config::Config;
 use directories::ProjectDirs;
 use enum_dispatch::enum_dispatch;
