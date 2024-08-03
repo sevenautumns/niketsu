@@ -1,8 +1,8 @@
 use enum_dispatch::enum_dispatch;
 use iced::Command;
-use log::debug;
 use niketsu_core::playlist::Video;
 use niketsu_core::ui::UiModel;
+use tracing::debug;
 
 use super::{FileInteraction, PlaylistWidgetState};
 use crate::message::{Message, MessageHandler};
@@ -36,7 +36,7 @@ pub struct DoubleClick {
 
 impl PlaylistWidgetMessageTrait for DoubleClick {
     fn handle(self, _state: &mut PlaylistWidgetState, model: &UiModel) {
-        debug!("filetable doubleclick: {:?}", self.video);
+        debug!(video = ?self.video, "filetable doubleclick");
         model.change_video(self.video)
     }
 }
@@ -48,7 +48,7 @@ pub struct Delete {
 
 impl PlaylistWidgetMessageTrait for Delete {
     fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel) {
-        debug!("filetable delete file: {:?}", self.video);
+        debug!(video = ?self.video, "filetable delete file");
         state.delete_video(&self.video);
         model.change_playlist(state.playlist.clone());
     }
@@ -62,7 +62,7 @@ pub struct Move {
 
 impl PlaylistWidgetMessageTrait for Move {
     fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel) {
-        debug!("filetable move file: {:?}, {}", self.video, self.pos);
+        debug!(video = ?self.video, pos = %self.pos, "filetable move file");
         state.move_video(&self.video, self.pos);
         model.change_playlist(state.playlist.clone());
     }
@@ -76,10 +76,7 @@ pub struct Interaction {
 
 impl PlaylistWidgetMessageTrait for Interaction {
     fn handle(self, state: &mut PlaylistWidgetState, _: &UiModel) {
-        debug!(
-            "filetable file interaction: {:?}, {:?}",
-            self.video, self.interaction
-        );
+        debug!(video = ?self.video, interaction = ?self.interaction);
         state.file_interaction(self.video.clone(), self.interaction.clone());
     }
 }

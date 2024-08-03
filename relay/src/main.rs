@@ -1,10 +1,10 @@
 use anyhow::Result;
-use log::{info, warn};
+use clap::Parser;
+use libp2p::identity::Keypair;
+use tracing::{info, warn};
 
 use crate::cli::{setup_logger, Args};
 use crate::config::Config;
-use clap::Parser;
-use libp2p::identity::Keypair;
 mod cli;
 mod config;
 mod relay;
@@ -29,14 +29,14 @@ async fn main() -> Result<()> {
         config.port = port;
     }
     config.keypair = Some(keypair.to_protobuf_encoding()?);
-    if let Err(e) = config.save() {
-        warn!("Failed to save config to file: {e:?}");
+    if let Err(error) = config.save() {
+        warn!(%error, "Failed to save config to file");
     }
 
     let mut relay = relay::new(config)?;
     info!(
-        "Finished initialization. Now receiving requests for relay: {:?}",
-        relay.peer_id()
+        peer_id = %relay.peer_id(),
+        "Finished initialization. Now receiving requests for relay"
     );
     relay.run().await;
 

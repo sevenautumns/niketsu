@@ -7,8 +7,8 @@ use std::task::{Poll, Waker};
 
 use arc_swap::ArcSwapOption;
 use enum_dispatch::enum_dispatch;
-use log::trace;
 use niketsu_core::player::*;
+use tracing::trace;
 
 use super::bindings::mpv_event;
 use super::{Mpv, MpvHandle, MpvProperty};

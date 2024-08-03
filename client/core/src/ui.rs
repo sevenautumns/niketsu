@@ -7,9 +7,9 @@ use arcstr::ArcStr;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use enum_dispatch::enum_dispatch;
-use log::{trace, Level};
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
+use tracing::{trace, Level};
 
 use super::communicator::{EndpointInfo, PlaylistMsg, SelectMsg, UserMessageMsg};
 use super::player::MediaPlayerTrait;
@@ -203,11 +203,11 @@ pub enum MessageLevel {
 impl From<Level> for MessageLevel {
     fn from(value: Level) -> Self {
         match value {
-            Level::Error => MessageLevel::Error,
-            Level::Warn => MessageLevel::Warn,
-            Level::Info => MessageLevel::Success,
-            Level::Debug => MessageLevel::Debug,
-            Level::Trace => MessageLevel::Trace,
+            Level::ERROR => MessageLevel::Error,
+            Level::WARN => MessageLevel::Warn,
+            Level::INFO => MessageLevel::Success,
+            Level::DEBUG => MessageLevel::Debug,
+            Level::TRACE => MessageLevel::Trace,
         }
     }
 }

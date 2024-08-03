@@ -11,9 +11,9 @@ use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use im::Vector;
 use itertools::Itertools;
-use log::{trace, warn};
 use rayon::prelude::IntoParallelRefIterator;
 use tokio::task::JoinHandle;
+use tracing::{trace, warn};
 
 use self::fuzzy::FuzzySearch;
 use self::updater::FileDatabaseUpdater;
@@ -283,7 +283,7 @@ impl FileDatabaseTrait for FileDatabase {
             update = updater => {
                 match update {
                     Ok(data) => self.store = FileStore::from_iter(data),
-                    Err(e) => warn!("update error: {e:?}"),
+                    Err(error) => warn!(%error, "update error"),
                 };
                 self.update.take();
                 Some(UpdateComplete.into())

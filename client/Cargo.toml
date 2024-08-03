@@ -21,22 +21,22 @@ anyhow.workspace = true
 tokio.workspace = true
 strum.workspace = true
 directories.workspace = true
-log.workspace = true
+tracing.workspace = true
 whoami = "1.4"
-clap = { version = "4.4.2", features = ["derive"] }
+clap.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
 strum.workspace = true
 clap_complete = "4"
-clap = { version = "4", features = [ "derive" ] }
+clap.workspace = true
 clap_mangen = "0.2"
-log.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-log.workspace = true
+tracing.workspace = true
 arcstr.workspace = true
-chrono = "0.4"
+chrono.workspace = true
 
 [[example]]
 name = "ratatui"

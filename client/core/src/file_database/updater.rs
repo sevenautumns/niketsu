@@ -2,10 +2,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use log::warn;
 use tokio::fs::DirEntry;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+use tracing::warn;
 
 use super::UpdateProgressTracker;
 use crate::file_database::FileEntry;
@@ -36,8 +36,8 @@ impl FileDatabaseUpdater {
         let mut database = Vec::new();
         while let Some(res) = updater.join_next().await {
             match res {
-                Ok(Err(err)) => warn!("{err:?}"),
-                Err(err) => warn!("{err:?}"),
+                Ok(Err(error)) => warn!(%error),
+                Err(error) => warn!(%error),
                 Ok(Ok(db)) => database.extend_from_slice(&db),
             }
         }
@@ -114,8 +114,8 @@ impl FileDatabaseUpdater {
     async fn finish_subdirs(&mut self) {
         while let Some(subdir) = self.subdirs.join_next().await {
             match subdir {
-                Ok(Err(err)) => warn!("{err:?}"),
-                Err(err) => warn!("{err:?}"),
+                Ok(Err(error)) => warn!(%error),
+                Err(error) => warn!(%error),
                 Ok(Ok(paths)) => self.paths.extend(paths),
             }
         }

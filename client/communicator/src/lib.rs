@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use log::{error, warn};
 use niketsu_core::communicator::*;
 use p2p::P2PClient;
 use tokio::task::JoinHandle;
+use tracing::{error, warn};
 
 use self::messages::NiketsuMessage;
 
@@ -36,7 +36,7 @@ impl Connection {
             match self {
                 Connection::Connected(c) => match c.recv().await.map(IncomingMessage::try_from) {
                     Ok(Ok(msg)) => return msg,
-                    Ok(Err(msg)) => warn!("received unexpected message: {msg:?}"),
+                    Ok(Err(msg)) => warn!(?msg, "received unexpected message"),
                     Err(c) => *self = c,
                 },
                 Connection::Connecting(c) => {
@@ -62,8 +62,8 @@ impl Connected {
     }
 
     fn send(&mut self, msg: NiketsuMessage) -> std::result::Result<(), Connection> {
-        if let Err(err) = self.p2p.send(msg) {
-            error!("Connection error: {err}");
+        if let Err(error) = self.p2p.send(msg) {
+            error!(%error, "Connection error");
             return Err(Connection::Disconnected(Disconnected::now()));
         }
         Ok(())
@@ -109,8 +109,8 @@ impl Future for Connecting {
         let p2p = p2p.map_err(anyhow::Error::from);
         match p2p {
             Ok(Ok(p2p)) => Poll::Ready(Connection::Connected(Connected { p2p })),
-            Err(e) | Ok(Err(e)) => {
-                error!("Connection error: {e}");
+            Err(error) | Ok(Err(error)) => {
+                error!(%error, "Connection error");
                 Poll::Ready(Connection::Disconnected(Disconnected::now()))
             }
         }

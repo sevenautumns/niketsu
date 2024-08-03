@@ -26,7 +26,7 @@ impl PlaylistBrowser {
     fn get_playlist_folder() -> Option<&'static PathBuf> {
         let playlist = PLAYLIST_FOLDER.as_ref();
         if playlist.is_none() {
-            log::error!("failed to get playlist folder")
+            tracing::error!("failed to get playlist folder")
         }
         playlist
     }
@@ -34,10 +34,12 @@ impl PlaylistBrowser {
     async fn get_playlist_from_path(path: &Path) -> Option<PlaylistHandler> {
         let playlist = tokio::fs::read_to_string(path)
             .await
-            .inspect_err(|err| log::warn!("failed reading file {path:?}: {err:?}"))
+            .inspect_err(|error| tracing::warn!(file = ?path, %error, "failed reading file"))
             .ok()?;
         serde_yaml::from_str(&playlist)
-            .inspect_err(|err| log::warn!("failed parsing playlist {path:?}: {err:?}"))
+            .inspect_err(
+                |error| tracing::warn!(playlist = ?path, %error, "failed parsing playlist"),
+            )
             .ok()
     }
 
@@ -49,7 +51,7 @@ impl PlaylistBrowser {
                 return playlist;
             }
         }
-        log::warn!("No playlist found");
+        tracing::warn!("No playlist found");
         None
     }
 
@@ -61,8 +63,8 @@ impl PlaylistBrowser {
         let room_folder = playlist_folder.join(room.as_str());
         let mut read_dir = match tokio::fs::read_dir(&room_folder).await {
             Ok(read_dir) => read_dir,
-            Err(e) => {
-                log::error!("failed to read folder {room_folder:?}: {e:?}");
+            Err(error) => {
+                tracing::error!(?room_folder, %error, "failed to read folder");
                 return vec![];
             }
         };
@@ -98,8 +100,8 @@ impl PlaylistBrowser {
         };
         let mut read_dir = match tokio::fs::read_dir(playlist_folder).await {
             Ok(read_dir) => read_dir,
-            Err(e) => {
-                log::warn!("failed to read folder {playlist_folder:?}: {e:?}");
+            Err(error) => {
+                tracing::warn!(%error, ?playlist_folder, "failed to read folder");
                 return BTreeMap::new();
             }
         };
@@ -126,7 +128,7 @@ impl PlaylistBrowser {
 
     pub(crate) fn save(room: &RoomName, handler: &PlaylistHandler) {
         let Ok(playlist) = serde_yaml::to_string(handler)
-            .inspect_err(|err| log::error!("failed to serialize the playlist: {err:?}"))
+            .inspect_err(|error| tracing::error!(%error, "failed to serialize the playlist"))
         else {
             return;
         };
@@ -139,12 +141,12 @@ impl PlaylistBrowser {
         tokio::task::spawn(async move {
             let permit = SAVE_PERMIT.acquire().await;
             if let Some(parent) = filepath.parent() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    log::error!("error creating directories: {e:?}");
+                if let Err(error) = tokio::fs::create_dir_all(parent).await {
+                    tracing::error!(%error, "error creating directories");
                 };
             }
-            if let Err(e) = tokio::fs::write(filepath, playlist).await {
-                log::error!("error saving playlist: {e:?}");
+            if let Err(error) = tokio::fs::write(filepath, playlist).await {
+                tracing::error!(%error, "error saving playlist");
             };
             drop(permit);
         });

@@ -1,17 +1,21 @@
 use std::fs::File;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use directories::ProjectDirs;
-use log::{debug, LevelFilter};
-use once_cell::sync::Lazy;
-use simplelog::{
-    CombinedLogger, Config as LogConfig, ConfigBuilder, SharedLogger, TermLogger, WriteLogger,
-};
+use once_cell::sync::{Lazy, OnceCell};
 use strum::Display;
+use tracing::Level;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::filter::Targets;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 
 pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =
     Lazy::new(|| ProjectDirs::from("de", "autumnal", "niketsu-relay"));
+
+static FILE_GUARD: OnceCell<WorkerGuard> = OnceCell::new();
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -39,55 +43,41 @@ pub enum LogLevel {
     Trace,
 }
 
-impl From<LogLevel> for LevelFilter {
+impl From<LogLevel> for Option<Level> {
     fn from(value: LogLevel) -> Self {
         match value {
-            LogLevel::Off => LevelFilter::Off,
-            LogLevel::Error => LevelFilter::Error,
-            LogLevel::Warn => LevelFilter::Warn,
-            LogLevel::Info => LevelFilter::Info,
-            LogLevel::Debug => LevelFilter::Debug,
-            LogLevel::Trace => LevelFilter::Trace,
+            LogLevel::Off => None,
+            LogLevel::Error => Some(Level::ERROR),
+            LogLevel::Warn => Some(Level::WARN),
+            LogLevel::Info => Some(Level::INFO),
+            LogLevel::Debug => Some(Level::DEBUG),
+            LogLevel::Trace => Some(Level::TRACE),
         }
     }
 }
 
-pub fn setup_logger(term_filter: LevelFilter) -> Result<()> {
-    let logger = vec![setup_file_logger(), setup_terminal_logger(term_filter)]
-        .into_iter()
-        .flatten()
-        .collect();
-    CombinedLogger::init(logger).map_err(anyhow::Error::from)?;
-    Ok(())
-}
+pub fn setup_logger(term_filter: Option<Level>) -> Result<()> {
+    let terminal_filter = Targets::new().with_target("niketsu", term_filter);
+    let terminal = tracing_subscriber::fmt::Layer::default().with_filter(terminal_filter);
+    let tracer = tracing_subscriber::registry().with(terminal);
 
-fn setup_terminal_logger(filter: LevelFilter) -> Option<Box<dyn SharedLogger>> {
-    if let LevelFilter::Off = filter {
-        return None;
-    }
-    debug!("setup terminal logger");
-    Some(TermLogger::new(
-        filter,
-        setup_config(),
-        simplelog::TerminalMode::Mixed,
-        simplelog::ColorChoice::Auto,
-    ))
-}
-
-fn setup_config() -> LogConfig {
-    ConfigBuilder::new()
-        .add_filter_allow(String::from("niketsu"))
-        .build()
-}
-
-fn setup_file_logger() -> Option<Box<dyn SharedLogger>> {
-    debug!("setup file logger");
-    let mut log_file = PROJECT_DIRS.as_ref()?.cache_dir().to_path_buf();
-    std::fs::create_dir_all(log_file.clone()).ok()?;
+    let mut log_file = PROJECT_DIRS
+        .as_ref()
+        .context("Could not get log folder")?
+        .cache_dir()
+        .to_path_buf();
+    std::fs::create_dir_all(log_file.clone())?;
     log_file.push("niketsu-relay.log");
-    Some(WriteLogger::new(
-        LevelFilter::Trace,
-        setup_config(),
-        File::create(log_file).ok()?,
-    ))
+    let appender = File::create(log_file)?;
+    let (non_blocking_appender, guard) = tracing_appender::non_blocking(appender);
+    FILE_GUARD.set(guard).ok();
+    let file_filter = Targets::new().with_target("niketsu", Level::TRACE);
+    let file = tracing_subscriber::fmt::Layer::default()
+        .with_ansi(false)
+        .with_file(true)
+        .with_line_number(true)
+        .with_writer(non_blocking_appender)
+        .with_filter(file_filter);
+    tracer.with(file).init();
+    Ok(())
 }
