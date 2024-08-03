@@ -19,13 +19,13 @@ impl CommandInputWidgetState {
         self.active = active;
         self.input_field.highlight(self.style, self.style.cyan());
         self.input_field
-            .set_default_style()
-            .set_block(
+            .with_default_style()
+            .with_block(
                 Block::default()
                     .borders(Borders::NONE)
                     .padding(Padding::new(0, 0, 0, 0)),
             )
-            .placeholder("Enter your command");
+            .with_placeholder("Enter your command");
     }
 
     pub fn input(&mut self, event: impl Into<Input>) {

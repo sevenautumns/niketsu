@@ -32,13 +32,13 @@ impl MediaDirWidgetState {
 
     fn setup_input_field(&mut self) {
         self.input_field
-            .set_default_style()
-            .set_block(
+            .with_white_style()
+            .with_block(
                 Block::default()
                     .borders(Borders::NONE)
                     .padding(Padding::new(1, 0, 0, 0)),
             )
-            .placeholder("Enter a path separated by /");
+            .with_placeholder("Enter a path separated by /");
     }
 
     pub fn get_input(&self) -> String {
@@ -136,8 +136,9 @@ impl StatefulWidget for MediaDirWidget {
         let outer_block = Block::default().title("Path").borders(Borders::ALL).gray();
 
         let layout = Layout::default()
-            .constraints([Constraint::Length(2), Constraint::Min(3)].as_ref())
+            .constraints([Constraint::Length(1), Constraint::Min(3)].as_ref())
             .horizontal_margin(1)
+            .vertical_margin(1)
             .split(area);
 
         let media_dirs: Vec<ListItem> = state

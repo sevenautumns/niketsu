@@ -306,7 +306,7 @@ impl P2PClient {
                     ),
                 })
             })?
-            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(2)))
+            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
             .build();
 
         debug!("Attempting to connect to relay {relay:?}");
