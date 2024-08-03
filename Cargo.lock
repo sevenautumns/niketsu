@@ -3868,6 +3868,7 @@ dependencies = [
  "libp2p",
  "log",
  "niketsu-core",
+ "once_cell",
  "ordered-float",
  "serde",
  "serde_json",

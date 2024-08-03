@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 use niketsu::cli::Args;
-use niketsu_communicator::WebsocketCommunicator;
+use niketsu_communicator::P2PCommunicator;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::FileDatabase;
@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
         }
     }
     let player = Mpv::new().unwrap();
-    let communicator = WebsocketCommunicator::default();
+    let communicator = P2PCommunicator::default();
     let mut file_database = FileDatabase::default();
     if !args.skip_database_refresh {
         file_database = FileDatabase::new(config.media_dirs.iter().map(PathBuf::from).collect());

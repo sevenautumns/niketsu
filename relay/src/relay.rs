@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::config::Config;
 use anyhow::Result;
@@ -61,8 +62,15 @@ pub fn new(config: Config) -> Result<Relay> {
         )?
         .with_quic()
         .with_behaviour(|key| Behaviour {
-            relay: relay::Behaviour::new(key.public().to_peer_id(), Default::default()),
-            ping: ping::Behaviour::new(ping::Config::new()),
+            relay: relay::Behaviour::new(
+                key.public().to_peer_id(),
+                libp2p::relay::Config::default(),
+            ),
+            ping: ping::Behaviour::new(
+                ping::Config::new()
+                    .with_timeout(Duration::from_secs(2))
+                    .with_interval(Duration::from_secs(1)),
+            ),
             identify: identify::Behaviour::new(identify::Config::new(
                 "/identify/1".to_string(),
                 key.public(),
@@ -75,6 +83,7 @@ pub fn new(config: Config) -> Result<Relay> {
                 request_response::Config::default(),
             ),
         })?
+        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(2)))
         .build();
 
     let listen_addr_tcp = Multiaddr::empty()
@@ -121,8 +130,8 @@ impl Relay {
                     debug!("Added external node");
                 }
                 SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                    self.close_node(peer_id).await;
                     debug!("Connection closed due to: {cause:?}");
+                    self.close_node(peer_id).await;
                 }
                 SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                     if let Some(pid) = peer_id {
@@ -142,7 +151,9 @@ impl Relay {
                         debug!("Received init response. This should not happen")
                     }
                 },
-                _ => {}
+                e => {
+                    debug!("Uncaptured event: {e:?}");
+                }
             }
         }
     }
