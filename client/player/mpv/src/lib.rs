@@ -190,7 +190,7 @@ impl Mpv {
     }
 
     fn post_init(&mut self) -> Result<()> {
-        self.pause();
+        self.set_property(MpvProperty::Pause, true.into())?;
         self.observe_property(MpvProperty::Pause)?;
         self.observe_property(MpvProperty::PausedForCache)?;
         self.observe_property(MpvProperty::Filename)?;
@@ -366,10 +366,7 @@ impl MediaPlayerTrait for Mpv {
 
     fn is_paused(&self) -> Option<bool> {
         self.status.file.as_ref()?;
-        let paused = log!(
-            self.get_property_flag(MpvProperty::Pause),
-            Default::default()
-        );
+        let paused = log!(self.get_property_flag(MpvProperty::Pause), true);
         Some(paused)
     }
 
