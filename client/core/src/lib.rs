@@ -1,12 +1,13 @@
+use anyhow::anyhow;
 use config::Config;
 use directories::ProjectDirs;
 use enum_dispatch::enum_dispatch;
 use futures::future::OptionFuture;
-use log::{info, trace};
 use logging::ChatLogger;
 use once_cell::sync::Lazy;
 use player::wrapper::MediaPlayerWrapper;
 use playlist::handler::PlaylistHandler;
+use tracing::{info, trace};
 
 use self::communicator::*;
 use self::file_database::*;
@@ -99,7 +100,7 @@ impl Core {
                     trace!("handle database event");
                     db.handle(&mut self.model);
                 }
-                Some(Some(message)) = OptionFuture::from(self.model.chat_logger.as_mut().map(ChatLogger::recv)) => {
+                Some(message) = OptionFuture::from(self.model.chat_logger.as_mut().map(ChatLogger::recv)) => {
                     self.model.ui.player_message(message)
                 }
             }
@@ -110,15 +111,15 @@ impl Core {
 #[macro_export]
 macro_rules! log {
     ($result:expr) => {
-        if let Err(err) = $result {
-            log::error!("{:?}", err);
+        if let Err(error) = $result {
+            tracing::error!(%error);
         }
     };
     ($result:expr, $default:expr) => {
         match $result {
             Ok(ok_val) => ok_val,
-            Err(err) => {
-                log::error!("{:?}", err);
+            Err(error) => {
+                tracing::error!(%error);
                 $default
             }
         }

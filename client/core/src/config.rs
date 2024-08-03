@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use arcstr::ArcStr;
-use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
+use tracing::{debug, warn};
 
 use crate::room::RoomName;
 use crate::user::UserStatus;
@@ -97,8 +97,8 @@ impl Config {
     }
 
     pub fn load_or_default() -> Self {
-        Self::load().unwrap_or_else(|e| {
-            warn!("no config loaded: {e:?}");
+        Self::load().unwrap_or_else(|error| {
+            warn!(%error, "no config loaded");
             Default::default()
         })
     }

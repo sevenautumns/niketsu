@@ -3,7 +3,6 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::Config;
 use anyhow::Result;
 use async_std::stream::StreamExt;
 use async_std::sync::RwLock;
@@ -14,8 +13,10 @@ use libp2p::identity::Keypair;
 use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{identify, noise, ping, relay, tcp, yamux, PeerId, StreamProtocol, Swarm};
-use log::debug;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
+
+use crate::config::Config;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -130,14 +131,14 @@ impl Relay {
                     debug!("Added external node");
                 }
                 SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                    debug!("Connection closed due to: {cause:?}");
+                    debug!(?cause, "Connection closed");
                     self.close_node(peer_id).await;
                 }
                 SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                     if let Some(pid) = peer_id {
                         self.close_node(pid).await;
                     }
-                    debug!("Connection closed due to an error: {error:?}");
+                    debug!(?error, "Connection closed due to an error");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::InitRequestResponse(
                     request_response::Event::Message { peer, message },
@@ -151,8 +152,8 @@ impl Relay {
                         debug!("Received init response. This should not happen")
                     }
                 },
-                e => {
-                    debug!("Uncaptured event: {e:?}");
+                event => {
+                    debug!(?event, "Uncaptured event");
                 }
             }
         }

@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use log::trace;
+use tracing::trace;
 
 use super::MediaPlayerTrait;
 use crate::playlist::Video;

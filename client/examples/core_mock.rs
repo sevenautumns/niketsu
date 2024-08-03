@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::Local;
-use log::info;
 use niketsu_core::file_database::{FileEntry, FileStore};
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::UserList;
@@ -13,6 +12,7 @@ use niketsu_core::ui::{
     UserInterfaceTrait,
 };
 use niketsu_core::user::UserStatus;
+use tracing::info;
 
 pub struct CoreMock<T: UserInterfaceTrait> {
     ui: T,
@@ -58,7 +58,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
     }
 
     fn receive_event(&mut self, event: UserInterfaceEvent) {
-        info!("Received Event from UI: {event:?}");
+        info!(?event, "Received Event from UI");
         match event {
             UserInterfaceEvent::PlaylistChange(p) => {
                 self.playlist = p.playlist;

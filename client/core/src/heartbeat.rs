@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use log::trace;
 use tokio::time::Interval;
+use tracing::trace;
 
 use super::communicator::VideoStatusMsg;
 use super::player::MediaPlayerTrait;

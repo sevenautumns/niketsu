@@ -6,9 +6,9 @@ use arcstr::ArcStr;
 use async_trait::async_trait;
 use chrono::Local;
 use enum_dispatch::enum_dispatch;
-use log::trace;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
+use tracing::trace;
 
 use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
@@ -314,7 +314,7 @@ impl From<SeekMsg> for PlayerMessage {
 
 impl EventHandler for SeekMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!("received seek: {self:?}");
+        trace!(seek = ?self, "received");
         let playlist_video = Video::from(self.video.as_str());
         model.playlist.select_playing(&playlist_video);
         PlaylistBrowser::save(&model.config.room, &model.playlist);
@@ -372,7 +372,7 @@ impl From<SelectMsg> for PlayerMessage {
 
 impl EventHandler for SelectMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!("received select: {self:?}");
+        trace!(select = ?self, "received");
         let playlist_video = self.video.as_ref().map(|f| Video::from(f.as_str()));
         if let Some(playlist_video) = playlist_video.clone() {
             model.playlist.select_playing(&playlist_video);
@@ -419,7 +419,7 @@ impl From<UserMessageMsg> for PlayerMessage {
 
 impl EventHandler for UserMessageMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!("received user message: {self:?}");
+        trace!(user_message = ?self, "received");
         model.ui.player_message(PlayerMessage::from(self))
     }
 }
@@ -451,7 +451,7 @@ impl From<ServerMessageMsg> for PlayerMessage {
 
 impl EventHandler for ServerMessageMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!("received server message: {self:?}");
+        trace!(server_message = ?self, "received");
         model.ui.player_message(PlayerMessage::from(self))
     }
 }

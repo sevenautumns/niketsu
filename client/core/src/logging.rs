@@ -1,70 +1,78 @@
 use std::fs::File;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Local;
-use log::{debug, LevelFilter, Log};
-use simplelog::{
-    CombinedLogger, Config as LogConfig, ConfigBuilder, SharedLogger, TermLogger, WriteLogger,
-};
+use once_cell::sync::OnceCell;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::{Level, Subscriber};
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::filter::Targets;
+use tracing_subscriber::fmt::format::{DefaultVisitor, Writer};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 
 use crate::ui::{MessageSource, PlayerMessage, PlayerMessageInner};
 use crate::PROJECT_DIRS;
 
+static FILE_GUARD: OnceCell<WorkerGuard> = OnceCell::new();
+
 pub fn setup_logger(
-    term_filter: LevelFilter,
-    chat_filter: LevelFilter,
+    term_filter: Option<Level>,
+    chat_filter: Option<Level>,
 ) -> Result<Option<ChatLogger>> {
-    let (logger, chat_logger) = setup_chat_logger(chat_filter);
-    let logger = vec![
-        setup_file_logger(),
-        setup_terminal_logger(term_filter),
-        logger,
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    CombinedLogger::init(logger).map_err(anyhow::Error::from)?;
-    Ok(chat_logger)
-}
+    let (logger, chat_logger) = ChatLoggerSender::new();
+    let terminal_filter = Targets::new().with_target("niketsu", term_filter);
+    let terminal = tracing_subscriber::fmt::Layer::default().with_filter(terminal_filter);
+    let tracer = tracing_subscriber::registry().with(terminal);
 
-fn setup_config() -> LogConfig {
-    ConfigBuilder::new()
-        .add_filter_allow(String::from("niketsu"))
-        .build()
-}
+    let chat_filter = Targets::new().with_target("niketsu", chat_filter);
+    let chat = logger.with_filter(chat_filter);
+    let tracer = tracer.with(chat);
 
-fn setup_terminal_logger(filter: LevelFilter) -> Option<Box<dyn SharedLogger>> {
-    if let LevelFilter::Off = filter {
-        return None;
-    }
-    debug!("setup terminal logger");
-    Some(TermLogger::new(
-        filter,
-        setup_config(),
-        simplelog::TerminalMode::Mixed,
-        simplelog::ColorChoice::Auto,
-    ))
-}
-
-fn setup_chat_logger(filter: LevelFilter) -> (Option<Box<dyn SharedLogger>>, Option<ChatLogger>) {
-    if let LevelFilter::Off = filter {
-        return (None, None);
-    }
-    let (logger, chat_logger) = ChatLoggerSender::new(filter);
-    (Some(logger), Some(chat_logger))
-}
-
-fn setup_file_logger() -> Option<Box<dyn SharedLogger>> {
-    debug!("setup file logger");
-    let mut log_file = PROJECT_DIRS.as_ref()?.cache_dir().to_path_buf();
-    std::fs::create_dir_all(log_file.clone()).ok()?;
+    let mut log_file = PROJECT_DIRS
+        .as_ref()
+        .context("Could not get log folder")?
+        .cache_dir()
+        .to_path_buf();
+    std::fs::create_dir_all(log_file.clone())?;
     log_file.push("niketsu.log");
-    Some(WriteLogger::new(
-        LevelFilter::Trace,
-        setup_config(),
-        File::create(log_file).ok()?,
-    ))
+    let appender = File::create(log_file)?;
+    let (non_blocking_appender, guard) = tracing_appender::non_blocking(appender);
+    FILE_GUARD.set(guard).ok();
+    let file_filter = Targets::new().with_target("niketsu", Level::TRACE);
+    let file = tracing_subscriber::fmt::Layer::default()
+        .with_ansi(false)
+        .with_file(true)
+        .with_line_number(true)
+        .with_writer(non_blocking_appender)
+        .with_filter(file_filter);
+    tracer.with(file).init();
+
+    Ok(Some(chat_logger))
+}
+
+impl<S: Subscriber> Layer<S> for ChatLoggerSender {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut message = format!("[{}] ", event.metadata().level());
+        let writer = Writer::new(&mut message);
+        let mut visitor = DefaultVisitor::new(writer, false);
+        event.record(&mut visitor);
+
+        let _ = self.tx.try_send(
+            PlayerMessageInner {
+                message,
+                source: MessageSource::Internal,
+                level: (*event.metadata().level()).into(),
+                timestamp: Local::now(),
+            }
+            .into(),
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -73,9 +81,11 @@ pub struct ChatLogger {
 }
 
 impl ChatLogger {
-    pub async fn recv(&mut self) -> Option<PlayerMessage> {
+    pub async fn recv(&mut self) -> PlayerMessage {
         if let Some(rx) = &mut self.rx {
-            return rx.recv().await;
+            if let Some(message) = rx.recv().await {
+                return message;
+            }
         }
         futures::future::pending().await
     }
@@ -84,55 +94,13 @@ impl ChatLogger {
 #[derive(Debug)]
 pub struct ChatLoggerSender {
     tx: Sender<PlayerMessage>,
-    filter: LevelFilter,
 }
 
 impl ChatLoggerSender {
-    pub fn new(filter: LevelFilter) -> (Box<Self>, ChatLogger) {
+    pub fn new() -> (Self, ChatLogger) {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let logger = ChatLogger { rx: Some(rx) };
-        let sender = Self { tx, filter };
-        (Box::new(sender), logger)
-    }
-}
-
-impl Log for ChatLoggerSender {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        if metadata.level() > self.filter {
-            return false;
-        }
-        metadata.target().starts_with("niketsu")
-    }
-
-    fn log(&self, record: &log::Record) {
-        if !self.enabled(record.metadata()) {
-            return;
-        }
-        let message = format!("[{}] {}", record.level(), record.args());
-        let _ = self.tx.try_send(
-            PlayerMessageInner {
-                message,
-                source: MessageSource::Internal,
-                level: record.level().into(),
-                timestamp: Local::now(),
-            }
-            .into(),
-        );
-    }
-
-    fn flush(&self) {}
-}
-
-impl SharedLogger for ChatLoggerSender {
-    fn level(&self) -> LevelFilter {
-        self.filter
-    }
-
-    fn config(&self) -> Option<&LogConfig> {
-        None
-    }
-
-    fn as_log(self: Box<Self>) -> Box<dyn Log> {
-        self
+        let sender = Self { tx };
+        (sender, logger)
     }
 }

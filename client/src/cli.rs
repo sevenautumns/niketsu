@@ -1,6 +1,6 @@
 use clap::{Parser, ValueEnum};
-use log::LevelFilter;
 use strum::Display;
+use tracing::Level;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -45,15 +45,15 @@ pub enum LogLevel {
     Trace,
 }
 
-impl From<LogLevel> for LevelFilter {
+impl From<LogLevel> for Option<Level> {
     fn from(value: LogLevel) -> Self {
         match value {
-            LogLevel::Off => LevelFilter::Off,
-            LogLevel::Error => LevelFilter::Error,
-            LogLevel::Warn => LevelFilter::Warn,
-            LogLevel::Info => LevelFilter::Info,
-            LogLevel::Debug => LevelFilter::Debug,
-            LogLevel::Trace => LevelFilter::Trace,
+            LogLevel::Off => None,
+            LogLevel::Error => Some(Level::ERROR),
+            LogLevel::Warn => Some(Level::WARN),
+            LogLevel::Info => Some(Level::INFO),
+            LogLevel::Debug => Some(Level::DEBUG),
+            LogLevel::Trace => Some(Level::TRACE),
         }
     }
 }

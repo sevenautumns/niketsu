@@ -6,9 +6,9 @@ use iced::keyboard::{KeyCode, Modifiers};
 use iced::mouse::Cursor;
 use iced::widget::{Button, Column, Container, Rule, Text};
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme};
-use log::trace;
 use niketsu_core::file_database::FileStore;
 use niketsu_core::playlist::{Playlist, *};
+use tracing::trace;
 
 use self::message::*;
 use crate::message::Message;
@@ -324,7 +324,6 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         let inner_state = state.state.downcast_mut::<InnerState>();
 
         // Workaround for if we touch the overlay
-        // trace!("{cursor_position:?}")
         if let Cursor::Available(cursor_position) = cursor {
             inner_state.cursor_position = cursor_position;
         }
@@ -388,7 +387,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
                     }
                 }
                 iced::window::Event::FileDropped(file) => {
-                    trace!("file dropped: {file:?}");
+                    trace!(?file, "file dropped");
                     self.released(Some(file.clone()), inner_state, layout, shell)
                 }
                 iced::window::Event::FilesHoveredLeft => shell.publish(

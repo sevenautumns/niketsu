@@ -6,12 +6,12 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
-use log::debug;
 use niketsu_core::file_database::FileStore;
 use niketsu_core::log;
 use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait};
 use niketsu_core::playlist::Video;
 use strum::{AsRefStr, EnumString};
+use tracing::debug;
 
 use self::bindings::*;
 use self::event::{MpvEventPipe, MpvEventTrait, PropertyValue};
@@ -383,11 +383,11 @@ impl MediaPlayerTrait for Mpv {
 
     fn set_position(&mut self, pos: Duration) {
         if self.status.seeking {
-            debug!("already seeking, ignoring set_position: {pos:?}");
+            debug!(?pos, "already seeking, ignoring set_position");
             return;
         }
         if self.status.file.is_none() {
-            debug!("no file is playing, ignoring set_position: {pos:?}");
+            debug!(?pos, "no file is playing, ignoring set_position");
             return;
         }
         self.status.seeking = true;
@@ -464,7 +464,7 @@ impl MediaPlayerTrait for Mpv {
             return;
         };
         let Some(path) = load.to_path_str(db) else {
-            debug!("get path from: {:?}", load);
+            debug!(video = ?load, "get path from video");
             self.unload_video();
             return;
         };
