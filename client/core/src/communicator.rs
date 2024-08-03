@@ -356,7 +356,7 @@ impl From<SelectMsg> for PlayerMessage {
     fn from(value: SelectMsg) -> Self {
         let actor = value.actor;
         let message = if let Some(video) = value.video {
-            format!("{actor} selected {video:?}")
+            format!("{actor} selected {}", video.as_str())
         } else {
             format!("{actor} unselected video")
         };
