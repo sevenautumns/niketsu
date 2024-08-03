@@ -242,6 +242,10 @@ pub(crate) struct P2PClient {
 impl P2PClient {
     pub(crate) async fn new(relay: String, room: RoomName, password: String) -> Result<P2PClient> {
         let keypair = KEYPAIR.clone();
+        let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
+        quic_config.handshake_timeout = Duration::from_secs(60);
+        quic_config.max_idle_timeout = 60 * 1000;
+
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
             .with_tcp(
@@ -249,7 +253,7 @@ impl P2PClient {
                 libp2p::noise::Config::new,
                 yamux::Config::default,
             )?
-            .with_quic()
+            .with_quic_config(|_| quic_config)
             .with_dns()?
             .with_relay_client(noise::Config::new, yamux::Config::default)?
             .with_behaviour(|keypair, relay_behaviour| {
@@ -496,8 +500,11 @@ impl CommunicationHandler for ClientCommunicationHandler {
 
     async fn handle_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         match event {
-            SwarmEvent::Behaviour(BehaviourEvent::Ping(ping::Event { result, .. })) => {
+            SwarmEvent::Behaviour(BehaviourEvent::Ping(ping::Event { result, peer, .. })) => {
                 debug!("Received ping!");
+                if peer != self.host {
+                    return;
+                }
                 match result {
                     Ok(d) => self.delay = d,
                     Err(error) => warn!(%error, "Failed to get ping rtt"),
@@ -532,7 +539,12 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 }
                 request_response::Message::Response { .. } => {}
             },
-            SwarmEvent::ConnectionEstablished { .. } => {
+            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                if peer_id != self.host {
+                    return;
+                }
+
+                info!("Connection to host established!");
                 if let Err(error) = self.message_sender.send(ConnectedMsg.into()) {
                     warn!(%error, "Failed to send connected message to core");
                 }
@@ -559,6 +571,14 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 if pid == self.host {
                     warn!(?error, ?peer_id, host = %self.host, "Connection of client to host closed");
                     self.core_receiver.close();
+                }
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
+                request_response::Event::OutboundFailure { peer, error, .. },
+            )) => {
+                if peer == self.host {
+                    warn!("Outbound failure for request response with peer: error: {error:?} from {peer:?} where host {:?}", self.host);
+                    // self.core_receiver.close();
                 }
             }
             SwarmEvent::Dialing {
@@ -869,7 +889,7 @@ impl CommunicationHandler for HostCommunicationHandler {
                         error!(%error, "Failed to handle incoming message");
                     }
                 }
-                request_response::Message::Response { .. } => debug!("Received direct response"),
+                _ => {}
             },
             SwarmEvent::IncomingConnection { local_addr, .. } => {
                 debug!(%local_addr, "Received connection")
