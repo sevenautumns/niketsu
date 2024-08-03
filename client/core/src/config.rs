@@ -11,14 +11,18 @@ use crate::user::UserStatus;
 use crate::PROJECT_DIRS;
 
 #[serde_as]
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Config {
     #[serde(default = "get_username")]
     pub username: ArcStr,
     #[serde(default)]
     pub media_dirs: Vec<String>,
-    #[serde(default = "bootstrap_relay", skip_serializing_if = "is_default")]
+    #[serde(default = "bootstrap_relay", skip_serializing_if = "is_default_relay")]
     pub relay: String,
+    #[serde(default = "bootstrap_port", skip_serializing_if = "is_default_port")]
+    pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_id: Option<String>,
     #[serde(default)]
     pub room: RoomName,
     #[serde(default)]
@@ -27,16 +31,38 @@ pub struct Config {
     pub auto_connect: bool,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            relay: bootstrap_relay(),
+            port: bootstrap_port(),
+            peer_id: Default::default(),
+            username: Default::default(),
+            media_dirs: Default::default(),
+            room: Default::default(),
+            password: Default::default(),
+            auto_connect: Default::default(),
+        }
+    }
+}
+
 fn get_username() -> ArcStr {
     whoami::username().into()
 }
 
 fn bootstrap_relay() -> String {
-    "/ip4/89.58.15.23/udp/7766/quic-v1/p2p/12D3KooWQQmVRZaFW3pSPWrgujk5Ldtkzwqdb4rzTWeQfqYpE74A"
-        .to_string()
+    "autumnal.de".to_string()
 }
 
-fn is_default(value: &String) -> bool {
+fn bootstrap_port() -> u16 {
+    7766
+}
+
+fn is_default_port(value: &u16) -> bool {
+    *value == bootstrap_port()
+}
+
+fn is_default_relay(value: &String) -> bool {
     *value == bootstrap_relay()
 }
 
@@ -53,7 +79,14 @@ impl Config {
     }
 
     pub fn addr(&self) -> String {
-        self.relay.clone()
+        if let Some(peer_id) = self.peer_id.clone() {
+            format!(
+                "/dns/{}/udp/{}/quic-v1/p2p/{}",
+                self.relay, self.port, peer_id
+            )
+        } else {
+            format!("/dns/{}/udp/{}/quic-v1", self.relay, self.port)
+        }
     }
 
     pub fn load() -> Result<Self> {

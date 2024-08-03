@@ -86,16 +86,22 @@ trait SwarmRelayConnection {
         room: RoomName,
         password: String,
     ) -> Result<Host>;
-    async fn identify_loop(&mut self, room: RoomName, password: String) -> Option<PeerId>;
+    async fn identify_loop(&mut self, room: RoomName, password: String) -> PeerInfo;
     async fn identify_relay(
         &mut self,
         relay_addr: Multiaddr,
         room: RoomName,
         password: String,
-    ) -> Result<Option<PeerId>>;
+    ) -> Result<PeerInfo>;
 }
 
 type Host = PeerId;
+
+#[derive(Debug)]
+struct PeerInfo {
+    relay: PeerId,
+    host: Option<Host>,
+}
 
 #[async_trait]
 impl SwarmRelayConnection for Swarm<Behaviour> {
@@ -108,12 +114,16 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
         self.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
         self.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
-        let host_peer_id = self
+        let peer_info = self
             .identify_relay(relay_addr.clone(), room, password)
-            .await;
+            .await?;
 
-        info!("Peer id from relay: {host_peer_id:?}");
-        if let Some(peer_id) = host_peer_id? {
+        let relay_addr = relay_addr
+            .with_p2p(peer_info.relay)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+
+        debug!("Peer IDs from relay: {peer_info:?}");
+        if let Some(peer_id) = peer_info.host {
             info!("Dialing peer: {:?}", peer_id);
             self.dial(
                 relay_addr
@@ -136,18 +146,20 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
         Ok(*self.local_peer_id())
     }
 
-    async fn identify_loop(&mut self, room: RoomName, password: String) -> Option<PeerId> {
+    async fn identify_loop(&mut self, room: RoomName, password: String) -> PeerInfo {
         let mut host_peer_id: Option<PeerId> = None;
+        let mut relay_peer_id: Option<PeerId> = None;
         let mut learned_observed_addr = false;
         let mut told_relay_observed_addr = false;
-        let mut observed_peer = false;
+        let mut learned_host_peer_id = false;
+        let mut learned_relay_peer_id = false;
 
         loop {
             match self.next().await.unwrap() {
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Sent {
                     ..
                 })) => {
-                    info!("Told relay its public address");
+                    debug!("Told relay its public address");
                     told_relay_observed_addr = true;
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {
@@ -155,8 +167,8 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
                     info: identify::Info { observed_addr, .. },
                     ..
                 })) => {
-                    info!("Relay told us our observed address: {observed_addr}");
-                    info!("Sending new room request to relay");
+                    debug!("Relay told us our observed address: {observed_addr}");
+                    debug!("Sending new room request to relay");
                     self.behaviour_mut()
                         .init_request_response
                         .send_request(&peer_id, InitRequest::new(room.clone(), password.clone()));
@@ -173,19 +185,31 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
                             );
                         } else {
                             host_peer_id = response.peer_id;
-                            observed_peer = true;
+                            learned_host_peer_id = true;
                         }
                     }
                 }
-                event => info!("Received other relay events: {event:?}"),
+                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                    debug!("Learned relay peer id: {:?}", peer_id);
+                    relay_peer_id = Some(peer_id);
+                    learned_relay_peer_id = true;
+                }
+                event => debug!("Received other relay events: {event:?}"),
             }
 
-            if learned_observed_addr && told_relay_observed_addr && observed_peer {
+            if learned_observed_addr
+                && told_relay_observed_addr
+                && learned_host_peer_id
+                && learned_relay_peer_id
+            {
                 break;
             }
         }
 
-        host_peer_id
+        PeerInfo {
+            relay: relay_peer_id.unwrap(),
+            host: host_peer_id,
+        }
     }
 
     async fn identify_relay(
@@ -193,7 +217,7 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
         relay_addr: Multiaddr,
         room: RoomName,
         password: String,
-    ) -> Result<Option<PeerId>> {
+    ) -> Result<PeerInfo> {
         info!("Dialing relay for identify exchange");
         self.dial(relay_addr.clone())
             .context("Failed to dial relay")?;
@@ -284,6 +308,7 @@ impl P2PClient {
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
             .build();
 
+        debug!("Attempting to connect to relay {relay:?}");
         let relay_addr = Multiaddr::from_str(&relay).expect("Relay address could not be parsed");
 
         let room2 = room.clone();

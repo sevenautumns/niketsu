@@ -28,7 +28,6 @@ pub enum SettingsWidgetMessage {
     ConnectApplyCloseSave,
     ApplyCloseSave,
     UsernameInput,
-    UrlInput,
     PathInput,
     DeletePath,
     AddPath,
@@ -79,7 +78,7 @@ impl SettingsWidgetMessageTrait for ConnectApplyClose {
         ApplyClose.handle(state, model);
         let config = state.config();
         model.change_server(ServerChange {
-            addr: config.relay.clone(),
+            addr: config.addr(),
             password: config.password.clone(),
             room: config.room.clone(),
         });
@@ -126,15 +125,6 @@ pub struct UsernameInput(pub ArcStr);
 impl SettingsWidgetMessageTrait for UsernameInput {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
         state.config.username = self.0;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct UrlInput(pub String);
-
-impl SettingsWidgetMessageTrait for UrlInput {
-    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
-        state.config.relay = self.0;
     }
 }
 
