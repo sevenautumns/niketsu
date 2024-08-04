@@ -14,7 +14,7 @@ use futures::StreamExt;
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
 use libp2p::multiaddr::Protocol;
-use libp2p::request_response::{self, ProtocolSupport};
+use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{ConnectionId, NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
     dcutr, gossipsub, identify, identity, kad, noise, ping, relay, tcp, yamux, Multiaddr, PeerId,
@@ -53,7 +53,13 @@ struct Behaviour {
 struct MessageRequest(NiketsuMessage);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct MessageResponse(NiketsuMessage);
+pub(crate) struct MessageResponse(ResponseStatus);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum ResponseStatus {
+    Ok,
+    Error,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct InitRequest {
@@ -137,8 +143,7 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
             .unwrap();
             self.behaviour_mut()
                 .kademlia
-                .add_address(&peer_id, "/dnsaddr/bootstrap.libp2p.io".parse()?);
-
+                .add_address(&peer_id, "/dnsaddr/bootstrap.autumnal.de".parse()?);
             return Ok(peer_id);
         }
 
@@ -243,7 +248,7 @@ impl P2PClient {
     pub(crate) async fn new(relay: String, room: RoomName, password: String) -> Result<P2PClient> {
         let keypair = KEYPAIR.clone();
         let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
-        quic_config.handshake_timeout = Duration::from_secs(20);
+        quic_config.handshake_timeout = Duration::from_secs(10);
         quic_config.max_idle_timeout = 10 * 1000;
 
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
@@ -529,6 +534,10 @@ impl CommunicationHandler for ClientCommunicationHandler {
                     if let Some(conn) = self.relay_conn {
                         info!("Established direct connection. Closing connection to relay");
                         self.swarm.close_connection(conn);
+                        self.swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .add_explicit_peer(&remote_peer_id);
                     }
                 }
                 Err(error) => {
@@ -550,13 +559,22 @@ impl CommunicationHandler for ClientCommunicationHandler {
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
                 request_response::Event::Message { message, .. },
             )) => match message {
-                request_response::Message::Request { request, .. } => {
-                    //TODO refactor
+                request_response::Message::Request {
+                    request, channel, ..
+                } => {
                     if let Err(error) = self.message_sender.send(request.0) {
                         error!(%error, "Failed to send direct message to core");
                     }
+                    if let Err(e) = self
+                        .swarm
+                        .send_response(channel, MessageResponse(ResponseStatus::Ok))
+                    {
+                        warn!(error = ?e)
+                    }
                 }
-                request_response::Message::Response { .. } => {}
+                request_response::Message::Response { response, .. } => {
+                    debug!(?response, "Received response");
+                }
             },
             SwarmEvent::ConnectionEstablished {
                 peer_id,
@@ -656,6 +674,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
 
 trait Sender<T, TResponse> {
     fn send_request(&mut self, peer_id: &PeerId, msg: T);
+    fn send_response(&mut self, channel: ResponseChannel<TResponse>, msg: TResponse) -> Result<()>;
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: T) -> Result<()>;
 }
 
@@ -665,6 +684,25 @@ impl Sender<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
         self.behaviour_mut()
             .message_request_response
             .send_request(peer_id, MessageRequest(msg));
+    }
+
+    fn send_response(
+        &mut self,
+        channel: ResponseChannel<MessageResponse>,
+        msg: MessageResponse,
+    ) -> Result<()> {
+        let res = self
+            .behaviour_mut()
+            .message_request_response
+            .send_response(channel, msg);
+
+        match res {
+            Ok(_) => {
+                debug!("Successfully send response status");
+                Ok(())
+            }
+            Err(e) => bail!("Failed to send response status {e:?}"),
+        }
     }
 
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()> {
@@ -924,12 +962,22 @@ impl CommunicationHandler for HostCommunicationHandler {
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
                 request_response::Event::Message { peer, message, .. },
             )) => match message {
-                request_response::Message::Request { request, .. } => {
+                request_response::Message::Request {
+                    request, channel, ..
+                } => {
                     if let Err(error) = self.handle_incoming_message(peer, request.0) {
                         error!(%error, "Failed to handle incoming message");
                     }
+                    if let Err(e) = self
+                        .swarm
+                        .send_response(channel, MessageResponse(ResponseStatus::Ok))
+                    {
+                        warn!(error = ?e)
+                    }
                 }
-                _ => {}
+                request_response::Message::Response { response, .. } => {
+                    debug!(?response, "Received response");
+                }
             },
             SwarmEvent::IncomingConnection { local_addr, .. } => {
                 debug!(%local_addr, "Received connection")
