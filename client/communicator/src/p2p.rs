@@ -881,6 +881,40 @@ impl HostCommunicationHandler {
         Ok(())
     }
 
+    fn select_next(&mut self, new_playlist: &PlaylistMsg) -> Option<SelectMsg> {
+        if new_playlist.playlist.len() > self.playlist.playlist.len() {
+            return None;
+        }
+
+        // assume that at most a consecutive range of videos was deleted
+        // we need to find the break off point and check if the current video was deleted
+        let mut new_position = 0;
+        let max_len = new_playlist.playlist.len();
+        if let Some(current_video) = self.select.video.clone() {
+            for old_video in self.playlist.playlist.iter() {
+                if let Some(new_video) = new_playlist.playlist.get(new_position) {
+                    if *old_video == current_video {
+                        break;
+                    }
+                    if *new_video == *old_video {
+                        new_position += 1;
+                    }
+                    if new_position >= max_len {
+                        new_position -= 1;
+                        break;
+                    }
+                }
+            }
+        }
+
+        let new_select = new_playlist.playlist.get(new_position).unwrap().clone();
+        return Some(SelectMsg {
+            actor: arcstr::format!("host"),
+            position: Duration::ZERO,
+            video: Some(new_select),
+        });
+    }
+
     fn handle_incoming_message(&mut self, peer_id: PeerId, mut msg: NiketsuMessage) -> Result<()> {
         debug!(?msg, "Received message");
         match msg.clone() {
@@ -890,7 +924,17 @@ impl HostCommunicationHandler {
                 msg = NiketsuMessage::StatusList(self.status_list.clone());
             }
             NiketsuMessage::Playlist(playlist) => {
+                self.message_sender.send(msg.clone())?;
+                self.swarm.try_broadcast(self.topic.clone(), msg)?;
+
+                if let Some(select_msg) = self.select_next(&playlist) {
+                    msg = select_msg.into();
+                    self.message_sender.send(msg.clone())?;
+                    self.swarm.try_broadcast(self.topic.clone(), msg)?;
+                    self.handle_all_users_ready(&peer_id)?;
+                }
                 self.playlist = playlist;
+                return Ok(());
             }
             NiketsuMessage::Select(select) => {
                 self.select = select;
