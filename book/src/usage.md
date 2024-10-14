@@ -22,25 +22,17 @@ Use `niketsu-client` to binge content in real-time with your crew. Whether you'r
 
 #### Let's Dive Deep 🌊
 
-##### Server Address 🏠
-Host:Port format. If you're on HTTPS, don't forget to toggle that secure button.  
-Example: `autumnal.de:7766`
+Most parameters are now moved to the configuration file, typically found at `~/.config/niketsu/config.toml`:
 
-##### Password 🗝️
-Server-set password? Input it. No password? We're chill either way.
-Example: `1234secure`
-
-##### Username 🎭
-This is how you'll show up in the matrix.  
-Example: `tech-savy gopher`
-
-##### Room 🚪
-Your landing zone. Auto-creates if doesn't exist.
-Example: `spaceship`
-
-#### Filesystem 📂
-Add/delete directories via "+" and "-" buttons.  
-Example: `~/videos/`
+```toml
+username = "xd"
+media_dirs = ["/mnt/net/anime"]
+room = "anime"
+password = "1234"
+auto_connect = false
+relay = "autumnal.de"
+port = 7766
+```
 
 #### Other options
 Set auto-login to directly dive into your adventure without a boring login screen.
@@ -63,8 +55,9 @@ Debug through the chat box.
 - **Settings**: Top-left corner.
 - **File Search**: Beside Settings, for quicker video additions.
 
+
 ##### Terminal Junkies 🤓
-Opt for our Text-based UI. Keybindings? `space + h`.
+Opt for our Text-based UI using `--ui ratatui`. Keybindings? `space + h`.
 
 <img src="./images/niketsu_tui.png" alt="GUI" style="height: 40rem"/>
 
