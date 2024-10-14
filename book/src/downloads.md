@@ -25,4 +25,4 @@ Encountered an issue? [Report here](https://github.com/sevenautumns/niketsu/issu
 
 **A Fair Warning**: If your malware detector acts up, don't blame us, blame Ferris. For the skeptics, our [Github](https://github.com/sevenautumns/niketsu) is always open for inspection.
 
-**niketsu**—Because traditional streaming is so 2020.
+**niketsu** — Because traditional streaming is so 2020.

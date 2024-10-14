@@ -1,27 +1,14 @@
 # Elevate Your Viewing Game with niketsu! 🚀
 
-<div style="margin-bottom: 5rem;">
-  <a href="https://i.redd.it/legpnja6soa81.png">
-    <img src="https://i.redd.it/legpnja6soa81.png" alt="Aberrant Gopher" height=200 style="float: left; margin-right: 3rem;"/>
-  </a>
-
-Say goodbye to disjointed viewing sessions! Introducing niketsu—your go-to platform for synced-up, social video streaming. Elevate your hangouts on Zoom, Teams, or any other VoIP of your choice, and get everyone literally on the same frame.
-</div>
-
-<br>
+Say goodbye to disjointed viewing sessions! Introducing niketsu — your go-to platform for synced-up, social video streaming. Elevate your hangouts on Zoom, Teams, or any other VoIP of your choice, and get everyone literally on the same frame.
 
 ## Why niketsu? 🔥🎬
 
-<div>
-  <img src="./images/gopher-dance-long-3x.gif" alt="Dancing Gopher" height=275 width=175 style="float: right; margin-left: 3rem;"/>
-  <img src="./images/gopher-dance-long-3x.gif" alt="Dancing Gopher" height=275 width=175 style="float: left; margin-right: 3rem;"/>
-
-> - **Unrivaled Performance**: Built on the rock-solid foundation of the esteemed [mpv video player](https://github.com/mpv-player/mpv).
+> **Unrivaled Performance**: Built on the rock-solid foundation of the esteemed [mpv video player](https://github.com/mpv-player/mpv).
 >
-> - **One-Stop Shop**: Whether it's local files or streaming YouTube videos, we've got you covered. Share your screen, not the limitations.
+> **One-Stop Shop**: Whether it's local files or streaming YouTube videos, we've got you covered. Share your screen, not the limitations.
 >
-> - **Zero Learning Curve**: Designed to be intuitive and lightweight—so you can focus on binge-watching, not troubleshooting.
-</div>
+> **Zero Learning Curve**: Designed to be intuitive and lightweight—so you can focus on binge-watching, not troubleshooting.
 
 ## Ready to Dive In? 🎉
 
@@ -35,28 +22,16 @@ For a quick guide, visit our [Usage Page](./usage.md), or explore our in-depth w
 
 Don't want to host? No worries! Connect instantly to one of our public servers and let the good times roll.
 
-### Latest Release
+## Latest Release 🚀
 
-#### Secure (TLS)
+We're thrilled to announce the latest update to **niketsu**, featuring groundbreaking **Peer-to-Peer (P2P) functionality**. This new capability transforms your viewing experience, allowing you to connect directly with other users, bypassing the need for centralized servers. Enjoy faster, more reliable video synchronization, even with large groups.
 
-- autumnal.de:6969
-- autumnal.de:9696
-- autumnal.de:42069
+**Key Highlights:**
+- **Direct Connections**: Establish peer-to-peer connections for a smoother, more efficient streaming experience.
+- **Enhanced Privacy**: By eliminating central servers, your data stays between you and your peers.
+- **Optimized Performance**: Experience reduced latency and improved synchronization, ensuring everyone stays on the same frame.
 
-#### Casual (TCP)
-
-- autumnal.de:2222
-
-### Stable Release
-
-#### Secure (TLS)
-
-Choose from our range of ports: autumnal.de:7766-7777
-
-#### Casual (TCP)
-
-- autumnal.de:3333
-- autumnal.de:4444
+**niketsu** continues to redefine social video streaming. With this update, you get more control, better performance, and a truly decentralized experience. Upgrade now to explore the future of synced viewing!
 
 ## Show-Stopping Features 🌟
 
@@ -66,4 +41,4 @@ Choose from our range of ports: autumnal.de:7766-7777
 
 - **Backend Brilliance**: Our server architecture is optimized for both cost-efficiency and scalability, all thanks to Go. 🌐
 
-**Don't just watch—experience. niketsu is not just another product; it's your social viewing revolution.** 🌈
+**Don't just watch — experience. niketsu is not just another product; it's your social viewing revolution.** 🌈
