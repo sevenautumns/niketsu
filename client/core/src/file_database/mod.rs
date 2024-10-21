@@ -85,9 +85,15 @@ impl EventHandler for UpdateProgress {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct FileEntry {
     inner: Arc<FileEntryInner>,
+}
+
+impl std::fmt::Debug for FileEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
 }
 
 impl FileEntry {
@@ -111,11 +117,21 @@ impl From<FileEntryInner> for FileEntry {
     }
 }
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Clone, Eq)]
 pub struct FileEntryInner {
     path: PathBuf,
     name: ArcStr,
     modified: Option<SystemTime>,
+}
+
+impl std::fmt::Debug for FileEntryInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileEntry")
+            .field("path", &self.path)
+            .field("name", &self.name)
+            .field("modified", &self.modified)
+            .finish()
+    }
 }
 
 impl std::hash::Hash for FileEntryInner {
