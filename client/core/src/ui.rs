@@ -154,9 +154,15 @@ impl EventHandler for UserMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlayerMessage {
     inner: Arc<PlayerMessageInner>,
+}
+
+impl std::fmt::Debug for PlayerMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
 }
 
 impl Deref for PlayerMessage {
@@ -174,12 +180,23 @@ impl From<PlayerMessageInner> for PlayerMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlayerMessageInner {
     pub message: String,
     pub source: MessageSource,
     pub level: MessageLevel,
     pub timestamp: DateTime<Local>,
+}
+
+impl std::fmt::Debug for PlayerMessageInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlayerMessage")
+            .field("message", &self.message)
+            .field("source", &self.source)
+            .field("level", &self.level)
+            .field("timestamp", &self.timestamp)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

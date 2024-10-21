@@ -12,10 +12,16 @@ use crate::file_database::FileStore;
 pub mod file;
 pub mod handler;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Video {
     #[serde(flatten)]
     inner: Arc<VideoInner>,
+}
+
+impl std::fmt::Debug for Video {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
 }
 
 impl Deref for Video {
