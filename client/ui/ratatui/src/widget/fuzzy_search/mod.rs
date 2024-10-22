@@ -220,7 +220,7 @@ impl StatefulWidget for FuzzySearchWidget {
             .highlight_symbol("> ");
 
         outer_block.render(area, buf);
-        state.input_field.widget().render(layout[0], buf);
+        state.input_field.render(layout[0], buf);
         StatefulWidget::render(search_list, layout[1], buf, state.list_state.inner());
     }
 }

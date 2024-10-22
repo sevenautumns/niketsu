@@ -58,6 +58,6 @@ impl StatefulWidget for CommandInputWidget {
 
         let prefix_block = Paragraph::new(prefix);
         prefix_block.render(horizontal_split[0], buf);
-        state.input_field.widget().render(horizontal_split[1], buf);
+        state.input_field.render(horizontal_split[1], buf);
     }
 }

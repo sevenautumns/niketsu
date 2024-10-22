@@ -317,11 +317,11 @@ impl RatatuiView {
     }
 
     fn render(f: &mut Frame, app: &mut App) {
-        let size = f.size();
+        let area = f.area();
         let main_vertical_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
-            .split(size);
+            .split(area);
 
         let horizontal_chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -379,7 +379,7 @@ impl RatatuiView {
             if let Some(overlay) = &app.current_overlay_state {
                 match overlay {
                     OverlayState::Option(_options) => {
-                        let area = app.options_widget_state.area(size);
+                        let area = app.options_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(
                             OptionsWidget {},
@@ -388,17 +388,17 @@ impl RatatuiView {
                         );
                     }
                     OverlayState::Help(_help) => {
-                        let area = app.help_widget_state.area(size);
+                        let area = app.help_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(HelpWidget {}, area, &mut app.help_widget_state);
                     }
                     OverlayState::Login(_login) => {
-                        let area = app.login_widget_state.area(size);
+                        let area = app.login_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(LoginWidget {}, area, &mut app.login_widget_state);
                     }
                     OverlayState::FuzzySearch(_fuzzy_search) => {
-                        let area = app.fuzzy_search_widget_state.area(size);
+                        let area = app.fuzzy_search_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(
                             FuzzySearchWidget {},
@@ -407,7 +407,7 @@ impl RatatuiView {
                         );
                     }
                     OverlayState::MediaDir(_media_dir) => {
-                        let area = app.media_widget_state.area(size);
+                        let area = app.media_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(
                             MediaDirWidget {},

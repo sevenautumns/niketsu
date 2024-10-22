@@ -155,8 +155,8 @@ impl StatefulWidget for LoginWidget {
 
         outer_block.render(area, buf);
         text_block.render(layout[0], buf);
-        username_field.widget().render(layout[1], buf);
-        room_field.widget().render(layout[2], buf);
-        password_field.widget().render(layout[3], buf);
+        username_field.render(layout[1], buf);
+        room_field.render(layout[2], buf);
+        password_field.render(layout[3], buf);
     }
 }
