@@ -1,8 +1,3 @@
-use std::collections::{BTreeSet, HashMap};
-use std::fmt;
-use std::str::FromStr;
-use std::time::Duration;
-
 use anyhow::{bail, Context, Result};
 use arcstr::ArcStr;
 use async_trait::async_trait;
@@ -30,6 +25,11 @@ use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use sha256::digest;
+use std::collections::{BTreeSet, HashMap};
+use std::fmt;
+use std::str::FromStr;
+use std::time::Duration;
 use tokio::{io, spawn};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -263,6 +263,7 @@ impl P2PClient {
             .with_dns()?
             .with_relay_client(noise::Config::new, yamux::Config::default)?
             .with_behaviour(|keypair, relay_behaviour| {
+                // IDs do not matter as these are just message exchanges
                 let message_id_fn = |_message: &gossipsub::Message| {
                     let id = Uuid::new_v4();
                     gossipsub::MessageId::from(id)
@@ -270,7 +271,7 @@ impl P2PClient {
 
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
                     .heartbeat_interval(Duration::from_secs(10))
-                    .duplicate_cache_time(Duration::from_secs(1))
+                    .duplicate_cache_time(Duration::from_secs(60))
                     .validation_mode(gossipsub::ValidationMode::Strict)
                     .message_id_fn(message_id_fn)
                     .build()
@@ -285,7 +286,7 @@ impl P2PClient {
                         ping::Config::new().with_interval(Duration::from_secs(1)),
                     ),
                     identify: identify::Behaviour::new(identify::Config::new(
-                        "/identify/1".to_string(),
+                        "/niketsu-identify/1".to_string(),
                         keypair.public(),
                     )),
                     dcutr: dcutr::Behaviour::new(keypair.public().to_peer_id()),
@@ -334,7 +335,8 @@ impl P2PClient {
             "Starting client with peer id",
         );
 
-        let topic = gossipsub::IdentTopic::new(format!("{room}|{password}")); // TODO hash
+        let topic_hash = digest(format!("{room}|{password}"));
+        let topic = gossipsub::IdentTopic::new(topic_hash); // can topics be discovered of new nodes?
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
 
         let (core_sender, core_receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -897,13 +899,11 @@ impl HostCommunicationHandler {
                     info!(?current_video, ?new_video, "Current video and old");
                     if *new_video == current_video {
                         // No need to select if current video is still in playlist
-                        info!("Current video is still in playlist");
                         return None;
                     }
 
                     if *old_video == current_video {
                         // found the break point
-                        info!("Found break point :)");
                         break;
                     }
 
@@ -912,7 +912,6 @@ impl HostCommunicationHandler {
                     }
 
                     if new_position >= max_len {
-                        info!("At the end of the loop and you know it, lol");
                         new_position -= 1;
                         break;
                     }
