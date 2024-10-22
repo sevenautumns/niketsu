@@ -1,3 +1,4 @@
+use ratatui::buffer::Buffer;
 use ratatui::prelude::Rect;
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::block::Block;
@@ -228,8 +229,8 @@ impl TextAreaWrapper {
         self.inner.lines()
     }
 
-    fn widget(&self) -> impl Widget + '_ {
-        self.inner.widget()
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.inner.render(area, buf)
     }
 
     fn input(&mut self, input: impl Into<Input>) -> bool {

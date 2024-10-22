@@ -27,7 +27,7 @@ directories = "5.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tracing-appender = "0.2"
-libp2p = "0.53"
+libp2p = "0.54"
 bcrypt = "0.15"
 chrono = "0.4"
 

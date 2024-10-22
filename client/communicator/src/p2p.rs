@@ -13,6 +13,7 @@ use fake::Fake;
 use futures::StreamExt;
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
+use libp2p::kad::Config;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{ConnectionId, NetworkBehaviour, Swarm, SwarmEvent};
@@ -254,7 +255,7 @@ impl P2PClient {
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
             .with_tcp(
-                tcp::Config::default().port_reuse(true).nodelay(true),
+                tcp::Config::default(),
                 libp2p::noise::Config::new,
                 yamux::Config::default,
             )?
@@ -275,7 +276,7 @@ impl P2PClient {
                     .build()
                     .map_err(|msg| io::Error::new(io::ErrorKind::Other, msg))?;
 
-                let mut cfg = kad::Config::default();
+                let mut cfg = Config::new(StreamProtocol::new("/niketsu-kad/1"));
                 cfg.set_query_timeout(Duration::from_secs(5 * 60));
 
                 Ok(Behaviour {
@@ -333,7 +334,7 @@ impl P2PClient {
             "Starting client with peer id",
         );
 
-        let topic = gossipsub::IdentTopic::new(format!("{room}|{password}"));
+        let topic = gossipsub::IdentTopic::new(format!("{room}|{password}")); // TODO hash
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
 
         let (core_sender, core_receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -893,13 +894,25 @@ impl HostCommunicationHandler {
         if let Some(current_video) = self.select.video.clone() {
             for old_video in self.playlist.playlist.iter() {
                 if let Some(new_video) = new_playlist.playlist.get(new_position) {
+                    info!(?current_video, ?new_video, "Current video and old");
+                    if *new_video == current_video {
+                        // No need to select if current video is still in playlist
+                        info!("Current video is still in playlist");
+                        return None;
+                    }
+
                     if *old_video == current_video {
+                        // found the break point
+                        info!("Found break point :)");
                         break;
                     }
+
                     if *new_video == *old_video {
                         new_position += 1;
                     }
+
                     if new_position >= max_len {
+                        info!("At the end of the loop and you know it, lol");
                         new_position -= 1;
                         break;
                     }
@@ -907,12 +920,14 @@ impl HostCommunicationHandler {
             }
         }
 
-        let new_select = new_playlist.playlist.get(new_position).unwrap().clone();
-        return Some(SelectMsg {
-            actor: arcstr::format!("host"),
-            position: Duration::ZERO,
-            video: Some(new_select),
-        });
+        match new_playlist.playlist.get(new_position) {
+            Some(new_select) => Some(SelectMsg {
+                actor: arcstr::format!("host"),
+                position: Duration::ZERO,
+                video: Some(new_select.clone()),
+            }),
+            None => None,
+        }
     }
 
     fn handle_incoming_message(&mut self, peer_id: PeerId, mut msg: NiketsuMessage) -> Result<()> {
@@ -928,6 +943,7 @@ impl HostCommunicationHandler {
                 self.swarm.try_broadcast(self.topic.clone(), msg)?;
 
                 if let Some(select_msg) = self.select_next(&playlist) {
+                    self.select = select_msg.clone();
                     msg = select_msg.into();
                     self.message_sender.send(msg.clone())?;
                     self.swarm.try_broadcast(self.topic.clone(), msg)?;

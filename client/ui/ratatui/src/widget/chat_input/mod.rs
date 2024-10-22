@@ -1,7 +1,7 @@
 use ratatui::prelude::{Buffer, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, StatefulWidget, Widget};
+use ratatui::widgets::{Borders, StatefulWidget};
 use tui_textarea::Input;
 
 use super::TextAreaWrapper;
@@ -56,6 +56,6 @@ impl StatefulWidget for ChatInputWidget {
                 .title("Message here")
                 .style(state.style),
         );
-        input_block.widget().render(area, buf);
+        input_block.render(area, buf);
     }
 }
