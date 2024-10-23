@@ -1,9 +1,12 @@
 use std::time::Instant;
 
+use iced::advanced::widget::Operation;
+use iced::advanced::Widget;
+use iced::keyboard::key::Named;
+use iced::keyboard::Key;
 use iced::widget::scrollable::Id;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
-use iced::{Element, Length, Renderer, Theme};
-use iced_futures::core::Widget;
+use iced::{Element, Length, Renderer, Theme, Vector};
 use niketsu_core::file_database::fuzzy::{FuzzyResult, FuzzySearch};
 
 use self::message::{
@@ -11,7 +14,7 @@ use self::message::{
 };
 use super::overlay::{ElementOverlay, ElementOverlayConfig};
 use crate::message::Message;
-use crate::styling::{FileButton, ResultButton};
+use crate::styling::FileButton;
 
 pub mod message;
 
@@ -26,11 +29,11 @@ impl<'a> FileSearchWidget<'a> {
         let search_button = Button::new(
             Text::new("Files")
                 .width(Length::Fill)
-                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                .align_x(iced::alignment::Horizontal::Center),
         )
         .on_press(FileSearchWidgetMessage::from(Activate).into())
         .width(Length::Fill)
-        .style(ResultButton::ready());
+        .style(iced::widget::button::success);
 
         let mut results = vec![];
         for (index, file) in state.results.iter().enumerate() {
@@ -59,7 +62,7 @@ impl<'a> FileSearchWidget<'a> {
             .width(Length::Fill);
         let close_button = Button::new("Close")
             .on_press(FileSearchWidgetMessage::from(Close).into())
-            .style(ResultButton::not_ready());
+            .style(iced::widget::button::danger);
         let top_row = Row::new().push(input).push(close_button).spacing(5);
         let mut base = Column::new().push(top_row).padding(5);
         if !results.children().is_empty() {
@@ -77,21 +80,20 @@ impl<'a> FileSearchWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
-    fn width(&self) -> iced::Length {
-        self.button.as_widget().width()
-    }
-
-    fn height(&self) -> iced::Length {
-        self.button.as_widget().height()
+impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'a> {
+    fn size(&self) -> iced::Size<Length> {
+        self.button.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.button.as_widget().layout(renderer, limits)
+        self.button
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -120,7 +122,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn iced::advanced::widget::Operation<Message>,
+        operation: &mut dyn Operation,
     ) {
         self.button
             .as_widget()
@@ -176,24 +178,24 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
                 }
             }
             if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key_code,
-                modifiers: _,
+                key: Key::Named(named),
+                ..
             }) = event
             {
-                match key_code {
-                    iced::keyboard::KeyCode::Up => {
+                match named {
+                    Named::ArrowUp => {
                         let index = (self.state.cursor_index + self.state.results.len() - 1)
                             .checked_rem(self.state.results.len())
                             .unwrap_or_default();
                         shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
                     }
-                    iced::keyboard::KeyCode::Down => {
+                    Named::ArrowDown => {
                         let index = (self.state.cursor_index + 1)
                             .checked_rem(self.state.results.len())
                             .unwrap_or_default();
                         shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
                     }
-                    iced::keyboard::KeyCode::Enter => {
+                    Named::Enter => {
                         shell.publish(
                             FileSearchWidgetMessage::from(Insert {
                                 index: self.state.cursor_index,
@@ -201,7 +203,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
                             .into(),
                         );
                     }
-                    iced::keyboard::KeyCode::Escape => {
+                    Named::Escape => {
                         shell.publish(FileSearchWidgetMessage::from(Close).into());
                     }
                     _ => {}
@@ -230,18 +232,18 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for FileSearchWidget<'a> {
     fn overlay<'b>(
         &'b mut self,
         state: &'b mut iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'_>,
+        _layout: iced::advanced::Layout<'_>,
         _renderer: &Renderer,
-    ) -> Option<iced::advanced::overlay::Element<'b, Message, Renderer>> {
+        _translation: Vector,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
         if self.state.active {
-            return Some(iced::advanced::overlay::Element::new(
-                layout.position(),
-                Box::new(ElementOverlay {
+            return Some(iced::advanced::overlay::Element::new(Box::new(
+                ElementOverlay {
                     tree: &mut state.children[1],
                     content: &mut self.base,
                     config: ElementOverlayConfig::default(),
-                }),
-            ));
+                },
+            )));
         }
         None
     }

@@ -1,5 +1,5 @@
 use enum_dispatch::enum_dispatch;
-use iced::Command;
+use iced::Task;
 use niketsu_core::ui::UiModel;
 
 use super::MainView;
@@ -20,9 +20,9 @@ pub enum MainMessage {
 }
 
 impl MessageHandler for MainMessage {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
         MainMessageTrait::handle(self, &mut model.main, &model.model);
-        Command::none()
+        Task::none()
     }
 }
 

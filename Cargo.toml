@@ -30,6 +30,3 @@ tracing-appender = "0.2"
 libp2p = "0.54"
 bcrypt = "0.15"
 chrono = "0.4"
-
-[patch.crates-io]
-cosmic-text = { git = "https://github.com/sevenautumns/cosmic-text.git", branch = "main" }

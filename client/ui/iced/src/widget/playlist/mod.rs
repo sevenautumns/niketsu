@@ -1,11 +1,13 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use iced::advanced::widget::Operation;
 use iced::event::Status;
-use iced::keyboard::{KeyCode, Modifiers};
+use iced::keyboard::key::Named;
+use iced::keyboard::{Key, Modifiers};
 use iced::mouse::Cursor;
 use iced::widget::{Button, Column, Container, Rule, Text};
-use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use niketsu_core::file_database::FileStore;
 use niketsu_core::playlist::{Playlist, *};
 use tracing::trace;
@@ -215,7 +217,7 @@ impl<'a> PlaylistWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
+impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for PlaylistWidget<'a> {
     fn tag(&self) -> iced::advanced::widget::tree::Tag {
         iced::advanced::widget::tree::Tag::of::<InnerState>()
     }
@@ -224,20 +226,19 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         iced::advanced::widget::tree::State::new(InnerState::default())
     }
 
-    fn width(&self) -> Length {
-        self.base.as_widget().width()
-    }
-
-    fn height(&self) -> Length {
-        self.base.as_widget().height()
+    fn size(&self) -> Size<Length> {
+        self.base.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.base.as_widget().layout(renderer, limits)
+        self.base
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -281,7 +282,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn iced::advanced::widget::Operation<Message>,
+        operation: &mut dyn Operation,
     ) {
         self.base
             .as_widget()
@@ -329,18 +330,17 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         }
 
         match &event {
-            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key_code,
-                modifiers,
-            }) => {
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 _status = iced::event::Status::Captured;
                 // TODO arrow keys
-                if modifiers.is_empty() && *key_code == KeyCode::Delete {
+                if modifiers.is_empty() && *key == Key::Named(Named::Delete) {
                     self.deleted(shell)
                 }
                 // TODO use File input instead
-                if modifiers.contains(Modifiers::CTRL) && *key_code == KeyCode::V {
-                    if let Some(clipboard) = clipboard.read() {
+                if modifiers.contains(Modifiers::CTRL) && key.as_ref() == Key::Character("v") {
+                    if let Some(clipboard) =
+                        clipboard.read(iced::advanced::clipboard::Kind::Standard)
+                    {
                         shell.publish(
                             PlaylistWidgetMessage::from(Move {
                                 video: Video::from(clipboard.as_str()),
@@ -426,8 +426,11 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         state: &'b mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-    ) -> Option<iced::advanced::overlay::Element<'b, Message, Renderer>> {
-        self.base.as_widget_mut().overlay(state, layout, renderer)
+        _translation: Vector,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+        self.base
+            .as_widget_mut()
+            .overlay(state, layout, renderer, Vector::default()) // TODO check if vector is fine
     }
 }
 
@@ -513,21 +516,21 @@ impl<'a> From<PlaylistWidget<'a>> for Element<'a, Message> {
     }
 }
 
-pub struct InsertHint {
-    rule: Rule<Renderer>,
+pub struct InsertHint<'a> {
+    rule: Rule<'a, Theme>,
     pos: iced::Point,
 }
 
-impl Default for InsertHint {
+impl<'a> Default for InsertHint<'a> {
     fn default() -> Self {
         Self {
-            rule: Rule::horizontal(1).style(FileRuleTheme::theme()),
+            rule: Rule::horizontal(1).style(FileRuleTheme::theme),
             pos: iced::Point::default(),
         }
     }
 }
 
-impl InsertHint {
+impl<'a> InsertHint<'a> {
     pub fn new(pos: iced::Point) -> Self {
         Self {
             pos,
@@ -546,13 +549,16 @@ impl InsertHint {
         let limits = iced::advanced::layout::Limits::new(Size::ZERO, layout.bounds().size())
             .width(Length::Fill)
             .height(1);
-        let mut node = <iced::widget::Rule<Renderer> as iced::advanced::Widget<
-            Message,
-            Renderer,
-        >>::layout(&self.rule, renderer, &limits);
-        node.move_to(self.pos);
+        let mut node =
+            <iced::widget::Rule as iced::advanced::Widget<Message, Theme, Renderer>>::layout(
+                &self.rule,
+                &mut iced::advanced::widget::Tree::empty(),
+                renderer,
+                &limits,
+            );
+        node = node.move_to(self.pos);
         let layout = iced::advanced::Layout::new(&node);
-        <iced::widget::Rule<Renderer> as iced::advanced::Widget<Message, Renderer>>::draw(
+        <iced::widget::Rule as iced::advanced::Widget<Message, Theme, Renderer>>::draw(
             &self.rule,
             &iced::advanced::widget::Tree::empty(),
             renderer,

@@ -15,8 +15,7 @@ enum_dispatch.workspace = true
 once_cell.workspace = true
 directories.workspace = true
 serde_with = "3.0"
-iced = { version = "0.10", features = ["tokio", "advanced"] }
-iced_futures = { version = "0.7" }
+iced = { version = "0.13", features = ["tokio", "advanced"] }
 futures = "0.3"
 toml = "0.8"
 palette = "0.7"

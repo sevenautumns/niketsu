@@ -1,5 +1,5 @@
 use enum_dispatch::enum_dispatch;
-use iced::Command;
+use iced::Task;
 use niketsu_core::playlist::Video;
 use niketsu_core::ui::UiModel;
 use tracing::debug;
@@ -23,9 +23,9 @@ pub enum PlaylistWidgetMessage {
 }
 
 impl MessageHandler for PlaylistWidgetMessage {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
         PlaylistWidgetMessageTrait::handle(self, &mut model.playlist_widget_state, &model.model);
-        Command::none()
+        Task::none()
     }
 }
 

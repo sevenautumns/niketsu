@@ -1,5 +1,5 @@
 use enum_dispatch::enum_dispatch;
-use iced::Command;
+use iced::Task;
 use niketsu_core::ui::UiModel;
 
 use crate::message::{Message, MessageHandler};
@@ -18,9 +18,9 @@ pub enum DatabaseWidgetMessage {
 }
 
 impl MessageHandler for DatabaseWidgetMessage {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
         DatabaseWidgetMessageTrait::handle(self, &model.model);
-        Command::none()
+        Task::none()
     }
 }
 
