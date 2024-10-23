@@ -19,6 +19,7 @@ use super::widget::playlist::PlaylistWidgetState;
 use super::widget::rooms::UsersWidgetState;
 use super::widget::settings::SettingsWidgetState;
 use super::PreExistingTokioRuntime;
+use crate::config::IcedConfig;
 use crate::message::{KeyboardEvent, MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;
 
@@ -36,7 +37,7 @@ pub struct ViewModel {
 
 impl ViewModel {
     pub fn new(flags: Flags) -> Self {
-        let mut settings = SettingsWidgetState::new(flags.config.clone());
+        let mut settings = SettingsWidgetState::new(flags.config.clone(), flags.iced_config);
         if !flags.config.auto_connect {
             settings.activate();
         }
@@ -66,10 +67,6 @@ impl ViewModel {
 
     pub fn playing_video(&self) -> Option<Video> {
         self.model.playing_video.get_inner()
-    }
-
-    pub fn theme(&self) -> Theme {
-        Theme::Dark
     }
 
     pub fn get_rooms_widget_state(&self) -> &UsersWidgetState {
@@ -117,6 +114,7 @@ impl ViewModel {
 }
 
 pub struct Flags {
+    pub iced_config: IcedConfig,
     pub config: Config,
     pub ui_model: UiModel,
 }
@@ -135,6 +133,7 @@ impl View {
         let ui = UserInterface::new(&config);
         let flags = Flags {
             config,
+            iced_config: IcedConfig::load_or_default(),
             ui_model: ui.model().clone(),
         };
         let view = Box::pin(async {
@@ -164,7 +163,11 @@ impl View {
     }
 
     fn theme(&self) -> Theme {
-        self.view_model.theme()
+        self.view_model
+            .settings_widget_state
+            .iced_config()
+            .theme
+            .clone()
     }
 
     fn subscription(&self) -> Subscription<Message> {
