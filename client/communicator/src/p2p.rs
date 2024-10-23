@@ -536,7 +536,6 @@ impl CommunicationHandler for ClientCommunicationHandler {
 
                     if let Some(conn) = self.relay_conn {
                         info!("Established direct connection. Closing connection to relay");
-                        self.swarm.close_connection(conn);
                         self.swarm
                             .behaviour_mut()
                             .gossipsub
