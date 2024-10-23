@@ -9,7 +9,7 @@ use super::widget::chat::ChatWidget;
 use super::widget::database::DatabaseWidget;
 use super::widget::playlist::PlaylistWidget;
 use super::widget::rooms::RoomsWidget;
-use crate::styling::{ContainerBorder, ResultButton};
+use crate::styling::ContainerBorder;
 use crate::widget::file_search::FileSearchWidget;
 use crate::widget::settings::SettingsWidget;
 
@@ -34,17 +34,17 @@ impl MainView {
                 btn = Button::new(
                     Text::new("Ready")
                         .width(Length::Fill)
-                        .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        .align_x(iced::alignment::Horizontal::Center),
                 )
-                .style(ResultButton::ready())
+                .style(iced::widget::button::success)
             }
             false => {
                 btn = Button::new(
                     Text::new("Not Ready")
                         .width(Length::Fill)
-                        .horizontal_alignment(iced::alignment::Horizontal::Center),
+                        .align_x(iced::alignment::Horizontal::Center),
                 )
-                .style(ResultButton::not_ready())
+                .style(iced::widget::button::danger)
             }
         }
         btn = btn.on_press(MainMessage::from(ReadyButton).into());
@@ -72,9 +72,8 @@ impl MainView {
                         Container::new(RoomsWidget::new(
                             view_model.get_rooms_widget_state(),
                             &view_model.user(),
-                            &view_model.theme(),
                         ))
-                        .style(ContainerBorder::basic())
+                        .style(ContainerBorder::theme)
                         .padding(SPACING)
                         .width(Length::Fill)
                         .height(Length::Fill),
@@ -88,7 +87,7 @@ impl MainView {
                             .width(Length::Fill)
                             .id(Id::new("playlist")),
                         )
-                        .style(ContainerBorder::basic())
+                        .style(ContainerBorder::theme)
                         .padding(SPACING)
                         .height(Length::Fill),
                     )

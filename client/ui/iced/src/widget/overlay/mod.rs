@@ -1,10 +1,11 @@
-use iced::{BorderRadius, Color, Element, Padding, Point, Renderer, Size, Theme};
+use iced::advanced::widget::Operation;
+use iced::{Border, Color, Element, Point, Renderer, Size, Theme, Vector};
 
 use crate::message::Message;
 
 pub struct ElementOverlay<'a, 'b> {
     pub tree: &'b mut iced::advanced::widget::Tree,
-    pub content: &'b mut Element<'a, Message, Renderer>,
+    pub content: &'b mut Element<'a, Message>,
     pub config: ElementOverlayConfig,
 }
 
@@ -25,19 +26,18 @@ impl Default for ElementOverlayConfig {
     }
 }
 
-impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, 'b> {
-    fn layout(
-        &self,
-        renderer: &Renderer,
-        bounds: Size,
-        _position: Point,
-    ) -> iced_futures::core::layout::Node {
+impl<'a, 'b> iced::advanced::Overlay<Message, Theme, Renderer> for ElementOverlay<'a, 'b> {
+    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> iced::advanced::layout::Node {
+        let padding = self.config.min_padding * 2.0;
         let limits = iced::advanced::layout::Limits::new(Size::ZERO, bounds)
             .max_width(self.config.max_width.unwrap_or(f32::INFINITY))
             .max_height(self.config.max_height.unwrap_or(f32::INFINITY))
-            .pad(Padding::new(self.config.min_padding * 2.0));
-        let mut child = self.content.as_widget().layout(renderer, &limits);
-        child.align(
+            .shrink(Size::new(padding, padding));
+        let mut child = self
+            .content
+            .as_widget()
+            .layout(self.tree, renderer, &limits);
+        child = child.align(
             iced::Alignment::Center,
             iced::Alignment::Center,
             limits.max(),
@@ -68,9 +68,12 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, '
             renderer,
             iced::advanced::renderer::Quad {
                 bounds: layout.bounds().expand(5.0),
-                border_radius: BorderRadius::from(5.0),
-                border_width: 2.0,
-                border_color: theme.palette().text,
+                border: Border {
+                    color: theme.palette().text,
+                    width: 2.0,
+                    radius: 5.0.into(),
+                },
+                shadow: Default::default(),
             },
             Color {
                 a: 0.99,
@@ -93,7 +96,7 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, '
         &mut self,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn iced::advanced::widget::Operation<Message>,
+        operation: &mut dyn Operation,
     ) {
         self.content
             .as_widget()
@@ -137,9 +140,9 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, '
         &'c mut self,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-    ) -> Option<iced::advanced::overlay::Element<'c, Message, Renderer>> {
+    ) -> Option<iced::advanced::overlay::Element<'c, Message, Theme, Renderer>> {
         self.content
             .as_widget_mut()
-            .overlay(self.tree, layout, renderer)
+            .overlay(self.tree, layout, renderer, Vector::default()) // TODO check if default vector works
     }
 }

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use arcstr::ArcStr;
 use enum_dispatch::enum_dispatch;
-use iced::Command;
+use iced::Task;
 use niketsu_core::config::Config;
 use niketsu_core::log;
 use niketsu_core::room::RoomName;
@@ -37,9 +37,9 @@ pub enum SettingsWidgetMessage {
 }
 
 impl MessageHandler for SettingsWidgetMessage {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
         SettingsWidgetMessageTrait::handle(self, &mut model.settings_widget_state, &model.model);
-        Command::none()
+        Task::none()
     }
 }
 

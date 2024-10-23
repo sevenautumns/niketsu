@@ -1,7 +1,10 @@
+use iced::advanced::widget::Operation;
+use iced::keyboard::key::Named;
+use iced::keyboard::Key;
 use iced::widget::{
     row, Button, Checkbox, Column, Container, Row, Scrollable, Space, Text, TextInput,
 };
-use iced::{Alignment, Element, Length, Renderer, Theme};
+use iced::{Element, Length, Renderer, Theme, Vector};
 use niketsu_core::config::Config;
 
 use self::message::{
@@ -11,7 +14,7 @@ use self::message::{
 };
 use super::overlay::ElementOverlayConfig;
 use crate::message::Message;
-use crate::styling::{ColorButton, FileButton, ResultButton};
+use crate::styling::FileButton;
 use crate::widget::overlay::ElementOverlay;
 use crate::TEXT_SIZE;
 
@@ -31,11 +34,11 @@ impl<'a> SettingsWidget<'a> {
         let settings_button = Button::new(
             Text::new("Settings")
                 .width(Length::Fill)
-                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                .align_x(iced::alignment::Horizontal::Center),
         )
         .on_press(SettingsWidgetMessage::from(Activate).into())
         .width(Length::Fill)
-        .style(ResultButton::ready());
+        .style(iced::widget::button::success);
 
         Self {
             button: settings_button.into(),
@@ -56,14 +59,10 @@ impl<'a> SettingsWidget<'a> {
                 row!(
                     TextInput::new("Filepath", d)
                         .on_input(move |p| SettingsWidgetMessage::from(PathInput(i, p)).into()),
-                    Button::new(
-                        Container::new(Text::new("-"))
-                            .center_x()
-                            .width(Length::Fill)
-                    )
-                    .style(ColorButton::theme(Theme::Dark.palette().danger))
-                    .on_press(SettingsWidgetMessage::from(DeletePath(i)).into())
-                    .width(text_size * 2.0),
+                    Button::new(Container::new(Text::new("-")).center_x(Length::Fill))
+                        .style(iced::widget::button::danger)
+                        .on_press(SettingsWidgetMessage::from(DeletePath(i)).into())
+                        .width(text_size * 2.0),
                 )
                 .spacing(SPACING)
                 .into()
@@ -82,7 +81,7 @@ impl<'a> SettingsWidget<'a> {
                     .push(
                         Button::new("Close")
                             .on_press(SettingsWidgetMessage::from(Abort).into())
-                            .style(ResultButton::not_ready()),
+                            .style(iced::widget::button::danger),
                     )
                     .spacing(SPACING),
             )
@@ -113,20 +112,21 @@ impl<'a> SettingsWidget<'a> {
                                     .on_input(|u| {
                                         SettingsWidgetMessage::from(PasswordInput(u)).into()
                                     })
-                                    .password(),
+                                    .secure(true),
                             )
                             .push(TextInput::new("Username", &state.config.username).on_input(
                                 |u| SettingsWidgetMessage::from(UsernameInput(u.into())).into(),
                             ))
                             .push(
                                 Container::new(
-                                    Checkbox::new("", state.config.auto_connect, |b| {
-                                        SettingsWidgetMessage::from(AutoConnectCheckbox(b)).into()
-                                    })
-                                    .spacing(SPACING),
+                                    Checkbox::new("", state.config.auto_connect)
+                                        .on_toggle(|b| {
+                                            SettingsWidgetMessage::from(AutoConnectCheckbox(b))
+                                                .into()
+                                        })
+                                        .spacing(SPACING),
                                 )
-                                .center_y()
-                                .height(text_size + 15.0),
+                                .center_y(text_size + 15.0),
                             )
                             .spacing(SPACING)
                             .width(Length::Fill),
@@ -143,13 +143,9 @@ impl<'a> SettingsWidget<'a> {
                 Column::new()
                     .push(Column::with_children(file_paths).spacing(SPACING))
                     .push(
-                        Button::new(
-                            Container::new(Text::new("+"))
-                                .center_x()
-                                .width(Length::Fill),
-                        )
-                        .on_press(SettingsWidgetMessage::from(AddPath).into())
-                        .width(Length::Fill),
+                        Button::new(Container::new(Text::new("+")).center_x(Length::Fill))
+                            .on_press(SettingsWidgetMessage::from(AddPath).into())
+                            .width(Length::Fill),
                     )
                     .spacing(SPACING),
             )
@@ -160,7 +156,7 @@ impl<'a> SettingsWidget<'a> {
                         Button::new(
                             Text::new("Apply")
                                 .width(Length::Fill)
-                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                                .align_x(iced::alignment::Horizontal::Center),
                         )
                         .width(Length::Fill)
                         .on_press(SettingsWidgetMessage::from(ApplyClose).into()),
@@ -169,7 +165,7 @@ impl<'a> SettingsWidget<'a> {
                         Button::new(
                             Text::new("Connect")
                                 .width(Length::Fill)
-                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                                .align_x(iced::alignment::Horizontal::Center),
                         )
                         .width(Length::Fill)
                         .on_press(SettingsWidgetMessage::from(ConnectApplyClose).into()),
@@ -182,7 +178,7 @@ impl<'a> SettingsWidget<'a> {
                         Button::new(
                             Text::new("Apply & Save")
                                 .width(Length::Fill)
-                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                                .align_x(iced::alignment::Horizontal::Center),
                         )
                         .width(Length::Fill)
                         .on_press(SettingsWidgetMessage::from(ApplyCloseSave).into()),
@@ -191,47 +187,43 @@ impl<'a> SettingsWidget<'a> {
                         Button::new(
                             Text::new("Connect & Save")
                                 .width(Length::Fill)
-                                .horizontal_alignment(iced::alignment::Horizontal::Center),
+                                .align_x(iced::alignment::Horizontal::Center),
                         )
                         .width(Length::Fill)
                         .on_press(SettingsWidgetMessage::from(ConnectApplyCloseSave).into()),
                     )
                     .spacing(SPACING),
             )
-            .align_items(Alignment::Center)
+            .align_x(iced::alignment::Horizontal::Center)
             .width(Length::Fill)
             .max_width(MAX_WIDTH)
             .spacing(SPACING)
             .padding(SPACING);
 
         Container::new(Scrollable::new(
-            Container::new(column)
-                .padding(10)
-                .center_x()
-                .width(Length::Fill),
+            Container::new(column).padding(10).center_x(Length::Fill),
         ))
         .padding(SPACING)
         .max_width(MAX_WIDTH)
-        .center_y()
+        .center_y(Length::Shrink) // TODO maybe this needs to be Fill
         .into()
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
-    fn width(&self) -> iced::Length {
-        self.button.as_widget().width()
-    }
-
-    fn height(&self) -> iced::Length {
-        self.button.as_widget().height()
+impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for SettingsWidget<'a> {
+    fn size(&self) -> iced::Size<Length> {
+        self.button.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.button.as_widget().layout(renderer, limits)
+        self.button
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -260,7 +252,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn iced::advanced::widget::Operation<Message>,
+        operation: &mut dyn Operation,
     ) {
         self.button
             .as_widget()
@@ -316,13 +308,11 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
                 }
             }
             if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key_code,
-                modifiers: _,
+                key: Key::Named(Named::Escape),
+                ..
             }) = event
             {
-                if key_code == iced::keyboard::KeyCode::Escape {
-                    shell.publish(SettingsWidgetMessage::from(Abort).into());
-                }
+                shell.publish(SettingsWidgetMessage::from(Abort).into());
             }
         }
 
@@ -341,21 +331,21 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for SettingsWidget<'a> {
     fn overlay<'b>(
         &'b mut self,
         state: &'b mut iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'_>,
+        _layout: iced::advanced::Layout<'_>,
         _renderer: &Renderer,
-    ) -> Option<iced::advanced::overlay::Element<'b, Message, Renderer>> {
+        _translation: Vector,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
         if self.state.active {
-            return Some(iced::advanced::overlay::Element::new(
-                layout.position(),
-                Box::new(ElementOverlay {
+            return Some(iced::advanced::overlay::Element::new(Box::new(
+                ElementOverlay {
                     tree: &mut state.children[1],
                     content: &mut self.base,
                     config: ElementOverlayConfig {
                         max_width: Some(MAX_WIDTH),
                         ..Default::default()
                     },
-                }),
-            ));
+                },
+            )));
         }
         None
     }

@@ -1,6 +1,7 @@
 use enum_dispatch::enum_dispatch;
-use iced::keyboard::KeyCode;
-use iced::{Command, Event};
+use iced::keyboard::key::Named;
+use iced::keyboard::Key;
+use iced::Task;
 
 use super::main_window::message::MainMessage;
 use super::widget::chat::message::ChatWidgetMessage;
@@ -12,7 +13,7 @@ use crate::widget::settings::message::SettingsWidgetMessage;
 
 #[enum_dispatch]
 pub trait MessageHandler {
-    fn handle(self, model: &mut ViewModel) -> Command<Message>;
+    fn handle(self, model: &mut ViewModel) -> Task<Message>;
 }
 
 #[enum_dispatch(MessageHandler)]
@@ -20,7 +21,7 @@ pub trait MessageHandler {
 pub enum Message {
     Main(MainMessage),
     ModelChanged,
-    EventOccured,
+    KeyboardEvent,
     //
     SettingsWidget(SettingsWidgetMessage),
     PlaylistWidget(PlaylistWidgetMessage),
@@ -33,26 +34,25 @@ pub enum Message {
 pub struct ModelChanged;
 
 impl MessageHandler for ModelChanged {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
         model.update_from_inner_model();
-        Command::none()
+        Task::none()
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct EventOccured(pub Event);
+pub struct KeyboardEvent(pub iced::keyboard::Event);
 
-impl MessageHandler for EventOccured {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
-        if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
-            key_code,
+impl MessageHandler for KeyboardEvent {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
+        if let iced::keyboard::Event::KeyPressed {
             modifiers: _,
-        }) = self.0
+            key: Key::Named(Named::Space),
+            ..
+        } = self.0
         {
-            if key_code == KeyCode::Space {
-                model.model.user_ready_toggle();
-            }
+            model.model.user_ready_toggle();
         }
-        Command::none()
+        Task::none()
     }
 }

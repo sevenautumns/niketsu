@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use iced::advanced::widget::Operation;
 use iced::event::Status;
 use iced::mouse::Cursor;
 use iced::widget::scrollable::{Id, RelativeOffset};
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
-use iced::{Command, Element, Length, Rectangle, Renderer, Theme};
+use iced::{Element, Length, Rectangle, Renderer, Task, Theme};
 use niketsu_core::ui::{MessageSource, PlayerMessage};
 
 use self::message::{ChatWidgetMessage, MessageInput, ScrollMessages, SendMessage};
@@ -27,14 +28,14 @@ impl<'a> ChatWidget<'a> {
             .width(Length::Fill)
             .width(Length::Fill);
 
-        let msgs = state.messages.iter().map(|m| m.to_text()).collect();
+        let msgs: Vec<_> = state.messages.iter().map(|m| m.to_text()).collect();
         let messages = Container::new(
             Scrollable::new(Column::with_children(msgs))
                 .width(Length::Fill)
                 .on_scroll(|o| ChatWidgetMessage::from(ScrollMessages(o.relative_offset())).into())
                 .id(Id::new("messages")),
         )
-        .style(ContainerBorder::basic())
+        .style(ContainerBorder::theme)
         .padding(5.0)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -56,21 +57,20 @@ impl<'a> ChatWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for ChatWidget<'a> {
-    fn width(&self) -> Length {
-        self.base.as_widget().width()
-    }
-
-    fn height(&self) -> Length {
-        self.base.as_widget().height()
+impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for ChatWidget<'a> {
+    fn size(&self) -> iced::Size<Length> {
+        self.base.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.base.as_widget().layout(renderer, limits)
+        self.base
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -107,7 +107,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for ChatWidget<'a> {
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn iced::advanced::widget::Operation<Message>,
+        operation: &mut dyn Operation,
     ) {
         self.base
             .as_widget()
@@ -187,20 +187,20 @@ impl ChatWidgetState {
         self.messages = messages;
     }
 
-    pub fn snap(&self) -> Command<Message> {
+    pub fn snap(&self) -> Task<Message> {
         if self.offset.y == 1.0 {
             return iced::widget::scrollable::snap_to(Id::new("messages"), self.offset);
         }
-        Command::none()
+        Task::none()
     }
 }
 
 pub trait PlayerMessageExt {
-    fn to_text<'a>(&self) -> Element<'a, Message, Renderer>;
+    fn to_text<'a>(&self) -> Element<'a, Message>;
 }
 
 impl PlayerMessageExt for PlayerMessage {
-    fn to_text<'a>(&self) -> Element<'a, Message, Renderer> {
+    fn to_text<'a>(&self) -> Element<'a, Message> {
         let when = self.timestamp.format("[%H:%M:%S]").to_string();
         let message = &self.message;
 
@@ -211,8 +211,7 @@ impl PlayerMessageExt for PlayerMessage {
             MessageSource::UserAction(_) => format!("{when} {message}"),
         };
 
-        Container::new(Text::new(text))
-            .style(MessageColor::theme(self.level))
+        Container::new(Text::new(text).style(MessageColor::theme(self.level)))
             .width(Length::Fill)
             .into()
     }
