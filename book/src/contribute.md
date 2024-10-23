@@ -1,10 +1,10 @@
 # Contribute to Niketsu 🚀
 
-Level up your game—be part of something epic. 🌟
+> Level up your game—be part of something epic. 🌟
 
 ## Code Slingers Welcome 🛠 
 
-Got the chops in Rust or Go? Perfect. Your expertise can elevate this project to the next stratosphere. 🌌
+Got the chops in Rust? Perfect. Your expertise can elevate this project to the next stratosphere. 🌌
 
 To start:
 ```bash
@@ -29,16 +29,11 @@ Submit a [feature request](https://github.com/sevenautumns/niketsu/issues/new?te
 Got code? Make a PR. Guidelines:
 
 1. Fork the repo 🍴
-2. Branch off `develop` 🌿
+2. Branch off 🌿
 3. Commit your changes 📝
-4. PR to `develop` ➡️
-  
-```bash
-git checkout -b feature-foo
-git add .
-git commit -m "Implement foo"
-git push origin feature-foo
-```
+4. PR to `main` ➡️
+
+Please follow [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) for commit messages.
 
 ## Peer Review Paladins 👀
 
@@ -53,6 +48,7 @@ Help write the gospel. Update wikis, READMEs, and inline docs. 🖋
 Join the convo. Discuss, enlighten, engage. 
 Currently, restricted to [Github](https://github.com/sevenautumns/niketsu).
 
----
+<br>
+<hr>
 
 Let's build something legendary. Welcome to the guild. 🛡️

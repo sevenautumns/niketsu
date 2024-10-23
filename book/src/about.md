@@ -4,7 +4,7 @@ Find us on [GitHub](https://github.com/sevenautumns/niketsu/) or dive into our s
 
 ## The Vision 🎯
 
-Unleash the full potential of social video streaming with Niketsu, your go-to platform for revolutionary video sync experiences. 🌠 We're not just another startup; we're an open-source alliance committed to demolishing boundaries and setting benchmarks. 
+Unleash the full potential of social video streaming with Niketsu, your go-to platform for revolutionary video sync experiences. 🌠 We're not just another startup; we're an open-source alliance committed to demolishing boundaries and setting benchmarks (and we are most definitely not a startup). 
 
 ## Why Niketsu? 🚀
 
@@ -16,7 +16,7 @@ Unleash the full potential of social video streaming with Niketsu, your go-to pl
 
 ## Tech-Savvy Delight ⚙️
 
-Behind the scenes, we're a pack of tech ninjas hyper-focused on high-performance, low-latency video streaming. Whether you're into binge-watching or social streaming, expect zero glitches.  📺✨
+Behind the scenes, we're a pack of tech ninjas hyper-focused on high-performance, low-latency video streaming. Whether you're into binge-watching or social streaming, expect zero glitches (and be surprised).  📺✨
 
 ## Connect & Contribute 🤝
 
@@ -37,4 +37,7 @@ Sharing is caring. Upvote us on socials, smash that follow button, and ring that
 
 Shoutout to [egonelbre](https://github.com/egonelbre/gophers) for the dope Gopher vectors. Art fuels code. 🖌️👨‍🎨
 
-Let's get disruptive. 🤘
+<br>
+<hr>
+
+**Let's get disruptive.** 🤘

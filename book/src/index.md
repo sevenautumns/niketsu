@@ -18,11 +18,7 @@ Head to our [Download](./downloads.md) page to get started or [build](./building
 
 For a quick guide, visit our [Usage Page](./usage.md), or explore our in-depth wiki via the sidebar.
 
-## Join the Public Server Party 🎈
-
-Don't want to host? No worries! Connect instantly to one of our public servers and let the good times roll.
-
-## Latest Release 🚀
+## Join the Party 🎈
 
 We're thrilled to announce the latest update to **niketsu**, featuring groundbreaking **Peer-to-Peer (P2P) functionality**. This new capability transforms your viewing experience, allowing you to connect directly with other users, bypassing the need for centralized servers. Enjoy faster, more reliable video synchronization, even with large groups.
 
@@ -39,6 +35,9 @@ We're thrilled to announce the latest update to **niketsu**, featuring groundbre
   
 - **Frontend Flexibility**: Choose from our high-speed Rust clients, be it [ratatui](https://github.com/ratatui-org/ratatui) for TUI or [iced](https://github.com/iced-rs/iced) for GUI. 🛠️
 
-- **Backend Brilliance**: Our server architecture is optimized for both cost-efficiency and scalability, all thanks to Go. 🌐
+- **Backend Brilliance**: Our relay infractructure is optimized for both cost-efficiency and scalability, all thanks to Rust. 🌐
+
+<br>
+<hr>
 
 **Don't just watch — experience. niketsu is not just another product; it's your social viewing revolution.** 🌈
