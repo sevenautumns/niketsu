@@ -66,7 +66,7 @@ All you need, conveniently packed into one shell.
 
 #### Running the Beast
 
-- **Server**: `cargo run --release --bin niketsu-relay`
+- **Relay-Server**: `cargo run --release --bin niketsu-relay`
 - **Client**: `cargo run --release --bin niketsu`
 
 #### Examples for Debugging (Client only)
@@ -77,7 +77,10 @@ All you need, conveniently packed into one shell.
 
 Want even more control? Utilize our `flake.nix` to tailor your build.
 
+- **Relay-Server**: `nix build .#niketsu-relay`
 - **Client**: `nix build .#niketsu-client`
-- **Server**: `nix build .#niketsu-relay`
+
+<br>
+<hr>
 
 **Whatever your tech stack, niketsu seamlessly integrates, empowering you to create the ultimate shared viewing experience. Build it your way, run it your way.** 🌠
