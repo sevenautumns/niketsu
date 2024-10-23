@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use arcstr::ArcStr;
 use enum_dispatch::enum_dispatch;
-use iced::Task;
+use iced::{Task, Theme};
 use niketsu_core::config::Config;
 use niketsu_core::log;
 use niketsu_core::room::RoomName;
@@ -34,6 +34,7 @@ pub enum SettingsWidgetMessage {
     RoomInput,
     PasswordInput,
     AutoConnectCheckbox,
+    ThemeChange,
 }
 
 impl MessageHandler for SettingsWidgetMessage {
@@ -183,5 +184,14 @@ pub struct AutoConnectCheckbox(pub bool);
 impl SettingsWidgetMessageTrait for AutoConnectCheckbox {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
         state.config.auto_connect = self.0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ThemeChange(pub Theme);
+
+impl SettingsWidgetMessageTrait for ThemeChange {
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.iced_config.theme = self.0;
     }
 }
