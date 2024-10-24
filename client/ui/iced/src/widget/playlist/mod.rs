@@ -20,6 +20,7 @@ pub mod message;
 
 // TODO make configurable
 pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+pub const PLAYLIST_SPACING: f32 = 7.0;
 
 pub struct PlaylistWidget<'a> {
     base: Element<'a, Message>,
@@ -54,7 +55,10 @@ impl<'a> PlaylistWidget<'a> {
 
         Self {
             state,
-            base: Column::with_children(file_btns).width(Length::Fill).into(),
+            base: Column::with_children(file_btns)
+                .spacing(PLAYLIST_SPACING)
+                .width(Length::Fill)
+                .into(),
         }
     }
 
@@ -264,6 +268,11 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for PlaylistWidget<'a>
         if self.state.interaction.is_press() {
             let inner_state = state.state.downcast_ref::<InnerState>();
             if let Some((_, pos)) = self.closest_index(layout, inner_state.cursor_position) {
+                // Move point up by half the spacing
+                let pos = Point {
+                    y: pos.y - (PLAYLIST_SPACING / 2.0),
+                    ..pos
+                };
                 InsertHint::new(pos).draw(renderer, theme, style, layout, cursor)
             }
         }
