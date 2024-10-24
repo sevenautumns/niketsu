@@ -6,6 +6,7 @@ use arcstr::ArcStr;
 use async_trait::async_trait;
 use chrono::Local;
 use enum_dispatch::enum_dispatch;
+use multiaddr::Multiaddr;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
@@ -29,7 +30,7 @@ pub trait CommunicatorTrait: std::fmt::Debug + Send {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EndpointInfo {
-    pub addr: String,
+    pub addr: Multiaddr,
     pub room: RoomName,
     pub password: String,
 }
@@ -37,7 +38,7 @@ pub struct EndpointInfo {
 impl Display for EndpointInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO rework the interiors ?
-        f.write_str(&self.addr)
+        self.addr.fmt(f)
     }
 }
 

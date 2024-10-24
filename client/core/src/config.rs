@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use arcstr::ArcStr;
+use multiaddr::{Multiaddr, PeerId, Protocol};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use tracing::{debug, warn};
@@ -22,7 +23,7 @@ pub struct Config {
     #[serde(default = "bootstrap_port", skip_serializing_if = "is_default_port")]
     pub port: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub peer_id: Option<String>,
+    pub peer_id: Option<PeerId>,
     #[serde(default)]
     pub room: RoomName,
     #[serde(default)]
@@ -78,14 +79,19 @@ impl Config {
         }
     }
 
-    pub fn addr(&self) -> String {
+    pub fn addr(&self) -> Multiaddr {
         if let Some(peer_id) = self.peer_id.clone() {
-            format!(
-                "/dns/{}/udp/{}/quic-v1/p2p/{}",
-                self.relay, self.port, peer_id
-            )
+            Multiaddr::empty()
+                .with(Protocol::Dns(self.relay.as_str().into()))
+                .with(Protocol::Udp(self.port))
+                .with(Protocol::QuicV1)
+                .with_p2p(peer_id)
+                .unwrap_or_else(|a| a)
         } else {
-            format!("/dns/{}/udp/{}/quic-v1", self.relay, self.port)
+            Multiaddr::empty()
+                .with(Protocol::Dns(self.relay.as_str().into()))
+                .with(Protocol::Udp(self.port))
+                .with(Protocol::QuicV1)
         }
     }
 

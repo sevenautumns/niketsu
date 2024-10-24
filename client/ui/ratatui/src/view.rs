@@ -16,6 +16,7 @@ use crossterm::terminal::{
 use futures::future::OptionFuture;
 use futures::{Future, StreamExt};
 use gag::Gag;
+use multiaddr::Multiaddr;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::playlist::Video;
@@ -546,7 +547,7 @@ impl RatatuiView {
         _ = self.config.save();
     }
 
-    fn handle_server_change(&mut self, addr: String, password: String, room: RoomName) {
+    fn handle_server_change(&mut self, addr: Multiaddr, password: String, room: RoomName) {
         self.model.change_server(ServerChange {
             addr,
             password,
