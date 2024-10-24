@@ -463,6 +463,7 @@ impl UiModel {
 
     pub fn change_playlist(&self, playlist: Playlist) {
         trace!("change playlist");
+        self.playlist.set(playlist.clone());
         let res = self
             .events
             .send(UserInterfaceEvent::PlaylistChange(PlaylistChange {
