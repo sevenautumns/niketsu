@@ -6,7 +6,7 @@ use iced::keyboard::key::Named;
 use iced::keyboard::Key;
 use iced::widget::scrollable::Id;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
-use iced::{Element, Length, Renderer, Theme, Vector};
+use iced::{Element, Event, Length, Renderer, Theme, Vector};
 use niketsu_core::file_database::fuzzy::{FuzzyResult, FuzzySearch};
 
 use self::message::{
@@ -236,12 +236,26 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'
         _renderer: &Renderer,
         _translation: Vector,
     ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+        // Ignore Captures if the `Enter` key was pressed
+        let event_status = Box::new(|event, status| {
+            if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: Key::Named(Named::Enter),
+                ..
+            }) = event
+            {
+                return iced::event::Status::Ignored;
+            }
+            status
+        });
         if self.state.active {
             return Some(iced::advanced::overlay::Element::new(Box::new(
                 ElementOverlay {
                     tree: &mut state.children[1],
                     content: &mut self.base,
-                    config: ElementOverlayConfig::default(),
+                    config: ElementOverlayConfig {
+                        event_status,
+                        ..Default::default()
+                    },
                 },
             )));
         }

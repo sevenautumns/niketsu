@@ -82,10 +82,18 @@ pub struct Click {
 
 impl FileSearchWidgetMessageTrait for Click {
     fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Task<Message> {
+        let double_click = !MAX_DOUBLE_CLICK_INTERVAL
+            .saturating_sub(state.last_click.map(|i| i.elapsed()).unwrap_or_default())
+            .is_zero();
+
         if state.cursor_index != self.index || state.last_click.is_none() {
             Select::from(self).handle(state, model)
-        } else {
+        } else if double_click {
+            state.last_click = None;
             Insert::from(self).handle(state, model)
+        } else {
+            state.last_click = None;
+            Task::none()
         }
     }
 }
@@ -122,19 +130,10 @@ pub struct Insert {
 
 impl FileSearchWidgetMessageTrait for Insert {
     fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Task<Message> {
-        if let Some(last) = state.last_click {
-            state.last_click = None;
-            if MAX_DOUBLE_CLICK_INTERVAL
-                .saturating_sub(last.elapsed())
-                .is_zero()
-            {
-                return Task::none();
-            }
-            if let Some(video) = state.results.get(state.cursor_index) {
-                let mut playlist = model.playlist.get_inner();
-                playlist.push((&video.entry.file_name_arc()).into());
-                model.change_playlist(playlist)
-            }
+        if let Some(video) = state.results.get(state.cursor_index) {
+            let mut playlist = model.playlist.get_inner();
+            playlist.push((&video.entry.file_name_arc()).into());
+            model.change_playlist(playlist)
         }
         Task::none()
     }

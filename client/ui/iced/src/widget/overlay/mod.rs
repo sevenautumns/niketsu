@@ -9,11 +9,11 @@ pub struct ElementOverlay<'a, 'b> {
     pub config: ElementOverlayConfig,
 }
 
-#[derive(Debug, Clone)]
 pub struct ElementOverlayConfig {
     pub max_height: Option<f32>,
     pub max_width: Option<f32>,
     pub min_padding: f32,
+    pub event_status: Box<dyn Fn(iced::Event, iced::event::Status) -> iced::event::Status>,
 }
 
 impl Default for ElementOverlayConfig {
@@ -22,7 +22,18 @@ impl Default for ElementOverlayConfig {
             max_height: None,
             max_width: None,
             min_padding: 20.0,
+            event_status: Box::new(|_, status| status),
         }
+    }
+}
+
+impl std::fmt::Debug for ElementOverlayConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ElementOverlayConfig")
+            .field("max_height", &self.max_height)
+            .field("max_width", &self.max_width)
+            .field("min_padding", &self.min_padding)
+            .finish()
     }
 }
 
@@ -112,16 +123,17 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Theme, Renderer> for ElementOverla
         clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, Message>,
     ) -> iced::event::Status {
-        self.content.as_widget_mut().on_event(
+        let status = self.content.as_widget_mut().on_event(
             self.tree,
-            event,
+            event.clone(),
             layout,
             cursor,
             renderer,
             clipboard,
             shell,
             &layout.bounds(),
-        )
+        );
+        (self.config.event_status)(event, status)
     }
 
     fn mouse_interaction(
