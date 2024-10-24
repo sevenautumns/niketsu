@@ -80,7 +80,7 @@ impl Config {
     }
 
     pub fn addr(&self) -> Multiaddr {
-        if let Some(peer_id) = self.peer_id.clone() {
+        if let Some(peer_id) = self.peer_id {
             Multiaddr::empty()
                 .with(Protocol::Dns(self.relay.as_str().into()))
                 .with(Protocol::Udp(self.port))
