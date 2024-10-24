@@ -28,6 +28,9 @@ pub struct PlaylistWidgetState {
 impl PlaylistWidgetState {
     pub fn set_playlist(&mut self, playlist: Playlist) {
         self.playlist = playlist;
+        if !self.playlist.is_empty() && self.list_state.selected().is_none() {
+            self.list_state.select(Some(0));
+        }
     }
 
     pub fn set_playing_video(&mut self, playing_video: Option<Video>) {
@@ -129,27 +132,27 @@ impl StatefulWidget for PlaylistWidget {
                 .playlist
                 .iter()
                 .take(index)
-                .map(|t| mark_selection(t, state, Color::Gray))
+                .map(|t| color_selection(t, state, Color::Gray, Color::Yellow))
                 .chain(
                     state
                         .playlist
                         .iter()
                         .skip(index)
                         .take(state.selection_offset + 1)
-                        .map(|t| mark_selection(t, state, Color::Cyan)),
+                        .map(|t| color_selection(t, state, Color::Cyan, Color::Cyan)),
                 )
                 .chain(
                     state
                         .playlist
                         .iter()
                         .skip(index + state.selection_offset + 1)
-                        .map(|t| mark_selection(t, state, Color::Gray)),
+                        .map(|t| color_selection(t, state, Color::Gray, Color::Yellow)),
                 )
                 .collect(),
             None => state
                 .playlist
                 .iter()
-                .map(|t| mark_selection(t, state, Color::Gray))
+                .map(|t| color_selection(t, state, Color::Gray, Color::Yellow))
                 .collect(),
         };
 
@@ -181,17 +184,18 @@ impl StatefulWidget for PlaylistWidget {
     }
 }
 
-fn mark_selection<'a>(
+fn color_selection<'a>(
     video: &'a Video,
     state: &PlaylistWidgetState,
     default_color: Color,
+    hightlight_color: Color,
 ) -> ListItem<'a> {
     if let Some(playing_video) = &state.playing_video {
         if video.eq(playing_video) {
             let video_text = format!("> {}", video.as_str());
             return ListItem::new(vec![Line::styled(
                 video_text,
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(hightlight_color),
             )]);
         }
     }

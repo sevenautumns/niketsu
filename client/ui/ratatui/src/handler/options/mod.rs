@@ -35,6 +35,14 @@ impl EventHandler for Options {
                         view.app.users_widget_state.toggle_ready();
                         view.app.reset_overlay();
                     }
+                    KeyCode::Char('u') => {
+                        view.model.start_db_update();
+                        view.app.reset_overlay();
+                    }
+                    KeyCode::Char('s') => {
+                        view.model.stop_db_update();
+                        view.app.reset_overlay();
+                    }
                     _ => {
                         view.app.reset_overlay();
                     }

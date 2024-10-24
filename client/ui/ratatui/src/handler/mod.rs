@@ -5,7 +5,6 @@ use ratatui::style::Style;
 use self::chat::Chat;
 use self::chat_input::ChatInput;
 use self::command::Command;
-use self::database::Database;
 use self::fuzzy_search::FuzzySearch;
 use self::help::Help;
 use self::login::Login;
@@ -18,7 +17,6 @@ use crate::view::{Mode, RatatuiView};
 pub(crate) mod chat;
 pub(crate) mod chat_input;
 pub(crate) mod command;
-pub(crate) mod database;
 pub(crate) mod fuzzy_search;
 pub(crate) mod help;
 pub(crate) mod login;
@@ -60,7 +58,6 @@ pub trait MainEventHandler: EventHandler {
 pub enum State {
     Chat(Chat),
     ChatInput(ChatInput),
-    Database(Database),
     Users(Users),
     Playlist(Playlist),
 }

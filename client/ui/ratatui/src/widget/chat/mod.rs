@@ -72,13 +72,15 @@ impl ChatWidgetState {
 
     pub fn update_cursor_latest(&mut self) {
         if let Some(index) = self.list_state.selected() {
-            if index > self.messages.len().saturating_sub(5) {
+            if index >= self.messages.len().saturating_sub(5) {
                 self.list_state
                     .select(Some(self.messages.len().saturating_sub(1)));
                 self.vertical_scroll_state = self
                     .vertical_scroll_state
                     .position(self.messages.len().saturating_sub(1));
             }
+        } else if !self.messages.is_empty() {
+            self.jump_end();
         }
     }
 }
