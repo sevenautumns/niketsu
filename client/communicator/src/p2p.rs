@@ -534,13 +534,11 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 Ok(res) => {
                     self.host_conn = Some(res);
 
-                    if let Some(conn) = self.relay_conn {
-                        info!("Established direct connection. Closing connection to relay");
-                        self.swarm
-                            .behaviour_mut()
-                            .gossipsub
-                            .add_explicit_peer(&remote_peer_id);
-                    }
+                    info!("Established direct connection. Closing connection to relay");
+                    self.swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .add_explicit_peer(&remote_peer_id);
                 }
                 Err(error) => {
                     error!(%remote_peer_id, %error, "Direct connection (hole punching) failed");

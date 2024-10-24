@@ -2,7 +2,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use niketsu_core::playlist::Video;
 use ratatui::style::Style;
 
-use super::chat_input::ChatInput;
+use super::chat::Chat;
 use super::users::Users;
 use super::{MainEventHandler, State};
 use crate::handler::EventHandler;
@@ -77,7 +77,7 @@ impl EventHandler for Playlist {
 impl MainEventHandler for Playlist {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
-            KeyCode::Left => view.transition(State::from(ChatInput {})),
+            KeyCode::Left => view.transition(State::from(Chat {})),
             KeyCode::Up => view.transition(State::from(Users {})),
             _ => {}
         }

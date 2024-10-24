@@ -49,7 +49,7 @@ impl FuzzySearch {
                 })
                 .collect::<Result<Vec<_>>>()
                 .unwrap_or_default();
-            scores.par_sort_unstable_by_key(|r| -r.score);
+            scores.par_sort_by_key(|r| -r.score);
             scores
         })
     }
