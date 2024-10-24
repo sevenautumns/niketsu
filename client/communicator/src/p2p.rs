@@ -1,3 +1,8 @@
+use std::collections::{BTreeSet, HashMap};
+use std::fmt;
+use std::str::FromStr;
+use std::time::Duration;
+
 use anyhow::{bail, Context, Result};
 use arcstr::ArcStr;
 use async_trait::async_trait;
@@ -26,10 +31,6 @@ use niketsu_core::user::UserStatus;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha256::digest;
-use std::collections::{BTreeSet, HashMap};
-use std::fmt;
-use std::str::FromStr;
-use std::time::Duration;
 use tokio::{io, spawn};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -246,7 +247,11 @@ pub(crate) struct P2PClient {
 }
 
 impl P2PClient {
-    pub(crate) async fn new(relay: String, room: RoomName, password: String) -> Result<P2PClient> {
+    pub(crate) async fn new(
+        relay_addr: Multiaddr,
+        room: RoomName,
+        password: String,
+    ) -> Result<P2PClient> {
         let keypair = KEYPAIR.clone();
         let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
         quic_config.handshake_timeout = Duration::from_secs(10);
@@ -320,8 +325,7 @@ impl P2PClient {
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
             .build();
 
-        debug!(%relay, "Attempting to connect to relay");
-        let relay_addr = Multiaddr::from_str(&relay).expect("Relay address could not be parsed");
+        debug!(%relay_addr, "Attempting to connect to relay");
 
         let room2 = room.clone();
         let playlist_handler =

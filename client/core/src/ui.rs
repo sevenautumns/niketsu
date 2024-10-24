@@ -7,6 +7,7 @@ use arcstr::ArcStr;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use enum_dispatch::enum_dispatch;
+use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
 use tracing::{trace, Level};
@@ -98,7 +99,7 @@ impl EventHandler for VideoChange {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerChange {
-    pub addr: String,
+    pub addr: Multiaddr,
     pub password: String,
     pub room: RoomName,
 }
@@ -477,6 +478,7 @@ mod tests {
     use std::time::Duration;
 
     use mockall::predicate::{always, eq};
+    use multiaddr::Protocol;
     use tokio::sync::Notify;
 
     use super::*;
@@ -578,7 +580,9 @@ mod tests {
         let file_database = MockFileDatabaseTrait::default();
 
         let user = arcstr::literal!("max");
-        let addr = String::from("duckduckgo.com");
+        let addr = Multiaddr::empty()
+            .with(Protocol::Dns("duckduckgo.com".into()))
+            .with(Protocol::Tcp(6655));
         let password = String::from("passwd");
         let room = arcstr::literal!("room1");
         let config = Config {
@@ -925,7 +929,9 @@ mod tests {
             notify: notify.clone(),
         };
 
-        let addr = String::from("duckduckgo.com");
+        let addr = Multiaddr::empty()
+            .with(Protocol::Dns("duckduckgo.com".into()))
+            .with(Protocol::Tcp(6655));
         let password = String::from("passwd");
         let room = arcstr::literal!("room1");
         let request = ServerChange {
