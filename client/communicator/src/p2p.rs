@@ -1,6 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
-use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -920,14 +919,11 @@ impl HostCommunicationHandler {
             }
         }
 
-        match new_playlist.playlist.get(new_position) {
-            Some(new_select) => Some(SelectMsg {
+        new_playlist.playlist.get(new_position).map(|new_select| SelectMsg {
                 actor: arcstr::format!("host"),
                 position: Duration::ZERO,
                 video: Some(new_select.clone()),
-            }),
-            None => None,
-        }
+            })
     }
 
     fn handle_incoming_message(&mut self, peer_id: PeerId, mut msg: NiketsuMessage) -> Result<()> {
