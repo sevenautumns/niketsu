@@ -2,8 +2,8 @@ use iced::advanced::widget::Operation;
 use iced::keyboard::key::Named;
 use iced::keyboard::Key;
 use iced::widget::{
-    button, checkbox, column, pick_list, row, text, text_input, Button, Column,
-    Container, Scrollable, Space, Text,
+    button, checkbox, column, pick_list, row, text, text_input, Button, Column, Container,
+    Scrollable, Space, Text,
 };
 use iced::{Element, Length, Renderer, Theme, Vector};
 use message::ThemeChange;

@@ -6,7 +6,8 @@ use iced::event::Status;
 use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
 use iced::mouse::Cursor;
-use iced::widget::{Button, Column, Container, Rule, Text};
+use iced::widget::text::Wrapping;
+use iced::widget::{button, text, Column, Rule};
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use niketsu_core::file_database::FileStore;
 use niketsu_core::playlist::{Playlist, *};
@@ -20,6 +21,7 @@ pub mod message;
 
 // TODO make configurable
 pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+pub const PLAYLIST_SPACING: f32 = 2.0;
 
 pub struct PlaylistWidget<'a> {
     base: Element<'a, Message>,
@@ -44,9 +46,9 @@ impl<'a> PlaylistWidget<'a> {
                 }
             };
             file_btns.push(
-                Button::new(Container::new(Text::new(name)).padding(2))
-                    .padding(0)
-                    .width(Length::Fill)
+                button(text(name.clone()).wrapping(Wrapping::None))
+                    .clip(true)
+                    .padding(2)
                     .style(FileButton::theme(pressed, available))
                     .into(),
             );
@@ -54,7 +56,11 @@ impl<'a> PlaylistWidget<'a> {
 
         Self {
             state,
-            base: Column::with_children(file_btns).width(Length::Fill).into(),
+            base: Column::with_children(file_btns)
+                .spacing(PLAYLIST_SPACING)
+                .clip(true)
+                // .width(Length::Fill)
+                .into(),
         }
     }
 
@@ -264,6 +270,11 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for PlaylistWidget<'a>
         if self.state.interaction.is_press() {
             let inner_state = state.state.downcast_ref::<InnerState>();
             if let Some((_, pos)) = self.closest_index(layout, inner_state.cursor_position) {
+                // Move point up by half the spacing
+                let pos = Point {
+                    y: pos.y - (PLAYLIST_SPACING / 2.0),
+                    ..pos
+                };
                 InsertHint::new(pos).draw(renderer, theme, style, layout, cursor)
             }
         }
@@ -426,11 +437,11 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for PlaylistWidget<'a>
         state: &'b mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-        _translation: Vector,
+        translation: Vector,
     ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
         self.base
             .as_widget_mut()
-            .overlay(state, layout, renderer, Vector::default()) // TODO check if vector is fine
+            .overlay(&mut state.children[0], layout, renderer, translation)
     }
 }
 

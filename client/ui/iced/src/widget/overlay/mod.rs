@@ -155,6 +155,6 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Theme, Renderer> for ElementOverla
     ) -> Option<iced::advanced::overlay::Element<'c, Message, Theme, Renderer>> {
         self.content
             .as_widget_mut()
-            .overlay(self.tree, layout, renderer, Vector::default()) // TODO check if default vector works
+            .overlay(self.tree, layout, renderer, Vector::default())
     }
 }
