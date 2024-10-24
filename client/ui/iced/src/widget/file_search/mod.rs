@@ -239,11 +239,13 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'
         // Ignore Captures if the `Enter` key was pressed
         let event_status = Box::new(|event, status| {
             if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key: Key::Named(Named::Enter),
+                key: Key::Named(named),
                 ..
             }) = event
             {
-                return iced::event::Status::Ignored;
+                if matches!(named, Named::Enter) || matches!(named, Named::Escape) {
+                    return iced::event::Status::Ignored;
+                }
             }
             status
         });

@@ -1,6 +1,4 @@
 use enum_dispatch::enum_dispatch;
-use iced::keyboard::key::Named;
-use iced::keyboard::Key;
 use iced::Task;
 
 use super::main_window::message::MainMessage;
@@ -21,7 +19,7 @@ pub trait MessageHandler {
 pub enum Message {
     Main(MainMessage),
     ModelChanged,
-    KeyboardEvent,
+    ToggleReady,
     //
     SettingsWidget(SettingsWidgetMessage),
     PlaylistWidget(PlaylistWidgetMessage),
@@ -41,18 +39,11 @@ impl MessageHandler for ModelChanged {
 }
 
 #[derive(Debug, Clone)]
-pub struct KeyboardEvent(pub iced::keyboard::Event);
+pub struct ToggleReady;
 
-impl MessageHandler for KeyboardEvent {
+impl MessageHandler for ToggleReady {
     fn handle(self, model: &mut ViewModel) -> Task<Message> {
-        if let iced::keyboard::Event::KeyPressed {
-            modifiers: _,
-            key: Key::Named(Named::Space),
-            ..
-        } = self.0
-        {
-            model.model.user_ready_toggle();
-        }
+        model.model.user_ready_toggle();
         Task::none()
     }
 }

@@ -2,9 +2,9 @@ use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use futures::{Future, StreamExt};
+use futures::Future;
 use iced::advanced::subscription::Recipe;
-use iced::{Element, Event, Subscription, Task, Theme};
+use iced::{Element, Subscription, Task, Theme};
 use niketsu_core::config::Config;
 use niketsu_core::playlist::Video;
 use niketsu_core::ui::{UiModel, UserInterface};
@@ -20,13 +20,12 @@ use super::widget::rooms::UsersWidgetState;
 use super::widget::settings::SettingsWidgetState;
 use super::PreExistingTokioRuntime;
 use crate::config::IcedConfig;
-use crate::message::{KeyboardEvent, MessageHandler, ModelChanged};
+use crate::message::{MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;
 
 #[derive(Debug)]
 pub struct ViewModel {
     pub model: UiModel,
-    pub main: MainView,
     pub settings_widget_state: SettingsWidgetState,
     pub users_widget_state: UsersWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
@@ -49,12 +48,11 @@ impl ViewModel {
             chat_widget_statet: Default::default(),
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
-            main: MainView,
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        self.main.view(self)
+        MainView::new(self).into()
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -173,10 +171,7 @@ impl View {
     fn subscription(&self) -> Subscription<Message> {
         let notify = self.view_model.model.notify.clone();
         let model_subscription = ModelSubscription { notify };
-        let notify_subscription = iced::advanced::subscription::from_recipe(model_subscription);
-        let keyboard_subscription = iced::advanced::subscription::from_recipe(KeyboardSubscription);
-
-        iced::Subscription::batch([notify_subscription, keyboard_subscription])
+        iced::advanced::subscription::from_recipe(model_subscription)
     }
 }
 
@@ -198,33 +193,6 @@ impl Recipe for ModelSubscription {
         Box::pin(futures::stream::unfold(self, |s| async {
             s.notify.notified().await;
             Some((ModelChanged.into(), s))
-        }))
-    }
-}
-
-pub struct KeyboardSubscription;
-
-impl Recipe for KeyboardSubscription {
-    type Output = Message;
-
-    fn hash(&self, state: &mut iced::advanced::subscription::Hasher) {
-        std::any::TypeId::of::<Self>().hash(state)
-    }
-
-    fn stream(
-        self: Box<Self>,
-        input: iced::advanced::subscription::EventStream,
-    ) -> iced::advanced::graphics::futures::BoxStream<Self::Output> {
-        Box::pin(input.filter_map(|event| async move {
-            if let iced::advanced::subscription::Event::Interaction {
-                event: Event::Keyboard(k),
-                ..
-            } = event
-            {
-                Some(KeyboardEvent(k).into())
-            } else {
-                None
-            }
         }))
     }
 }

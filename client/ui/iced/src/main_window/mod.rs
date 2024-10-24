@@ -1,6 +1,11 @@
+use iced::advanced::widget::Operation;
+use iced::event::Status;
+use iced::keyboard::key::Named;
+use iced::keyboard::Key;
+use iced::mouse::Cursor;
 use iced::widget::scrollable::Id;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
-use iced::{Element, Length};
+use iced::{Element, Event, Length, Rectangle, Renderer, Theme};
 
 use self::message::{MainMessage, ReadyButton};
 use super::message::Message;
@@ -9,6 +14,7 @@ use super::widget::chat::ChatWidget;
 use super::widget::database::DatabaseWidget;
 use super::widget::playlist::PlaylistWidget;
 use super::widget::rooms::RoomsWidget;
+use crate::message::ToggleReady;
 use crate::styling::ContainerBorder;
 use crate::widget::file_search::FileSearchWidget;
 use crate::widget::settings::SettingsWidget;
@@ -17,17 +23,12 @@ pub(super) mod message;
 
 const SPACING: u16 = 5;
 
-#[derive(Debug)]
-pub struct MainView;
-
-impl Default for MainView {
-    fn default() -> Self {
-        Self
-    }
+pub struct MainView<'a> {
+    base: Element<'a, Message>,
 }
 
-impl MainView {
-    pub fn view<'a>(&'a self, view_model: &'a ViewModel) -> Element<Message> {
+impl<'a> MainView<'a> {
+    pub fn new(view_model: &'a ViewModel) -> Self {
         let mut btn: Button<Message>;
         match view_model.user().ready {
             true => {
@@ -49,7 +50,7 @@ impl MainView {
         }
         btn = btn.on_press(MainMessage::from(ReadyButton).into());
 
-        Row::new()
+        let base = Row::new()
             .push(
                 Column::new()
                     .push(
@@ -97,6 +98,136 @@ impl MainView {
             )
             .spacing(SPACING)
             .padding(SPACING)
-            .into()
+            .into();
+        Self { base }
+    }
+}
+
+impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for MainView<'a> {
+    fn size(&self) -> iced::Size<Length> {
+        self.base.as_widget().size()
+    }
+
+    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
+        vec![iced::advanced::widget::Tree::new(&self.base)]
+    }
+
+    fn layout(
+        &self,
+        tree: &mut iced::advanced::widget::Tree,
+        renderer: &Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        self.base
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
+        tree.diff_children(std::slice::from_ref(&self.base))
+    }
+
+    fn draw(
+        &self,
+        state: &iced::advanced::widget::Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        self.base.as_widget().draw(
+            &state.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn operate(
+        &self,
+        state: &mut iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.base
+            .as_widget()
+            .operate(&mut state.children[0], layout, renderer, operation);
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        cursor: Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> iced::advanced::mouse::Interaction {
+        self.base.as_widget().mouse_interaction(
+            &state.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn on_event(
+        &mut self,
+        state: &mut iced::advanced::widget::Tree,
+        event: iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        cursor: Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) -> Status {
+        let mut status = self.base.as_widget_mut().on_event(
+            &mut state.children[0],
+            event.clone(),
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+
+        if let Status::Ignored = status {
+            if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: Key::Named(Named::Space),
+                ..
+            }) = event
+            {
+                shell.publish(ToggleReady.into());
+                status = Status::Captured;
+            }
+        }
+
+        status
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        state: &'b mut iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        renderer: &Renderer,
+        translation: iced::Vector,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+        self.base
+            .as_widget_mut()
+            .overlay(&mut state.children[0], layout, renderer, translation)
+    }
+}
+
+impl<'a> From<MainView<'a>> for Element<'a, Message> {
+    fn from(msgs: MainView<'a>) -> Self {
+        Self::new(msgs)
     }
 }
