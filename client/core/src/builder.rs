@@ -33,6 +33,7 @@ impl From<CoreBuilder> for CoreModel {
             playlist: PlaylistHandler::default(),
             chat_logger: builder.chat_logger,
             ready: false,
+            running: true,
         }
     }
 }

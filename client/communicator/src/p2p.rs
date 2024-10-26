@@ -388,6 +388,7 @@ impl P2PClient {
 #[enum_dispatch]
 trait CommunicationHandler {
     async fn run(&mut self);
+    // fn abort(&mut self);
     async fn handle_event(&mut self, event: SwarmEvent<BehaviourEvent>);
     async fn handle_message(&mut self, msg: NiketsuMessage) -> Result<()>;
 }

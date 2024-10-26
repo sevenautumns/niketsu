@@ -45,6 +45,7 @@ pub struct CoreModel {
     chat_logger: Option<ChatLogger>,
     pub config: Config,
     pub ready: bool,
+    pub running: bool,
 }
 
 #[derive(Debug)]
@@ -77,7 +78,7 @@ impl Core {
     pub async fn run_loop(mut self) {
         info!("enter main loop");
         let mut pacemaker = Pacemaker::default();
-        loop {
+        while self.model.running {
             tokio::select! {
                 com = self.model.communicator.receive() => {
                     trace!("handle communicator event");

@@ -193,8 +193,8 @@ impl EventHandler for PlayerFileEnd {
 pub struct PlayerExit;
 
 impl EventHandler for PlayerExit {
-    fn handle(self, _: &mut CoreModel) {
+    fn handle(self, model: &mut CoreModel) {
         trace!("player exit");
-        exit(0)
+        model.running = false;
     }
 }

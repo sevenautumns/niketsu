@@ -141,7 +141,6 @@ pub struct Mpv {
 impl Drop for Mpv {
     fn drop(&mut self) {
         unsafe { mpv_terminate_destroy(self.handle.0) };
-        exit(0)
     }
 }
 

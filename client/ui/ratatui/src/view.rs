@@ -24,6 +24,7 @@ use niketsu_core::room::RoomName;
 use niketsu_core::ui::{ServerChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
+use tracing::error;
 
 use super::widget::login::LoginWidget;
 use super::widget::playlist::PlaylistWidget;
@@ -150,6 +151,14 @@ impl App {
         self.clipboard
             .get_contents()
             .map_err(|e| anyhow::anyhow!("{e:?}"))
+    }
+}
+
+impl Drop for RatatuiView {
+    fn drop(&mut self) {
+        if let Err(err) = RatatuiView::restore_terminal() {
+            error!(%err, "Failed to restore terminal");
+        };
     }
 }
 
