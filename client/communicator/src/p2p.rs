@@ -919,11 +919,26 @@ impl HostCommunicationHandler {
             }
         }
 
-        new_playlist.playlist.get(new_position).map(|new_select| SelectMsg {
+        new_playlist
+            .playlist
+            .get(new_position)
+            .map(|new_select| SelectMsg {
                 actor: arcstr::format!("host"),
                 position: Duration::ZERO,
                 video: Some(new_select.clone()),
             })
+    }
+
+    fn handle_new_playlist(&mut self, playlist: &PlaylistMsg, peer_id: PeerId) -> Result<()> {
+        if let Some(select_msg) = self.select_next(&playlist) {
+            self.select = select_msg.clone();
+            let msg: NiketsuMessage = select_msg.into();
+            self.message_sender.send(msg.clone())?;
+            self.swarm.try_broadcast(self.topic.clone(), msg)?;
+            self.handle_all_users_ready(&peer_id)?;
+        }
+
+        Ok(())
     }
 
     fn handle_incoming_message(&mut self, peer_id: PeerId, mut msg: NiketsuMessage) -> Result<()> {
@@ -937,14 +952,7 @@ impl HostCommunicationHandler {
             NiketsuMessage::Playlist(playlist) => {
                 self.message_sender.send(msg.clone())?;
                 self.swarm.try_broadcast(self.topic.clone(), msg)?;
-
-                if let Some(select_msg) = self.select_next(&playlist) {
-                    self.select = select_msg.clone();
-                    msg = select_msg.into();
-                    self.message_sender.send(msg.clone())?;
-                    self.swarm.try_broadcast(self.topic.clone(), msg)?;
-                    self.handle_all_users_ready(&peer_id)?;
-                }
+                self.handle_new_playlist(&playlist, peer_id)?;
                 self.playlist = playlist;
                 return Ok(());
             }
@@ -1093,6 +1101,7 @@ impl CommunicationHandler for HostCommunicationHandler {
                 self.message_sender.send(niketsu_msg.clone())?;
             }
             NiketsuMessage::Playlist(playlist) => {
+                self.handle_new_playlist(&playlist, self.host)?;
                 self.playlist = playlist;
             }
             NiketsuMessage::VideoStatus(status) => {
