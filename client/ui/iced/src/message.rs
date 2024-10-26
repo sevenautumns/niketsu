@@ -34,6 +34,9 @@ pub struct ModelChanged;
 impl MessageHandler for ModelChanged {
     fn handle(self, model: &mut ViewModel) -> Task<Message> {
         model.update_from_inner_model();
+        if !model.model.running.get_inner() {
+            return iced::exit();
+        }
         Task::none()
     }
 }

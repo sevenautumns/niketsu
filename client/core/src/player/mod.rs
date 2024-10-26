@@ -196,5 +196,6 @@ impl EventHandler for PlayerExit {
     fn handle(self, model: &mut CoreModel) {
         trace!("player exit");
         model.running = false;
+        model.ui.abort();
     }
 }

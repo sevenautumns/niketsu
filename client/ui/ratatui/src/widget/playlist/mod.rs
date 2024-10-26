@@ -41,38 +41,44 @@ impl PlaylistWidgetState {
         self.style = style;
     }
 
-    pub fn next(&mut self) {
-        self.selection_offset = 0;
-        self.list_state.overflowing_next(self.playlist.len());
+    fn set_vertical_scroll_state(&mut self) {
         if let Some(i) = self.list_state.selected() {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
+    }
+
+    pub fn next(&mut self) {
+        self.selection_offset = 0;
+        self.list_state.overflowing_next(self.playlist.len());
+        self.set_vertical_scroll_state();
     }
 
     pub fn previous(&mut self) {
         self.selection_offset = 0;
         self.list_state.overflowing_previous(self.playlist.len());
-        if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
-        }
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_next(&mut self, offset: usize) {
-        self.list_state.jump_next(offset)
+        self.list_state.jump_next(offset);
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_previous(&mut self, offset: usize) {
         self.list_state
-            .limited_jump_previous(offset, self.playlist.len())
+            .limited_jump_previous(offset, self.playlist.len());
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_start(&mut self) {
-        self.list_state.select(Some(0))
+        self.list_state.select(Some(0));
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_end(&mut self) {
         self.list_state
-            .select(Some(self.playlist.len().saturating_sub(1)))
+            .select(Some(self.playlist.len().saturating_sub(1)));
+        self.set_vertical_scroll_state();
     }
 
     pub fn reset_offset(&mut self) {

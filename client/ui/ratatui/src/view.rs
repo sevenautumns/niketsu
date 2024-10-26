@@ -24,7 +24,6 @@ use niketsu_core::room::RoomName;
 use niketsu_core::ui::{ServerChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
-use tracing::error;
 
 use super::widget::login::LoginWidget;
 use super::widget::playlist::PlaylistWidget;
@@ -49,6 +48,7 @@ pub struct RatatuiView {
     pub app: App,
     pub model: UiModel,
     pub config: Config,
+    pub running: bool,
 }
 
 enum LoopControl {
@@ -156,9 +156,7 @@ impl App {
 
 impl Drop for RatatuiView {
     fn drop(&mut self) {
-        if let Err(err) = RatatuiView::restore_terminal() {
-            error!(%err, "Failed to restore terminal");
-        };
+        self.running = false;
     }
 }
 
@@ -175,6 +173,7 @@ impl RatatuiView {
             app,
             model: ui.model().clone(),
             config,
+            running: true,
         };
         let handle = Box::pin(async move { view.run().await });
         (ui, handle)
@@ -195,7 +194,7 @@ impl RatatuiView {
 
         let mut needs_update = false;
         terminal.draw(|f| Self::render(f, &mut self.app))?;
-        loop {
+        while self.running {
             tokio::select! {
                 ct_event = event.next() => {
                     if let LoopControl::Break = self.handle_event(ct_event) {
@@ -292,6 +291,10 @@ impl RatatuiView {
     }
 
     fn handle_notify(&mut self) {
+        self.model.running.on_change(|running| {
+            self.running = running;
+        });
+
         self.model.file_database_status.on_change(|status| {
             self.app
                 .database_widget_state

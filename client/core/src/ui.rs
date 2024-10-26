@@ -35,6 +35,7 @@ pub trait UserInterfaceTrait: std::fmt::Debug + Send {
     fn user_update(&mut self, user: UserChange);
     fn player_message(&mut self, msg: PlayerMessage);
     fn username_change(&mut self, username: ArcStr);
+    fn abort(&mut self);
 
     async fn event(&mut self) -> UserInterfaceEvent;
 }
@@ -284,6 +285,7 @@ impl UserInterface {
             user: Observed::<_>::new(user, &notify),
             messages: Observed::new(RingBuffer::new(1000), &notify),
             events: tx,
+            running: Observed::new(true, &notify),
             notify,
         };
         Self {
@@ -337,6 +339,10 @@ impl UserInterfaceTrait for UserInterface {
         self.model.user.set(user)
     }
 
+    fn abort(&mut self) {
+        self.model.running.set(false);
+    }
+
     async fn event(&mut self) -> UserInterfaceEvent {
         self.ui_events.recv().await.expect("ui event stream ended")
     }
@@ -352,6 +358,7 @@ pub struct UiModel {
     pub user: Observed<UserStatus>,
     pub messages: Observed<RingBuffer<PlayerMessage>>,
     pub events: MpscSender<UserInterfaceEvent>,
+    pub running: Observed<bool>,
     pub notify: Arc<Notify>,
 }
 
@@ -776,6 +783,7 @@ mod tests {
             user: Observed::new(user, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
+            running: Observed::new(true, &notify),
             notify: Arc::new(Notify::new()),
         };
 
@@ -802,6 +810,7 @@ mod tests {
             user: Observed::new(user, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
+            running: Observed::new(true, &notify),
             notify: Arc::new(Notify::new()),
         };
 
@@ -828,6 +837,7 @@ mod tests {
             user: Observed::new(user.clone(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
+            running: Observed::new(true, &notify),
             notify: notify.clone(),
         };
 
@@ -851,6 +861,7 @@ mod tests {
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
+            running: Observed::new(true, &notify),
             notify: notify.clone(),
         };
 
@@ -879,6 +890,7 @@ mod tests {
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
+            running: Observed::new(true, &notify),
             notify: notify.clone(),
         };
 
@@ -903,6 +915,7 @@ mod tests {
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
+            running: Observed::new(true, &notify),
             notify: notify.clone(),
         };
 
@@ -927,6 +940,7 @@ mod tests {
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
+            running: Observed::new(true, &notify),
             notify: notify.clone(),
         };
 
@@ -959,6 +973,7 @@ mod tests {
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
+            running: Observed::new(true, &notify),
             notify: notify.clone(),
         };
 
@@ -985,6 +1000,7 @@ mod tests {
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
+            running: Observed::new(true, &notify),
             notify: notify.clone(),
         };
 

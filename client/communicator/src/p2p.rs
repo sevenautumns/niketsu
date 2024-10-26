@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::thread::sleep;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -388,7 +389,6 @@ impl P2PClient {
 #[enum_dispatch]
 trait CommunicationHandler {
     async fn run(&mut self);
-    // fn abort(&mut self);
     async fn handle_event(&mut self, event: SwarmEvent<BehaviourEvent>);
     async fn handle_message(&mut self, msg: NiketsuMessage) -> Result<()>;
 }
@@ -750,6 +750,9 @@ impl fmt::Debug for HostCommunicationHandler {
             .field("host", &self.host)
             .field("relay", &self.relay)
             .field("status_list", &self.status_list)
+            .field("playlist", &self.playlist)
+            .field("selected video", &self.select)
+            .field("users", &self.users)
             .finish()
     }
 }
