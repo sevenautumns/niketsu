@@ -533,8 +533,8 @@ mod tests {
         change.handle(&mut core.model)
     }
 
-    #[test]
-    fn test_video_change() {
+    #[tokio::test]
+    async fn test_video_change() {
         let mut communicator = MockCommunicatorTrait::default();
         let mut player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();

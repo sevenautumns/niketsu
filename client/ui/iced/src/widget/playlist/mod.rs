@@ -34,7 +34,7 @@ impl<'a> PlaylistWidget<'a> {
 
         let mut file_btns = vec![];
         for f in state.playlist.iter() {
-            let pressed = state.selected.as_ref().map_or(false, |f_i| f.eq(f_i));
+            let pressed = state.selected.as_ref().is_some_and(|f_i| f.eq(&f_i.video));
             let mut available = f.is_url();
             if !available {
                 available = state.file_store.find_file(f.as_str()).is_some();
@@ -68,61 +68,81 @@ impl<'a> PlaylistWidget<'a> {
         &self,
         layout: iced::advanced::layout::Layout<'_>,
         cursor_position: Point,
-    ) -> Option<(usize, Point)> {
+    ) -> Option<Index> {
         let files = layout.children();
-        let mut closest = (f32::INFINITY, 0, iced::Point::default());
+        let mut closest = (f32::INFINITY, Index::default());
         // Find closest index from overlay
         for (i, layout) in files.enumerate() {
             let dist = layout.position().distance(cursor_position);
             if dist < closest.0 {
-                closest = (dist, i, layout.position())
+                closest.0 = dist;
+                closest.1.index_absolute = i;
+                closest.1.index_relative = i;
+                closest.1.position = layout.position();
             }
         }
         // In-case we are at the end of the file list,
         // check if we are above or below
-        if closest.1 == self.state.playlist.len() - 1 {
+        if closest.1.index_absolute == self.state.playlist.len() - 1 {
             if let Some(l) = layout.children().last() {
                 let top = l.position();
                 let mut bottom = top;
                 bottom.y += l.bounds().height;
                 let dist = bottom.distance(cursor_position);
                 if dist < closest.0 {
-                    closest = (dist, self.state.playlist.len(), bottom)
+                    closest.0 = dist;
+                    closest.1.index_absolute = self.state.playlist.len();
+                    closest.1.position = bottom;
                 }
             }
+        }
+        // If the closest index is larger than the index of the selected video, adjust the relative index
+        if self
+            .state
+            .selected
+            .as_ref()
+            .is_some_and(|s| s.index < closest.1.index_absolute)
+        {
+            closest.1.index_relative = closest.1.index_absolute - 1;
         }
         // If no index was found return None
         if closest.0.is_infinite() {
             return None;
         }
-        // If we are below or above the selected file,
-        // dont send an index if we handle files within the playlist
+        // If we are below or above the selected file, dont send an index
         if let FileInteraction::Pressing(_) = self.state.interaction {
             if let Some(sele) = &self.state.selected {
-                if let Some(clos) = self.state.playlist.get(closest.1.saturating_sub(1)) {
-                    if clos.eq(sele) {
+                if let Some(clos) = self
+                    .state
+                    .playlist
+                    .get(closest.1.index_absolute.saturating_sub(1))
+                {
+                    if clos.eq(&sele.video) {
                         return None;
                     }
                 }
-                if let Some(clos) = self.state.playlist.get(closest.1) {
-                    if clos.eq(sele) {
+                if let Some(clos) = self.state.playlist.get(closest.1.index_absolute) {
+                    if clos.eq(&sele.video) {
                         return None;
                     }
                 }
             }
         }
-        Some((closest.1, closest.2))
+        Some(closest.1)
     }
 
     fn file_at_position(
         &self,
         layout: iced::advanced::Layout<'_>,
         cursor_position: Point,
-    ) -> Option<Video> {
+    ) -> Option<VideoIndex> {
         let files = self.state.playlist.iter().zip(layout.children());
-        for (file, lay) in files {
+        for (index, (file, lay)) in files.enumerate() {
             if lay.bounds().contains(cursor_position) {
-                return Some(file.clone());
+                return Some(VideoIndex {
+                    index,
+                    video: file.clone(),
+                });
             }
         }
 
@@ -150,7 +170,7 @@ impl<'a> PlaylistWidget<'a> {
                 if let FileInteraction::Released(when) = self.state.interaction {
                     if file.eq(prev_file) && when.elapsed() < MAX_DOUBLE_CLICK_INTERVAL {
                         shell.publish(
-                            PlaylistWidgetMessage::from(DoubleClick { video: file }).into(),
+                            PlaylistWidgetMessage::from(DoubleClick { video: file.video }).into(),
                         );
                     }
                 }
@@ -184,12 +204,16 @@ impl<'a> PlaylistWidget<'a> {
             }
             FileInteraction::Pressing(_) => {
                 let pos = state.cursor_position;
-                if let Some((i, _)) = self.closest_index(layout, pos) {
+                if let Some(Index {
+                    index_relative: pos,
+                    ..
+                }) = self.closest_index(layout, pos)
+                {
                     if let Some(file) = &self.state.selected {
                         shell.publish(
                             PlaylistWidgetMessage::from(Move {
-                                video: file.clone(),
-                                pos: i,
+                                video: file.clone().video,
+                                pos,
                             })
                             .into(),
                         )
@@ -218,7 +242,12 @@ impl<'a> PlaylistWidget<'a> {
 
     fn deleted(&self, shell: &mut iced::advanced::Shell<'_, Message>) {
         if let Some(f) = &self.state.selected {
-            shell.publish(PlaylistWidgetMessage::from(Delete { video: f.clone() }).into())
+            shell.publish(
+                PlaylistWidgetMessage::from(Delete {
+                    video: f.video.clone(),
+                })
+                .into(),
+            )
         }
     }
 }
@@ -269,7 +298,9 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for PlaylistWidget<'a>
         // Draw insert_hint
         if self.state.interaction.is_press() {
             let inner_state = state.state.downcast_ref::<InnerState>();
-            if let Some((_, pos)) = self.closest_index(layout, inner_state.cursor_position) {
+            if let Some(Index { position: pos, .. }) =
+                self.closest_index(layout, inner_state.cursor_position)
+            {
                 // Move point up by half the spacing
                 let pos = Point {
                     y: pos.y - (PLAYLIST_SPACING / 2.0),
@@ -454,7 +485,7 @@ struct InnerState {
 pub struct PlaylistWidgetState {
     playlist: Playlist,
     file_store: FileStore,
-    selected: Option<Video>,
+    selected: Option<VideoIndex>,
     interaction: FileInteraction,
 }
 
@@ -487,7 +518,7 @@ impl PlaylistWidgetState {
         self.playlist.move_video(video, index);
     }
 
-    pub fn file_interaction(&mut self, video: Option<Video>, interaction: FileInteraction) {
+    pub fn file_interaction(&mut self, video: Option<VideoIndex>, interaction: FileInteraction) {
         self.selected = video;
         self.interaction = interaction;
     }
@@ -500,7 +531,7 @@ impl PlaylistWidgetState {
         self.playlist = playlist;
 
         if let Some(video) = &self.selected {
-            if self.playlist.find(video).is_none() {
+            if self.playlist.find(&video.video).is_none() {
                 self.selected = None;
                 self.interaction = FileInteraction::None;
             }
@@ -525,6 +556,21 @@ impl<'a> From<PlaylistWidget<'a>> for Element<'a, Message> {
     fn from(table: PlaylistWidget<'a>) -> Self {
         Self::new(table)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoIndex {
+    pub index: usize,
+    pub video: Video,
+}
+
+#[derive(Default)]
+struct Index {
+    /// The index, which is used by the insert hint
+    index_absolute: usize,
+    /// The index, which is used by the playlist for moving
+    index_relative: usize,
+    position: Point,
 }
 
 pub struct InsertHint<'a> {

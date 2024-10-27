@@ -4,7 +4,7 @@ use niketsu_core::playlist::Video;
 use niketsu_core::ui::UiModel;
 use tracing::debug;
 
-use super::{FileInteraction, PlaylistWidgetState};
+use super::{FileInteraction, PlaylistWidgetState, VideoIndex};
 use crate::message::{Message, MessageHandler};
 use crate::view::ViewModel;
 
@@ -70,7 +70,7 @@ impl PlaylistWidgetMessageTrait for Move {
 
 #[derive(Debug, Clone)]
 pub struct Interaction {
-    pub video: Option<Video>,
+    pub video: Option<VideoIndex>,
     pub interaction: FileInteraction,
 }
 
