@@ -8,13 +8,17 @@ use super::MediaPlayerTrait;
 use crate::playlist::Video;
 use crate::{FileStore, MediaPlayerEvent, PlayerPositionChange};
 
-const MAXIMUM_DELAY: Duration = Duration::from_secs(5);
+const MAXIMUM_DELAY: Duration = Duration::from_secs(20);
 
 const MINIMUM_DELAY: Duration = Duration::from_secs(1);
 
-const MAXIMUM_SPEED_DIFF: f64 = 0.05;
+const DELAY_RANGE: Duration = MAXIMUM_DELAY.saturating_sub(MINIMUM_DELAY);
 
-const MINIMUM_SPEED_DIFF: f64 = 0.02;
+const MAXIMUM_SPEED_DIFF: f64 = 0.15;
+
+const MINIMUM_SPEED_DIFF: f64 = 0.03;
+
+const SPEED_RANGE: f64 = MAXIMUM_SPEED_DIFF - MINIMUM_SPEED_DIFF;
 
 #[derive(Debug)]
 pub struct MediaPlayerWrapper {
@@ -57,22 +61,20 @@ impl MediaPlayerWrapper {
                 .events
                 .push_back(PlayerPositionChange { pos: d }.into()),
             d if d > pos.saturating_add(min_delay) || d < pos.saturating_sub(min_delay) => {
-                self.stepwise_speed_change(d, pos)
+                self.continuous_speed_change(d, pos)
             }
             _ => trace!("position should not be possible"),
         }
     }
 
-    fn stepwise_speed_change(&mut self, client_pos: Duration, host_pos: Duration) {
-        let speed_increase: f64;
+    fn continuous_speed_change(&mut self, client_pos: Duration, host_pos: Duration) {
+        let diff = host_pos.saturating_sub(client_pos);
+        let min_diff = diff.saturating_sub(MINIMUM_DELAY).as_secs_f64();
+        let mut speed_increase =
+            min_diff / DELAY_RANGE.as_secs_f64() * SPEED_RANGE + MINIMUM_SPEED_DIFF;
 
-        if host_pos > client_pos {
-            let diff = host_pos.saturating_sub(client_pos);
-            speed_increase = diff.as_secs_f64() * (MAXIMUM_SPEED_DIFF - MINIMUM_SPEED_DIFF) / 4.0;
-        } else {
-            let diff = host_pos.saturating_sub(client_pos);
-            speed_increase =
-                (-1.0) * diff.as_secs_f64() * (MAXIMUM_SPEED_DIFF - MINIMUM_SPEED_DIFF) / 4.0;
+        if host_pos < client_pos {
+            speed_increase = (-1.0) * speed_increase;
         }
         self.player
             .set_speed(self.host_speed * (1.0 + speed_increase));

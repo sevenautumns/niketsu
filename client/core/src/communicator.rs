@@ -152,9 +152,19 @@ impl EventHandler for VideoStatusMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received video status for reconciliation");
         let (Some(pos), Some(_)) = (self.position, self.video) else {
-            trace!("video status sent without position or video");
+            trace!("video status sent without position or video: unloading video");
+            model.player.unload_video();
             return;
         };
+
+        if let Some(paused) = model.player.is_paused() {
+            match (paused, self.paused) {
+                (false, true) => model.player.pause(),
+                (true, false) => model.player.start(),
+                _ => {}
+            }
+        }
+
         model.player.reconcile(pos)
     }
 }

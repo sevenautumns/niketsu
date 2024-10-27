@@ -471,17 +471,19 @@ impl ClientCommunicationHandler {
     }
 
     fn handle_video_status(&mut self, mut msg: VideoStatusMsg) -> Result<()> {
+        // TODO delete this
         if self.is_seeking {
             debug!("can not determine client position during seek");
             return Ok(());
         }
 
-        let Some(pos) = msg.position else {
-            debug!("do not handle video status without position");
-            return Ok(());
-        };
+        if let Some(pos) = msg.position {
+            debug!("add delay to position");
+            if !msg.paused {
+                msg.position = Some(pos + self.delay.div_f64(2.0));
+            }
+        }
 
-        msg.position = Some(pos + self.delay.div_f64(2.0));
         self.message_sender
             .send(msg.into())
             .map_err(anyhow::Error::from)
