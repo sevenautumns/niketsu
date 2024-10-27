@@ -23,9 +23,6 @@ pub struct Args {
     /// Set the log level
     #[arg(short = 't', long, default_value_t = LogLevel::default())]
     pub log_level: LogLevel,
-    /// Use ipv6 instead of ipv4
-    #[arg(short = 'i', long)]
-    pub ipv6: Option<bool>,
     /// Set port to listen on
     #[arg(short = 'p', long)]
     pub port: Option<u16>,

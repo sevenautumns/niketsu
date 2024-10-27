@@ -11,8 +11,6 @@ use crate::cli::PROJECT_DIRS;
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 pub struct Config {
     #[serde(default)]
-    pub ipv6: bool,
-    #[serde(default)]
     pub keypair: Option<Vec<u8>>,
     #[serde(default = "default_port")]
     pub port: u16,
@@ -45,7 +43,6 @@ impl Config {
         Self::load().unwrap_or_else(|error| {
             warn!(%error, "no config loaded");
             Config {
-                ipv6: false,
                 keypair: None,
                 port: default_port(),
             }

@@ -22,9 +22,6 @@ async fn main() -> Result<()> {
         keypair = Keypair::generate_ed25519();
     }
 
-    if let Some(ipv6) = args.ipv6 {
-        config.ipv6 = ipv6;
-    }
     if let Some(port) = args.port {
         config.port = port;
     }

@@ -90,22 +90,25 @@ pub fn new(config: Config) -> Result<Relay> {
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
         .build();
 
-    let listen_addr_tcp = Multiaddr::empty()
-        .with(match config.ipv6 {
-            true => Protocol::from(Ipv6Addr::UNSPECIFIED),
-            _ => Protocol::from(Ipv4Addr::UNSPECIFIED),
-        })
+    let listen_addr_tcp_ipv4 = Multiaddr::empty()
+        .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
         .with(Protocol::Tcp(config.port));
-    swarm.listen_on(listen_addr_tcp)?;
+    let listen_addr_tcp_ipv6 = Multiaddr::empty()
+        .with(Protocol::from(Ipv6Addr::UNSPECIFIED))
+        .with(Protocol::Tcp(config.port));
+    swarm.listen_on(listen_addr_tcp_ipv4)?;
+    swarm.listen_on(listen_addr_tcp_ipv6)?;
 
-    let listen_addr_quic = Multiaddr::empty()
-        .with(match config.ipv6 {
-            true => Protocol::from(Ipv6Addr::UNSPECIFIED),
-            _ => Protocol::from(Ipv4Addr::UNSPECIFIED),
-        })
+    let listen_addr_quic_ipv4 = Multiaddr::empty()
+        .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
         .with(Protocol::Udp(config.port))
         .with(Protocol::QuicV1);
-    swarm.listen_on(listen_addr_quic)?;
+    let listen_addr_quic_ipv6 = Multiaddr::empty()
+        .with(Protocol::from(Ipv6Addr::UNSPECIFIED))
+        .with(Protocol::Udp(config.port))
+        .with(Protocol::QuicV1);
+    swarm.listen_on(listen_addr_quic_ipv4)?;
+    swarm.listen_on(listen_addr_quic_ipv6)?;
 
     let rooms: Arc<RwLock<HashMap<String, (PeerId, InitRequest)>>> =
         Arc::new(RwLock::new(HashMap::new()));
