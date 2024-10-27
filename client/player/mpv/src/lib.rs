@@ -1,6 +1,5 @@
 use std::ffi::{c_void, CStr, CString};
 use std::mem::MaybeUninit;
-use std::process::exit;
 use std::time::Duration;
 
 use anyhow::Result;

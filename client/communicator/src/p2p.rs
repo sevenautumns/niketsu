@@ -1,6 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
-use std::thread::sleep;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -425,20 +424,13 @@ impl ClientCommunicationHandler {
 
     fn handle_broadcast(&mut self, peer_id: PeerId, msg: Vec<u8>) -> Result<()> {
         let niketsu_msg = msg.try_into()?;
-        if let NiketsuMessage::UserMessage(_) = niketsu_msg {
-            return self
-                .message_sender
-                .send(niketsu_msg)
-                .map_err(anyhow::Error::from);
-        }
-
-        if peer_id != self.host {
-            bail!("Received broadcast from non-host peer: {peer_id:?}")
-        }
 
         match niketsu_msg {
             NiketsuMessage::VideoStatus(video_status) => {
-                return self.handle_video_status(video_status)
+                if peer_id != self.host {
+                    bail!("Received video status from non-host peer: {peer_id:?}")
+                }
+                return self.handle_video_status(video_status);
             }
             NiketsuMessage::Seek(_) => {
                 self.is_seeking = true;
@@ -637,24 +629,25 @@ impl CommunicationHandler for ClientCommunicationHandler {
         debug!(?msg, host = %self.host, peer = %self.swarm.local_peer_id(), "Handling core message");
 
         match msg {
-            NiketsuMessage::UserMessage(_) => {
-                debug!("Publishing message to gossipsub");
-                if let Err(error) = self.swarm.try_broadcast(self.topic.clone(), msg) {
-                    error!(%error, "Failed to broadcast user message");
-                }
-            }
             NiketsuMessage::VideoStatus(vs) => {
                 if vs.position != self.video_status.position {
                     self.is_seeking = false;
                     self.video_status = vs;
                 }
+                return Ok(());
             }
-            _ => {
-                debug!("Sending message to host");
+            NiketsuMessage::Playlist(_) => {
+                // TODO can be moved to client, but client needs info on playlist + video selection
                 self.swarm.send_request(&self.host, msg);
+                return Ok(());
             }
+            NiketsuMessage::Status(_) => {
+                self.swarm.send_request(&self.host, msg);
+                return Ok(());
+            }
+            _ => {}
         }
-        Ok(())
+        self.swarm.try_broadcast(self.topic.clone(), msg)
     }
 }
 
@@ -854,6 +847,7 @@ impl HostCommunicationHandler {
     }
 
     fn handle_all_users_ready(&mut self, peer_id: &PeerId) -> Result<()> {
+        debug!(ready=%self.all_users_ready(),"all users ready");
         if self.all_users_ready() {
             debug!("All users area ready. Publishing start to gossipsub");
             let mut start_msg = NiketsuMessage::Start(StartMsg {
@@ -923,43 +917,49 @@ impl HostCommunicationHandler {
             self.swarm.try_broadcast(self.topic.clone(), msg)?;
             self.handle_all_users_ready(&peer_id)?;
         }
-
         Ok(())
     }
 
     fn handle_incoming_message(&mut self, peer_id: PeerId, mut msg: NiketsuMessage) -> Result<()> {
-        debug!(?msg, "Received message");
         match msg.clone() {
             NiketsuMessage::Status(status) => {
                 self.handle_status(status.clone(), peer_id);
                 self.handle_all_users_ready(&peer_id)?;
                 msg = NiketsuMessage::StatusList(self.status_list.clone());
+                self.message_sender.send(msg.clone())?;
+                self.swarm.try_broadcast(self.topic.clone(), msg)?;
             }
             NiketsuMessage::Playlist(playlist) => {
                 self.message_sender.send(msg.clone())?;
                 self.swarm.try_broadcast(self.topic.clone(), msg)?;
                 self.handle_new_playlist(&playlist, peer_id)?;
                 self.playlist = playlist;
-                return Ok(());
             }
-            NiketsuMessage::Select(select) => {
-                self.select = select;
-                self.message_sender.send(msg.clone())?;
-                self.swarm.try_broadcast(self.topic.clone(), msg)?;
-                self.handle_all_users_ready(&peer_id)?;
-                return Ok(());
+            _ => {
+                bail!("Host received unexpected direct message: {msg:?}");
             }
-            _ => {}
         }
-
-        debug!(%peer_id, "Publishing message from peer to gossipsub");
-        self.message_sender.send(msg.clone())?;
-        self.swarm.try_broadcast(self.topic.clone(), msg)?;
         Ok(())
     }
 
-    fn handle_broadcast(&mut self, msg: Vec<u8>) -> Result<()> {
-        let niketsu_msg = msg.try_into()?;
+    fn handle_broadcast(&mut self, msg: Vec<u8>, peer_id: &PeerId) -> Result<()> {
+        let niketsu_msg: NiketsuMessage = msg.try_into()?;
+        match niketsu_msg.clone() {
+            NiketsuMessage::Select(select) => {
+                self.handle_all_users_ready(peer_id)?;
+                self.select = select;
+            }
+            NiketsuMessage::Join(_)
+            | NiketsuMessage::VideoStatus(_)
+            | NiketsuMessage::StatusList(_)
+            | NiketsuMessage::ServerMessage(_)
+            | NiketsuMessage::Status(_)
+            | NiketsuMessage::Playlist(_)
+            | NiketsuMessage::Connection(_) => {
+                bail!("Host received unexpected broadcast message: {niketsu_msg:?}")
+            }
+            _ => {}
+        }
         self.message_sender.send(niketsu_msg)?;
         Ok(())
     }
@@ -1005,8 +1005,8 @@ impl CommunicationHandler for HostCommunicationHandler {
                 message,
             })) => {
                 debug!(%id, %peer_id, msg = %String::from_utf8_lossy(&message.data), "Got message");
-                if let Err(error) = self.handle_broadcast(message.data) {
-                    error!(%error, "Failed to handle incoming message");
+                if let Err(error) = self.handle_broadcast(message.data, &peer_id) {
+                    error!(%error, "Failed to handle incoming broadcast message");
                 }
             }
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
@@ -1073,7 +1073,7 @@ impl CommunicationHandler for HostCommunicationHandler {
 
     async fn handle_message(&mut self, msg: NiketsuMessage) -> Result<()> {
         let mut niketsu_msg = msg.clone();
-        debug!(host = %self.host);
+        debug!(host = %self.host, ?msg, "Handling core message");
 
         match niketsu_msg.clone() {
             NiketsuMessage::Status(status) => {
@@ -1094,13 +1094,16 @@ impl CommunicationHandler for HostCommunicationHandler {
                 self.select.position = status.position.unwrap_or_default();
             }
             NiketsuMessage::Select(select) => {
-                info!(?select);
+                debug!(?select);
                 self.select = select;
+                self.swarm.try_broadcast(self.topic.clone(), niketsu_msg)?;
+                let host = self.host;
+                self.handle_all_users_ready(&host)?;
+                return Ok(());
             }
             _ => {}
         }
 
-        debug!(?msg, "Publishing message to gossipsub");
         self.swarm.try_broadcast(self.topic.clone(), niketsu_msg)?;
         Ok(())
     }
