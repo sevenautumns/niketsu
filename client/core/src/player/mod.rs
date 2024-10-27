@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
-use tracing::trace;
+use tracing::{trace, warn};
 
 use super::communicator::{
     OutgoingMessage, PauseMsg, PlaybackSpeedMsg, SeekMsg, SelectMsg, StartMsg,
@@ -158,11 +158,22 @@ impl EventHandler for PlayerSpeedChange {
 }
 
 #[derive(Debug, Clone)]
-pub struct PlayerFileEnd;
+pub struct PlayerFileEnd(pub Video);
 
 impl EventHandler for PlayerFileEnd {
     fn handle(self, model: &mut CoreModel) {
         trace!("player file end");
+
+        let current_video = model.playlist.get_current_video();
+        if current_video.as_ref().map_or(true, |c| c.ne(&self.0)) {
+            warn!(
+                playlist_video = ?current_video,
+                mpv_video = ?self.0,
+                "current playlist video and mpv video do not match",
+            );
+            return;
+        }
+
         // TODO refactor
         let mut video = None;
         if let Some(next) = model.playlist.advance_to_next() {

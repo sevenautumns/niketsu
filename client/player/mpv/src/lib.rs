@@ -39,7 +39,6 @@ pub enum MpvProperty {
     Filename,
     Duration,
     KeepOpen,
-    KeepOpenPause,
     CachePause,
     ForceWindow,
     Idle,
@@ -72,7 +71,6 @@ impl MpvProperty {
             MpvProperty::ForceWindow => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Idle => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Config => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::KeepOpenPause => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::EofReached => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::InputDefaultBindings => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::InputVoKeyboard => mpv_format::MPV_FORMAT_FLAG,
@@ -116,6 +114,15 @@ pub struct MpvStatus {
     file: Option<Video>,
     file_load_status: FileLoadStatus,
     load_position: Duration,
+}
+
+impl MpvStatus {
+    pub fn reset(&mut self) {
+        *self = Self {
+            speed: self.speed,
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for MpvStatus {
@@ -171,8 +178,7 @@ impl Mpv {
 
     fn set_settings(&self) -> Result<()> {
         self.set_ocs(true)?;
-        self.set_keep_open(true)?;
-        self.set_keep_open_pause(true)?;
+        self.set_keep_open(false)?;
         self.set_cache_pause(true)?;
         self.set_idle_mode(true)?;
         self.set_force_window(true)?;
@@ -202,10 +208,6 @@ impl Mpv {
 
     fn set_keep_open(&self, keep_open: bool) -> Result<()> {
         self.set_property(MpvProperty::KeepOpen, keep_open.into())
-    }
-
-    fn set_keep_open_pause(&self, keep_open_pause: bool) -> Result<()> {
-        self.set_property(MpvProperty::KeepOpenPause, keep_open_pause.into())
     }
 
     fn set_idle_mode(&self, idle_mode: bool) -> Result<()> {
@@ -306,12 +308,6 @@ impl Mpv {
         let mut cmd = Self::build_cmd(cmd);
         let ret = unsafe { mpv_command_async(self.handle.0, 0, cmd.as_mut_ptr()) };
         TryInto::<mpv_error>::try_into(ret)?.try_into()
-    }
-
-    fn eof_reached(&mut self) -> Option<bool> {
-        let duration = self.get_duration()?;
-        let position = self.get_position()?;
-        Some(position + Duration::from_millis(100) >= duration)
     }
 
     fn replace_video(&mut self, path: CString) {
