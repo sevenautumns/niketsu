@@ -865,25 +865,22 @@ impl HostCommunicationHandler {
     }
 
     fn select_next(&mut self, new_playlist: &PlaylistMsg) -> Option<SelectMsg> {
-        if new_playlist.playlist.len() > self.playlist.playlist.len() {
+        if new_playlist.playlist.len() >= self.playlist.playlist.len() {
             return None;
         }
 
-        // assume that at most a consecutive range of videos was deleted
-        // we need to find the break off point and check if the current video was deleted
         let mut new_position = 0;
         let max_len = new_playlist.playlist.len();
         if let Some(current_video) = self.select.video.clone() {
             for old_video in self.playlist.playlist.iter() {
                 if let Some(new_video) = new_playlist.playlist.get(new_position) {
-                    info!(?current_video, ?new_video, "Current video and old");
+                    debug!(?current_video, ?new_video, "Current video and old");
                     if *new_video == current_video {
                         // No need to select if current video is still in playlist
                         return None;
                     }
 
                     if *old_video == current_video {
-                        // found the break point
                         break;
                     }
 

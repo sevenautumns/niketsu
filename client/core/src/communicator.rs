@@ -160,7 +160,6 @@ impl EventHandler for VideoStatusMsg {
         //TODO check if current video is not the same as host?
         if let Some(paused) = model.player.is_paused() {
             let sp = self.paused;
-            info!("Paused of client: {paused:?} of server {sp:?}");
             match (paused, self.paused) {
                 (true, false) => model.player.start(),
                 (false, true) => model.player.pause(),
