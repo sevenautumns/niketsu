@@ -12,13 +12,11 @@ use fake::faker::company::en::Buzzword;
 use fake::Fake;
 use futures::StreamExt;
 use libp2p::gossipsub::PublishError;
-use libp2p::kad::store::MemoryStore;
-use libp2p::kad::Config;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{ConnectionId, NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
-    dcutr, gossipsub, identify, identity, kad, noise, ping, relay, tcp, yamux, Multiaddr, PeerId,
+    dcutr, gossipsub, identify, identity, noise, ping, relay, tcp, yamux, Multiaddr, PeerId,
     StreamProtocol,
 };
 use niketsu_core::communicator::{
@@ -31,9 +29,8 @@ use niketsu_core::user::UserStatus;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha256::digest;
-use tokio::{io, spawn};
+use tokio::spawn;
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
 use crate::messages::NiketsuMessage;
 
@@ -46,7 +43,6 @@ struct Behaviour {
     dcutr: dcutr::Behaviour,
     ping: ping::Behaviour,
     gossipsub: gossipsub::Behaviour,
-    kademlia: kad::Behaviour<MemoryStore>,
     message_request_response: request_response::cbor::Behaviour<MessageRequest, MessageResponse>,
     init_request_response: request_response::cbor::Behaviour<InitRequest, InitResponse>,
 }
@@ -124,6 +120,8 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
     ) -> Result<Host> {
         self.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
         self.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+        self.listen_on("/ip6/::/udp/0/quic-v1".parse()?)?;
+        self.listen_on("/ip6/::/tcp/0".parse()?)?;
 
         let peer_info = self
             .identify_relay(relay_addr.clone(), room, password)
@@ -143,9 +141,6 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
                     .with(Protocol::P2p(peer_id)),
             )
             .unwrap();
-            self.behaviour_mut()
-                .kademlia
-                .add_address(&peer_id, "/dnsaddr/bootstrap.autumnal.de".parse()?);
             return Ok(peer_id);
         }
 
@@ -268,22 +263,12 @@ impl P2PClient {
             .with_dns()?
             .with_relay_client(noise::Config::new, yamux::Config::default)?
             .with_behaviour(|keypair, relay_behaviour| {
-                // IDs do not matter as these are just message exchanges
-                let message_id_fn = |_message: &gossipsub::Message| {
-                    let id = Uuid::new_v4();
-                    gossipsub::MessageId::from(id)
-                };
-
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
                     .heartbeat_interval(Duration::from_secs(10))
                     .duplicate_cache_time(Duration::from_secs(60))
                     .validation_mode(gossipsub::ValidationMode::Strict)
-                    .message_id_fn(message_id_fn)
                     .build()
-                    .map_err(|msg| io::Error::new(io::ErrorKind::Other, msg))?;
-
-                let mut cfg = Config::new(StreamProtocol::new("/niketsu-kad/1"));
-                cfg.set_query_timeout(Duration::from_secs(5 * 60));
+                    .map_err(anyhow::Error::from)?;
 
                 Ok(Behaviour {
                     relay_client: relay_behaviour,
@@ -299,11 +284,6 @@ impl P2PClient {
                         gossipsub::MessageAuthenticity::Signed(keypair.clone()),
                         gossipsub_config,
                     )?,
-                    kademlia: kad::Behaviour::with_config(
-                        keypair.public().to_peer_id(),
-                        kad::store::MemoryStore::new(keypair.public().to_peer_id()),
-                        cfg,
-                    ),
                     message_request_response: request_response::cbor::Behaviour::new(
                         [(
                             StreamProtocol::new("/niketsu-message/1"),

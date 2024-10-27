@@ -14,16 +14,13 @@ im.workspace = true
 arc-swap.workspace = true
 once_cell.workspace = true
 serde_json = "1.0"
-async-tungstenite = { version = "0.28", features = [ "tokio-runtime", "tokio-native-tls" ] }
 serde_millis.workspace = true
 ordered-float = "4"
-tokio-native-tls = "0.3"
 futures = "0.3"
 async-trait = "0.1"
 enum_dispatch.workspace = true
-libp2p = { workspace = true, features = [ "dcutr", "dns", "gossipsub", "identify", "kad", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat" ] }
+libp2p = { workspace = true, features = [ "dcutr", "dns", "gossipsub", "identify", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat" ] }
 futures-timer = "3.0"
-uuid = { version = "1.8.0",  features = [ "v4","fast-rng" ]}
 bcrypt.workspace = true
 fake = "2.9.2"
 sha256 = "1.5"
