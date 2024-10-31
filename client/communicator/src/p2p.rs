@@ -5,7 +5,6 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use arcstr::ArcStr;
 use async_trait::async_trait;
-use bcrypt::{hash, DEFAULT_COST};
 use enum_dispatch::enum_dispatch;
 use fake::faker::company::en::Buzzword;
 use fake::Fake;
@@ -32,6 +31,7 @@ use tokio::spawn;
 use tracing::{debug, error, info, warn};
 
 use crate::messages::NiketsuMessage;
+use crate::CONNECT_TIMEOUT;
 
 static KEYPAIR: Lazy<identity::Keypair> = Lazy::new(identity::Keypair::generate_ed25519);
 
@@ -53,14 +53,7 @@ struct MessageRequest(NiketsuMessage);
 pub(crate) struct MessageResponse(ResponseStatus);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum ResponseStatus {
-    Ok,
-    Error,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct InitRequest {
-    // should be hashed when listening
     room: RoomName,
     password: String,
 }
@@ -69,18 +62,20 @@ impl InitRequest {
     fn new(room: RoomName, password: String) -> Self {
         Self {
             room,
-            password: hash(password, DEFAULT_COST).expect("Failed to hash password"),
+            password: digest(password),
         }
-    }
-
-    fn new_without_hash(room: RoomName, password: String) -> Self {
-        Self { room, password }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum ResponseStatus {
+    Ok,
+    Err,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct InitResponse {
-    status: u8,              // 0 -> ok, 1 -> err
+    status: ResponseStatus,
     peer_id: Option<PeerId>, // peer id of room if found
 }
 
@@ -92,7 +87,7 @@ trait SwarmRelayConnection {
         room: RoomName,
         password: String,
     ) -> Result<Host>;
-    async fn identify_loop(&mut self, room: RoomName, password: String) -> PeerInfo;
+    async fn identify_loop(&mut self, room: RoomName, password: String) -> Result<PeerInfo>;
     async fn identify_relay(
         &mut self,
         relay_addr: Multiaddr,
@@ -150,7 +145,7 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
         Ok(*self.local_peer_id())
     }
 
-    async fn identify_loop(&mut self, room: RoomName, password: String) -> PeerInfo {
+    async fn identify_loop(&mut self, room: RoomName, password: String) -> Result<PeerInfo> {
         let mut host_peer_id: Option<PeerId> = None;
         let mut relay_peer_id: Option<PeerId> = None;
         let mut learned_observed_addr = false;
@@ -179,17 +174,17 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
                     learned_observed_addr = true;
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::InitRequestResponse(
-                    request_response::Event::Message { peer, message },
+                    request_response::Event::Message { message, .. },
                 )) => {
                     if let request_response::Message::Response { response, .. } = message {
-                        if response.status != 0 {
-                            self.behaviour_mut().init_request_response.send_request(
-                                &peer,
-                                InitRequest::new_without_hash(room.clone(), password.clone()),
-                            );
-                        } else {
-                            host_peer_id = response.peer_id;
-                            learned_host_peer_id = true;
+                        match response.status {
+                            ResponseStatus::Ok => {
+                                host_peer_id = response.peer_id;
+                                learned_host_peer_id = true;
+                            }
+                            ResponseStatus::Err => {
+                                bail!("Authentication failed");
+                            }
                         }
                     }
                 }
@@ -210,10 +205,10 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
             }
         }
 
-        PeerInfo {
+        Ok(PeerInfo {
             relay: relay_peer_id.unwrap(),
             host: host_peer_id,
-        }
+        })
     }
 
     async fn identify_relay(
@@ -226,10 +221,11 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
         self.dial(relay_addr.clone())
             .context("Failed to dial relay")?;
 
+        // time out is already set in the communicator, so this could be dropped
         let host_peer_id =
-            tokio::time::timeout(Duration::from_secs(15), self.identify_loop(room, password)).await;
+            tokio::time::timeout(CONNECT_TIMEOUT, self.identify_loop(room, password)).await;
 
-        host_peer_id.context("Identify exchange with relay timed out")
+        host_peer_id.context("Identify exchange with relay timed out")?
     }
 }
 

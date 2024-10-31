@@ -9,7 +9,7 @@ use enum_dispatch::enum_dispatch;
 use multiaddr::Multiaddr;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
-use tracing::{info, trace};
+use tracing::trace;
 
 use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
@@ -159,7 +159,6 @@ impl EventHandler for VideoStatusMsg {
 
         //TODO check if current video is not the same as host?
         if let Some(paused) = model.player.is_paused() {
-            let sp = self.paused;
             match (paused, self.paused) {
                 (true, false) => model.player.start(),
                 (false, true) => model.player.pause(),

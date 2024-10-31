@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::Result;
 use async_std::stream::StreamExt;
 use async_std::sync::RwLock;
-use bcrypt::verify;
+use bcrypt::{hash, verify, DEFAULT_COST};
 use libp2p::core::multiaddr::Protocol;
 use libp2p::core::Multiaddr;
 use libp2p::identity::Keypair;
@@ -28,27 +28,42 @@ struct Behaviour {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct InitRequest {
-    // should be hashed when listening
     room: String,
     password: String,
 }
 
-impl InitRequest {
-    fn verify(&self, password: String) -> bool {
-        verify(password, &self.password).unwrap_or(false)
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum ResponseStatus {
+    Ok,
+    Err,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct InitResponse {
-    status: u8,              // 0 -> ok, 1 -> err
+pub(crate) struct InitResponse {
+    status: ResponseStatus,
     peer_id: Option<PeerId>, // peer id of room if found
 }
 
+struct PasswordHash(String);
+
+impl From<InitRequest> for PasswordHash {
+    fn from(value: InitRequest) -> Self {
+        PasswordHash(hash(value.password.clone(), DEFAULT_COST).unwrap_or(value.password))
+    }
+}
+
+impl PasswordHash {
+    fn verify(&self, password: String) -> bool {
+        verify(password, &self.0).unwrap_or(false)
+    }
+}
+
+type RoomName = String;
+
 pub struct Relay {
     swarm: Swarm<Behaviour>,
-    rooms: Arc<RwLock<HashMap<String, (PeerId, InitRequest)>>>,
-    hosts: Arc<RwLock<HashMap<PeerId, String>>>,
+    rooms: Arc<RwLock<HashMap<RoomName, (PeerId, PasswordHash)>>>,
+    hosts: Arc<RwLock<HashMap<PeerId, RoomName>>>,
 }
 
 pub fn new(config: Config) -> Result<Relay> {
@@ -110,7 +125,7 @@ pub fn new(config: Config) -> Result<Relay> {
     swarm.listen_on(listen_addr_quic_ipv4)?;
     swarm.listen_on(listen_addr_quic_ipv6)?;
 
-    let rooms: Arc<RwLock<HashMap<String, (PeerId, InitRequest)>>> =
+    let rooms: Arc<RwLock<HashMap<String, (PeerId, PasswordHash)>>> =
         Arc::new(RwLock::new(HashMap::new()));
     let hosts: Arc<RwLock<HashMap<PeerId, String>>> = Arc::new(RwLock::new(HashMap::new()));
 
@@ -158,9 +173,7 @@ impl Relay {
                         debug!("Received init response. This should not happen")
                     }
                 },
-                event => {
-                    debug!(?event, "Uncaptured event");
-                }
+                _ => {}
             }
         }
     }
@@ -182,25 +195,25 @@ impl Relay {
     ) {
         debug!("Received request from client");
         let mut r = self.rooms.write().await;
-        let mut status: u8 = 0;
+        let mut status = ResponseStatus::Ok;
         let mut peer_id: Option<PeerId> = None;
         if let Some((pid, req)) = r.get(request.room.as_str()) {
             if req.verify(request.password) {
                 // host is available and password is correct
                 if *pid != peer {
-                    debug!("Verified password. Returning pid");
+                    debug!("Authentication successfull");
                     peer_id = Some(*pid);
                 }
             } else {
-                debug!("Auth failed");
-                status = 1;
+                debug!("Authentication failed");
+                status = ResponseStatus::Err;
             }
         } else {
             // else no error and query client will be host
             debug!("Creating new room");
             let mut m = self.hosts.write().await;
             m.insert(peer, request.room.clone());
-            r.insert(request.room.clone(), (peer, request));
+            r.insert(request.room.clone(), (peer, request.into()));
         }
         self.swarm
             .behaviour_mut()
