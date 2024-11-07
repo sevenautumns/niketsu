@@ -56,19 +56,6 @@ impl From<UserStatusListMsg> for UserList {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct User<'a> {
-    user_iter: std::collections::btree_set::Iter<'a, UserStatus>,
-}
-
-impl<'a> Iterator for User<'a> {
-    type Item = &'a UserStatus;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.user_iter.next()
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

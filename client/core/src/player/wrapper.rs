@@ -74,7 +74,7 @@ impl MediaPlayerWrapper {
             min_diff / DELAY_RANGE.as_secs_f64() * SPEED_RANGE + MINIMUM_SPEED_DIFF;
 
         if host_pos < client_pos {
-            speed_increase = (-1.0) * speed_increase;
+            speed_increase *= -1.0;
         }
         self.player
             .set_speed(self.host_speed * (1.0 + speed_increase));

@@ -902,7 +902,7 @@ impl HostCommunicationHandler {
     }
 
     fn handle_new_playlist(&mut self, playlist: &PlaylistMsg, peer_id: PeerId) -> Result<()> {
-        if let Some(select_msg) = self.select_next(&playlist) {
+        if let Some(select_msg) = self.select_next(playlist) {
             self.select = select_msg.clone();
             let msg: NiketsuMessage = select_msg.into();
             self.message_sender.send(msg.clone())?;
