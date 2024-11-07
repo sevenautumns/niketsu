@@ -193,7 +193,7 @@ impl RatatuiView {
 
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic| {
-            Self::restore_terminal().expect("restore terminal failed");
+            Self::restore_terminal().ok();
             original_hook(panic);
         }));
 
