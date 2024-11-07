@@ -20,7 +20,7 @@ static SAVE_PERMIT: Semaphore = Semaphore::const_new(1);
 
 const EXTENSION: &str = "yaml";
 
-pub struct PlaylistBrowser {}
+pub struct PlaylistBrowser;
 
 impl PlaylistBrowser {
     fn get_playlist_folder() -> Option<&'static PathBuf> {
@@ -34,12 +34,10 @@ impl PlaylistBrowser {
     async fn get_playlist_from_path(path: &Path) -> Option<PlaylistHandler> {
         let playlist = tokio::fs::read_to_string(path)
             .await
-            .inspect_err(|error| tracing::warn!(file = ?path, %error, "failed reading file"))
+            .inspect_err(|error| tracing::warn!(?path, %error, "failed reading file"))
             .ok()?;
         serde_yaml::from_str(&playlist)
-            .inspect_err(
-                |error| tracing::warn!(playlist = ?path, %error, "failed parsing playlist"),
-            )
+            .inspect_err(|error| tracing::warn!(?path, %error, "failed parsing playlist"))
             .ok()
     }
 
@@ -51,7 +49,7 @@ impl PlaylistBrowser {
                 return playlist;
             }
         }
-        tracing::warn!("No playlist found");
+        tracing::warn!(%room, "No playlist found");
         None
     }
 
@@ -80,20 +78,25 @@ impl PlaylistBrowser {
         names
     }
 
-    pub async fn get_all_for_room(room: &RoomName) -> Vec<PlaylistHandler> {
+    pub async fn get_all_for_room(room: &RoomName) -> Vec<NamedPlaylist> {
         let mut paths = Self::get_all_paths_for_room(room).await;
         paths.sort_by_cached_key(|path| path.file_name().map(OsStr::to_os_string));
-        let mut handlers = Vec::with_capacity(paths.len());
+        let mut playlists = Vec::with_capacity(paths.len());
         for path in paths.iter().rev() {
-            if let Some(handler) = Self::get_playlist_from_path(path).await {
-                handlers.push(handler);
+            if let Some(playlist) = Self::get_playlist_from_path(path).await {
+                let name = path
+                    .file_name()
+                    .and_then(OsStr::to_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| room.to_string());
+                playlists.push(NamedPlaylist { name, playlist });
             }
         }
-        handlers.shrink_to_fit();
-        handlers
+        playlists.shrink_to_fit();
+        playlists
     }
 
-    pub async fn get_all() -> BTreeMap<RoomName, Vec<PlaylistHandler>> {
+    pub async fn get_all() -> BTreeMap<RoomName, Vec<NamedPlaylist>> {
         let mut rooms = BTreeMap::new();
         let Some(playlist_folder) = Self::get_playlist_folder() else {
             return BTreeMap::new();
@@ -151,4 +154,10 @@ impl PlaylistBrowser {
             drop(permit);
         });
     }
+}
+
+#[derive(Debug)]
+pub struct NamedPlaylist {
+    pub name: String,
+    pub playlist: PlaylistHandler,
 }
