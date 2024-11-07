@@ -14,6 +14,7 @@ serde.workspace = true
 enum_dispatch.workspace = true
 once_cell.workspace = true
 directories.workspace = true
+itertools.workspace = true
 serde_with = "3.0"
 iced = { version = "0.13", features = ["tokio", "advanced"] }
 futures = "0.3"

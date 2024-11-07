@@ -5,8 +5,9 @@ use iced::advanced::Widget;
 use iced::keyboard::key::Named;
 use iced::keyboard::Key;
 use iced::widget::scrollable::Id;
-use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
+use iced::widget::{rich_text, span, Button, Column, Container, Row, Scrollable, Text, TextInput};
 use iced::{Element, Event, Length, Renderer, Theme, Vector};
+use itertools::Itertools;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::file_database::FileEntry;
 use niketsu_core::util::FuzzyResult;
@@ -41,7 +42,22 @@ impl<'a> FileSearchWidget<'a> {
         for (index, file) in state.results.iter().enumerate() {
             let pressed = index == state.cursor_index;
             // TODO add modified date
-            let row = Row::new().push(Text::new(file.entry.file_name()).width(Length::Fill));
+            let text = file
+                .entry
+                .file_name()
+                .chars()
+                .enumerate()
+                .chunk_by(|(i, _)| file.hits.contains(i))
+                .into_iter()
+                .map(|(bold, chars)| {
+                    let mut span = span(String::from_iter(chars.map(|(_, c)| c)));
+                    if bold {
+                        span = span.underline(true);
+                    }
+                    span
+                })
+                .collect::<Vec<_>>();
+            let row = Row::new().push(rich_text(text).width(Length::Fill));
             results.push(
                 Button::new(Container::new(row).padding(2))
                     .padding(0)

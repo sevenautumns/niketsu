@@ -4134,6 +4134,7 @@ dependencies = [
  "enum_dispatch",
  "futures",
  "iced",
+ "itertools",
  "niketsu-core",
  "once_cell",
  "palette",
