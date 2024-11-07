@@ -843,7 +843,6 @@ impl HostCommunicationHandler {
     }
 
     fn handle_all_users_ready(&mut self, peer_id: &PeerId) -> Result<()> {
-        debug!(ready=%self.all_users_ready(),"all users ready");
         if self.all_users_ready() {
             debug!("All users area ready. Publishing start to gossipsub");
             let mut start_msg = NiketsuMessage::Start(StartMsg {
@@ -939,8 +938,10 @@ impl HostCommunicationHandler {
         let niketsu_msg: NiketsuMessage = msg.try_into()?;
         match niketsu_msg.clone() {
             NiketsuMessage::Select(select) => {
-                self.handle_all_users_ready(peer_id)?;
                 self.select = select;
+                self.message_sender.send(niketsu_msg)?;
+                self.handle_all_users_ready(peer_id)?;
+                return Ok(());
             }
             NiketsuMessage::Join(_)
             | NiketsuMessage::VideoStatus(_)
