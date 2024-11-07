@@ -7,7 +7,9 @@ use iced::keyboard::Key;
 use iced::widget::scrollable::Id;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
 use iced::{Element, Event, Length, Renderer, Theme, Vector};
-use niketsu_core::file_database::fuzzy::{FuzzyResult, FuzzySearch};
+use niketsu_core::file_database::fuzzy::FuzzySearch;
+use niketsu_core::file_database::FileEntry;
+use niketsu_core::util::FuzzyResult;
 
 use self::message::{
     Activate, Click, Close, FileSearchWidgetMessage, Input, Insert, SearchFinished, Select,
@@ -269,7 +271,7 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'
 pub struct FileSearchWidgetState {
     query: String,
     search: Option<FuzzySearch>,
-    results: Vec<FuzzyResult>,
+    results: Vec<FuzzyResult<FileEntry>>,
     cursor_index: usize,
     last_click: Option<Instant>,
     active: bool,

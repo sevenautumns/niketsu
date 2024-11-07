@@ -4,11 +4,16 @@ use std::fs::FileType;
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use once_cell::sync::Lazy;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::slice::ParallelSliceMut;
 use tokio::sync::Semaphore;
 
 use super::handler::PlaylistHandler;
 use crate::room::RoomName;
+use crate::util::FuzzyResult;
 use crate::PROJECT_DIRS;
 
 static PLAYLIST_FOLDER: Lazy<Option<PathBuf>> =
@@ -20,9 +25,43 @@ static SAVE_PERMIT: Semaphore = Semaphore::const_new(1);
 
 const EXTENSION: &str = "yaml";
 
-pub struct PlaylistBrowser;
+#[derive(Default, Debug, Clone)]
+pub struct PlaylistBrowser {
+    playlist_map: BTreeMap<RoomName, Vec<NamedPlaylist>>,
+}
 
 impl PlaylistBrowser {
+    pub fn playlist_map(&self) -> &BTreeMap<RoomName, Vec<NamedPlaylist>> {
+        &self.playlist_map
+    }
+
+    /// Fuzzy search over all playlist with the name combination: room name + playlist name
+    /// The indices in the fuzzy result will be aligned to the name of the playlist without the room name
+    pub fn fuzzy_search(&self, query: &str) -> Vec<FuzzyResult<&NamedPlaylist>> {
+        let matcher = SkimMatcherV2::default();
+
+        let mut lists = self
+            .playlist_map
+            .par_iter()
+            .map(|(_, list)| list)
+            .flatten()
+            .filter_map(|playlist| {
+                matcher
+                    .fuzzy_indices(&format!("{}{}", playlist.room, playlist.name), query)
+                    .map(|(score, hits)| FuzzyResult {
+                        score,
+                        hits: hits
+                            .into_iter()
+                            .filter_map(|i| i.checked_sub(playlist.room.len()))
+                            .collect(),
+                        entry: playlist,
+                    })
+            })
+            .collect::<Vec<_>>();
+        lists.par_sort_by_key(|r| -r.score);
+        lists
+    }
+
     fn get_playlist_folder() -> Option<&'static PathBuf> {
         let playlist = PLAYLIST_FOLDER.as_ref();
         if playlist.is_none() {
@@ -89,23 +128,27 @@ impl PlaylistBrowser {
                     .and_then(OsStr::to_str)
                     .map(str::to_string)
                     .unwrap_or_else(|| room.to_string());
-                playlists.push(NamedPlaylist { name, playlist });
+                playlists.push(NamedPlaylist {
+                    name,
+                    room: room.clone(),
+                    playlist,
+                });
             }
         }
         playlists.shrink_to_fit();
         playlists
     }
 
-    pub async fn get_all() -> BTreeMap<RoomName, Vec<NamedPlaylist>> {
-        let mut rooms = BTreeMap::new();
+    pub async fn get_all() -> PlaylistBrowser {
+        let mut playlist_map = BTreeMap::new();
         let Some(playlist_folder) = Self::get_playlist_folder() else {
-            return BTreeMap::new();
+            return PlaylistBrowser::default();
         };
         let mut read_dir = match tokio::fs::read_dir(playlist_folder).await {
             Ok(read_dir) => read_dir,
             Err(error) => {
                 tracing::warn!(%error, ?playlist_folder, "failed to read folder");
-                return BTreeMap::new();
+                return PlaylistBrowser::default();
             }
         };
         while let Ok(Some(entry)) = read_dir.next_entry().await {
@@ -123,10 +166,10 @@ impl PlaylistBrowser {
             };
             let playlists = Self::get_all_for_room(&room).await;
             if !playlists.is_empty() {
-                rooms.insert(room, playlists);
+                playlist_map.insert(room, playlists);
             }
         }
-        rooms
+        PlaylistBrowser { playlist_map }
     }
 
     pub(crate) fn save(room: &RoomName, handler: &PlaylistHandler) {
@@ -156,8 +199,58 @@ impl PlaylistBrowser {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NamedPlaylist {
     pub name: String,
+    pub room: RoomName,
     pub playlist: PlaylistHandler,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fuzzy_search() {
+        // Set up sample playlists
+        let mut playlist_browser = PlaylistBrowser::default();
+
+        let room = arcstr::literal!("Room 1");
+        let playlists = vec![
+            NamedPlaylist {
+                name: "Chill Vibes".to_string(),
+                room: room.clone(),
+                playlist: PlaylistHandler::default(),
+            },
+            NamedPlaylist {
+                name: "Upbeat Hits".to_string(),
+                room: room.clone(),
+                playlist: PlaylistHandler::default(),
+            },
+            NamedPlaylist {
+                name: "Chill Beats".to_string(),
+                room: room.clone(),
+                playlist: PlaylistHandler::default(),
+            },
+        ];
+
+        playlist_browser
+            .playlist_map
+            .insert(room.clone(), playlists);
+
+        // Test cases
+        let results = playlist_browser.fuzzy_search("Chill");
+        assert_eq!(results.len(), 2); // "Chill Vibes" and "Chill Beats"
+
+        let first_result = &results[0];
+        assert!(first_result.entry.name.contains("Chill"));
+        assert!(first_result.score > 0);
+
+        let results_no_match = playlist_browser.fuzzy_search("Party");
+        assert_eq!(results_no_match.len(), 0); // No matches for "Party"
+
+        let results_partial_match = playlist_browser.fuzzy_search("Vibes");
+        assert_eq!(results_partial_match.len(), 1); // Only "Chill Vibes" should match
+        assert_eq!(results_partial_match[0].entry.name, "Chill Vibes");
+    }
 }

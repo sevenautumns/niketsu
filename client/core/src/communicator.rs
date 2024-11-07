@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::fmt::Display;
 use std::time::Duration;
 
 use arcstr::ArcStr;
@@ -34,15 +33,6 @@ pub struct EndpointInfo {
     pub room: RoomName,
     pub password: String,
 }
-
-impl Display for EndpointInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO rework the interiors ?
-        self.addr.fmt(f)
-    }
-}
-
-impl EndpointInfo {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutgoingMessage {

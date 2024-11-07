@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::playlist::{Playlist, Video};
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct PlaylistHandler {
     playing: Option<usize>,
     #[serde(flatten)]

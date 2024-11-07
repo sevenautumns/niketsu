@@ -1,5 +1,6 @@
-use niketsu_core::file_database::fuzzy::{FuzzyResult, FuzzySearch};
+use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::file_database::{FileEntry, FileStore};
+use niketsu_core::util::FuzzyResult;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
@@ -14,7 +15,7 @@ pub struct FuzzySearchWidget;
 #[derive(Debug, Default, Clone)]
 pub struct FuzzySearchWidgetState {
     file_database: FileStore,
-    current_result: Option<Vec<FuzzyResult>>,
+    current_result: Option<Vec<FuzzyResult<FileEntry>>>,
     input_field: TextAreaWrapper,
     list_state: ListStateWrapper,
     max_len: usize,
@@ -67,7 +68,7 @@ impl FuzzySearchWidgetState {
         self.file_database = file_database;
     }
 
-    pub fn set_result(&mut self, results: Vec<FuzzyResult>) {
+    pub fn set_result(&mut self, results: Vec<FuzzyResult<FileEntry>>) {
         if results.is_empty() {
             self.list_state.select(None);
         }
