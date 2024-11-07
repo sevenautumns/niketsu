@@ -118,6 +118,7 @@ impl From<ServerChange> for EndpointInfo {
 impl EventHandler for ServerChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("server change message");
+        model.config.room.clone_from(&self.room);
         model.config.password.clone_from(&self.password);
         model.communicator.connect(self.into());
     }
