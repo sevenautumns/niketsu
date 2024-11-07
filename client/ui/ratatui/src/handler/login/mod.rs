@@ -1,7 +1,7 @@
 use arcstr::ArcStr;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use niketsu_core::room::RoomName;
-use niketsu_core::ui::ServerChange;
+use niketsu_core::ui::RoomChange;
 
 use super::EventHandler;
 use crate::view::RatatuiView;
@@ -22,8 +22,7 @@ impl EventHandler for Login {
                         view.app.reset_overlay();
                         let input = view.app.login_widget_state.collect_input();
                         let room = RoomName::from(input.0);
-                        view.model.change_server(ServerChange {
-                            addr: view.config.addr(),
+                        view.model.change_room(RoomChange {
                             room: room.clone(),
                             password: input.1.clone(),
                         });

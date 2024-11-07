@@ -6,7 +6,7 @@ use iced::{Task, Theme};
 use niketsu_core::config::Config;
 use niketsu_core::log;
 use niketsu_core::room::RoomName;
-use niketsu_core::ui::{ServerChange, UiModel};
+use niketsu_core::ui::{RoomChange, UiModel};
 
 use super::SettingsWidgetState;
 use crate::message::{Message, MessageHandler};
@@ -78,8 +78,7 @@ impl SettingsWidgetMessageTrait for ConnectApplyClose {
     fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
         ApplyClose.handle(state, model);
         let config = state.config();
-        model.change_server(ServerChange {
-            addr: config.addr(),
+        model.change_room(RoomChange {
             password: config.password.clone(),
             room: config.room.clone(),
         });

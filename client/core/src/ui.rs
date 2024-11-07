@@ -45,7 +45,7 @@ pub trait UserInterfaceTrait: std::fmt::Debug + Send {
 pub enum UserInterfaceEvent {
     PlaylistChange,
     VideoChange,
-    ServerChange,
+    RoomChange,
     UserChange,
     UserMessage,
     FileDatabaseChange,
@@ -99,28 +99,29 @@ impl EventHandler for VideoChange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServerChange {
-    pub addr: Multiaddr,
+pub struct RoomChange {
     pub password: String,
     pub room: RoomName,
 }
 
-impl From<ServerChange> for EndpointInfo {
-    fn from(value: ServerChange) -> Self {
-        Self {
-            room: value.room,
-            password: value.password,
-            addr: value.addr,
+impl RoomChange {
+    fn into_endpoint(self, addr: Multiaddr) -> EndpointInfo {
+        EndpointInfo {
+            room: self.room,
+            password: self.password,
+            addr,
         }
     }
 }
 
-impl EventHandler for ServerChange {
+impl EventHandler for RoomChange {
     fn handle(self, model: &mut CoreModel) {
-        trace!("server change message");
+        trace!("room change message");
         model.config.room.clone_from(&self.room);
         model.config.password.clone_from(&self.password);
-        model.communicator.connect(self.into());
+        model
+            .communicator
+            .connect(self.into_endpoint(model.config.addr()));
     }
 }
 
@@ -450,11 +451,11 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn change_server(&self, request: ServerChange) {
-        trace!("change server");
+    pub fn change_room(&self, request: RoomChange) {
+        trace!("change room");
         let res = self
             .events
-            .send(UserInterfaceEvent::ServerChange(request))
+            .send(UserInterfaceEvent::RoomChange(request))
             .map_err(anyhow::Error::from);
         crate::log!(res)
     }
@@ -618,8 +619,7 @@ mod tests {
             .config(config)
             .build();
 
-        let change = ServerChange {
-            addr,
+        let change = RoomChange {
             password,
             room: room.clone(),
         };
@@ -929,7 +929,7 @@ mod tests {
     }
 
     #[test]
-    fn test_change_server() {
+    fn test_change_room() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let notify = Arc::new(Notify::new());
         let ui_model = UiModel {
@@ -945,17 +945,10 @@ mod tests {
             notify: notify.clone(),
         };
 
-        let addr = Multiaddr::empty()
-            .with(Protocol::Dns("duckduckgo.com".into()))
-            .with(Protocol::Tcp(6655));
         let password = String::from("passwd");
         let room = arcstr::literal!("room1");
-        let request = ServerChange {
-            addr,
-            password,
-            room,
-        };
-        ui_model.change_server(request.clone());
+        let request = RoomChange { password, room };
+        ui_model.change_room(request.clone());
 
         let received_event = rx.try_recv().unwrap();
         assert_eq!(received_event, request.into());

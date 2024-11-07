@@ -203,6 +203,7 @@ impl PlaylistBrowser {
 pub struct NamedPlaylist {
     pub name: String,
     pub room: RoomName,
+    // TODO maybe place this into an Arc
     pub playlist: PlaylistHandler,
 }
 

@@ -16,13 +16,12 @@ use crossterm::terminal::{
 use futures::future::OptionFuture;
 use futures::{Future, StreamExt};
 use gag::Gag;
-use multiaddr::Multiaddr;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::playlist::Video;
 use niketsu_core::room::RoomName;
-use niketsu_core::ui::{ServerChange, UiModel, UserInterface};
+use niketsu_core::ui::{RoomChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 use tokio::task::JoinHandle;
@@ -507,17 +506,12 @@ impl RatatuiView {
 
         match args {
             ["w", msg @ ..] | ["write", msg @ ..] => self.model.send_message(msg.concat()),
-            ["server-change", password, room] | ["sc", password, room] => self
-                .handle_server_change(
-                    self.config.addr(),
-                    password.to_string(),
-                    RoomName::from(*room),
-                ),
-            ["server-change", room] | ["sc", room] => self.handle_server_change(
-                self.config.addr(),
-                String::default(),
-                RoomName::from(*room),
-            ),
+            ["room-change", password, room] | ["sc", password, room] => {
+                self.handle_room_change(password.to_string(), RoomName::from(*room))
+            }
+            ["room-change", room] | ["sc", room] => {
+                self.handle_room_change(String::default(), RoomName::from(*room))
+            }
             ["username-change", username] | ["uc", username] => {
                 self.model.change_username(username.to_string().into())
             }
@@ -590,12 +584,8 @@ impl RatatuiView {
         _ = self.config.save();
     }
 
-    fn handle_server_change(&mut self, addr: Multiaddr, password: String, room: RoomName) {
-        self.model.change_server(ServerChange {
-            addr,
-            password,
-            room,
-        });
+    fn handle_room_change(&mut self, password: String, room: RoomName) {
+        self.model.change_room(RoomChange { password, room });
     }
 
     fn handle_move(&mut self, filename: &str, position: &str) {
