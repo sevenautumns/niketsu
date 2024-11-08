@@ -13,7 +13,7 @@ use crate::TEXT_SIZE;
 pub mod message;
 
 pub struct DatabaseWidget<'a> {
-    base: Element<'a, Message>,
+    base: Element<'a, DatabaseWidgetMessage>,
 }
 
 impl<'a> DatabaseWidget<'a> {
@@ -40,8 +40,8 @@ impl<'a> DatabaseWidget<'a> {
         };
 
         let update_msg = match finished {
-            true => DatabaseWidgetMessage::from(StartDbUpdate).into(),
-            false => DatabaseWidgetMessage::from(StopDbUpdate).into(),
+            true => StartDbUpdate.into(),
+            false => StopDbUpdate.into(),
         };
         let update_btn = match finished {
             true => Button::new("Update"),
@@ -75,7 +75,7 @@ impl<'a> DatabaseWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for DatabaseWidget<'a> {
+impl<'a> iced::advanced::Widget<DatabaseWidgetMessage, Theme, Renderer> for DatabaseWidget<'a> {
     fn size(&self) -> iced::Size<Length> {
         self.base.as_widget().size()
     }
@@ -156,7 +156,7 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for DatabaseWidget<'a>
         cursor: Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, Message>,
+        shell: &mut iced::advanced::Shell<'_, DatabaseWidgetMessage>,
         viewport: &Rectangle,
     ) -> Status {
         self.base.as_widget_mut().on_event(
@@ -174,7 +174,7 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for DatabaseWidget<'a>
 
 impl<'a> From<DatabaseWidget<'a>> for Element<'a, Message> {
     fn from(db: DatabaseWidget<'a>) -> Self {
-        Self::new(db)
+        Element::new(db).map(Message::from)
     }
 }
 

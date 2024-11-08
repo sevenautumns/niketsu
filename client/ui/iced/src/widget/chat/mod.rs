@@ -18,7 +18,7 @@ pub mod message;
 const SPACING: u16 = 5;
 
 pub struct ChatWidget<'a> {
-    base: Element<'a, Message>,
+    base: Element<'a, ChatWidgetMessage>,
 }
 
 impl<'a> ChatWidget<'a> {
@@ -32,7 +32,7 @@ impl<'a> ChatWidget<'a> {
         let messages = Container::new(
             Scrollable::new(Column::with_children(msgs))
                 .width(Length::Fill)
-                .on_scroll(|o| ChatWidgetMessage::from(ScrollMessages(o.relative_offset())).into())
+                .on_scroll(|o| ScrollMessages(o.relative_offset()).into())
                 .id(Id::new("messages")),
         )
         .style(ContainerBorder::theme)
@@ -45,10 +45,10 @@ impl<'a> ChatWidget<'a> {
             .push(
                 TextInput::new("Message", &state.message)
                     .width(Length::Fill)
-                    .on_input(|i| ChatWidgetMessage::from(MessageInput(i)).into())
-                    .on_submit(ChatWidgetMessage::from(SendMessage).into()),
+                    .on_input(|i| MessageInput(i).into())
+                    .on_submit(SendMessage.into()),
             )
-            .push(Button::new("Send").on_press(ChatWidgetMessage::from(SendMessage).into()))
+            .push(Button::new("Send").on_press(SendMessage.into()))
             .spacing(SPACING);
         column = column.push(message_input);
 
@@ -57,7 +57,7 @@ impl<'a> ChatWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for ChatWidget<'a> {
+impl<'a> iced::advanced::Widget<ChatWidgetMessage, Theme, Renderer> for ChatWidget<'a> {
     fn size(&self) -> iced::Size<Length> {
         self.base.as_widget().size()
     }
@@ -139,7 +139,7 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for ChatWidget<'a> {
         cursor: Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, Message>,
+        shell: &mut iced::advanced::Shell<'_, ChatWidgetMessage>,
         viewport: &Rectangle,
     ) -> Status {
         self.base.as_widget_mut().on_event(
@@ -157,7 +157,7 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for ChatWidget<'a> {
 
 impl<'a> From<ChatWidget<'a>> for Element<'a, Message> {
     fn from(msgs: ChatWidget<'a>) -> Self {
-        Self::new(msgs)
+        Element::new(msgs).map(Message::from)
     }
 }
 
@@ -196,11 +196,11 @@ impl ChatWidgetState {
 }
 
 pub trait PlayerMessageExt {
-    fn to_text<'a>(&self) -> Element<'a, Message>;
+    fn to_text<'a>(&self) -> Element<'a, ChatWidgetMessage>;
 }
 
 impl PlayerMessageExt for PlayerMessage {
-    fn to_text<'a>(&self) -> Element<'a, Message> {
+    fn to_text<'a>(&self) -> Element<'a, ChatWidgetMessage> {
         let when = self.timestamp.format("[%H:%M:%S]").to_string();
         let message = &self.message;
 

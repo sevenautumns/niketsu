@@ -22,8 +22,8 @@ use crate::styling::FileButton;
 pub mod message;
 
 pub struct FileSearchWidget<'a> {
-    button: Element<'a, Message>,
-    base: Element<'a, Message>,
+    button: Element<'a, FileSearchWidgetMessage>,
+    base: Element<'a, FileSearchWidgetMessage>,
     state: &'a FileSearchWidgetState,
 }
 
@@ -34,7 +34,7 @@ impl<'a> FileSearchWidget<'a> {
                 .width(Length::Fill)
                 .align_x(iced::alignment::Horizontal::Center),
         )
-        .on_press(FileSearchWidgetMessage::from(Activate).into())
+        .on_press(Activate.into())
         .width(Length::Fill)
         .style(iced::widget::button::success);
 
@@ -62,24 +62,24 @@ impl<'a> FileSearchWidget<'a> {
                 Button::new(Container::new(row).padding(2))
                     .padding(0)
                     .width(Length::Fill)
-                    .on_press(FileSearchWidgetMessage::from(Click { index }).into())
+                    .on_press(Click { index }.into())
                     .style(FileButton::theme(pressed, true))
                     .into(),
             );
         }
         let results = Column::with_children(results).width(Length::Fill);
         let input = TextInput::new("Search Query", &state.query)
-            .on_input(|query| FileSearchWidgetMessage::from(Input { query }).into())
+            .on_input(|query| Input { query }.into())
             .on_submit(
-                FileSearchWidgetMessage::from(Insert {
+                Insert {
                     index: state.cursor_index,
-                })
+                }
                 .into(),
             )
             .id(iced::widget::text_input::Id::new("file_search_query"))
             .width(Length::Fill);
         let close_button = Button::new("Close")
-            .on_press(FileSearchWidgetMessage::from(Close).into())
+            .on_press(Close.into())
             .style(iced::widget::button::danger);
         let top_row = Row::new().push(input).push(close_button).spacing(5);
         let mut base = Column::new().push(top_row).padding(5);
@@ -98,7 +98,7 @@ impl<'a> FileSearchWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'a> {
+impl<'a> iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSearchWidget<'a> {
     fn size(&self) -> iced::Size<Length> {
         self.button.as_widget().size()
     }
@@ -183,7 +183,7 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'
         cursor: iced::advanced::mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, Message>,
+        shell: &mut iced::advanced::Shell<'_, FileSearchWidgetMessage>,
         viewport: &iced::Rectangle,
     ) -> iced::event::Status {
         if self.state.active {
@@ -192,7 +192,7 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'
             )) = event
             {
                 if matches!(cursor, iced::mouse::Cursor::Available(_)) {
-                    shell.publish(FileSearchWidgetMessage::from(Close).into());
+                    shell.publish(Close.into());
                 }
             }
             if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -205,24 +205,24 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'
                         let index = (self.state.cursor_index + self.state.results.len() - 1)
                             .checked_rem(self.state.results.len())
                             .unwrap_or_default();
-                        shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
+                        shell.publish(Select { index }.into());
                     }
                     Named::ArrowDown => {
                         let index = (self.state.cursor_index + 1)
                             .checked_rem(self.state.results.len())
                             .unwrap_or_default();
-                        shell.publish(FileSearchWidgetMessage::from(Select { index }).into());
+                        shell.publish(Select { index }.into());
                     }
                     Named::Enter => {
                         shell.publish(
-                            FileSearchWidgetMessage::from(Insert {
+                            Insert {
                                 index: self.state.cursor_index,
-                            })
+                            }
                             .into(),
                         );
                     }
                     Named::Escape => {
-                        shell.publish(FileSearchWidgetMessage::from(Close).into());
+                        shell.publish(Close.into());
                     }
                     _ => {}
                 }
@@ -230,7 +230,7 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'
 
             if let Some(search) = &self.state.search {
                 if search.is_finished() {
-                    shell.publish(FileSearchWidgetMessage::from(SearchFinished).into());
+                    shell.publish(SearchFinished.into());
                 }
             }
         }
@@ -253,7 +253,8 @@ impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for FileSearchWidget<'
         _layout: iced::advanced::Layout<'_>,
         _renderer: &Renderer,
         _translation: Vector,
-    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+    ) -> Option<iced::advanced::overlay::Element<'b, FileSearchWidgetMessage, Theme, Renderer>>
+    {
         // Ignore Captures if the `Enter` key was pressed
         let event_status = Box::new(|event, status| {
             if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -295,6 +296,6 @@ pub struct FileSearchWidgetState {
 
 impl<'a> From<FileSearchWidget<'a>> for Element<'a, Message> {
     fn from(table: FileSearchWidget<'a>) -> Self {
-        Self::new(table)
+        Element::new(table).map(Message::from)
     }
 }

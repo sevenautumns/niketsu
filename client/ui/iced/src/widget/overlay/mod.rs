@@ -1,11 +1,9 @@
 use iced::advanced::widget::Operation;
 use iced::{Border, Color, Element, Point, Renderer, Size, Theme, Vector};
 
-use crate::message::Message;
-
-pub struct ElementOverlay<'a, 'b> {
+pub struct ElementOverlay<'a, 'b, M> {
     pub tree: &'b mut iced::advanced::widget::Tree,
-    pub content: &'b mut Element<'a, Message>,
+    pub content: &'b mut Element<'a, M>,
     pub config: ElementOverlayConfig,
 }
 
@@ -37,7 +35,7 @@ impl std::fmt::Debug for ElementOverlayConfig {
     }
 }
 
-impl<'a, 'b> iced::advanced::Overlay<Message, Theme, Renderer> for ElementOverlay<'a, 'b> {
+impl<'a, 'b, M> iced::advanced::Overlay<M, Theme, Renderer> for ElementOverlay<'a, 'b, M> {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> iced::advanced::layout::Node {
         let padding = self.config.min_padding * 2.0;
         let limits = iced::advanced::layout::Limits::new(Size::ZERO, bounds)
@@ -121,7 +119,7 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Theme, Renderer> for ElementOverla
         cursor: iced::advanced::mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, Message>,
+        shell: &mut iced::advanced::Shell<'_, M>,
     ) -> iced::event::Status {
         let status = self.content.as_widget_mut().on_event(
             self.tree,
@@ -152,7 +150,7 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Theme, Renderer> for ElementOverla
         &'c mut self,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-    ) -> Option<iced::advanced::overlay::Element<'c, Message, Theme, Renderer>> {
+    ) -> Option<iced::advanced::overlay::Element<'c, M, Theme, Renderer>> {
         self.content
             .as_widget_mut()
             .overlay(self.tree, layout, renderer, Vector::default())
