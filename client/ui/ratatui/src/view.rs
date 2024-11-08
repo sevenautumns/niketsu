@@ -19,11 +19,14 @@ use gag::Gag;
 use multiaddr::Multiaddr;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
+use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::playlist::Video;
 use niketsu_core::room::RoomName;
 use niketsu_core::ui::{ServerChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
+use tokio::task::JoinHandle;
+use tracing::warn;
 
 use super::widget::login::LoginWidget;
 use super::widget::playlist::PlaylistWidget;
@@ -41,6 +44,7 @@ use crate::widget::login::LoginWidgetState;
 use crate::widget::media::{MediaDirWidget, MediaDirWidgetState};
 use crate::widget::options::{OptionsWidget, OptionsWidgetState};
 use crate::widget::playlist::PlaylistWidgetState;
+use crate::widget::playlist_browser::{PlaylistBrowserWidget, PlaylistBrowserWidgetState};
 use crate::widget::users::{UsersWidget, UsersWidgetState};
 use crate::widget::OverlayWidgetState;
 
@@ -78,6 +82,7 @@ pub struct App {
     pub login_widget_state: LoginWidgetState,
     pub media_widget_state: MediaDirWidgetState,
     pub fuzzy_search_widget_state: FuzzySearchWidgetState,
+    pub playlist_browser_widget_state: PlaylistBrowserWidgetState,
     pub current_search: Option<FuzzySearch>,
     pub clipboard: ClipboardContext,
     mode: Mode,
@@ -106,6 +111,7 @@ impl App {
             login_widget_state: LoginWidgetState::new(&config),
             fuzzy_search_widget_state: FuzzySearchWidgetState::new(),
             media_widget_state: MediaDirWidgetState::new(config.media_dirs),
+            playlist_browser_widget_state: PlaylistBrowserWidgetState::new(),
             current_search: None,
             clipboard: ctx,
             mode: Mode::Normal,
@@ -194,6 +200,11 @@ impl RatatuiView {
 
         let mut needs_update = false;
         terminal.draw(|f| Self::render(f, &mut self.app))?;
+        let mut playlist_browser_handle: Option<JoinHandle<PlaylistBrowser>> =
+            Some(tokio::task::spawn(async move {
+                PlaylistBrowser::get_all().await
+            }));
+
         while self.running {
             tokio::select! {
                 ct_event = event.next() => {
@@ -206,6 +217,17 @@ impl RatatuiView {
                     self.app.fuzzy_search_widget_state.set_result(search_result);
                     self.app.current_search = None;
                     needs_update = true;
+                }
+               Some(result) = OptionFuture::from(playlist_browser_handle.as_mut()) => {
+                    match result {
+                        Ok(playlist_browser) => {
+                            self.app.playlist_browser_widget_state.set_playlist_browser(playlist_browser);
+                        },
+                        Err(e) => {
+                            warn!(?e, "Failed to retrieve playlists");
+                        }
+                    }
+                    playlist_browser_handle = None;
                 },
                 _ = notify.notified() => {
                     self.handle_notify();
@@ -249,7 +271,7 @@ impl RatatuiView {
                     .clone()
                     .handle_with_overlay(self, &event),
                 Mode::Overlay => {
-                    if let Some(overlay) = self.app.current_overlay_state {
+                    if let Some(overlay) = self.app.current_overlay_state.clone() {
                         overlay.handle(self, &event)
                     }
                 }
@@ -426,6 +448,15 @@ impl RatatuiView {
                             MediaDirWidget {},
                             area,
                             &mut app.media_widget_state,
+                        );
+                    }
+                    OverlayState::PlaylistBrowser(_media_dir) => {
+                        let area = app.playlist_browser_widget_state.area(area);
+                        f.render_widget(Clear, area);
+                        f.render_stateful_widget(
+                            PlaylistBrowserWidget {},
+                            area,
+                            &mut app.playlist_browser_widget_state,
                         );
                     }
                     OverlayState::Command(_command) => {

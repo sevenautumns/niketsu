@@ -24,6 +24,7 @@ impl ChatInputWidgetState {
 
     fn setup_input_field(&mut self) {
         self.input_field
+            .with_placeholder("Enter your message")
             .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 

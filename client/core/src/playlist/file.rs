@@ -37,7 +37,7 @@ impl PlaylistBrowser {
 
     /// Fuzzy search over all playlist with the name combination: room name + playlist name
     /// The indices in the fuzzy result will be aligned to the name of the playlist without the room name
-    pub fn fuzzy_search(&self, query: &str) -> Vec<FuzzyResult<&NamedPlaylist>> {
+    pub fn fuzzy_search(&self, query: &str) -> Vec<FuzzyResult<NamedPlaylist>> {
         let matcher = SkimMatcherV2::default();
 
         let mut lists = self
@@ -47,14 +47,14 @@ impl PlaylistBrowser {
             .flatten()
             .filter_map(|playlist| {
                 matcher
-                    .fuzzy_indices(&format!("{}{}", playlist.room, playlist.name), query)
+                    .fuzzy_indices(&format!("{}/{}", playlist.room, playlist.name), query)
                     .map(|(score, hits)| FuzzyResult {
                         score,
                         hits: hits
                             .into_iter()
                             .filter_map(|i| i.checked_sub(playlist.room.len()))
                             .collect(),
-                        entry: playlist,
+                        entry: playlist.clone(),
                     })
             })
             .collect::<Vec<_>>();

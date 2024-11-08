@@ -33,13 +33,13 @@ impl FuzzySearchWidgetState {
 
     fn setup_input_field(&mut self) {
         self.input_field
-            .with_white_style()
             .with_block(
                 Block::default()
                     .borders(Borders::NONE)
                     .padding(Padding::new(1, 0, 0, 0)),
             )
-            .with_placeholder("Enter your search");
+            .with_placeholder("Enter your search")
+            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     pub fn get_input(&self) -> String {
@@ -69,16 +69,15 @@ impl FuzzySearchWidgetState {
     }
 
     pub fn set_result(&mut self, results: Vec<FuzzyResult<FileEntry>>) {
+        let results: Vec<FuzzyResult<FileEntry>> = results.into_iter().take(self.max_len).collect();
+
         if results.is_empty() {
             self.list_state.select(None);
+        } else if self.list_state.selected().is_none() {
+            self.list_state.select(Some(0));
         }
-        let results = results
-            .into_iter()
-            .take(self.max_len)
-            .filter(|f| f.score > 10)
-            .collect();
-        self.current_result = Some(results);
         self.list_state.limit(self.len());
+        self.current_result = Some(results);
     }
 
     pub fn reset_all(&mut self) {
@@ -112,14 +111,6 @@ impl FuzzySearchWidgetState {
 
     pub fn jump_previous(&mut self, offset: usize) {
         self.list_state.limited_jump_previous(offset, self.len())
-    }
-
-    pub fn jump_start(&mut self) {
-        self.list_state.select(Some(0))
-    }
-
-    pub fn jump_end(&mut self) {
-        self.list_state.select(Some(self.len().saturating_sub(1)))
     }
 
     fn len(&self) -> usize {

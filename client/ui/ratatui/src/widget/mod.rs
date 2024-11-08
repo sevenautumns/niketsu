@@ -15,6 +15,7 @@ pub(crate) mod login;
 pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
+pub(crate) mod playlist_browser;
 pub(crate) mod users;
 
 pub trait OverlayWidgetState {
@@ -162,8 +163,10 @@ impl TextAreaWrapper {
     }
 
     fn highlight(&mut self, block_style: Style, cursor_style: Style) {
+        self.inner.set_tab_length(2);
         self.inner.set_style(Style::default().gray());
         self.inner.set_cursor_style(cursor_style);
+        self.inner.set_cursor_line_style(Style::default());
         self.with_block_style(block_style);
     }
 
@@ -171,15 +174,6 @@ impl TextAreaWrapper {
         self.inner.set_tab_length(2);
         self.inner
             .set_style(Style::default().fg(Color::Gray).add_modifier(Modifier::DIM));
-        self.inner.set_cursor_line_style(Style::default());
-        self.inner.set_cursor_style(Style::default());
-        self.with_block_style(Style::default().gray());
-        self
-    }
-
-    fn with_white_style(&mut self) -> &mut Self {
-        self.inner.set_tab_length(2);
-        self.inner.set_style(Style::default().fg(Color::Gray));
         self.inner.set_cursor_line_style(Style::default());
         self.inner.set_cursor_style(Style::default());
         self.with_block_style(Style::default().gray());

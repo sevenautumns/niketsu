@@ -30,8 +30,6 @@ impl EventHandler for FuzzySearch {
                     KeyCode::Down => view.app.fuzzy_search_widget_state.previous(),
                     KeyCode::PageUp => view.app.fuzzy_search_widget_state.jump_next(5),
                     KeyCode::PageDown => view.app.fuzzy_search_widget_state.jump_previous(5),
-                    KeyCode::Home => view.app.fuzzy_search_widget_state.jump_start(),
-                    KeyCode::End => view.app.fuzzy_search_widget_state.jump_end(),
                     _ => {
                         view.app.fuzzy_search_widget_state.input(*key);
                         let query = view.app.fuzzy_search_widget_state.get_input();

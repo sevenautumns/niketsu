@@ -1,5 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use enum_dispatch::enum_dispatch;
+use playlist_browser::PlaylistBrowserOverlay;
 use ratatui::style::Style;
 
 use self::chat::Chat;
@@ -23,6 +24,7 @@ pub(crate) mod login;
 pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
+pub(crate) mod playlist_browser;
 pub(crate) mod users;
 
 #[enum_dispatch]
@@ -69,12 +71,13 @@ impl Default for State {
 }
 
 #[enum_dispatch(EventHandler)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum OverlayState {
     Login(Login),
     FuzzySearch(FuzzySearch),
     Option(Options),
     MediaDir(MediaDir),
+    PlaylistBrowser(PlaylistBrowserOverlay),
     Command(Command),
     Help(Help),
 }

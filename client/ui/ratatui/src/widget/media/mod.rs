@@ -32,13 +32,13 @@ impl MediaDirWidgetState {
 
     fn setup_input_field(&mut self) {
         self.input_field
-            .with_white_style()
             .with_block(
                 Block::default()
                     .borders(Borders::NONE)
                     .padding(Padding::new(1, 0, 0, 0)),
             )
-            .with_placeholder("Enter a path separated by /");
+            .with_placeholder("Enter a path separated by /")
+            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     pub fn get_input(&self) -> String {
