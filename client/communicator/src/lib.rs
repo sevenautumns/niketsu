@@ -1,8 +1,9 @@
 use std::future::Future;
+use std::sync::Arc;
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Error, Result};
 use async_trait::async_trait;
 use niketsu_core::communicator::*;
 use p2p::P2PClient;
@@ -42,7 +43,15 @@ impl Connection {
                 Connection::Connecting(c) => {
                     *self = c.await;
                 }
-                Connection::Disconnected(d) => *self = d.reconnect(endpoint).await,
+                Connection::Disconnected(d) => {
+                    let reason = d.reason.clone();
+                    *self = d.reconnect(endpoint).await;
+                    if let Some(r) = reason {
+                        return IncomingMessage::from(ServerMessageMsg {
+                            message: r.to_string(),
+                        });
+                    }
+                }
             }
         }
     }
@@ -58,13 +67,15 @@ impl Connected {
         if let Some(msg) = self.p2p.next().await {
             return Ok(msg);
         }
-        Err(Connection::Disconnected(Disconnected::now()))
+        Err(Connection::Disconnected(Disconnected::now(Some(
+            anyhow::anyhow!("Received None message"),
+        ))))
     }
 
     fn send(&mut self, msg: NiketsuMessage) -> std::result::Result<(), Connection> {
         if let Err(error) = self.p2p.send(msg) {
             error!(%error, "Connection error");
-            return Err(Connection::Disconnected(Disconnected::now()));
+            return Err(Connection::Disconnected(Disconnected::now(Some(error))));
         }
         Ok(())
     }
@@ -86,10 +97,13 @@ impl Connecting {
             ),
         );
         let connect_task = tokio::task::spawn(async move {
-            connection
-                .await
-                .context("Connection Timeout")?
-                .context("Connection failed")
+            match connection.await {
+                Ok(res) => match res {
+                    Ok(client) => return Ok(client),
+                    Err(err) => return Err(err),
+                },
+                Err(err) => return Err(anyhow::anyhow!("Connection timeout: {}", err)),
+            }
         });
         Self { connect_task }
     }
@@ -111,7 +125,7 @@ impl Future for Connecting {
             Ok(Ok(p2p)) => Poll::Ready(Connection::Connected(Connected { p2p })),
             Err(error) | Ok(Err(error)) => {
                 error!(%error, "Connection error");
-                Poll::Ready(Connection::Disconnected(Disconnected::now()))
+                Poll::Ready(Connection::Disconnected(Disconnected::now(Some(error))))
             }
         }
     }
@@ -120,12 +134,14 @@ impl Future for Connecting {
 #[derive(Debug, Default)]
 pub struct Disconnected {
     when: Option<Instant>,
+    reason: Option<Arc<Error>>,
 }
 
 impl Disconnected {
-    fn now() -> Self {
+    fn now(reason: Option<Error>) -> Self {
         Self {
             when: Some(Instant::now()),
+            reason: reason.map(Arc::new),
         }
     }
 
