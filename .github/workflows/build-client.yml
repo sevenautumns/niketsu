@@ -34,7 +34,7 @@ jobs:
           - target: aarch64-linux
             package: niketsu-client-windows
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Nix
         uses: cachix/install-nix-action@v23
         with:
@@ -42,7 +42,7 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
             extra-platforms = aarch64-linux
-      - uses: cachix/cachix-action@v12
+      - uses: cachix/cachix-action@v14
         with:
           name: niketsu
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
