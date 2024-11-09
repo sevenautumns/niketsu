@@ -41,6 +41,7 @@ impl HelpWidgetState {
                 vec!["Change secure option", "[Space]", "Login"],
                 vec!["Insert selection", "[Enter]", "FuzzySearch"],
                 vec!["Add media path", "[Enter]", "Media"],
+                vec!["Change Playlist", "[Enter]", "PlaylistBrowser"],
                 vec!["Delete media path", "[Ctrl] + d", "Media"],
             ],
         }

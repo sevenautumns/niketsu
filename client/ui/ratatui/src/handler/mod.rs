@@ -1,5 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use enum_dispatch::enum_dispatch;
+use playlist::video_overlay::VideoName;
 use playlist_browser::PlaylistBrowserOverlay;
 use ratatui::style::Style;
 
@@ -78,6 +79,7 @@ pub enum OverlayState {
     Option(Options),
     MediaDir(MediaDir),
     PlaylistBrowser(PlaylistBrowserOverlay),
+    VideoName(VideoName),
     Command(Command),
     Help(Help),
 }

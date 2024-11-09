@@ -42,6 +42,7 @@ use crate::widget::help::{HelpWidget, HelpWidgetState};
 use crate::widget::login::LoginWidgetState;
 use crate::widget::media::{MediaDirWidget, MediaDirWidgetState};
 use crate::widget::options::{OptionsWidget, OptionsWidgetState};
+use crate::widget::playlist::video_overlay::{VideoNameWidget, VideoNameWidgetState};
 use crate::widget::playlist::PlaylistWidgetState;
 use crate::widget::playlist_browser::{PlaylistBrowserWidget, PlaylistBrowserWidgetState};
 use crate::widget::users::{UsersWidget, UsersWidgetState};
@@ -73,8 +74,8 @@ pub struct App {
     pub database_widget_state: DatabaseWidgetState,
     pub users_widget_state: UsersWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
-    pub command_input_widget: CommandInputWidgetState,
-    pub chat_input_widget: ChatInputWidgetState,
+    pub command_input_widget_state: CommandInputWidgetState,
+    pub chat_input_widget_state: ChatInputWidgetState,
     pub current_overlay_state: Option<OverlayState>,
     pub options_widget_state: OptionsWidgetState,
     pub help_widget_state: HelpWidgetState,
@@ -82,6 +83,7 @@ pub struct App {
     pub media_widget_state: MediaDirWidgetState,
     pub fuzzy_search_widget_state: FuzzySearchWidgetState,
     pub playlist_browser_widget_state: PlaylistBrowserWidgetState,
+    pub video_name_widget_state: VideoNameWidgetState,
     pub current_search: Option<FuzzySearch>,
     pub clipboard: ClipboardContext,
     mode: Mode,
@@ -102,8 +104,8 @@ impl App {
             database_widget_state: DatabaseWidgetState::default(),
             users_widget_state: UsersWidgetState::default(),
             playlist_widget_state: PlaylistWidgetState::default(),
-            command_input_widget: CommandInputWidgetState::default(),
-            chat_input_widget: ChatInputWidgetState::new(),
+            command_input_widget_state: CommandInputWidgetState::default(),
+            chat_input_widget_state: ChatInputWidgetState::new(),
             current_overlay_state: None,
             options_widget_state: OptionsWidgetState::default(),
             help_widget_state: HelpWidgetState::new(),
@@ -111,6 +113,7 @@ impl App {
             fuzzy_search_widget_state: FuzzySearchWidgetState::new(),
             media_widget_state: MediaDirWidgetState::new(config.media_dirs),
             playlist_browser_widget_state: PlaylistBrowserWidgetState::new(),
+            video_name_widget_state: VideoNameWidgetState::default(),
             current_search: None,
             clipboard: ctx,
             mode: Mode::Normal,
@@ -289,7 +292,7 @@ impl RatatuiView {
                         self.app.set_mode(Mode::Overlay);
                         self.app
                             .set_current_overlay_state(Some(OverlayState::from(Command {})));
-                        self.app.command_input_widget.set_active(true);
+                        self.app.command_input_widget_state.set_active(true);
                     }
                     KeyCode::Enter => {
                         self.app.mode = Mode::Inspecting;
@@ -406,7 +409,7 @@ impl RatatuiView {
         f.render_stateful_widget(
             ChatInputWidget {},
             vertical_left_chunks[1],
-            &mut app.chat_input_widget,
+            &mut app.chat_input_widget_state,
         );
 
         if let Mode::Overlay = app.mode {
@@ -462,7 +465,16 @@ impl RatatuiView {
                         f.render_stateful_widget(
                             CommandInputWidget {},
                             main_vertical_chunks[1],
-                            &mut app.command_input_widget,
+                            &mut app.command_input_widget_state,
+                        );
+                    }
+                    OverlayState::VideoName(_) => {
+                        let area = app.video_name_widget_state.area(area);
+                        f.render_widget(Clear, area);
+                        f.render_stateful_widget(
+                            VideoNameWidget {},
+                            area,
+                            &mut app.video_name_widget_state,
                         );
                     }
                 }

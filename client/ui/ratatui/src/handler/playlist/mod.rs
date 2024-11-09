@@ -1,12 +1,15 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use niketsu_core::playlist::Video;
 use ratatui::style::Style;
+use video_overlay::VideoName;
 
 use super::chat::Chat;
 use super::users::Users;
-use super::{MainEventHandler, State};
+use super::{MainEventHandler, OverlayState, State};
 use crate::handler::EventHandler;
 use crate::view::{Mode, RatatuiView};
+
+pub(crate) mod video_overlay;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Playlist;
@@ -53,6 +56,16 @@ impl EventHandler for Playlist {
                             {
                                 view.append_at(index + 1, clipboard);
                             }
+                        }
+                    }
+                    KeyCode::Char('f') => {
+                        if let Some(video) = view.app.playlist_widget_state.get_current_video() {
+                            view.app
+                                .video_name_widget_state
+                                .set_name(video.as_str().into());
+                            view.app.set_mode(Mode::Overlay);
+                            view.app
+                                .set_current_overlay_state(Some(OverlayState::from(VideoName {})));
                         }
                     }
                     KeyCode::Char('v') => {

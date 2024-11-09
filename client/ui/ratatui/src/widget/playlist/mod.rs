@@ -9,6 +9,7 @@ use ratatui::widgets::{
 };
 
 use super::ListStateWrapper;
+pub(crate) mod video_overlay;
 
 //TODO negative offset support
 //TODO state trait wrapper
