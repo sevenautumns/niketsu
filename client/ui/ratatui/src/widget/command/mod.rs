@@ -17,7 +17,6 @@ pub struct CommandInputWidgetState {
 impl CommandInputWidgetState {
     pub fn set_active(&mut self, active: bool) {
         self.active = active;
-        self.input_field.highlight(self.style, self.style.cyan());
         self.input_field
             .with_default_style()
             .with_block(
@@ -25,7 +24,8 @@ impl CommandInputWidgetState {
                     .borders(Borders::NONE)
                     .padding(Padding::new(0, 0, 0, 0)),
             )
-            .with_placeholder("Enter your command");
+            .with_placeholder("Enter your command")
+            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     pub fn input(&mut self, event: impl Into<Input>) {

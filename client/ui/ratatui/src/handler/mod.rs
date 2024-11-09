@@ -41,13 +41,20 @@ pub trait MainEventHandler: EventHandler {
         if let Event::Key(key) = event {
             match view.app.current_state() {
                 State::ChatInput(_) => {}
-                _ => {
-                    if key.code == KeyCode::Char(' ') {
+                _ => match key.code {
+                    KeyCode::Char(' ') => {
                         view.app.set_mode(Mode::Overlay);
                         view.app
                             .set_current_overlay_state(Some(OverlayState::from(Options {})));
                     }
-                }
+                    KeyCode::Char(':') => {
+                        view.app.set_mode(Mode::Overlay);
+                        view.app
+                            .set_current_overlay_state(Some(OverlayState::from(Command {})));
+                        view.app.command_input_widget_state.set_active(true);
+                    }
+                    _ => {}
+                },
             }
         }
         self.handle(view, event);

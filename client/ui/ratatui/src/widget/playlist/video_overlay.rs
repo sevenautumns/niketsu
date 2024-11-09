@@ -1,4 +1,4 @@
-use std::cmp::{max, min};
+use std::cmp::max;
 
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::widgets::block::Block;
