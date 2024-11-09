@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 
+use arcstr::ArcStr;
 use enum_dispatch::enum_dispatch;
-use iced::Command;
+use iced::{Task, Theme};
 use niketsu_core::config::Config;
 use niketsu_core::log;
-use niketsu_core::ui::{RoomChange, ServerChange, UiModel};
+use niketsu_core::room::RoomName;
+use niketsu_core::ui::{RoomChange, UiModel};
 
 use super::SettingsWidgetState;
 use crate::message::{Message, MessageHandler};
@@ -26,20 +28,19 @@ pub enum SettingsWidgetMessage {
     ConnectApplyCloseSave,
     ApplyCloseSave,
     UsernameInput,
-    UrlInput,
     PathInput,
     DeletePath,
     AddPath,
     RoomInput,
     PasswordInput,
-    SecureCheckbox,
     AutoConnectCheckbox,
+    ThemeChange,
 }
 
 impl MessageHandler for SettingsWidgetMessage {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
         SettingsWidgetMessageTrait::handle(self, &mut model.settings_widget_state, &model.model);
-        Command::none()
+        Task::none()
     }
 }
 
@@ -77,13 +78,9 @@ impl SettingsWidgetMessageTrait for ConnectApplyClose {
     fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
         ApplyClose.handle(state, model);
         let config = state.config();
-        model.change_server(ServerChange {
-            addr: config.url.clone(),
-            secure: config.secure,
-            password: Some(config.password.clone()),
-            room: RoomChange {
-                room: config.room.clone(),
-            },
+        model.change_room(RoomChange {
+            password: config.password.clone(),
+            room: config.room.clone(),
         });
     }
 }
@@ -123,20 +120,11 @@ impl SettingsWidgetMessageTrait for ApplyCloseSave {
 }
 
 #[derive(Debug, Clone)]
-pub struct UsernameInput(pub String);
+pub struct UsernameInput(pub ArcStr);
 
 impl SettingsWidgetMessageTrait for UsernameInput {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
         state.config.username = self.0;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct UrlInput(pub String);
-
-impl SettingsWidgetMessageTrait for UrlInput {
-    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
-        state.config.url = self.0;
     }
 }
 
@@ -172,7 +160,7 @@ impl SettingsWidgetMessageTrait for AddPath {
 }
 
 #[derive(Debug, Clone)]
-pub struct RoomInput(pub String);
+pub struct RoomInput(pub RoomName);
 
 impl SettingsWidgetMessageTrait for RoomInput {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
@@ -190,19 +178,19 @@ impl SettingsWidgetMessageTrait for PasswordInput {
 }
 
 #[derive(Debug, Clone)]
-pub struct SecureCheckbox(pub bool);
-
-impl SettingsWidgetMessageTrait for SecureCheckbox {
-    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
-        state.config.secure = self.0;
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct AutoConnectCheckbox(pub bool);
 
 impl SettingsWidgetMessageTrait for AutoConnectCheckbox {
     fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
         state.config.auto_connect = self.0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ThemeChange(pub Theme);
+
+impl SettingsWidgetMessageTrait for ThemeChange {
+    fn handle(self, state: &mut SettingsWidgetState, _: &UiModel) {
+        state.iced_config.theme = self.0;
     }
 }

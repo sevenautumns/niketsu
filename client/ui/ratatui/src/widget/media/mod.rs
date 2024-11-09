@@ -32,9 +32,13 @@ impl MediaDirWidgetState {
 
     fn setup_input_field(&mut self) {
         self.input_field
-            .set_textarea_style(self.style, self.style.dark_gray().on_white());
-        self.input_field
-            .set_block(Block::default().padding(Padding::new(1, 0, 0, 0)));
+            .with_block(
+                Block::default()
+                    .borders(Borders::NONE)
+                    .padding(Padding::new(1, 0, 0, 0)),
+            )
+            .with_placeholder("Enter a path separated by /")
+            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     pub fn get_input(&self) -> String {
@@ -52,7 +56,7 @@ impl MediaDirWidgetState {
     pub fn push_path(&mut self) {
         let path = self.input_field.get_input();
         self.media_paths.push(path);
-        self.input_field = TextAreaWrapper::from("".to_string());
+        self.input_field = TextAreaWrapper::new("Input".into(), "".into());
         self.setup_input_field();
     }
 
@@ -133,7 +137,8 @@ impl StatefulWidget for MediaDirWidget {
 
         let layout = Layout::default()
             .constraints([Constraint::Length(1), Constraint::Min(3)].as_ref())
-            .margin(1)
+            .horizontal_margin(1)
+            .vertical_margin(1)
             .split(area);
 
         let media_dirs: Vec<ListItem> = state
@@ -149,14 +154,13 @@ impl StatefulWidget for MediaDirWidget {
                     .style(state.style)
                     .title("Media Directories")
                     .borders(Borders::TOP)
-                    .padding(Padding::new(1, 1, 1, 1)),
+                    .padding(Padding::new(1, 0, 0, 1)),
             )
             .highlight_style(Style::default().fg(Color::Cyan))
             .highlight_symbol("> ");
 
-        let input_field = state.input_field.clone();
         outer_block.render(area, buf);
-        input_field.widget().render(layout[0], buf);
+        state.input_field.render(layout[0], buf);
         StatefulWidget::render(media_path_list, layout[1], buf, state.list_state.inner());
     }
 }

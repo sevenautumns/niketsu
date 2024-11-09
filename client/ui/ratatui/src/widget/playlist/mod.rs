@@ -9,6 +9,7 @@ use ratatui::widgets::{
 };
 
 use super::ListStateWrapper;
+pub(crate) mod video_overlay;
 
 //TODO negative offset support
 //TODO state trait wrapper
@@ -28,6 +29,9 @@ pub struct PlaylistWidgetState {
 impl PlaylistWidgetState {
     pub fn set_playlist(&mut self, playlist: Playlist) {
         self.playlist = playlist;
+        if !self.playlist.is_empty() && self.list_state.selected().is_none() {
+            self.list_state.select(Some(0));
+        }
     }
 
     pub fn set_playing_video(&mut self, playing_video: Option<Video>) {
@@ -38,38 +42,44 @@ impl PlaylistWidgetState {
         self.style = style;
     }
 
-    pub fn next(&mut self) {
-        self.selection_offset = 0;
-        self.list_state.overflowing_next(self.playlist.len());
+    fn set_vertical_scroll_state(&mut self) {
         if let Some(i) = self.list_state.selected() {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
+    }
+
+    pub fn next(&mut self) {
+        self.selection_offset = 0;
+        self.list_state.overflowing_next(self.playlist.len());
+        self.set_vertical_scroll_state();
     }
 
     pub fn previous(&mut self) {
         self.selection_offset = 0;
         self.list_state.overflowing_previous(self.playlist.len());
-        if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
-        }
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_next(&mut self, offset: usize) {
-        self.list_state.jump_next(offset)
+        self.list_state.jump_next(offset);
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_previous(&mut self, offset: usize) {
         self.list_state
-            .limited_jump_previous(offset, self.playlist.len())
+            .limited_jump_previous(offset, self.playlist.len());
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_start(&mut self) {
-        self.list_state.select(Some(0))
+        self.list_state.select(Some(0));
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_end(&mut self) {
         self.list_state
-            .select(Some(self.playlist.len().saturating_sub(1)))
+            .select(Some(self.playlist.len().saturating_sub(1)));
+        self.set_vertical_scroll_state();
     }
 
     pub fn reset_offset(&mut self) {
@@ -129,27 +139,27 @@ impl StatefulWidget for PlaylistWidget {
                 .playlist
                 .iter()
                 .take(index)
-                .map(|t| mark_selection(t, state, Color::Gray))
+                .map(|t| color_selection(t, state, Color::Gray, Color::Yellow))
                 .chain(
                     state
                         .playlist
                         .iter()
                         .skip(index)
                         .take(state.selection_offset + 1)
-                        .map(|t| mark_selection(t, state, Color::Cyan)),
+                        .map(|t| color_selection(t, state, Color::Cyan, Color::Cyan)),
                 )
                 .chain(
                     state
                         .playlist
                         .iter()
                         .skip(index + state.selection_offset + 1)
-                        .map(|t| mark_selection(t, state, Color::Gray)),
+                        .map(|t| color_selection(t, state, Color::Gray, Color::Yellow)),
                 )
                 .collect(),
             None => state
                 .playlist
                 .iter()
-                .map(|t| mark_selection(t, state, Color::Gray))
+                .map(|t| color_selection(t, state, Color::Gray, Color::Yellow))
                 .collect(),
         };
 
@@ -171,7 +181,7 @@ impl StatefulWidget for PlaylistWidget {
         let mut state = state.vertical_scroll_state;
         state = state.content_length(playlist_len);
         scrollbar.render(
-            area.inner(&Margin {
+            area.inner(Margin {
                 vertical: 1,
                 horizontal: 0,
             }),
@@ -181,17 +191,18 @@ impl StatefulWidget for PlaylistWidget {
     }
 }
 
-fn mark_selection<'a>(
+fn color_selection<'a>(
     video: &'a Video,
     state: &PlaylistWidgetState,
     default_color: Color,
+    hightlight_color: Color,
 ) -> ListItem<'a> {
     if let Some(playing_video) = &state.playing_video {
         if video.eq(playing_video) {
             let video_text = format!("> {}", video.as_str());
             return ListItem::new(vec![Line::styled(
                 video_text,
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(hightlight_color),
             )]);
         }
     }

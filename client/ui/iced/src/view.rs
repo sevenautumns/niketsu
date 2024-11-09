@@ -1,7 +1,10 @@
+use std::hash::Hash;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use futures::Future;
-use iced::{Application, Command, Element, Renderer, Settings, Subscription, Theme};
+use iced::advanced::subscription::Recipe;
+use iced::{Element, Subscription, Task, Theme};
 use niketsu_core::config::Config;
 use niketsu_core::playlist::Video;
 use niketsu_core::ui::{UiModel, UserInterface};
@@ -13,18 +16,18 @@ use super::message::Message;
 use super::widget::chat::ChatWidgetState;
 use super::widget::database::DatabaseWidgetState;
 use super::widget::playlist::PlaylistWidgetState;
-use super::widget::rooms::RoomsWidgetState;
+use super::widget::rooms::UsersWidgetState;
 use super::widget::settings::SettingsWidgetState;
 use super::PreExistingTokioRuntime;
-use crate::message::{EventOccured, MessageHandler, ModelChanged};
+use crate::config::IcedConfig;
+use crate::message::{MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;
 
 #[derive(Debug)]
 pub struct ViewModel {
     pub model: UiModel,
-    pub main: MainView,
     pub settings_widget_state: SettingsWidgetState,
-    pub rooms_widget_state: RoomsWidgetState,
+    pub users_widget_state: UsersWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
     pub chat_widget_statet: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
@@ -33,28 +36,27 @@ pub struct ViewModel {
 
 impl ViewModel {
     pub fn new(flags: Flags) -> Self {
-        let mut settings = SettingsWidgetState::new(flags.config.clone());
+        let mut settings = SettingsWidgetState::new(flags.config.clone(), flags.iced_config);
         if !flags.config.auto_connect {
             settings.activate();
         }
         Self {
             model: flags.ui_model,
             settings_widget_state: settings,
-            rooms_widget_state: Default::default(),
+            users_widget_state: Default::default(),
             playlist_widget_state: Default::default(),
             chat_widget_statet: Default::default(),
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
-            main: MainView,
         }
     }
 
-    pub fn view(&self) -> Element<'_, Message, Renderer<Theme>> {
-        self.main.view(self)
+    pub fn view(&self) -> Element<'_, Message> {
+        MainView::new(self).into()
     }
 
-    fn update(&mut self, message: Message) -> Command<Message> {
-        Command::batch([message.handle(self), self.get_chat_widget_state().snap()])
+    fn update(&mut self, message: Message) -> Task<Message> {
+        Task::batch([message.handle(self), self.get_chat_widget_state().snap()])
     }
 
     pub fn user(&self) -> UserStatus {
@@ -65,12 +67,8 @@ impl ViewModel {
         self.model.playing_video.get_inner()
     }
 
-    pub fn theme(&self) -> Theme {
-        Theme::Dark
-    }
-
-    pub fn get_rooms_widget_state(&self) -> &RoomsWidgetState {
-        &self.rooms_widget_state
+    pub fn get_rooms_widget_state(&self) -> &UsersWidgetState {
+        &self.users_widget_state
     }
 
     pub fn get_playlist_widget_state(&self) -> &PlaylistWidgetState {
@@ -95,8 +93,8 @@ impl ViewModel {
 
     pub fn update_from_inner_model(&mut self) {
         self.model
-            .room_list
-            .on_change(|rooms| self.rooms_widget_state.replace_rooms(rooms));
+            .user_list
+            .on_change(|rooms| self.users_widget_state.replace_users(rooms));
         self.model
             .playlist
             .on_change(|playlist| self.playlist_widget_state.replace_playlist(playlist));
@@ -114,6 +112,7 @@ impl ViewModel {
 }
 
 pub struct Flags {
+    pub iced_config: IcedConfig,
     pub config: Config,
     pub ui_model: UiModel,
 }
@@ -132,61 +131,68 @@ impl View {
         let ui = UserInterface::new(&config);
         let flags = Flags {
             config,
+            iced_config: IcedConfig::load_or_default(),
             ui_model: ui.model().clone(),
         };
-        let settings = Settings::with_flags(flags);
-        let view = Box::pin(async { View::run(settings).map_err(anyhow::Error::from) });
+        let view = Box::pin(async {
+            iced::application("Niketsu", Self::update, Self::view)
+                .theme(Self::theme)
+                .subscription(Self::subscription)
+                .executor::<PreExistingTokioRuntime>()
+                .run_with(|| {
+                    (
+                        View {
+                            view_model: ViewModel::new(flags),
+                        },
+                        Task::none(),
+                    )
+                })
+                .map_err(anyhow::Error::from)
+        });
         (ui, view)
     }
-}
 
-impl Application for View {
-    type Executor = PreExistingTokioRuntime;
-
-    type Message = Message;
-
-    type Theme = Theme;
-
-    type Flags = Flags;
-
-    fn new(flags: Self::Flags) -> (Self, Command<Self::Message>) {
-        let window = Self {
-            view_model: ViewModel::new(flags),
-        };
-        (window, Command::none())
-    }
-
-    fn title(&self) -> String {
-        "Niketsu".into()
-    }
-
-    fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
+    fn update(&mut self, message: Message) -> Task<Message> {
         self.view_model.update(message)
     }
 
-    fn view(&self) -> Element<'_, Self::Message, Renderer<Self::Theme>> {
+    fn view(&self) -> Element<'_, Message> {
         self.view_model.view()
     }
 
-    fn theme(&self) -> Self::Theme {
-        self.view_model.theme()
+    fn theme(&self) -> Theme {
+        self.view_model
+            .settings_widget_state
+            .iced_config()
+            .theme
+            .clone()
     }
 
-    fn subscription(&self) -> Subscription<Self::Message> {
+    fn subscription(&self) -> Subscription<Message> {
         let notify = self.view_model.model.notify.clone();
-        let notify_subscription = iced::subscription::channel(
-            std::any::TypeId::of::<Notify>(),
-            1,
-            |mut sender| async move {
-                loop {
-                    notify.notified().await;
-                    let _ = sender.try_send(ModelChanged.into());
-                }
-            },
-        );
+        let model_subscription = ModelSubscription { notify };
+        iced::advanced::subscription::from_recipe(model_subscription)
+    }
+}
 
-        let ready_subscription = iced::subscription::events().map(|e| EventOccured(e).into());
+pub struct ModelSubscription {
+    notify: Arc<Notify>,
+}
 
-        iced::subscription::Subscription::batch([notify_subscription, ready_subscription])
+impl Recipe for ModelSubscription {
+    type Output = Message;
+
+    fn hash(&self, state: &mut iced::advanced::subscription::Hasher) {
+        std::any::TypeId::of::<Self>().hash(state)
+    }
+
+    fn stream(
+        self: Box<Self>,
+        _: iced::advanced::subscription::EventStream,
+    ) -> futures::stream::BoxStream<'static, Self::Output> {
+        Box::pin(futures::stream::unfold(self, |s| async {
+            s.notify.notified().await;
+            Some((ModelChanged.into(), s))
+        }))
     }
 }

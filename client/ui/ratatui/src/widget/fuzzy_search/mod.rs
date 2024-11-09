@@ -1,5 +1,6 @@
-use niketsu_core::file_database::fuzzy::{FuzzyResult, FuzzySearch};
+use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::file_database::{FileEntry, FileStore};
+use niketsu_core::util::FuzzyResult;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
@@ -14,7 +15,7 @@ pub struct FuzzySearchWidget;
 #[derive(Debug, Default, Clone)]
 pub struct FuzzySearchWidgetState {
     file_database: FileStore,
-    current_result: Option<Vec<FuzzyResult>>,
+    current_result: Option<Vec<FuzzyResult<FileEntry>>>,
     input_field: TextAreaWrapper,
     list_state: ListStateWrapper,
     max_len: usize,
@@ -32,9 +33,13 @@ impl FuzzySearchWidgetState {
 
     fn setup_input_field(&mut self) {
         self.input_field
-            .set_textarea_style(self.style, self.style.dark_gray().on_white());
-        self.input_field
-            .set_block(Block::default().padding(Padding::new(1, 0, 0, 0)));
+            .with_block(
+                Block::default()
+                    .borders(Borders::NONE)
+                    .padding(Padding::new(1, 0, 0, 0)),
+            )
+            .with_placeholder("Enter your search")
+            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     pub fn get_input(&self) -> String {
@@ -63,17 +68,16 @@ impl FuzzySearchWidgetState {
         self.file_database = file_database;
     }
 
-    pub fn set_result(&mut self, results: Vec<FuzzyResult>) {
+    pub fn set_result(&mut self, results: Vec<FuzzyResult<FileEntry>>) {
+        let results: Vec<FuzzyResult<FileEntry>> = results.into_iter().take(self.max_len).collect();
+
         if results.is_empty() {
             self.list_state.select(None);
+        } else if self.list_state.selected().is_none() {
+            self.list_state.select(Some(0));
         }
-        let results = results
-            .into_iter()
-            .take(self.max_len)
-            .filter(|f| f.score > 10)
-            .collect();
-        self.current_result = Some(results);
         self.list_state.limit(self.len());
+        self.current_result = Some(results);
     }
 
     pub fn reset_all(&mut self) {
@@ -107,14 +111,6 @@ impl FuzzySearchWidgetState {
 
     pub fn jump_previous(&mut self, offset: usize) {
         self.list_state.limited_jump_previous(offset, self.len())
-    }
-
-    pub fn jump_start(&mut self) {
-        self.list_state.select(Some(0))
-    }
-
-    pub fn jump_end(&mut self) {
-        self.list_state.select(Some(self.len().saturating_sub(1)))
     }
 
     fn len(&self) -> usize {
@@ -172,7 +168,8 @@ impl StatefulWidget for FuzzySearchWidget {
 
         let layout = Layout::default()
             .constraints([Constraint::Length(1), Constraint::Min(3)].as_ref())
-            .margin(1)
+            .horizontal_margin(1)
+            .vertical_margin(1)
             .split(area);
 
         let search_result: Vec<ListItem> = match &state.current_result {
@@ -209,14 +206,13 @@ impl StatefulWidget for FuzzySearchWidget {
                     .style(state.style)
                     .title("Results")
                     .borders(Borders::TOP)
-                    .padding(Padding::new(1, 1, 1, 1)),
+                    .padding(Padding::new(1, 0, 0, 1)),
             )
             .highlight_style(Style::default().fg(Color::Cyan))
             .highlight_symbol("> ");
 
-        let input_field = state.input_field.clone();
         outer_block.render(area, buf);
-        input_field.widget().render(layout[0], buf);
+        state.input_field.render(layout[0], buf);
         StatefulWidget::render(search_list, layout[1], buf, state.list_state.inner());
     }
 }

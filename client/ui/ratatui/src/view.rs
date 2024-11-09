@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use arcstr::ArcStr;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEventKind,
@@ -17,16 +18,20 @@ use futures::{Future, StreamExt};
 use gag::Gag;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
+use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::playlist::Video;
-use niketsu_core::ui::{RoomChange, ServerChange, UiModel, UserInterface};
+use niketsu_core::room::RoomName;
+use niketsu_core::ui::{RoomChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
+use tokio::task::JoinHandle;
+use tracing::warn;
 
 use super::widget::login::LoginWidget;
 use super::widget::playlist::PlaylistWidget;
-use crate::handler::chat::Chat;
 use crate::handler::command::Command;
 use crate::handler::options::Options;
+use crate::handler::playlist::Playlist;
 use crate::handler::{EventHandler, MainEventHandler, OverlayState, State};
 use crate::widget::chat::{ChatWidget, ChatWidgetState};
 use crate::widget::chat_input::{ChatInputWidget, ChatInputWidgetState};
@@ -37,14 +42,17 @@ use crate::widget::help::{HelpWidget, HelpWidgetState};
 use crate::widget::login::LoginWidgetState;
 use crate::widget::media::{MediaDirWidget, MediaDirWidgetState};
 use crate::widget::options::{OptionsWidget, OptionsWidgetState};
+use crate::widget::playlist::video_overlay::{VideoNameWidget, VideoNameWidgetState};
 use crate::widget::playlist::PlaylistWidgetState;
-use crate::widget::room::{RoomsWidget, RoomsWidgetState};
+use crate::widget::playlist_browser::{PlaylistBrowserWidget, PlaylistBrowserWidgetState};
+use crate::widget::users::{UsersWidget, UsersWidgetState};
 use crate::widget::OverlayWidgetState;
 
 pub struct RatatuiView {
     pub app: App,
     pub model: UiModel,
     pub config: Config,
+    pub running: bool,
 }
 
 enum LoopControl {
@@ -52,7 +60,7 @@ enum LoopControl {
     Break,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub enum Mode {
     #[default]
     Normal,
@@ -64,16 +72,18 @@ pub struct App {
     current_state: State,
     pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
-    pub rooms_widget_state: RoomsWidgetState,
+    pub users_widget_state: UsersWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
-    pub command_input_widget: CommandInputWidgetState,
-    pub chat_input_widget: ChatInputWidgetState,
+    pub command_input_widget_state: CommandInputWidgetState,
+    pub chat_input_widget_state: ChatInputWidgetState,
     pub current_overlay_state: Option<OverlayState>,
     pub options_widget_state: OptionsWidgetState,
     pub help_widget_state: HelpWidgetState,
     pub login_widget_state: LoginWidgetState,
     pub media_widget_state: MediaDirWidgetState,
     pub fuzzy_search_widget_state: FuzzySearchWidgetState,
+    pub playlist_browser_widget_state: PlaylistBrowserWidgetState,
+    pub video_name_widget_state: VideoNameWidgetState,
     pub current_search: Option<FuzzySearch>,
     pub clipboard: ClipboardContext,
     mode: Mode,
@@ -85,23 +95,25 @@ impl App {
         let ctx = ClipboardContext::new().unwrap();
 
         App {
-            current_state: State::from(Chat {}),
-            chat_widget_state: {
-                let mut chat = ChatWidgetState::default();
-                chat.set_style(Style::default().fg(Color::Magenta));
-                chat
-            },
+            current_state: State::from(Playlist {}),
+            chat_widget_state: ChatWidgetState::default(),
             database_widget_state: DatabaseWidgetState::default(),
-            rooms_widget_state: RoomsWidgetState::default(),
-            playlist_widget_state: PlaylistWidgetState::default(),
-            command_input_widget: CommandInputWidgetState::default(),
-            chat_input_widget: ChatInputWidgetState::new(),
+            users_widget_state: UsersWidgetState::default(),
+            playlist_widget_state: {
+                let mut playlist_state = PlaylistWidgetState::default();
+                playlist_state.set_style(Style::default().fg(Color::Magenta));
+                playlist_state
+            },
+            command_input_widget_state: CommandInputWidgetState::default(),
+            chat_input_widget_state: ChatInputWidgetState::new(),
             current_overlay_state: None,
             options_widget_state: OptionsWidgetState::default(),
             help_widget_state: HelpWidgetState::new(),
             login_widget_state: LoginWidgetState::new(&config),
             fuzzy_search_widget_state: FuzzySearchWidgetState::new(),
             media_widget_state: MediaDirWidgetState::new(config.media_dirs),
+            playlist_browser_widget_state: PlaylistBrowserWidgetState::new(),
+            video_name_widget_state: VideoNameWidgetState::default(),
             current_search: None,
             clipboard: ctx,
             mode: Mode::Normal,
@@ -118,13 +130,13 @@ impl App {
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
-        self.prev_mode = Some(self.mode.clone());
+        self.prev_mode = Some(self.mode);
         self.mode = mode;
     }
 
     pub fn reset_overlay(&mut self) {
         self.current_overlay_state = None;
-        if let Some(mode) = self.prev_mode.clone() {
+        if let Some(mode) = self.prev_mode {
             self.mode = mode;
         } else {
             self.mode = Mode::Normal;
@@ -150,6 +162,12 @@ impl App {
     }
 }
 
+impl Drop for RatatuiView {
+    fn drop(&mut self) {
+        self.running = false;
+    }
+}
+
 impl RatatuiView {
     pub fn create(
         config: Config,
@@ -163,6 +181,7 @@ impl RatatuiView {
             app,
             model: ui.model().clone(),
             config,
+            running: true,
         };
         let handle = Box::pin(async move { view.run().await });
         (ui, handle)
@@ -177,13 +196,18 @@ impl RatatuiView {
 
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic| {
-            Self::restore_terminal().expect("restore terminal failed");
+            Self::restore_terminal().ok();
             original_hook(panic);
         }));
 
         let mut needs_update = false;
         terminal.draw(|f| Self::render(f, &mut self.app))?;
-        loop {
+        let mut playlist_browser_handle: Option<JoinHandle<PlaylistBrowser>> =
+            Some(tokio::task::spawn(async move {
+                PlaylistBrowser::get_all().await
+            }));
+
+        while self.running {
             tokio::select! {
                 ct_event = event.next() => {
                     if let LoopControl::Break = self.handle_event(ct_event) {
@@ -195,6 +219,17 @@ impl RatatuiView {
                     self.app.fuzzy_search_widget_state.set_result(search_result);
                     self.app.current_search = None;
                     needs_update = true;
+                }
+               Some(result) = OptionFuture::from(playlist_browser_handle.as_mut()) => {
+                    match result {
+                        Ok(playlist_browser) => {
+                            self.app.playlist_browser_widget_state.set_playlist_browser(playlist_browser);
+                        },
+                        Err(e) => {
+                            warn!(?e, "Failed to retrieve playlists");
+                        }
+                    }
+                    playlist_browser_handle = None;
                 },
                 _ = notify.notified() => {
                     self.handle_notify();
@@ -238,7 +273,7 @@ impl RatatuiView {
                     .clone()
                     .handle_with_overlay(self, &event),
                 Mode::Overlay => {
-                    if let Some(overlay) = self.app.current_overlay_state {
+                    if let Some(overlay) = self.app.current_overlay_state.clone() {
                         overlay.handle(self, &event)
                     }
                 }
@@ -257,7 +292,7 @@ impl RatatuiView {
                         self.app.set_mode(Mode::Overlay);
                         self.app
                             .set_current_overlay_state(Some(OverlayState::from(Command {})));
-                        self.app.command_input_widget.set_active(true);
+                        self.app.command_input_widget_state.set_active(true);
                     }
                     KeyCode::Enter => {
                         self.app.mode = Mode::Inspecting;
@@ -280,59 +315,50 @@ impl RatatuiView {
     }
 
     fn handle_notify(&mut self) {
-        if self.model.file_database_status.changed() {
-            let file_db_status = self.model.file_database_status.get_inner();
+        self.model.running.on_change(|running| {
+            self.running = running;
+        });
+
+        self.model.file_database_status.on_change(|status| {
             self.app
                 .database_widget_state
-                .set_file_database_status((file_db_status * 100.0) as u16);
-        }
+                .set_file_database_status((status * 100.0) as u16);
+        });
 
-        if self.model.file_database.changed() {
-            let file_db = self.model.file_database.get_inner();
-            self.app
-                .database_widget_state
-                .set_file_database(file_db.clone());
-            self.app
-                .fuzzy_search_widget_state
-                .set_file_database(file_db);
-        }
+        self.model.file_database.on_change(|db| {
+            self.app.database_widget_state.set_file_database(db.clone());
+            self.app.fuzzy_search_widget_state.set_file_database(db);
+        });
 
-        if self.model.playlist.changed() {
-            let playlist = self.model.playlist.get_inner();
+        self.model.playlist.on_change(|playlist| {
             self.app.playlist_widget_state.set_playlist(playlist);
-        }
+        });
 
-        if self.model.messages.changed() {
-            let messages = self.model.messages.get_inner().iter().cloned().collect();
+        self.model.messages.on_change_arc(|messages| {
             self.app.chat_widget_state.set_messages(messages);
             self.app.chat_widget_state.update_cursor_latest();
-        }
+        });
 
-        if self.model.room_list.changed() {
-            let rooms = self.model.room_list.get_inner();
-            self.app.rooms_widget_state.set_rooms(rooms);
-        }
+        self.model.user_list.on_change(|users| {
+            self.app.users_widget_state.set_user_list(users);
+        });
 
-        if self.model.user.changed() {
-            let user = self.model.user.get_inner();
-            self.app.rooms_widget_state.set_user(user.clone());
+        self.model.user.on_change(|user| {
+            self.app.users_widget_state.set_user(user.clone());
             self.app.chat_widget_state.set_user(user);
-        }
+        });
 
-        if self.model.playing_video.changed() {
-            let playing_video = self.model.playing_video.get_inner();
-            self.app
-                .playlist_widget_state
-                .set_playing_video(playing_video);
-        }
+        self.model.playing_video.on_change(|video| {
+            self.app.playlist_widget_state.set_playing_video(video);
+        });
     }
 
     fn render(f: &mut Frame, app: &mut App) {
-        let size = f.size();
+        let area = f.area();
         let main_vertical_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
-            .split(size);
+            .split(area);
 
         let horizontal_chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -363,9 +389,9 @@ impl RatatuiView {
         );
 
         f.render_stateful_widget(
-            RoomsWidget,
+            UsersWidget,
             vertical_right_chunks[1],
-            &mut app.rooms_widget_state,
+            &mut app.users_widget_state,
         );
 
         f.render_stateful_widget(
@@ -383,14 +409,14 @@ impl RatatuiView {
         f.render_stateful_widget(
             ChatInputWidget {},
             vertical_left_chunks[1],
-            &mut app.chat_input_widget,
+            &mut app.chat_input_widget_state,
         );
 
         if let Mode::Overlay = app.mode {
             if let Some(overlay) = &app.current_overlay_state {
                 match overlay {
                     OverlayState::Option(_options) => {
-                        let area = app.options_widget_state.area(size);
+                        let area = app.options_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(
                             OptionsWidget {},
@@ -399,17 +425,17 @@ impl RatatuiView {
                         );
                     }
                     OverlayState::Help(_help) => {
-                        let area = app.help_widget_state.area(size);
+                        let area = app.help_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(HelpWidget {}, area, &mut app.help_widget_state);
                     }
                     OverlayState::Login(_login) => {
-                        let area = app.login_widget_state.area(size);
+                        let area = app.login_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(LoginWidget {}, area, &mut app.login_widget_state);
                     }
                     OverlayState::FuzzySearch(_fuzzy_search) => {
-                        let area = app.fuzzy_search_widget_state.area(size);
+                        let area = app.fuzzy_search_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(
                             FuzzySearchWidget {},
@@ -418,7 +444,7 @@ impl RatatuiView {
                         );
                     }
                     OverlayState::MediaDir(_media_dir) => {
-                        let area = app.media_widget_state.area(size);
+                        let area = app.media_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(
                             MediaDirWidget {},
@@ -426,11 +452,29 @@ impl RatatuiView {
                             &mut app.media_widget_state,
                         );
                     }
+                    OverlayState::PlaylistBrowser(_media_dir) => {
+                        let area = app.playlist_browser_widget_state.area(area);
+                        f.render_widget(Clear, area);
+                        f.render_stateful_widget(
+                            PlaylistBrowserWidget {},
+                            area,
+                            &mut app.playlist_browser_widget_state,
+                        );
+                    }
                     OverlayState::Command(_command) => {
                         f.render_stateful_widget(
                             CommandInputWidget {},
                             main_vertical_chunks[1],
-                            &mut app.command_input_widget,
+                            &mut app.command_input_widget_state,
+                        );
+                    }
+                    OverlayState::VideoName(_) => {
+                        let area = app.video_name_widget_state.area(area);
+                        f.render_widget(Clear, area);
+                        f.render_stateful_widget(
+                            VideoNameWidget {},
+                            area,
+                            &mut app.video_name_widget_state,
                         );
                     }
                 }
@@ -466,6 +510,7 @@ impl RatatuiView {
     }
 
     //TODO returning errors
+    // hidden feature
     pub fn parse_commands(&mut self, msg: String) {
         //TODO refactor
         let args: Vec<&str> = msg.split_whitespace().collect();
@@ -473,25 +518,18 @@ impl RatatuiView {
 
         match args {
             ["w", msg @ ..] | ["write", msg @ ..] => self.model.send_message(msg.concat()),
-            ["server-change", addr, secure, password, room]
-            | ["sc", addr, secure, password, room] => self.handle_server_change(
-                addr.to_string(),
-                secure,
-                Some(password.to_string()),
-                room.to_string(),
-            ),
-            ["server-change", addr, secure, room] | ["sc", addr, secure, room] => {
-                self.handle_server_change(addr.to_string(), secure, None, room.to_string())
+            ["room-change", password, room] | ["sc", password, room] => {
+                self.handle_room_change(password.to_string(), RoomName::from(*room))
             }
-            ["room-change", room] | ["rc", room] => {
-                self.model.change_room(RoomChange::from(room.to_string()))
+            ["room-change", room] | ["sc", room] => {
+                self.handle_room_change(String::default(), RoomName::from(*room))
             }
             ["username-change", username] | ["uc", username] => {
-                self.model.change_username(username.to_string())
+                self.model.change_username(username.to_string().into())
             }
             ["toggle-ready"] | ["tr"] => self.model.user_ready_toggle(),
-            ["start-update"] => self.model.start_db_update(),
-            ["stop-update"] => self.model.stop_db_update(),
+            ["start-update"] | ["load"] => self.model.start_db_update(),
+            ["stop-update"] | ["stop"] => self.model.stop_db_update(),
             ["delete", filename] | ["d", filename] => self.remove(&Video::from(*filename)),
 
             ["move", filename, position] | ["mv", filename, position] => {
@@ -546,16 +584,7 @@ impl RatatuiView {
         self.model.change_db_paths(paths)
     }
 
-    pub fn save_config(
-        &mut self,
-        address: String,
-        secure: bool,
-        password: String,
-        room: String,
-        username: String,
-    ) {
-        self.config.url = address;
-        self.config.secure = secure;
+    pub fn save_config(&mut self, password: String, room: RoomName, username: ArcStr) {
         self.config.password = password;
         self.config.room = room;
         self.config.username = username;
@@ -567,28 +596,8 @@ impl RatatuiView {
         _ = self.config.save();
     }
 
-    fn handle_server_change(
-        &mut self,
-        addr: String,
-        secure: &str,
-        password: Option<String>,
-        room: String,
-    ) {
-        //TODO refactor
-        let secure: bool = match secure {
-            "true" => true,
-            "false" => false,
-            _ => return,
-        };
-
-        let room = RoomChange { room };
-
-        self.model.change_server(ServerChange {
-            addr,
-            secure,
-            password,
-            room,
-        });
+    fn handle_room_change(&mut self, password: String, room: RoomName) {
+        self.model.change_room(RoomChange { password, room });
     }
 
     fn handle_move(&mut self, filename: &str, position: &str) {

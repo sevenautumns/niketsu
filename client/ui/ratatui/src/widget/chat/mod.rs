@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use niketsu_core::ui::PlayerMessage;
 use niketsu_core::user::UserStatus;
+use niketsu_core::util::RingBuffer;
 use ratatui::prelude::{Buffer, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols::scrollbar;
@@ -19,7 +22,7 @@ pub struct ChatWidgetState {
     list_state: ListStateWrapper,
     user: UserStatus,
     style: Style,
-    messages: Vec<PlayerMessage>,
+    messages: Arc<RingBuffer<PlayerMessage>>,
 }
 
 impl ChatWidgetState {
@@ -27,7 +30,7 @@ impl ChatWidgetState {
         self.style = style;
     }
 
-    pub fn set_messages(&mut self, messages: Vec<PlayerMessage>) {
+    pub fn set_messages(&mut self, messages: Arc<RingBuffer<PlayerMessage>>) {
         self.messages = messages;
     }
 
@@ -35,47 +38,55 @@ impl ChatWidgetState {
         self.user = user;
     }
 
-    pub fn next(&mut self) {
-        self.list_state.next();
+    fn set_vertical_scroll_state(&mut self) {
         if let Some(i) = self.list_state.selected() {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
+    }
+
+    pub fn next(&mut self) {
+        self.list_state.next();
+        self.set_vertical_scroll_state();
     }
 
     pub fn previous(&mut self) {
         self.list_state.limited_previous(self.messages.len());
-        if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
-        }
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_next(&mut self, offset: usize) {
-        self.list_state.jump_next(offset)
+        self.list_state.jump_next(offset);
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_previous(&mut self, offset: usize) {
         self.list_state
             .limited_jump_previous(offset, self.messages.len());
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_start(&mut self) {
-        self.list_state.select(Some(0))
+        self.list_state.select(Some(0));
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_end(&mut self) {
         self.list_state
-            .select(Some(self.messages.len().saturating_sub(1)))
+            .select(Some(self.messages.len().saturating_sub(1)));
+        self.set_vertical_scroll_state();
     }
 
     pub fn update_cursor_latest(&mut self) {
         if let Some(index) = self.list_state.selected() {
-            if index > self.messages.len().saturating_sub(5) {
+            if index >= self.messages.len().saturating_sub(5) {
                 self.list_state
                     .select(Some(self.messages.len().saturating_sub(1)));
                 self.vertical_scroll_state = self
                     .vertical_scroll_state
                     .position(self.messages.len().saturating_sub(1));
             }
+        } else if !self.messages.is_empty() {
+            self.jump_end();
         }
     }
 }
@@ -146,7 +157,7 @@ impl StatefulWidget for ChatWidget {
         let mut state = state.vertical_scroll_state;
         state = state.content_length(messages_len);
         scrollbar.render(
-            area.inner(&Margin {
+            area.inner(Margin {
                 vertical: 1,
                 horizontal: 0,
             }),

@@ -1,328 +1,186 @@
-use std::collections::VecDeque;
+use std::future::Future;
+use std::sync::Arc;
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Error, Result};
 use async_trait::async_trait;
-use async_tungstenite::stream::Stream;
-use async_tungstenite::tokio::TokioAdapter;
-use async_tungstenite::tungstenite::Message as TsMessage;
-use async_tungstenite::WebSocketStream;
-use futures::stream::{SplitSink, SplitStream};
-use futures::{Future, SinkExt, StreamExt};
-use log::{debug, error, warn};
 use niketsu_core::communicator::*;
-use tokio::net::TcpStream;
-use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
+use p2p::P2PClient;
 use tokio::task::JoinHandle;
-use tokio_native_tls::TlsStream;
+use tracing::{error, warn};
 
 use self::messages::NiketsuMessage;
 
 pub mod messages;
+pub mod p2p;
 
-type WsSink = SplitSink<
-    WebSocketStream<Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<TcpStream>>>>,
-    TsMessage,
->;
-type WsStream = SplitStream<
-    WebSocketStream<Stream<TokioAdapter<TcpStream>, TokioAdapter<TlsStream<TcpStream>>>>,
->;
-
-pub const RECONNECT_INTERVAL: Duration = Duration::from_secs(3);
+pub const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
-enum ConnectionState {
-    Disconnected(Disconnected),
+pub enum Connection {
     Connected(Connected),
     Connecting(Connecting),
+    Disconnected(Disconnected),
 }
 
-impl Default for ConnectionState {
+impl Default for Connection {
     fn default() -> Self {
         Self::Disconnected(Disconnected::default())
     }
 }
 
-#[derive(Debug)]
-struct Disconnected {
-    last_reconnect: Instant,
-    error: Option<anyhow::Error>,
-}
-
-impl Disconnected {
-    fn last_reconnect(&self) -> &Instant {
-        &self.last_reconnect
-    }
-}
-
-impl From<Disconnected> for ConnectionState {
-    fn from(value: Disconnected) -> Self {
-        ConnectionState::Disconnected(value)
-    }
-}
-
-impl Default for Disconnected {
-    fn default() -> Self {
-        let last_reconnect = Instant::now();
-        Self {
-            last_reconnect,
-            error: None,
+impl Connection {
+    async fn receive(&mut self, endpoint: &EndpointInfo) -> IncomingMessage {
+        loop {
+            match self {
+                Connection::Connected(c) => match c.recv().await.map(IncomingMessage::try_from) {
+                    Ok(Ok(msg)) => return msg,
+                    Ok(Err(msg)) => warn!(?msg, "received unexpected message"),
+                    Err(c) => *self = c,
+                },
+                Connection::Connecting(c) => {
+                    *self = c.await;
+                }
+                Connection::Disconnected(d) => {
+                    let reason = d.reason.clone();
+                    *self = d.reconnect(endpoint).await;
+                    if let Some(r) = reason {
+                        return IncomingMessage::from(ServerMessageMsg {
+                            message: r.to_string(),
+                        });
+                    }
+                }
+            }
         }
     }
 }
 
 #[derive(Debug)]
-struct Connected {
-    sender_task: JoinHandle<()>,
-    sender: MpscSender<NiketsuMessage>,
-    receiver: WsStream,
-}
-
-impl Drop for Connected {
-    fn drop(&mut self) {
-        self.sender_task.abort_handle();
-    }
-}
-
-impl From<Connected> for ConnectionState {
-    fn from(value: Connected) -> Self {
-        ConnectionState::Connected(value)
-    }
+pub struct Connected {
+    p2p: P2PClient,
 }
 
 impl Connected {
-    async fn new(endpoint: EndpointInfo) -> Result<Self> {
-        let addr = endpoint.to_string();
-        let (sender, rx) = tokio::sync::mpsc::unbounded_channel();
-        let connect = async_tungstenite::tokio::connect_async(addr);
-        let connect = tokio::time::timeout(Duration::from_secs(3), connect);
-        let connection_res = connect
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))?
-            .map_err(anyhow::Error::from)?;
-        let (ws, _) = connection_res;
-        let (sink, receiver) = ws.split();
-        let sender_task = tokio::task::spawn(Self::sender(rx, sink));
-        Ok(Self {
-            sender_task,
-            sender,
-            receiver,
-        })
-    }
-
-    async fn receive_incoming_message(&mut self) -> Result<IncomingMessage> {
-        loop {
-            let msg = self.receive_niketsu_message().await?;
-            if let ping @ NiketsuMessage::Ping(_) = msg {
-                self.send(ping);
-                continue;
-            }
-            return msg
-                .try_into()
-                .map_err(|msg| anyhow!("unexpected message: {msg:?}"));
+    async fn recv(&mut self) -> std::result::Result<NiketsuMessage, Connection> {
+        if let Some(msg) = self.p2p.next().await {
+            return Ok(msg);
         }
+        Err(Connection::Disconnected(Disconnected::now(Some(
+            anyhow::anyhow!("Received None message"),
+        ))))
     }
 
-    async fn receive_niketsu_message(&mut self) -> Result<NiketsuMessage> {
-        loop {
-            if let Some(msg) = self.receiver.next().await {
-                match msg?.into_text() {
-                    Ok(msg) => match serde_json::from_str::<NiketsuMessage>(&msg) {
-                        Ok(msg) => return Ok(msg),
-                        Err(e) => {
-                            error!("msg parse error: {e:?}");
-                            continue;
-                        }
-                    },
-                    Err(e) => {
-                        error!("into text failed: {e:?}");
-                        continue;
-                    }
-                }
-            }
-            bail!("Websocket ended")
+    fn send(&mut self, msg: NiketsuMessage) -> std::result::Result<(), Connection> {
+        if let Err(error) = self.p2p.send(msg) {
+            error!(%error, "Connection error");
+            return Err(Connection::Disconnected(Disconnected::now(Some(error))));
         }
-    }
-
-    fn send(&self, msg: NiketsuMessage) {
-        niketsu_core::log!(self.sender.send(msg))
-    }
-
-    async fn sender(mut ch: MpscReceiver<NiketsuMessage>, mut sink: WsSink) {
-        loop {
-            if let Some(msg) = ch.recv().await {
-                debug!("sending {msg:?}");
-                match serde_json::to_string(&msg) {
-                    Ok(msg) => {
-                        if let Err(err) = sink.send(TsMessage::Text(msg)).await {
-                            warn!("Websocket ended: {err:?}");
-                            return;
-                        }
-                    }
-                    Err(err) => {
-                        warn!("serde error: {err:?}")
-                    }
-                }
-            } else {
-                return;
-            }
-        }
+        Ok(())
     }
 }
 
 #[derive(Debug)]
-struct Connecting {
-    handle: JoinHandle<Result<Connected>>,
-}
-
-impl From<Connecting> for ConnectionState {
-    fn from(value: Connecting) -> Self {
-        ConnectionState::Connecting(value)
-    }
+pub struct Connecting {
+    connect_task: JoinHandle<Result<P2PClient>>,
 }
 
 impl Connecting {
-    fn connect(endpoint: EndpointInfo) -> Self {
-        debug!("attempt connection for: {endpoint}");
-        let handle = tokio::task::spawn(Connected::new(endpoint));
-        Self { handle }
-    }
-
-    async fn reconnect(endpoint: EndpointInfo, last_reconnect: &Instant) -> Self {
-        let remaining_time = RECONNECT_INTERVAL.saturating_sub(last_reconnect.elapsed());
-        if !remaining_time.is_zero() {
-            tokio::time::sleep(remaining_time).await;
-        }
-        Self::connect(endpoint)
-    }
-}
-
-impl From<Result<Connected>> for ConnectionState {
-    fn from(result: Result<Connected>) -> Self {
-        match result {
-            Ok(connected) => ConnectionState::Connected(connected),
-            Err(err) => {
-                niketsu_core::log!(Err::<Connected, _>(&err));
-                ConnectionState::Disconnected(Disconnected {
-                    error: Some(err),
-                    ..Default::default()
-                })
+    fn new(endpoint: EndpointInfo) -> Self {
+        let connection = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            P2PClient::new(
+                endpoint.addr.clone(),
+                endpoint.room.clone(),
+                endpoint.password.clone(),
+            ),
+        );
+        let connect_task = tokio::task::spawn(async move {
+            match connection.await {
+                Ok(res) => match res {
+                    Ok(client) => Ok(client),
+                    Err(err) => Err(err),
+                },
+                Err(err) => Err(anyhow::anyhow!("Connection timeout: {}", err)),
             }
-        }
+        });
+        Self { connect_task }
     }
 }
 
 impl Future for Connecting {
-    type Output = ConnectionState;
+    type Output = Connection;
 
     fn poll(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        let handle = unsafe { self.map_unchecked_mut(|s| &mut s.handle) };
-        let poll = handle.poll(cx);
-        let Poll::Ready(result) = poll else {
+        let pin = unsafe { self.as_mut().map_unchecked_mut(|s| &mut s.connect_task) };
+        let Poll::Ready(p2p) = pin.poll(cx) else {
             return Poll::Pending;
         };
-        let result = result.unwrap_or_else(|err| Err(anyhow::Error::from(err)));
-        Poll::Ready(ConnectionState::from(result))
+        let p2p = p2p.map_err(anyhow::Error::from);
+        match p2p {
+            Ok(Ok(p2p)) => Poll::Ready(Connection::Connected(Connected { p2p })),
+            Err(error) | Ok(Err(error)) => {
+                error!(%error, "Connection error");
+                Poll::Ready(Connection::Disconnected(Disconnected::now(Some(error))))
+            }
+        }
     }
 }
 
 #[derive(Debug, Default)]
-pub struct WebsocketCommunicator {
-    state: ConnectionState,
-    endpoint: Option<EndpointInfo>,
-    in_queue: VecDeque<IncomingMessage>,
+pub struct Disconnected {
+    when: Option<Instant>,
+    reason: Option<Arc<Error>>,
 }
 
-impl WebsocketCommunicator {
-    async fn receive_or_reconnect(&mut self) -> Option<IncomingMessage> {
-        if let ConnectionState::Connected(connection) = &mut self.state {
-            let msg = connection.receive_incoming_message().await;
-            return self.disconnect_on_err(msg);
-        }
-        if let ConnectionState::Disconnected(disconnected) = &mut self.state {
-            if let Some(error) = disconnected.error.take() {
-                self.in_queue
-                    .push_back(NiketsuConnectionError(error.to_string()).into());
-            }
-        }
-
-        self.reconnect().await;
-        None
-    }
-
-    fn disconnect_on_err(&mut self, msg: Result<IncomingMessage>) -> Option<IncomingMessage> {
-        match msg {
-            Ok(msg) => Some(msg),
-            Err(err) => {
-                niketsu_core::log!(Err::<Connected, _>(&err));
-                self.state = ConnectionState::Disconnected(Disconnected {
-                    error: Some(err),
-                    ..Default::default()
-                });
-                None
-            }
+impl Disconnected {
+    fn now(reason: Option<Error>) -> Self {
+        Self {
+            when: Some(Instant::now()),
+            reason: reason.map(Arc::new),
         }
     }
 
-    async fn reconnect(&mut self) {
-        if let ConnectionState::Connecting(connecting) = &mut self.state {
-            self.state = connecting.await;
-            if let ConnectionState::Connected(_) = &self.state {
-                self.in_queue.push_back(NiketsuConnected.into());
-            }
-            if let ConnectionState::Disconnected(dis) = &mut self.state {
-                if let Some(error) = dis.error.take() {
-                    self.in_queue
-                        .push_back(NiketsuConnectionError(error.to_string()).into())
-                }
-            }
-            return;
+    async fn reconnect(&self, endpoint: &EndpointInfo) -> Connection {
+        let elapsed = self.when.map(|i| i.elapsed()).unwrap_or(Duration::MAX);
+        let remaining = RECONNECT_INTERVAL.saturating_sub(elapsed);
+        if !remaining.is_zero() {
+            tokio::time::sleep(remaining).await;
         }
-        let Some(endpoint) = self.endpoint.clone() else {
-            tokio::time::sleep(Duration::from_secs(300)).await;
-            return;
-        };
-        match &mut self.state {
-            ConnectionState::Disconnected(disconnected) => {
-                let last_reconnect = disconnected.last_reconnect();
-                self.state = Connecting::reconnect(endpoint, last_reconnect).await.into();
-            }
-            ConnectionState::Connecting(_) => {
-                self.state = Connecting::connect(endpoint).into();
-            }
-            _ => {}
-        }
+        Connection::Connecting(Connecting::new(endpoint.clone()))
     }
+}
+
+#[derive(Debug, Default)]
+pub struct P2PCommunicator {
+    connection: Connection,
+    endpoint: Option<EndpointInfo>,
 }
 
 #[async_trait]
-impl CommunicatorTrait for WebsocketCommunicator {
+impl CommunicatorTrait for P2PCommunicator {
     fn connect(&mut self, endpoint: EndpointInfo) {
-        self.endpoint = Some(endpoint.clone());
-        self.state = Connecting::connect(endpoint).into();
+        self.endpoint.replace(endpoint.clone());
+        self.connection = Connection::Connecting(Connecting::new(endpoint))
     }
 
     fn send(&mut self, msg: OutgoingMessage) {
-        let ConnectionState::Connected(connection) = &mut self.state else {
-            warn!("message dropped: {msg:?}");
-            return;
-        };
-        connection.send(msg.into())
+        if let Connection::Connected(con) = &mut self.connection {
+            if let Err(con) = con.send(msg.into()) {
+                self.connection = con
+            }
+        }
     }
 
     async fn receive(&mut self) -> IncomingMessage {
-        loop {
-            if let Some(msg) = self.in_queue.pop_front() {
-                return msg;
-            }
-            if let Some(msg) = self.receive_or_reconnect().await {
-                return msg;
-            }
-        }
+        let Some(endpoint) = &self.endpoint else {
+            return std::future::pending().await;
+        };
+        self.connection.receive(endpoint).await
     }
 }
 

@@ -8,21 +8,20 @@ Available for Linux and even on your Raspberry Pi! **We're inclusive, just like 
 
 ### Client Builds
 - Fensterreinigung (Windows)
-- Awaiting deployment on a certain scientific fruit companies' systems and
-  Linux (x86-64)
+- Builds for iOS or static builds for Linux are not yet available
 
-### Server Builds
+### Relay-Server Builds
 - Linux (x86-64 & ARM64)
 
 ### Source
-- Available in Zip and Tar formats
+- Available in Zip and Tar formats [here](https://github.com/sevenautumns/niketsu/releases)
 
 ## A Note from the Makers 📝
 
-This platform has undergone meticulous scrutiny by a dedicated team of Gophers and their Ferris companions.
+This platform has undergone meticulous scrutiny by a dedicated team of Ferris companions.
 They're fun but serious about code quality.
 Encountered an issue? [Report here](https://github.com/sevenautumns/niketsu/issues). 
 
-**A Fair Warning**: If your malware detector acts up, don't blame us, blame Ferris. For the skeptics, our [Github](https://github.com/sevenautumns/niketsu) is always open for inspection.
+**A Fair Warning**: If your malware detector acts up, don't blame us, blame Ferris. For the skeptics, our [Github repository](https://github.com/sevenautumns/niketsu) is always open for inspection.
 
-**niketsu**—Because traditional streaming is so 2020.
+**niketsu** — Because traditional streaming is so 2020.

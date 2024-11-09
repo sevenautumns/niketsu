@@ -12,10 +12,11 @@ use rayon::slice::ParallelSliceMut;
 use tokio::task::JoinHandle;
 
 use super::{FileEntry, FileStore};
+use crate::util::FuzzyResult;
 
 #[derive(Debug)]
 pub struct FuzzySearch {
-    handle: JoinHandle<Vec<FuzzyResult>>,
+    handle: JoinHandle<Vec<FuzzyResult<FileEntry>>>,
     stop: Arc<AtomicBool>,
 }
 
@@ -31,7 +32,7 @@ impl FuzzySearch {
         query: String,
         store: FileStore,
         stop: Arc<AtomicBool>,
-    ) -> JoinHandle<Vec<FuzzyResult>> {
+    ) -> JoinHandle<Vec<FuzzyResult<FileEntry>>> {
         tokio::task::spawn_blocking(move || {
             let matcher = SkimMatcherV2::default();
             let mut scores = store
@@ -49,7 +50,7 @@ impl FuzzySearch {
                 })
                 .collect::<Result<Vec<_>>>()
                 .unwrap_or_default();
-            scores.par_sort_unstable_by_key(|r| -r.score);
+            scores.par_sort_by_key(|r| -r.score);
             scores
         })
     }
@@ -58,7 +59,7 @@ impl FuzzySearch {
         self.handle.is_finished()
     }
 
-    pub fn poll(&mut self) -> Option<Vec<FuzzyResult>> {
+    pub fn poll(&mut self) -> Option<Vec<FuzzyResult<FileEntry>>> {
         // TODO replace with Waker::noop when
         // https://github.com/rust-lang/rust/issues/98286 lands
         const VTABLE: RawWakerVTable = RawWakerVTable::new(|_| RAW, |_| {}, |_| {}, |_| {});
@@ -78,7 +79,7 @@ impl FuzzySearch {
 }
 
 impl Future for FuzzySearch {
-    type Output = Vec<FuzzyResult>;
+    type Output = Vec<FuzzyResult<FileEntry>>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -98,13 +99,6 @@ impl Drop for FuzzySearch {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct FuzzyResult {
-    pub score: i64,
-    pub hits: Vec<usize>,
-    pub entry: FileEntry,
 }
 
 #[cfg(test)]

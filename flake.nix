@@ -4,10 +4,12 @@
     utils.url = "github:numtide/flake-utils";
     devshell.url = "github:numtide/devshell";
     fenix.url = "github:nix-community/fenix";
+    fenix.inputs.nixpkgs.follows = "nixpkgs";
     naersk.url = "github:nix-community/naersk";
+    naersk.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, devshell, utils, fenix, naersk, ... }@inputs:
+  outputs = { nixpkgs, devshell, utils, fenix, naersk, ... }:
     utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" ] (system:
       let
         lib = nixpkgs.lib;
@@ -15,14 +17,16 @@
           inherit system;
           overlays = [ devshell.overlays.default ];
         };
-        host-target = pkgs.rust.toRustTargetSpec pkgs.stdenv.hostPlatform;
+        static-rust-target = pkgs.pkgsStatic.targetPlatform.rust.rustcTarget;
+        windows-target = pkgs.pkgsCross.mingwW64.targetPlatform.rust.rustcTarget;
         rust-toolchain = with fenix.packages.${system};
           combine [
             stable.rustc
             stable.cargo
             stable.clippy
             latest.rustfmt
-            targets.x86_64-pc-windows-gnu.stable.rust-std
+            targets.${windows-target}.stable.rust-std
+            targets.${static-rust-target}.stable.rust-std
           ];
         naersk-lib = (naersk.lib.${system}.override {
           cargo = rust-toolchain;
@@ -78,19 +82,20 @@
               lib.getVersion p.stdenv.cc.cc
             }/include"
           }";
-        MPV_SOURCE = pkgs.stdenv.mkDerivation {
-          name = "mpv-windows";
-          src = pkgs.fetchurl {
-            url =
-              "https://altushost-swe.dl.sourceforge.net/project/mpv-player-windows/libmpv/mpv-dev-x86_64-v3-20230423-git-c7a8e71.7z";
-            sha256 = "sha256-/BLNQZDGpSPJP3DfkjDBBh/FM1OEFMZxPyIjdb6cHPM=";
+        WINDOWS_MPV_SOURCE = pkgs.stdenv.mkDerivation
+          {
+            name = "mpv-windows";
+            src = pkgs.fetchurl {
+              url =
+                "https://altushost-swe.dl.sourceforge.net/project/mpv-player-windows/libmpv/mpv-dev-x86_64-v3-20241103-git-42ff6f9.7z";
+              sha256 = "sha256-g/0Sgco0LCKvfQvtclG2v9XDj+SB78dH7y48j2qfLQ0=";
+            };
+            unpackCmd = ''
+              ${pkgs.p7zip}/bin/7z x $curSrc
+              mkdir $out
+              cp -r * $out/
+            '';
           };
-          unpackCmd = ''
-            ${pkgs.p7zip}/bin/7z x $curSrc
-            mkdir $out
-            cp -r * $out/
-          '';
-        };
       in
       rec {
         packages = {
@@ -100,20 +105,20 @@
             name = "niketsu";
             version = VERSION;
             root = ./.;
+            cargoBuildOptions = x: x ++ [ "--package" name ];
+            cargoTestOptions = x: x ++ [ "--package" name ];
             nativeBuildInputs = with pkgs; [ cmake pkg-config ] ++ libraries;
             buildInputs = with pkgs; [ yt-dlp ];
-            preConfigure = ''
-              export BINDGEN_EXTRA_CLANG_ARGS='${BINDGEN_EXTRA_LANG_ARGS pkgs}'
-              export C_INCLUDE_PATH=$C_INCLUDE_PATH:${pkgs.mpv}/include
-            '';
+            BINDGEN_EXTRA_CLANG_ARGS = BINDGEN_EXTRA_LANG_ARGS pkgs;
+            C_INCLUDE_PATH = "$C_INCLUDE_PATH:${pkgs.mpv}/include";
           };
           niketsu-client-windows = naersk-lib.buildPackage rec {
             inherit LIBCLANG_PATH;
             name = "niketsu";
             version = VERSION;
             root = ./.;
-            cargoBuildOptions = x: x ++ [ "--target" "x86_64-pc-windows-gnu" ];
-            cargoTestOptions = x: x ++ [ "--target" "x86_64-pc-windows-gnu" ];
+            cargoBuildOptions = x: x ++ [ "--target" windows-target "--package" name ];
+            cargoTestOptions = x: x ++ [ "--target" windows-target "--package" name ];
             buildInputs = with pkgs.pkgsCross.mingwW64.windows; [
               mingw_w64_pthreads
               pthreads
@@ -125,32 +130,22 @@
               export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C link-args=$(echo $NIX_LDFLAGS | tr ' ' '\n' | grep -- '^-L' | tr '\n' ' ')"
               export NIX_LDFLAGS=
             '';
-            preConfigure = ''
-              export BINDGEN_EXTRA_CLANG_ARGS='${
-                BINDGEN_EXTRA_LANG_ARGS pkgs.pkgsCross.mingwW64
-              }'
-              export C_INCLUDE_PATH=$C_INCLUDE_PATH:${MPV_SOURCE}/include
-              export MPV_SOURCE=${MPV_SOURCE}
-            '';
+            TARGET_CC = "${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}cc";
+            BINDGEN_EXTRA_CLANG_ARGS = BINDGEN_EXTRA_LANG_ARGS pkgs.pkgsCross.mingwW64;
+            MPV_SOURCE = WINDOWS_MPV_SOURCE;
+            C_INCLUDE_PATH = "$C_INCLUDE_PATH:${WINDOWS_MPV_SOURCE}/include";
             postInstall = ''
-              zip --junk-paths niketsu.zip $out/bin/niketsu.exe ${MPV_SOURCE}/*dll*
+              zip --junk-paths niketsu.zip $out/bin/niketsu.exe ${WINDOWS_MPV_SOURCE}/*dll*
               rm -dr $out
               mv niketsu.zip $out
             '';
           };
-          niketsu-server = pkgs.buildGoModule rec {
-            name = "niketsu-server";
+          niketsu-relay = naersk-lib.buildPackage rec {
+            name = "niketsu-relay";
             version = VERSION;
-            src = ./.;
-            SSL_CERT_FILE =
-              "${./server/src/communication/testdata/certificate.crt}";
-            buildInputs = with pkgs; [ stdenv go glibc.static ];
-            ldflags =
-              [ "-s" "-w" "-linkmode external" "-extldflags" "-static" ];
-            postInstall = ''
-              mv $out/bin/server $out/bin/niketsu-server
-            '';
-            vendorHash = "sha256-39ku23cOc/RYdVOUuL7r2o3LMqEUxd2qx2BDEqnhtwA=";
+            root = ./.;
+            cargoBuildOptions = x: x ++ [ "--target" static-rust-target "--package" name ];
+            cargoTestOptions = x: x ++ [ "--target" static-rust-target "--package" name ];
           };
         };
         devShells.default = (pkgs.devshell.mkShell {
@@ -172,20 +167,11 @@
             mdbook
             pkg-config
             yt-dlp
-            go
           ];
-          git.hooks = {
-            enable = true;
-            # pre-commit.text = "nix flake check";
-          };
           env = [
             {
               name = "LD_LIBRARY_PATH";
               value = LD_LIBRARY_PATH;
-            }
-            {
-              name = "SSL_CERT_DIR";
-              eval = "$PRJ_ROOT/server/src/communication/testdata";
             }
             {
               name = "LIBCLANG_PATH";
@@ -209,14 +195,6 @@
             }
           ];
           commands = [
-            {
-              name = "go-test";
-              category = "go";
-              command = ''
-                go test github.com/sevenautumns/niketsu/server/src/...
-              '';
-              help = "Run go test for the server";
-            }
             { package = "treefmt"; }
             {
               name = "udeps";
@@ -278,4 +256,5 @@
         };
       });
 }
+
 

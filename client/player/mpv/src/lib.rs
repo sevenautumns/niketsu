@@ -1,17 +1,16 @@
 use std::ffi::{c_void, CStr, CString};
 use std::mem::MaybeUninit;
-use std::process::exit;
 use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
-use log::debug;
 use niketsu_core::file_database::FileStore;
 use niketsu_core::log;
 use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait};
 use niketsu_core::playlist::Video;
 use strum::{AsRefStr, EnumString};
+use tracing::debug;
 
 use self::bindings::*;
 use self::event::{MpvEventPipe, MpvEventTrait, PropertyValue};
@@ -39,7 +38,6 @@ pub enum MpvProperty {
     Filename,
     Duration,
     KeepOpen,
-    KeepOpenPause,
     CachePause,
     ForceWindow,
     Idle,
@@ -72,7 +70,6 @@ impl MpvProperty {
             MpvProperty::ForceWindow => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Idle => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Config => mpv_format::MPV_FORMAT_FLAG,
-            MpvProperty::KeepOpenPause => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::EofReached => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::InputDefaultBindings => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::InputVoKeyboard => mpv_format::MPV_FORMAT_FLAG,
@@ -118,6 +115,15 @@ pub struct MpvStatus {
     load_position: Duration,
 }
 
+impl MpvStatus {
+    pub fn reset(&mut self) {
+        *self = Self {
+            speed: self.speed,
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for MpvStatus {
     fn default() -> Self {
         Self {
@@ -141,7 +147,6 @@ pub struct Mpv {
 impl Drop for Mpv {
     fn drop(&mut self) {
         unsafe { mpv_terminate_destroy(self.handle.0) };
-        exit(0)
     }
 }
 
@@ -172,8 +177,7 @@ impl Mpv {
 
     fn set_settings(&self) -> Result<()> {
         self.set_ocs(true)?;
-        self.set_keep_open(true)?;
-        self.set_keep_open_pause(true)?;
+        self.set_keep_open(false)?;
         self.set_cache_pause(true)?;
         self.set_idle_mode(true)?;
         self.set_force_window(true)?;
@@ -186,11 +190,11 @@ impl Mpv {
     fn init_handle(&self) -> Result<()> {
         let ret = unsafe { mpv_initialize(self.handle.0) };
         let ret = TryInto::<mpv_error>::try_into(ret)?;
-        ret.try_into()
+        ret.ok()
     }
 
     fn post_init(&mut self) -> Result<()> {
-        self.pause();
+        self.set_property(MpvProperty::Pause, true.into())?;
         self.observe_property(MpvProperty::Pause)?;
         self.observe_property(MpvProperty::PausedForCache)?;
         self.observe_property(MpvProperty::Filename)?;
@@ -203,10 +207,6 @@ impl Mpv {
 
     fn set_keep_open(&self, keep_open: bool) -> Result<()> {
         self.set_property(MpvProperty::KeepOpen, keep_open.into())
-    }
-
-    fn set_keep_open_pause(&self, keep_open_pause: bool) -> Result<()> {
-        self.set_property(MpvProperty::KeepOpenPause, keep_open_pause.into())
     }
 
     fn set_idle_mode(&self, idle_mode: bool) -> Result<()> {
@@ -253,7 +253,7 @@ impl Mpv {
                 value.format(),
                 value.as_mut_ptr(),
             );
-            TryInto::<mpv_error>::try_into(ret)?.try_into()
+            mpv_error::try_from(ret)?.ok()
         }
     }
 
@@ -261,7 +261,7 @@ impl Mpv {
         let format = prop.format();
         let prop: CString = prop.try_into()?;
         let ret = unsafe { mpv_observe_property(self.handle.0, 0, prop.as_ptr(), format) };
-        TryInto::<mpv_error>::try_into(ret)?.try_into()
+        mpv_error::try_from(ret)?.ok()
     }
 
     fn get_property_f64(&self, prop: MpvProperty) -> Result<f64> {
@@ -274,7 +274,7 @@ impl Mpv {
                 mpv_format::MPV_FORMAT_DOUBLE,
                 data.as_mut_ptr() as *mut c_void,
             );
-            TryInto::<mpv_error>::try_into(ret)?.try_into()?;
+            mpv_error::try_from(ret)?.ok()?;
             Ok(data.assume_init())
         }
     }
@@ -289,7 +289,7 @@ impl Mpv {
                 mpv_format::MPV_FORMAT_FLAG,
                 data.as_mut_ptr() as *mut c_void,
             );
-            TryInto::<mpv_error>::try_into(ret)?.try_into()?;
+            mpv_error::try_from(ret)?.ok()?;
             Ok(data.assume_init())
         }
     }
@@ -306,13 +306,7 @@ impl Mpv {
     fn send_command(&self, cmd: &[&CStr]) -> Result<()> {
         let mut cmd = Self::build_cmd(cmd);
         let ret = unsafe { mpv_command_async(self.handle.0, 0, cmd.as_mut_ptr()) };
-        TryInto::<mpv_error>::try_into(ret)?.try_into()
-    }
-
-    fn eof_reached(&mut self) -> Option<bool> {
-        let duration = self.get_duration()?;
-        let position = self.get_position()?;
-        Some(position + Duration::from_millis(100) >= duration)
+        mpv_error::try_from(ret)?.ok()
     }
 
     fn replace_video(&mut self, path: CString) {
@@ -325,7 +319,7 @@ impl Mpv {
         let start = self.status.load_position.as_secs_f64();
         let options = format!("start={start}");
         let options = CString::new(options).expect("Got invalid UTF-8");
-        let res = self.send_command(&[&cmd, &path, &replace, &options]);
+        let res = self.send_command(&[&cmd, &path, &replace, c"0", &options]);
         self.status.file_load_status = FileLoadStatus::Loading;
         log!(res)
     }
@@ -366,10 +360,7 @@ impl MediaPlayerTrait for Mpv {
 
     fn is_paused(&self) -> Option<bool> {
         self.status.file.as_ref()?;
-        let paused = log!(
-            self.get_property_flag(MpvProperty::Pause),
-            Default::default()
-        );
+        let paused = log!(self.get_property_flag(MpvProperty::Pause), true);
         Some(paused)
     }
 
@@ -386,11 +377,11 @@ impl MediaPlayerTrait for Mpv {
 
     fn set_position(&mut self, pos: Duration) {
         if self.status.seeking {
-            debug!("already seeking, ignoring set_position: {pos:?}");
+            debug!(?pos, "already seeking, ignoring set_position");
             return;
         }
         if self.status.file.is_none() {
-            debug!("no file is playing, ignoring set_position: {pos:?}");
+            debug!(?pos, "no file is playing, ignoring set_position");
             return;
         }
         self.status.seeking = true;
@@ -467,7 +458,7 @@ impl MediaPlayerTrait for Mpv {
             return;
         };
         let Some(path) = load.to_path_str(db) else {
-            debug!("get path from: {:?}", load);
+            debug!(video = ?load, "get path from video");
             self.unload_video();
             return;
         };

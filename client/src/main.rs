@@ -3,12 +3,11 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 use niketsu::cli::Args;
-use niketsu_communicator::WebsocketCommunicator;
+use niketsu_communicator::P2PCommunicator;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::FileDatabase;
 use niketsu_core::logging::setup_logger;
-use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::ui::UserInterfaceTrait;
 use niketsu_mpv::Mpv;
 
@@ -40,7 +39,7 @@ async fn main() -> Result<()> {
         }
     }
     let player = Mpv::new().unwrap();
-    let communicator = WebsocketCommunicator::default();
+    let communicator = P2PCommunicator::default();
     let mut file_database = FileDatabase::default();
     if !args.skip_database_refresh {
         file_database = FileDatabase::new(config.media_dirs.iter().map(PathBuf::from).collect());
@@ -51,12 +50,10 @@ async fn main() -> Result<()> {
         .player(Box::new(player))
         .communicator(Box::new(communicator))
         .file_database(Box::new(file_database))
-        .playlist(Box::<PlaylistHandler>::default())
         .chat_logger(chat_logger)
         .config(config)
         .build();
 
     tokio::task::spawn(async move { core.run().await });
-
     ui_fn.await
 }

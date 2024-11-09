@@ -11,12 +11,13 @@ use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use im::Vector;
 use itertools::Itertools;
-use log::{trace, warn};
 use rayon::prelude::IntoParallelRefIterator;
 use tokio::task::JoinHandle;
+use tracing::{trace, warn};
 
 use self::fuzzy::FuzzySearch;
 use self::updater::FileDatabaseUpdater;
+use super::player::MediaPlayerTrait;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
 
@@ -84,9 +85,15 @@ impl EventHandler for UpdateProgress {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct FileEntry {
     inner: Arc<FileEntryInner>,
+}
+
+impl std::fmt::Debug for FileEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
 }
 
 impl FileEntry {
@@ -110,11 +117,21 @@ impl From<FileEntryInner> for FileEntry {
     }
 }
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Clone, Eq)]
 pub struct FileEntryInner {
     path: PathBuf,
     name: ArcStr,
     modified: Option<SystemTime>,
+}
+
+impl std::fmt::Debug for FileEntryInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileEntry")
+            .field("path", &self.path)
+            .field("name", &self.name)
+            .field("modified", &self.modified)
+            .finish()
+    }
 }
 
 impl std::hash::Hash for FileEntryInner {
@@ -282,7 +299,7 @@ impl FileDatabaseTrait for FileDatabase {
             update = updater => {
                 match update {
                     Ok(data) => self.store = FileStore::from_iter(data),
-                    Err(e) => warn!("update error: {e:?}"),
+                    Err(error) => warn!(%error, "update error"),
                 };
                 self.update.take();
                 Some(UpdateComplete.into())

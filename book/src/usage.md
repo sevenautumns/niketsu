@@ -22,29 +22,23 @@ Use `niketsu-client` to binge content in real-time with your crew. Whether you'r
 
 #### Let's Dive Deep 🌊
 
-##### Server Address 🏠
-Host:Port format. If you're on HTTPS, don't forget to toggle that secure button.  
-Example: `autumnal.de:7766`
+Most parameters are now moved to the configuration file, typically found at `~/.config/niketsu/config.toml`:
 
-##### Password 🗝️
-Server-set password? Input it. No password? We're chill either way.
-Example: `1234secure`
-
-##### Username 🎭
-This is how you'll show up in the matrix.  
-Example: `tech-savy gopher`
-
-##### Room 🚪
-Your landing zone. Auto-creates if doesn't exist.
-Example: `spaceship`
-
-#### Filesystem 📂
-Add/delete directories via "+" and "-" buttons.  
-Example: `~/videos/`
+```toml
+username = "karl"
+media_dirs = ["/mnt/point"]
+room = "someverylongroomname"
+password = "1234"
+auto_connect = false
+relay = "autumnal.de"
+port = 7766
+```
 
 #### Other options
-Set auto-login to directly dive into your adventure without a boring login screen.
+Set auto-login (`auto_connect = true`) to directly dive into your adventure without a boring login screen.
 The save buttons will apply your login data and save it for future calls.
+
+If you host your own relay server, make sure to set `relay` to the IP/domain of your relay and `port` to the corresponding port of the service.
 
 #### Video Time 🎬
 Hit "Start," connect, and enjoy dual-window magic with [mpv](https://mpv.io).
@@ -63,8 +57,11 @@ Debug through the chat box.
 - **Settings**: Top-left corner.
 - **File Search**: Beside Settings, for quicker video additions.
 
-##### Terminal Junkies 🤓
-Opt for our Text-based UI. Keybindings? `space + h`.
+
+#### Terminal Junkies 🤓
+Opt for our text-based UI using `--ui ratatui`. Keybindings? Press `space + h`.
+
+Simple and intuitive design.
 
 <img src="./images/niketsu_tui.png" alt="GUI" style="height: 40rem"/>
 
@@ -74,20 +71,16 @@ For the DIY gods, check out [building page](./building.md) or snag our [precompi
 
 #### Customizing Your Realm 🌍
 
-Configurations can be set via JSON, CLI, or ENV variables, in that precedence order. Explore the GitHub repo for a [sample config](https://github.com/sevenautumns/niketsu/blob/main/server/config.json).
+Configurations can be set via toml or cli found at .`~/.config/niketsu-relay/config.toml` if available.
 
 ##### Parameters 📋
-- **HOST**: Where your server listens.
-- **PASSWORD**: Gateway for clients.
-- **PORT**: 7766 by default.
-- **KEY**: For TLS.
-- **CERT**: Ditto.
-- **DBPATH**: `.db` default.
-- **DBUPDATEINTERVAL**: Database write interval.
-- **DBWAITTIMEOUT**: DB lock timeout.
-- **DEBUG**: For extra logs.
+```toml
+ipv6 = true
+keypair = "ed25519keypairstuff"
+port = 7766
+```
 
-#### CLI & ENV Vars 🖋️
-Invoke with `--help` for CLI args. ENV vars work too, but CLI trumps all.
+<br>
+<hr>
 
-Stay updated, we're always in flux. 🔄
+**Stay updated, we're always in flux.** 🔄

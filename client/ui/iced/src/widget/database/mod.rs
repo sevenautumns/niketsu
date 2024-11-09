@@ -1,3 +1,4 @@
+use iced::advanced::widget::Operation;
 use iced::event::Status;
 use iced::mouse::Cursor;
 use iced::widget::{Button, Container, ProgressBar, Row, Text, Tooltip};
@@ -6,13 +7,13 @@ use niketsu_core::file_database::FileStore;
 
 use self::message::{DatabaseWidgetMessage, StartDbUpdate, StopDbUpdate};
 use crate::message::Message;
-use crate::styling::{ContainerBorder, FileButton, FileProgressBar, ResultButton};
+use crate::styling::{ContainerBorder, FileButton, FileProgressBar};
 use crate::TEXT_SIZE;
 
 pub mod message;
 
 pub struct DatabaseWidget<'a> {
-    base: Element<'a, Message>,
+    base: Element<'a, DatabaseWidgetMessage>,
 }
 
 impl<'a> DatabaseWidget<'a> {
@@ -27,7 +28,7 @@ impl<'a> DatabaseWidget<'a> {
                 )
                 .align_x(iced::alignment::Horizontal::Center)
                 .align_y(iced::alignment::Vertical::Center)
-                .style(ContainerBorder::basic())
+                .style(ContainerBorder::theme)
                 .width(Length::Fill)
                 .into()
             }
@@ -39,15 +40,21 @@ impl<'a> DatabaseWidget<'a> {
         };
 
         let update_msg = match finished {
-            true => DatabaseWidgetMessage::from(StartDbUpdate).into(),
-            false => DatabaseWidgetMessage::from(StopDbUpdate).into(),
+            true => StartDbUpdate.into(),
+            false => StopDbUpdate.into(),
         };
         let update_btn = match finished {
             true => Button::new("Update"),
             false => Button::new("Stop"),
         }
         .on_press(update_msg)
-        .style(ResultButton::theme(finished));
+        .style(move |theme, status| {
+            if finished {
+                iced::widget::button::success(theme, status)
+            } else {
+                iced::widget::button::danger(theme, status)
+            }
+        });
 
         let update_text = match finished {
             true => "Update file database",
@@ -68,21 +75,20 @@ impl<'a> DatabaseWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for DatabaseWidget<'a> {
-    fn width(&self) -> Length {
-        self.base.as_widget().width()
-    }
-
-    fn height(&self) -> Length {
-        self.base.as_widget().height()
+impl<'a> iced::advanced::Widget<DatabaseWidgetMessage, Theme, Renderer> for DatabaseWidget<'a> {
+    fn size(&self) -> iced::Size<Length> {
+        self.base.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.base.as_widget().layout(renderer, limits)
+        self.base
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -118,7 +124,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for DatabaseWidget<'a> {
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn iced::advanced::widget::Operation<Message>,
+        operation: &mut dyn Operation,
     ) {
         self.base
             .as_widget()
@@ -150,7 +156,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for DatabaseWidget<'a> {
         cursor: Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, Message>,
+        shell: &mut iced::advanced::Shell<'_, DatabaseWidgetMessage>,
         viewport: &Rectangle,
     ) -> Status {
         self.base.as_widget_mut().on_event(
@@ -168,7 +174,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for DatabaseWidget<'a> {
 
 impl<'a> From<DatabaseWidget<'a>> for Element<'a, Message> {
     fn from(db: DatabaseWidget<'a>) -> Self {
-        Self::new(db)
+        Element::new(db).map(Message::from)
     }
 }
 

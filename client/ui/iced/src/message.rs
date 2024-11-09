@@ -1,19 +1,17 @@
 use enum_dispatch::enum_dispatch;
-use iced::keyboard::KeyCode;
-use iced::{Command, Event};
+use iced::Task;
 
 use super::main_window::message::MainMessage;
 use super::widget::chat::message::ChatWidgetMessage;
 use super::widget::database::message::DatabaseWidgetMessage;
 use super::widget::playlist::message::PlaylistWidgetMessage;
-use super::widget::rooms::message::RoomsWidgetMessage;
 use crate::view::ViewModel;
 use crate::widget::file_search::message::FileSearchWidgetMessage;
 use crate::widget::settings::message::SettingsWidgetMessage;
 
 #[enum_dispatch]
 pub trait MessageHandler {
-    fn handle(self, model: &mut ViewModel) -> Command<Message>;
+    fn handle(self, model: &mut ViewModel) -> Task<Message>;
 }
 
 #[enum_dispatch(MessageHandler)]
@@ -21,10 +19,9 @@ pub trait MessageHandler {
 pub enum Message {
     Main(MainMessage),
     ModelChanged,
-    EventOccured,
+    ToggleReady,
     //
     SettingsWidget(SettingsWidgetMessage),
-    RoomsWidget(RoomsWidgetMessage),
     PlaylistWidget(PlaylistWidgetMessage),
     ChatWidget(ChatWidgetMessage),
     DatabaseWidget(DatabaseWidgetMessage),
@@ -35,26 +32,21 @@ pub enum Message {
 pub struct ModelChanged;
 
 impl MessageHandler for ModelChanged {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
         model.update_from_inner_model();
-        Command::none()
+        if !model.model.running.get_inner() {
+            return iced::exit();
+        }
+        Task::none()
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct EventOccured(pub Event);
+pub struct ToggleReady;
 
-impl MessageHandler for EventOccured {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
-        if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
-            key_code,
-            modifiers: _,
-        }) = self.0
-        {
-            if key_code == KeyCode::Space {
-                model.model.user_ready_toggle();
-            }
-        }
-        Command::none()
+impl MessageHandler for ToggleReady {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
+        model.model.user_ready_toggle();
+        Task::none()
     }
 }

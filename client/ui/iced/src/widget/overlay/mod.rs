@@ -1,18 +1,17 @@
-use iced::{BorderRadius, Color, Element, Padding, Point, Renderer, Size, Theme};
+use iced::advanced::widget::Operation;
+use iced::{Border, Color, Element, Point, Renderer, Size, Theme, Vector};
 
-use crate::message::Message;
-
-pub struct ElementOverlay<'a, 'b> {
+pub struct ElementOverlay<'a, 'b, M> {
     pub tree: &'b mut iced::advanced::widget::Tree,
-    pub content: &'b mut Element<'a, Message, Renderer>,
+    pub content: &'b mut Element<'a, M>,
     pub config: ElementOverlayConfig,
 }
 
-#[derive(Debug, Clone)]
 pub struct ElementOverlayConfig {
     pub max_height: Option<f32>,
     pub max_width: Option<f32>,
     pub min_padding: f32,
+    pub event_status: Box<dyn Fn(iced::Event, iced::event::Status) -> iced::event::Status>,
 }
 
 impl Default for ElementOverlayConfig {
@@ -21,23 +20,33 @@ impl Default for ElementOverlayConfig {
             max_height: None,
             max_width: None,
             min_padding: 20.0,
+            event_status: Box::new(|_, status| status),
         }
     }
 }
 
-impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, 'b> {
-    fn layout(
-        &self,
-        renderer: &Renderer,
-        bounds: Size,
-        _position: Point,
-    ) -> iced_futures::core::layout::Node {
+impl std::fmt::Debug for ElementOverlayConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ElementOverlayConfig")
+            .field("max_height", &self.max_height)
+            .field("max_width", &self.max_width)
+            .field("min_padding", &self.min_padding)
+            .finish()
+    }
+}
+
+impl<'a, 'b, M> iced::advanced::Overlay<M, Theme, Renderer> for ElementOverlay<'a, 'b, M> {
+    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> iced::advanced::layout::Node {
+        let padding = self.config.min_padding * 2.0;
         let limits = iced::advanced::layout::Limits::new(Size::ZERO, bounds)
             .max_width(self.config.max_width.unwrap_or(f32::INFINITY))
             .max_height(self.config.max_height.unwrap_or(f32::INFINITY))
-            .pad(Padding::new(self.config.min_padding * 2.0));
-        let mut child = self.content.as_widget().layout(renderer, &limits);
-        child.align(
+            .shrink(Size::new(padding, padding));
+        let mut child = self
+            .content
+            .as_widget()
+            .layout(self.tree, renderer, &limits);
+        child = child.align(
             iced::Alignment::Center,
             iced::Alignment::Center,
             limits.max(),
@@ -68,9 +77,12 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, '
             renderer,
             iced::advanced::renderer::Quad {
                 bounds: layout.bounds().expand(5.0),
-                border_radius: BorderRadius::from(5.0),
-                border_width: 2.0,
-                border_color: theme.palette().text,
+                border: Border {
+                    color: theme.palette().text,
+                    width: 2.0,
+                    radius: 5.0.into(),
+                },
+                shadow: Default::default(),
             },
             Color {
                 a: 0.99,
@@ -93,7 +105,7 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, '
         &mut self,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn iced::advanced::widget::Operation<Message>,
+        operation: &mut dyn Operation,
     ) {
         self.content
             .as_widget()
@@ -107,18 +119,19 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, '
         cursor: iced::advanced::mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, Message>,
+        shell: &mut iced::advanced::Shell<'_, M>,
     ) -> iced::event::Status {
-        self.content.as_widget_mut().on_event(
+        let status = self.content.as_widget_mut().on_event(
             self.tree,
-            event,
+            event.clone(),
             layout,
             cursor,
             renderer,
             clipboard,
             shell,
             &layout.bounds(),
-        )
+        );
+        (self.config.event_status)(event, status)
     }
 
     fn mouse_interaction(
@@ -137,9 +150,9 @@ impl<'a, 'b> iced::advanced::Overlay<Message, Renderer> for ElementOverlay<'a, '
         &'c mut self,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-    ) -> Option<iced::advanced::overlay::Element<'c, Message, Renderer>> {
+    ) -> Option<iced::advanced::overlay::Element<'c, M, Theme, Renderer>> {
         self.content
             .as_widget_mut()
-            .overlay(self.tree, layout, renderer)
+            .overlay(self.tree, layout, renderer, Vector::default())
     }
 }

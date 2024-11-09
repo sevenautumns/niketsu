@@ -1,14 +1,17 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use iced::advanced::widget::Operation;
 use iced::event::Status;
-use iced::keyboard::{KeyCode, Modifiers};
+use iced::keyboard::key::Named;
+use iced::keyboard::{Key, Modifiers};
 use iced::mouse::Cursor;
-use iced::widget::{Button, Column, Container, Rule, Text};
-use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme};
-use log::trace;
+use iced::widget::text::Wrapping;
+use iced::widget::{button, text, Column, Rule};
+use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use niketsu_core::file_database::FileStore;
 use niketsu_core::playlist::{Playlist, *};
+use tracing::trace;
 
 use self::message::*;
 use crate::message::Message;
@@ -18,9 +21,10 @@ pub mod message;
 
 // TODO make configurable
 pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+pub const PLAYLIST_SPACING: f32 = 2.0;
 
 pub struct PlaylistWidget<'a> {
-    base: Element<'a, Message>,
+    base: Element<'a, PlaylistWidgetMessage>,
     state: PlaylistWidgetState,
 }
 
@@ -30,7 +34,7 @@ impl<'a> PlaylistWidget<'a> {
 
         let mut file_btns = vec![];
         for f in state.playlist.iter() {
-            let pressed = state.selected.as_ref().map_or(false, |f_i| f.eq(f_i));
+            let pressed = state.selected.as_ref().is_some_and(|f_i| f.eq(&f_i.video));
             let mut available = f.is_url();
             if !available {
                 available = state.file_store.find_file(f.as_str()).is_some();
@@ -42,9 +46,9 @@ impl<'a> PlaylistWidget<'a> {
                 }
             };
             file_btns.push(
-                Button::new(Container::new(Text::new(name)).padding(2))
-                    .padding(0)
-                    .width(Length::Fill)
+                button(text(name.clone()).wrapping(Wrapping::None))
+                    .clip(true)
+                    .padding(2)
                     .style(FileButton::theme(pressed, available))
                     .into(),
             );
@@ -52,7 +56,11 @@ impl<'a> PlaylistWidget<'a> {
 
         Self {
             state,
-            base: Column::with_children(file_btns).width(Length::Fill).into(),
+            base: Column::with_children(file_btns)
+                .spacing(PLAYLIST_SPACING)
+                .clip(true)
+                // .width(Length::Fill)
+                .into(),
         }
     }
 
@@ -60,61 +68,81 @@ impl<'a> PlaylistWidget<'a> {
         &self,
         layout: iced::advanced::layout::Layout<'_>,
         cursor_position: Point,
-    ) -> Option<(usize, Point)> {
+    ) -> Option<Index> {
         let files = layout.children();
-        let mut closest = (f32::INFINITY, 0, iced::Point::default());
+        let mut closest = (f32::INFINITY, Index::default());
         // Find closest index from overlay
         for (i, layout) in files.enumerate() {
             let dist = layout.position().distance(cursor_position);
             if dist < closest.0 {
-                closest = (dist, i, layout.position())
+                closest.0 = dist;
+                closest.1.index_absolute = i;
+                closest.1.index_relative = i;
+                closest.1.position = layout.position();
             }
         }
         // In-case we are at the end of the file list,
         // check if we are above or below
-        if closest.1 == self.state.playlist.len() - 1 {
+        if closest.1.index_absolute == self.state.playlist.len() - 1 {
             if let Some(l) = layout.children().last() {
                 let top = l.position();
                 let mut bottom = top;
                 bottom.y += l.bounds().height;
                 let dist = bottom.distance(cursor_position);
                 if dist < closest.0 {
-                    closest = (dist, self.state.playlist.len(), bottom)
+                    closest.0 = dist;
+                    closest.1.index_absolute = self.state.playlist.len();
+                    closest.1.position = bottom;
                 }
             }
+        }
+        // If the closest index is larger than the index of the selected video, adjust the relative index
+        if self
+            .state
+            .selected
+            .as_ref()
+            .is_some_and(|s| s.index < closest.1.index_absolute)
+        {
+            closest.1.index_relative = closest.1.index_absolute - 1;
         }
         // If no index was found return None
         if closest.0.is_infinite() {
             return None;
         }
-        // If we are below or above the selected file,
-        // dont send an index if we handle files within the playlist
+        // If we are below or above the selected file, dont send an index
         if let FileInteraction::Pressing(_) = self.state.interaction {
             if let Some(sele) = &self.state.selected {
-                if let Some(clos) = self.state.playlist.get(closest.1.saturating_sub(1)) {
-                    if clos.eq(sele) {
+                if let Some(clos) = self
+                    .state
+                    .playlist
+                    .get(closest.1.index_absolute.saturating_sub(1))
+                {
+                    if clos.eq(&sele.video) {
                         return None;
                     }
                 }
-                if let Some(clos) = self.state.playlist.get(closest.1) {
-                    if clos.eq(sele) {
+                if let Some(clos) = self.state.playlist.get(closest.1.index_absolute) {
+                    if clos.eq(&sele.video) {
                         return None;
                     }
                 }
             }
         }
-        Some((closest.1, closest.2))
+        Some(closest.1)
     }
 
     fn file_at_position(
         &self,
         layout: iced::advanced::Layout<'_>,
         cursor_position: Point,
-    ) -> Option<Video> {
+    ) -> Option<VideoIndex> {
         let files = self.state.playlist.iter().zip(layout.children());
-        for (file, lay) in files {
+        for (index, (file, lay)) in files.enumerate() {
             if lay.bounds().contains(cursor_position) {
-                return Some(file.clone());
+                return Some(VideoIndex {
+                    index,
+                    video: file.clone(),
+                });
             }
         }
 
@@ -125,25 +153,23 @@ impl<'a> PlaylistWidget<'a> {
         &self,
         layout: iced::advanced::Layout<'_>,
         cursor_position: Point,
-        shell: &mut iced::advanced::Shell<'_, Message>,
+        shell: &mut iced::advanced::Shell<'_, PlaylistWidgetMessage>,
     ) {
         if let Some(file) = self.file_at_position(layout, cursor_position) {
             // if let Some(i) = self.state.file_index(&file) {
             let interaction = FileInteraction::Pressing(Instant::now());
             shell.publish(
-                PlaylistWidgetMessage::from(Interaction {
+                Interaction {
                     video: Some(file.clone()),
                     interaction,
-                })
+                }
                 .into(),
             );
 
             if let Some(prev_file) = &self.state.selected {
                 if let FileInteraction::Released(when) = self.state.interaction {
                     if file.eq(prev_file) && when.elapsed() < MAX_DOUBLE_CLICK_INTERVAL {
-                        shell.publish(
-                            PlaylistWidgetMessage::from(DoubleClick { video: file }).into(),
-                        );
+                        shell.publish(DoubleClick { video: file.video }.into());
                     }
                 }
                 // }
@@ -156,7 +182,7 @@ impl<'a> PlaylistWidget<'a> {
         file: Option<PathBuf>,
         state: &InnerState,
         layout: iced::advanced::layout::Layout<'_>,
-        shell: &mut iced::advanced::Shell<'_, Message>,
+        shell: &mut iced::advanced::Shell<'_, PlaylistWidgetMessage>,
     ) {
         match &self.state.interaction {
             FileInteraction::PressingExternal => {
@@ -165,10 +191,10 @@ impl<'a> PlaylistWidget<'a> {
                         .and_then(|f| f.to_str().map(|f| f.to_string()))
                 }) {
                     shell.publish(
-                        PlaylistWidgetMessage::from(Move {
+                        Move {
                             video: Video::from(name.as_str()),
                             pos: 0,
-                        })
+                        }
                         .into(),
                     );
                 }
@@ -176,31 +202,35 @@ impl<'a> PlaylistWidget<'a> {
             }
             FileInteraction::Pressing(_) => {
                 let pos = state.cursor_position;
-                if let Some((i, _)) = self.closest_index(layout, pos) {
+                if let Some(Index {
+                    index_relative: pos,
+                    ..
+                }) = self.closest_index(layout, pos)
+                {
                     if let Some(file) = &self.state.selected {
                         shell.publish(
-                            PlaylistWidgetMessage::from(Move {
-                                video: file.clone(),
-                                pos: i,
-                            })
+                            Move {
+                                video: file.clone().video,
+                                pos,
+                            }
                             .into(),
                         )
                     }
                 }
                 shell.publish(
-                    PlaylistWidgetMessage::from(Interaction {
+                    Interaction {
                         video: self.state.selected.clone(),
                         interaction: FileInteraction::Released(Instant::now()),
-                    })
+                    }
                     .into(),
                 )
             }
             FileInteraction::Released(_) => {
                 shell.publish(
-                    PlaylistWidgetMessage::from(Interaction {
+                    Interaction {
                         video: self.state.selected.clone(),
                         interaction: FileInteraction::None,
-                    })
+                    }
                     .into(),
                 );
             }
@@ -208,14 +238,19 @@ impl<'a> PlaylistWidget<'a> {
         }
     }
 
-    fn deleted(&self, shell: &mut iced::advanced::Shell<'_, Message>) {
+    fn deleted(&self, shell: &mut iced::advanced::Shell<'_, PlaylistWidgetMessage>) {
         if let Some(f) = &self.state.selected {
-            shell.publish(PlaylistWidgetMessage::from(Delete { video: f.clone() }).into())
+            shell.publish(
+                Delete {
+                    video: f.video.clone(),
+                }
+                .into(),
+            )
         }
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
+impl<'a> iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for PlaylistWidget<'a> {
     fn tag(&self) -> iced::advanced::widget::tree::Tag {
         iced::advanced::widget::tree::Tag::of::<InnerState>()
     }
@@ -224,20 +259,19 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         iced::advanced::widget::tree::State::new(InnerState::default())
     }
 
-    fn width(&self) -> Length {
-        self.base.as_widget().width()
-    }
-
-    fn height(&self) -> Length {
-        self.base.as_widget().height()
+    fn size(&self) -> Size<Length> {
+        self.base.as_widget().size()
     }
 
     fn layout(
         &self,
+        tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        self.base.as_widget().layout(renderer, limits)
+        self.base
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -262,7 +296,14 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         // Draw insert_hint
         if self.state.interaction.is_press() {
             let inner_state = state.state.downcast_ref::<InnerState>();
-            if let Some((_, pos)) = self.closest_index(layout, inner_state.cursor_position) {
+            if let Some(Index { position: pos, .. }) =
+                self.closest_index(layout, inner_state.cursor_position)
+            {
+                // Move point up by half the spacing
+                let pos = Point {
+                    y: pos.y - (PLAYLIST_SPACING / 2.0),
+                    ..pos
+                };
                 InsertHint::new(pos).draw(renderer, theme, style, layout, cursor)
             }
         }
@@ -281,7 +322,7 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn iced::advanced::widget::Operation<Message>,
+        operation: &mut dyn Operation,
     ) {
         self.base
             .as_widget()
@@ -317,36 +358,34 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         cursor: Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, Message>,
+        shell: &mut iced::advanced::Shell<'_, PlaylistWidgetMessage>,
         viewport: &iced::Rectangle,
     ) -> Status {
         let mut _status = iced::event::Status::Ignored;
         let inner_state = state.state.downcast_mut::<InnerState>();
 
         // Workaround for if we touch the overlay
-        // trace!("{cursor_position:?}")
         if let Cursor::Available(cursor_position) = cursor {
             inner_state.cursor_position = cursor_position;
         }
 
         match &event {
-            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key_code,
-                modifiers,
-            }) => {
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 _status = iced::event::Status::Captured;
                 // TODO arrow keys
-                if modifiers.is_empty() && *key_code == KeyCode::Delete {
+                if modifiers.is_empty() && *key == Key::Named(Named::Delete) {
                     self.deleted(shell)
                 }
                 // TODO use File input instead
-                if modifiers.contains(Modifiers::CTRL) && *key_code == KeyCode::V {
-                    if let Some(clipboard) = clipboard.read() {
+                if modifiers.contains(Modifiers::CTRL) && key.as_ref() == Key::Character("v") {
+                    if let Some(clipboard) =
+                        clipboard.read(iced::advanced::clipboard::Kind::Standard)
+                    {
                         shell.publish(
-                            PlaylistWidgetMessage::from(Move {
+                            Move {
                                 video: Video::from(clipboard.as_str()),
                                 pos: 0,
-                            })
+                            }
                             .into(),
                         )
                     }
@@ -379,23 +418,23 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
                 iced::window::Event::FileHovered(_) => {
                     if !self.state.interaction.is_press_extern() {
                         shell.publish(
-                            PlaylistWidgetMessage::from(Interaction {
+                            Interaction {
                                 video: self.state.selected.clone(),
                                 interaction: FileInteraction::PressingExternal,
-                            })
+                            }
                             .into(),
                         )
                     }
                 }
                 iced::window::Event::FileDropped(file) => {
-                    trace!("file dropped: {file:?}");
+                    trace!(?file, "file dropped");
                     self.released(Some(file.clone()), inner_state, layout, shell)
                 }
                 iced::window::Event::FilesHoveredLeft => shell.publish(
-                    PlaylistWidgetMessage::from(Interaction {
+                    Interaction {
                         video: self.state.selected.clone(),
                         interaction: FileInteraction::None,
-                    })
+                    }
                     .into(),
                 ),
                 _ => {}
@@ -427,8 +466,11 @@ impl<'a> iced::advanced::Widget<Message, Renderer> for PlaylistWidget<'a> {
         state: &'b mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
-    ) -> Option<iced::advanced::overlay::Element<'b, Message, Renderer>> {
-        self.base.as_widget_mut().overlay(state, layout, renderer)
+        translation: Vector,
+    ) -> Option<iced::advanced::overlay::Element<'b, PlaylistWidgetMessage, Theme, Renderer>> {
+        self.base
+            .as_widget_mut()
+            .overlay(&mut state.children[0], layout, renderer, translation)
     }
 }
 
@@ -441,7 +483,7 @@ struct InnerState {
 pub struct PlaylistWidgetState {
     playlist: Playlist,
     file_store: FileStore,
-    selected: Option<Video>,
+    selected: Option<VideoIndex>,
     interaction: FileInteraction,
 }
 
@@ -474,7 +516,7 @@ impl PlaylistWidgetState {
         self.playlist.move_video(video, index);
     }
 
-    pub fn file_interaction(&mut self, video: Option<Video>, interaction: FileInteraction) {
+    pub fn file_interaction(&mut self, video: Option<VideoIndex>, interaction: FileInteraction) {
         self.selected = video;
         self.interaction = interaction;
     }
@@ -487,7 +529,7 @@ impl PlaylistWidgetState {
         self.playlist = playlist;
 
         if let Some(video) = &self.selected {
-            if self.playlist.find(video).is_none() {
+            if self.playlist.find(&video.video).is_none() {
                 self.selected = None;
                 self.interaction = FileInteraction::None;
             }
@@ -510,25 +552,40 @@ impl PlaylistWidgetState {
 
 impl<'a> From<PlaylistWidget<'a>> for Element<'a, Message> {
     fn from(table: PlaylistWidget<'a>) -> Self {
-        Self::new(table)
+        Element::new(table).map(Message::from)
     }
 }
 
-pub struct InsertHint {
-    rule: Rule<Renderer>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoIndex {
+    pub index: usize,
+    pub video: Video,
+}
+
+#[derive(Default)]
+struct Index {
+    /// The index, which is used by the insert hint
+    index_absolute: usize,
+    /// The index, which is used by the playlist for moving
+    index_relative: usize,
+    position: Point,
+}
+
+pub struct InsertHint<'a> {
+    rule: Rule<'a, Theme>,
     pos: iced::Point,
 }
 
-impl Default for InsertHint {
+impl<'a> Default for InsertHint<'a> {
     fn default() -> Self {
         Self {
-            rule: Rule::horizontal(1).style(FileRuleTheme::theme()),
+            rule: Rule::horizontal(1).style(FileRuleTheme::theme),
             pos: iced::Point::default(),
         }
     }
 }
 
-impl InsertHint {
+impl<'a> InsertHint<'a> {
     pub fn new(pos: iced::Point) -> Self {
         Self {
             pos,
@@ -547,13 +604,16 @@ impl InsertHint {
         let limits = iced::advanced::layout::Limits::new(Size::ZERO, layout.bounds().size())
             .width(Length::Fill)
             .height(1);
-        let mut node = <iced::widget::Rule<Renderer> as iced::advanced::Widget<
-            Message,
-            Renderer,
-        >>::layout(&self.rule, renderer, &limits);
-        node.move_to(self.pos);
+        let mut node =
+            <iced::widget::Rule as iced::advanced::Widget<Message, Theme, Renderer>>::layout(
+                &self.rule,
+                &mut iced::advanced::widget::Tree::empty(),
+                renderer,
+                &limits,
+            );
+        node = node.move_to(self.pos);
         let layout = iced::advanced::Layout::new(&node);
-        <iced::widget::Rule<Renderer> as iced::advanced::Widget<Message, Renderer>>::draw(
+        <iced::widget::Rule as iced::advanced::Widget<Message, Theme, Renderer>>::draw(
             &self.rule,
             &iced::advanced::widget::Tree::empty(),
             renderer,

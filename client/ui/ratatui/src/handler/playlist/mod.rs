@@ -1,12 +1,15 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use niketsu_core::playlist::Video;
 use ratatui::style::Style;
+use video_overlay::VideoName;
 
-use super::chat_input::ChatInput;
-use super::room::Rooms;
-use super::{MainEventHandler, State};
+use super::chat::Chat;
+use super::users::Users;
+use super::{MainEventHandler, OverlayState, State};
 use crate::handler::EventHandler;
 use crate::view::{Mode, RatatuiView};
+
+pub(crate) mod video_overlay;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Playlist;
@@ -55,6 +58,16 @@ impl EventHandler for Playlist {
                             }
                         }
                     }
+                    KeyCode::Char('f') => {
+                        if let Some(video) = view.app.playlist_widget_state.get_current_video() {
+                            view.app
+                                .video_name_widget_state
+                                .set_name(video.as_str().into());
+                            view.app.set_mode(Mode::Overlay);
+                            view.app
+                                .set_current_overlay_state(Some(OverlayState::from(VideoName {})));
+                        }
+                    }
                     KeyCode::Char('v') => {
                         if key.modifiers == KeyModifiers::CONTROL {
                             let content = view.app.get_clipboard();
@@ -77,8 +90,8 @@ impl EventHandler for Playlist {
 impl MainEventHandler for Playlist {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
-            KeyCode::Left => view.transition(State::from(ChatInput {})),
-            KeyCode::Up => view.transition(State::from(Rooms {})),
+            KeyCode::Left => view.transition(State::from(Chat {})),
+            KeyCode::Up => view.transition(State::from(Users {})),
             _ => {}
         }
     }

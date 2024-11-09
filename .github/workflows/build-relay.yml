@@ -1,0 +1,57 @@
+name: Build Relay Action
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-relay.yml'
+      - 'relay/**'
+      - 'flake.*'
+      - 'go.*'
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build Relay
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix: 
+        target: 
+          - aarch64-linux
+          - x86_64-linux
+        isMain:
+          - ${{ contains(github.ref, 'main') }}
+        exclude:
+          - target: aarch64-linux
+            isMain: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v23
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-platforms = aarch64-linux
+      - uses: cachix/cachix-action@v14
+        with:
+          name: niketsu
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: docker/setup-qemu-action@v3
+        if: ${{ matrix.target == 'aarch64-linux' }}
+        with:
+          platforms: arm64
+      - name: Run build
+        run: nix build .#packages.${{ matrix.target }}.niketsu-relay --fallback
+      - name: Rename
+        run: mkdir out && cp result/bin/niketsu* out/${{ matrix.target }}-niketsu-relay
+      - name: Pre-Release
+        uses: softprops/action-gh-release@v1
+        if: ${{ github.event_name == 'push' }}
+        with:
+          prerelease: true
+          tag_name: nightly
+          files: out/*

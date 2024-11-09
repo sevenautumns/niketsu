@@ -7,7 +7,7 @@ edition = "2021"
 niketsu-core.path = "../../core"
 anyhow.workspace = true
 strum.workspace = true
-log.workspace = true
+tracing.workspace = true
 arc-swap.workspace = true
 enum_dispatch.workspace = true
 futures = "0.3"
@@ -19,4 +19,4 @@ libc = "0.2"
 
 [build-dependencies]
 anyhow.workspace = true
-bindgen = "0.69"
+bindgen = "0.70"

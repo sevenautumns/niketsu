@@ -1,9 +1,12 @@
 use config::Config;
+use directories::ProjectDirs;
 use enum_dispatch::enum_dispatch;
 use futures::future::OptionFuture;
-use log::{info, trace};
 use logging::ChatLogger;
-use playlist::PlaylistHandlerTrait;
+use once_cell::sync::Lazy;
+use player::wrapper::MediaPlayerWrapper;
+use playlist::handler::PlaylistHandler;
+use tracing::{info, trace};
 
 use self::communicator::*;
 use self::file_database::*;
@@ -19,10 +22,13 @@ pub mod heartbeat;
 pub mod logging;
 pub mod player;
 pub mod playlist;
-pub mod rooms;
+pub mod room;
 pub mod ui;
 pub mod user;
 pub mod util;
+
+pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =
+    Lazy::new(|| ProjectDirs::from("de", "autumnal", "niketsu"));
 
 #[enum_dispatch]
 pub trait EventHandler {
@@ -32,13 +38,14 @@ pub trait EventHandler {
 #[derive(Debug)]
 pub struct CoreModel {
     pub communicator: Box<dyn CommunicatorTrait>,
-    pub player: Box<dyn MediaPlayerTrait>,
+    pub player: MediaPlayerWrapper,
     pub ui: Box<dyn UserInterfaceTrait>,
     pub database: Box<dyn FileDatabaseTrait>,
-    pub playlist: Box<dyn PlaylistHandlerTrait>,
+    pub playlist: PlaylistHandler,
     chat_logger: Option<ChatLogger>,
     pub config: Config,
     pub ready: bool,
+    pub running: bool,
 }
 
 #[derive(Debug)]
@@ -57,16 +64,21 @@ impl Core {
     }
 
     pub async fn auto_connect(&mut self) {
-        let addr = self.model.config.url.clone();
-        let secure = self.model.config.secure;
-        let endpoint = EndpointInfo { addr, secure };
+        let addr = self.model.config.addr();
+        let room = self.model.config.room.clone();
+        let password = self.model.config.password.clone();
+        let endpoint = EndpointInfo {
+            room: room.clone(),
+            password,
+            addr,
+        };
         self.model.communicator.connect(endpoint);
     }
 
     pub async fn run_loop(mut self) {
         info!("enter main loop");
         let mut pacemaker = Pacemaker::default();
-        loop {
+        while self.model.running {
             tokio::select! {
                 com = self.model.communicator.receive() => {
                     trace!("handle communicator event");
@@ -88,7 +100,7 @@ impl Core {
                     trace!("handle database event");
                     db.handle(&mut self.model);
                 }
-                Some(Some(message)) = OptionFuture::from(self.model.chat_logger.as_mut().map(|l| l.recv())) => {
+                Some(message) = OptionFuture::from(self.model.chat_logger.as_mut().map(ChatLogger::recv)) => {
                     self.model.ui.player_message(message)
                 }
             }
@@ -99,15 +111,15 @@ impl Core {
 #[macro_export]
 macro_rules! log {
     ($result:expr) => {
-        if let Err(err) = $result {
-            log::error!("{:?}", err);
+        if let Err(error) = $result {
+            tracing::error!(%error);
         }
     };
     ($result:expr, $default:expr) => {
         match $result {
             Ok(ok_val) => ok_val,
-            Err(err) => {
-                log::error!("{:?}", err);
+            Err(error) => {
+                tracing::error!(%error);
                 $default
             }
         }

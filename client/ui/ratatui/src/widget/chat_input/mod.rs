@@ -1,7 +1,7 @@
 use ratatui::prelude::{Buffer, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, StatefulWidget, Widget};
+use ratatui::widgets::{Borders, StatefulWidget};
 use tui_textarea::Input;
 
 use super::TextAreaWrapper;
@@ -24,7 +24,8 @@ impl ChatInputWidgetState {
 
     fn setup_input_field(&mut self) {
         self.input_field
-            .set_textarea_style(self.style, self.style.dark_gray().on_white());
+            .with_placeholder("Enter your message")
+            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     pub fn set_style(&mut self, style: Style) {
@@ -50,12 +51,12 @@ impl StatefulWidget for ChatInputWidget {
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let mut input_block = state.input_field.clone();
-        input_block.set_block(
+        input_block.with_block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Message here")
                 .style(state.style),
         );
-        input_block.widget().render(area, buf);
+        input_block.render(area, buf);
     }
 }

@@ -2,7 +2,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::style::{Color, Style};
 
 use super::chat_input::ChatInput;
-use super::database::Database;
+use super::users::Users;
 use super::{MainEventHandler, State};
 use crate::handler::EventHandler;
 use crate::view::{Mode, RatatuiView};
@@ -38,15 +38,15 @@ impl MainEventHandler for Chat {
             KeyCode::Right => {
                 view.app.chat_widget_state.set_style(Style::default());
                 view.app
-                    .database_widget_state
+                    .users_widget_state
                     .set_style(Style::default().fg(Color::Magenta));
-                view.app.set_current_state(State::from(Database {}));
+                view.app.set_current_state(State::from(Users {}));
             }
             KeyCode::Down => {
                 view.app.chat_widget_state.set_style(Style::default());
                 view.app.set_current_state(State::from(ChatInput {}));
                 view.app
-                    .chat_input_widget
+                    .chat_input_widget_state
                     .set_style(Style::default().fg(Color::Magenta));
             }
             _ => {}

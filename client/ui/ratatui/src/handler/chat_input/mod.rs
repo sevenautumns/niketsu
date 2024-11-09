@@ -19,11 +19,11 @@ impl EventHandler for ChatInput {
                         view.hover_highlight();
                     }
                     KeyCode::Enter => {
-                        let msg = view.app.chat_input_widget.get_input();
+                        let msg = view.app.chat_input_widget_state.get_input();
                         view.model.send_message(msg);
-                        view.app.chat_input_widget.reset();
+                        view.app.chat_input_widget_state.reset();
                     }
-                    _ => view.app.chat_input_widget.input(*key),
+                    _ => view.app.chat_input_widget_state.input(*key),
                 }
             }
         }
@@ -40,6 +40,6 @@ impl MainEventHandler for ChatInput {
     }
 
     fn set_style(&self, view: &mut RatatuiView, style: Style) {
-        view.app.chat_input_widget.set_style(style);
+        view.app.chat_input_widget_state.set_style(style);
     }
 }

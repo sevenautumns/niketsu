@@ -1,8 +1,9 @@
+use ratatui::buffer::Buffer;
 use ratatui::prelude::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, ListState, Widget};
-use tui_textarea::{CursorMove, Input, TextArea};
+use tui_textarea::{Input, TextArea};
 
 pub(crate) mod chat;
 pub(crate) mod chat_input;
@@ -14,7 +15,8 @@ pub(crate) mod login;
 pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
-pub(crate) mod room;
+pub(crate) mod playlist_browser;
+pub(crate) mod users;
 
 pub trait OverlayWidgetState {
     fn area(&self, r: Rect) -> Rect;
@@ -115,6 +117,7 @@ impl ListStateWrapper {
 
 pub struct TextAreaWrapper {
     inner: TextArea<'static>,
+    title: Option<String>,
 }
 
 impl std::fmt::Debug for TextAreaWrapper {
@@ -125,10 +128,12 @@ impl std::fmt::Debug for TextAreaWrapper {
 
 impl Default for TextAreaWrapper {
     fn default() -> Self {
-        let wrapper = Self {
+        let mut wrapper = Self {
             inner: TextArea::default(),
+            title: Default::default(),
         };
-        wrapper.set_default_stye()
+        wrapper.with_default_style();
+        wrapper
     }
 }
 
@@ -136,68 +141,78 @@ impl Clone for TextAreaWrapper {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            title: self.title.clone(),
         }
     }
 }
 
-impl From<String> for TextAreaWrapper {
-    fn from(value: String) -> Self {
-        TextAreaWrapper {
-            inner: TextArea::new(vec![value]),
-        }
+impl From<(String, String)> for TextAreaWrapper {
+    fn from(value: (String, String)) -> Self {
+        let mut text_area = TextAreaWrapper {
+            inner: TextArea::new(vec![value.1]),
+            title: Some(value.0),
+        };
+        text_area.with_block_style(Style::default());
+        text_area
     }
 }
 
 impl TextAreaWrapper {
-    fn new(title: &str, content: String) -> Self {
-        let mut text_area = Self::from(content);
-        text_area.inner.set_block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title.to_string()),
-        );
-        text_area
+    fn new(title: String, content: String) -> Self {
+        Self::from((title.clone(), content))
     }
 
-    fn set_textarea_style(&mut self, style: Style, cursor_style: Style) {
-        self.inner.set_style(style);
+    fn highlight(&mut self, block_style: Style, cursor_style: Style) {
+        self.inner.set_tab_length(2);
+        self.inner.set_style(Style::default().gray());
         self.inner.set_cursor_style(cursor_style);
+        self.inner.set_cursor_line_style(Style::default());
+        self.with_block_style(block_style);
     }
 
-    fn set_default_stye(self) -> Self {
-        let mut text_area = self;
-        text_area.inner.set_tab_length(2);
-        text_area
-            .inner
+    fn with_default_style(&mut self) -> &mut Self {
+        self.inner.set_tab_length(2);
+        self.inner
             .set_style(Style::default().fg(Color::Gray).add_modifier(Modifier::DIM));
-        text_area.inner.set_cursor_line_style(Style::default());
-        text_area.inner.set_cursor_style(Style::default());
-        text_area
+        self.inner.set_cursor_line_style(Style::default());
+        self.inner.set_cursor_style(Style::default());
+        self.with_block_style(Style::default().gray());
+        self
     }
 
-    fn set_block(&mut self, block: Block<'static>) {
-        self.inner.set_block(block);
+    fn with_block_style(&mut self, style: Style) {
+        let block = self.inner.block();
+        let title = self.title.clone();
+
+        match block {
+            Some(b) => self.inner.set_block(b.clone().style(style)),
+            _ => {
+                let b = match title {
+                    Some(t) => Block::default().title(t).borders(Borders::ALL).style(style),
+                    _ => Block::default().borders(Borders::ALL).style(style),
+                };
+                self.inner.set_block(b);
+            }
+        }
     }
 
-    fn into_masked(self, title: &str) -> Self {
-        let lines = self.inner.lines();
-        let masked_lines: String = lines
-            .iter()
-            .map(|l| "*".repeat(l.chars().count()))
-            .collect::<Vec<String>>()
-            .join("");
-        let mut text_area = TextAreaWrapper::from(masked_lines);
-        text_area.inner.set_block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title.to_string()),
-        );
-        let cursor = self.inner.cursor();
-        text_area = text_area.set_default_stye();
-        text_area
-            .inner
-            .move_cursor(CursorMove::Jump(cursor.0 as u16, cursor.1 as u16));
-        text_area
+    fn with_block(&mut self, block: Block<'static>) -> &mut Self {
+        match self.title.clone() {
+            Some(t) => self.inner.set_block(block.title(t)),
+            _ => self.inner.set_block(block),
+        }
+        self
+    }
+
+    fn with_placeholder(&mut self, placeholder_text: &str) -> &mut Self {
+        self.inner.set_placeholder_text(placeholder_text);
+        self
+    }
+
+    fn with_mask(&mut self, placeholder_text: &str) -> &mut Self {
+        self.inner.set_placeholder_text(placeholder_text);
+        self.inner.set_mask_char('\u{2022}');
+        self
     }
 
     fn get_input(&self) -> String {
@@ -208,8 +223,8 @@ impl TextAreaWrapper {
         self.inner.lines()
     }
 
-    fn widget(&self) -> impl Widget + '_ {
-        self.inner.widget()
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.inner.render(area, buf)
     }
 
     fn input(&mut self, input: impl Into<Input>) -> bool {

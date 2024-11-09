@@ -1,10 +1,10 @@
 use enum_dispatch::enum_dispatch;
-use iced::Command;
-use log::debug;
+use iced::Task;
 use niketsu_core::playlist::Video;
 use niketsu_core::ui::UiModel;
+use tracing::debug;
 
-use super::{FileInteraction, PlaylistWidgetState};
+use super::{FileInteraction, PlaylistWidgetState, VideoIndex};
 use crate::message::{Message, MessageHandler};
 use crate::view::ViewModel;
 
@@ -23,9 +23,9 @@ pub enum PlaylistWidgetMessage {
 }
 
 impl MessageHandler for PlaylistWidgetMessage {
-    fn handle(self, model: &mut ViewModel) -> Command<Message> {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
         PlaylistWidgetMessageTrait::handle(self, &mut model.playlist_widget_state, &model.model);
-        Command::none()
+        Task::none()
     }
 }
 
@@ -36,7 +36,7 @@ pub struct DoubleClick {
 
 impl PlaylistWidgetMessageTrait for DoubleClick {
     fn handle(self, _state: &mut PlaylistWidgetState, model: &UiModel) {
-        debug!("filetable doubleclick: {:?}", self.video);
+        debug!(video = ?self.video, "filetable doubleclick");
         model.change_video(self.video)
     }
 }
@@ -48,7 +48,7 @@ pub struct Delete {
 
 impl PlaylistWidgetMessageTrait for Delete {
     fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel) {
-        debug!("filetable delete file: {:?}", self.video);
+        debug!(video = ?self.video, "filetable delete file");
         state.delete_video(&self.video);
         model.change_playlist(state.playlist.clone());
     }
@@ -62,7 +62,7 @@ pub struct Move {
 
 impl PlaylistWidgetMessageTrait for Move {
     fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel) {
-        debug!("filetable move file: {:?}, {}", self.video, self.pos);
+        debug!(video = ?self.video, pos = %self.pos, "filetable move file");
         state.move_video(&self.video, self.pos);
         model.change_playlist(state.playlist.clone());
     }
@@ -70,16 +70,13 @@ impl PlaylistWidgetMessageTrait for Move {
 
 #[derive(Debug, Clone)]
 pub struct Interaction {
-    pub video: Option<Video>,
+    pub video: Option<VideoIndex>,
     pub interaction: FileInteraction,
 }
 
 impl PlaylistWidgetMessageTrait for Interaction {
     fn handle(self, state: &mut PlaylistWidgetState, _: &UiModel) {
-        debug!(
-            "filetable file interaction: {:?}, {:?}",
-            self.video, self.interaction
-        );
+        debug!(video = ?self.video, interaction = ?self.interaction);
         state.file_interaction(self.video.clone(), self.interaction.clone());
     }
 }

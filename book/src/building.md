@@ -1,8 +1,9 @@
 # Build Like a Pro: Your Comprehensive Guide to niketsu Deployment 🛠️
 
+<!--
 ## Unleash Docker Magic 🐳
 
-Too cool for Docker? Think again. We offer a sleek, ready-to-go Dockerfile for the server side, ensuring you're up and running in no time.
+Too cool for Docker? Think again. We offer a sleek, ready-to-go Dockerfile for the intermediate relay, ensuring you're up and running in no time if you do not feel like using our self-hosted relay services.
 
 👇 **One-Click Build**:
 ```bash
@@ -14,38 +15,42 @@ podman run -p 7766:7666 niketsu-server:latest
 ```
 
 For the Docker aficionados, you can even customize your setup with environment variables. Dive into our [Usage Page](usage.md#Arguments) for more details.
+-->
 
 ## Hand-Craft Your Source Build 🚀
 
-### For the Client
-
-Join the cutting edge—build the niketsu client from source.
+Join the cutting edge — build niketsu from source.
   
 1. **Clone & Navigate**
     ```bash
     git clone https://github.com/sevenautumns/niketsu.git
     cd niketsu
     ```
-2. **Compile & Run**
+
+2. **Compile**
     ```bash
+    # All
     cargo build --release
+    # Client only
+    cargo build --release --bin niketsu
+    # Relay only
+    cargo build --release --bin niketsu-relay
+    ```
+
+3. **Run**
+    ```bash
     ./target/release/niketsu
     ```
 
-### For the Server
+</br>
 
-Want more control? Build your own niketsu server from the ground up.
-  
-1. **Clone & Navigate**
-    ```bash
-    git clone https://github.com/sevenautumns/niketsu.git
-    cd niketsu
-    ```
-2. **Compile & Run**
-    ```bash
-    go build -o niketsu-server server/main.go
-    ./niketsu-server
-    ```
+Want more control? Run your own niketsu relay after compiling using the instructions above:
+
+```bash
+./target/release/niketsu-relay
+```
+
+Check out the help page on the command line by using `--help` or visit the [usage web page](http://localhost:3000/usage.html).
 
 ## The Nix Nirvana 🌀
 
@@ -61,14 +66,21 @@ All you need, conveniently packed into one shell.
 
 #### Running the Beast
 
-- **Server**: `go run server/main.go`
-- **Client**: `cargo run --release`
+- **Relay-Server**: `cargo run --release --bin niketsu-relay`
+- **Client**: `cargo run --release --bin niketsu`
+
+#### Examples for Debugging (Client only)
+
+`cargo run --example [OPTION]`
 
 ### The Nix Build
 
 Want even more control? Utilize our `flake.nix` to tailor your build.
 
+- **Relay-Server**: `nix build .#niketsu-relay`
 - **Client**: `nix build .#niketsu-client`
-- **Server**: `nix build .#niketsu-server`
+
+<br>
+<hr>
 
 **Whatever your tech stack, niketsu seamlessly integrates, empowering you to create the ultimate shared viewing experience. Build it your way, run it your way.** 🌠

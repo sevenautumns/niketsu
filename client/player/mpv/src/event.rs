@@ -7,8 +7,8 @@ use std::task::{Poll, Waker};
 
 use arc_swap::ArcSwapOption;
 use enum_dispatch::enum_dispatch;
-use log::trace;
 use niketsu_core::player::*;
+use tracing::trace;
 
 use super::bindings::mpv_event;
 use super::{Mpv, MpvHandle, MpvProperty};
@@ -36,6 +36,7 @@ pub enum MpvEvent {
     MpvPropertyChanged,
     MpvFileLoaded,
     MpvSeek,
+    MpvEndFile,
     Unparsed,
 }
 
@@ -69,9 +70,6 @@ impl MpvPropertyChanged {
             return Option::None;
         }
         mpv.status.paused = paused;
-        if mpv.eof_reached().unwrap_or_default() {
-            return Some(PlayerFileEnd.into());
-        }
         if paused {
             return Some(PlayerPause.into());
         }
@@ -125,7 +123,7 @@ impl MpvEventTrait for MpvFileLoaded {
             mpv.start();
         }
         trace!("file loaded");
-        Option::None
+        None
     }
 }
 
@@ -138,13 +136,21 @@ impl MpvEventTrait for MpvSeek {
             mpv.status.seeking = false;
             return Option::None;
         }
-        if mpv.eof_reached().unwrap_or_default() {
-            return Some(PlayerFileEnd.into());
-        }
         if let Some(pos) = mpv.get_position() {
             return Some(PlayerPositionChange::new(pos).into());
         }
         None
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MpvEndFile;
+
+impl MpvEventTrait for MpvEndFile {
+    fn process(self, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
+        let file = mpv.status.file.take()?;
+        mpv.status.reset();
+        Some(PlayerFileEnd(file).into())
     }
 }
 
@@ -164,6 +170,13 @@ impl From<mpv_event> for MpvEvent {
             mpv_event_id::MPV_EVENT_SHUTDOWN => Self::MpvShutdown(MpvShutdown),
             mpv_event_id::MPV_EVENT_PLAYBACK_RESTART => Self::MpvFileLoaded(MpvFileLoaded),
             mpv_event_id::MPV_EVENT_SEEK => Self::MpvSeek(MpvSeek),
+            mpv_event_id::MPV_EVENT_END_FILE => unsafe {
+                let prop = *(event.data as *mut mpv_event_end_file);
+                if matches!(prop.reason, mpv_end_file_reason::MPV_END_FILE_REASON_EOF) {
+                    return Self::MpvEndFile(MpvEndFile);
+                }
+                Self::Unparsed(Unparsed)
+            },
             mpv_event_id::MPV_EVENT_PROPERTY_CHANGE => {
                 let name;
                 unsafe {

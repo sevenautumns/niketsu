@@ -1,6 +1,6 @@
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Style, Stylize};
-use ratatui::widgets::{Paragraph, StatefulWidget, Widget};
+use ratatui::widgets::{Block, Borders, Padding, Paragraph, StatefulWidget, Widget};
 use tui_textarea::Input;
 
 use super::TextAreaWrapper;
@@ -18,7 +18,14 @@ impl CommandInputWidgetState {
     pub fn set_active(&mut self, active: bool) {
         self.active = active;
         self.input_field
-            .set_textarea_style(self.style, self.style.dark_gray().on_white());
+            .with_default_style()
+            .with_block(
+                Block::default()
+                    .borders(Borders::NONE)
+                    .padding(Padding::new(0, 0, 0, 0)),
+            )
+            .with_placeholder("Enter your command")
+            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     pub fn input(&mut self, event: impl Into<Input>) {
@@ -31,7 +38,6 @@ impl CommandInputWidgetState {
 
     pub fn reset(&mut self) {
         self.input_field = TextAreaWrapper::default();
-        self.input_field.set_textarea_style(self.style, self.style);
         self.active = false;
     }
 }
@@ -47,12 +53,11 @@ impl StatefulWidget for CommandInputWidget {
 
         let horizontal_split = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(1), Constraint::Min(1)].as_ref())
+            .constraints([Constraint::Length(1), Constraint::Min(2)].as_ref())
             .split(area);
 
         let prefix_block = Paragraph::new(prefix);
-        let input_block = state.input_field.widget();
         prefix_block.render(horizontal_split[0], buf);
-        input_block.render(horizontal_split[1], buf);
+        state.input_field.render(horizontal_split[1], buf);
     }
 }
