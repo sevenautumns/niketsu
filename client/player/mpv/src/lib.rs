@@ -190,7 +190,7 @@ impl Mpv {
     fn init_handle(&self) -> Result<()> {
         let ret = unsafe { mpv_initialize(self.handle.0) };
         let ret = TryInto::<mpv_error>::try_into(ret)?;
-        ret.try_into()
+        ret.ok()
     }
 
     fn post_init(&mut self) -> Result<()> {
@@ -253,7 +253,7 @@ impl Mpv {
                 value.format(),
                 value.as_mut_ptr(),
             );
-            TryInto::<mpv_error>::try_into(ret)?.try_into()
+            mpv_error::try_from(ret)?.ok()
         }
     }
 
@@ -261,7 +261,7 @@ impl Mpv {
         let format = prop.format();
         let prop: CString = prop.try_into()?;
         let ret = unsafe { mpv_observe_property(self.handle.0, 0, prop.as_ptr(), format) };
-        TryInto::<mpv_error>::try_into(ret)?.try_into()
+        mpv_error::try_from(ret)?.ok()
     }
 
     fn get_property_f64(&self, prop: MpvProperty) -> Result<f64> {
@@ -274,7 +274,7 @@ impl Mpv {
                 mpv_format::MPV_FORMAT_DOUBLE,
                 data.as_mut_ptr() as *mut c_void,
             );
-            TryInto::<mpv_error>::try_into(ret)?.try_into()?;
+            mpv_error::try_from(ret)?.ok()?;
             Ok(data.assume_init())
         }
     }
@@ -289,7 +289,7 @@ impl Mpv {
                 mpv_format::MPV_FORMAT_FLAG,
                 data.as_mut_ptr() as *mut c_void,
             );
-            TryInto::<mpv_error>::try_into(ret)?.try_into()?;
+            mpv_error::try_from(ret)?.ok()?;
             Ok(data.assume_init())
         }
     }
@@ -306,7 +306,7 @@ impl Mpv {
     fn send_command(&self, cmd: &[&CStr]) -> Result<()> {
         let mut cmd = Self::build_cmd(cmd);
         let ret = unsafe { mpv_command_async(self.handle.0, 0, cmd.as_mut_ptr()) };
-        TryInto::<mpv_error>::try_into(ret)?.try_into()
+        mpv_error::try_from(ret)?.ok()
     }
 
     fn replace_video(&mut self, path: CString) {

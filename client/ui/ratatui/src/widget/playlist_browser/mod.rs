@@ -48,7 +48,7 @@ impl PlaylistBrowserWidgetState {
 
     pub fn set_playlist_browser(&mut self, playlist_browser: PlaylistBrowser) {
         self.playlist_browser = playlist_browser;
-        self.fuzzy_result = self.playlist_browser.fuzzy_search(&"");
+        self.fuzzy_result = self.playlist_browser.fuzzy_search("");
         self.list_state.select(Some(0));
     }
 
@@ -73,7 +73,7 @@ impl PlaylistBrowserWidgetState {
         self.list_state.select(Some(0));
         self.input_field = TextAreaWrapper::default();
         self.setup_input_field();
-        self.fuzzy_result = self.playlist_browser.fuzzy_search(&"");
+        self.fuzzy_result = self.playlist_browser.fuzzy_search("");
     }
 
     pub fn next(&mut self) {
@@ -188,18 +188,15 @@ impl StatefulWidget for PlaylistBrowserWidget {
 
         let mut playlist_content = Vec::<ListItem>::new();
         if let Some(pos) = state.list_state.selected() {
-            let current_video = state.fuzzy_result.iter().nth(pos);
-            match current_video {
-                Some(v) => {
-                    playlist_content = v
-                        .entry
-                        .playlist
-                        .get_playlist()
-                        .iter()
-                        .map(|video| ListItem::new(Line::from(video.as_str().to_string())))
-                        .collect();
-                }
-                None => {}
+            let current_video = state.fuzzy_result.get(pos);
+            if let Some(v) = current_video {
+                playlist_content = v
+                    .entry
+                    .playlist
+                    .get_playlist()
+                    .iter()
+                    .map(|video| ListItem::new(Line::from(video.as_str().to_string())))
+                    .collect();
             }
         }
 

@@ -9,8 +9,8 @@ pub struct Command;
 impl EventHandler for Command {
     fn handle(&self, view: &mut RatatuiView, event: &Event) {
         if let Event::Key(key) = event {
-            match key.kind == KeyEventKind::Press {
-                true => match key.code {
+            if key.kind == KeyEventKind::Press {
+                match key.code {
                     KeyCode::Esc => {
                         view.app.reset_overlay();
                         view.app.command_input_widget_state.reset();
@@ -22,8 +22,7 @@ impl EventHandler for Command {
                         view.app.command_input_widget_state.reset();
                     }
                     _ => view.app.command_input_widget_state.input(*key),
-                },
-                false => (),
+                }
             }
         }
     }

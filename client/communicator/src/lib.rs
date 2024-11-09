@@ -99,10 +99,10 @@ impl Connecting {
         let connect_task = tokio::task::spawn(async move {
             match connection.await {
                 Ok(res) => match res {
-                    Ok(client) => return Ok(client),
-                    Err(err) => return Err(err),
+                    Ok(client) => Ok(client),
+                    Err(err) => Err(err),
                 },
-                Err(err) => return Err(anyhow::anyhow!("Connection timeout: {}", err)),
+                Err(err) => Err(anyhow::anyhow!("Connection timeout: {}", err)),
             }
         });
         Self { connect_task }

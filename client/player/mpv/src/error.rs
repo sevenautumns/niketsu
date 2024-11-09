@@ -14,11 +14,9 @@ impl TryFrom<i32> for mpv_error {
     }
 }
 
-impl TryFrom<mpv_error> for () {
-    type Error = anyhow::Error;
-
-    fn try_from(ret: mpv_error) -> Result<Self, Self::Error> {
-        match ret {
+impl mpv_error {
+    pub fn ok(&self) -> anyhow::Result<()> {
+        match self {
             mpv_error::MPV_ERROR_SUCCESS => Ok(()),
             e => bail!("MPV error: {e}"),
         }
