@@ -38,36 +38,42 @@ impl ChatWidgetState {
         self.user = user;
     }
 
-    pub fn next(&mut self) {
-        self.list_state.next();
+    fn set_vertical_scroll_state(&mut self) {
         if let Some(i) = self.list_state.selected() {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
+    }
+
+    pub fn next(&mut self) {
+        self.list_state.next();
+        self.set_vertical_scroll_state();
     }
 
     pub fn previous(&mut self) {
         self.list_state.limited_previous(self.messages.len());
-        if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
-        }
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_next(&mut self, offset: usize) {
-        self.list_state.jump_next(offset)
+        self.list_state.jump_next(offset);
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_previous(&mut self, offset: usize) {
         self.list_state
             .limited_jump_previous(offset, self.messages.len());
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_start(&mut self) {
-        self.list_state.select(Some(0))
+        self.list_state.select(Some(0));
+        self.set_vertical_scroll_state();
     }
 
     pub fn jump_end(&mut self) {
         self.list_state
-            .select(Some(self.messages.len().saturating_sub(1)))
+            .select(Some(self.messages.len().saturating_sub(1)));
+        self.set_vertical_scroll_state();
     }
 
     pub fn update_cursor_latest(&mut self) {

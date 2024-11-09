@@ -29,9 +29,9 @@ use tracing::warn;
 
 use super::widget::login::LoginWidget;
 use super::widget::playlist::PlaylistWidget;
-use crate::handler::chat::Chat;
 use crate::handler::command::Command;
 use crate::handler::options::Options;
+use crate::handler::playlist::Playlist;
 use crate::handler::{EventHandler, MainEventHandler, OverlayState, State};
 use crate::widget::chat::{ChatWidget, ChatWidgetState};
 use crate::widget::chat_input::{ChatInputWidget, ChatInputWidgetState};
@@ -95,15 +95,15 @@ impl App {
         let ctx = ClipboardContext::new().unwrap();
 
         App {
-            current_state: State::from(Chat {}),
-            chat_widget_state: {
-                let mut chat = ChatWidgetState::default();
-                chat.set_style(Style::default().fg(Color::Magenta));
-                chat
-            },
+            current_state: State::from(Playlist {}),
+            chat_widget_state: ChatWidgetState::default(),
             database_widget_state: DatabaseWidgetState::default(),
             users_widget_state: UsersWidgetState::default(),
-            playlist_widget_state: PlaylistWidgetState::default(),
+            playlist_widget_state: {
+                let mut playlist_state = PlaylistWidgetState::default();
+                playlist_state.set_style(Style::default().fg(Color::Magenta));
+                playlist_state
+            },
             command_input_widget_state: CommandInputWidgetState::default(),
             chat_input_widget_state: ChatInputWidgetState::new(),
             current_overlay_state: None,

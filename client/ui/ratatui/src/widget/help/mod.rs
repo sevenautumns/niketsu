@@ -37,6 +37,7 @@ impl HelpWidgetState {
                 vec!["Shift down selection", "x", "Playlist"],
                 vec!["Delete selection", "d", "Playlist"],
                 vec!["Paste selection", "p", "Playlist"],
+                vec!["Highlight video", "f", "Playlist"],
                 vec!["Enter login input", "[Enter]", "Login"],
                 vec!["Change secure option", "[Space]", "Login"],
                 vec!["Insert selection", "[Enter]", "FuzzySearch"],
