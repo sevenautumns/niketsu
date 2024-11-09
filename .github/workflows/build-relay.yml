@@ -1,10 +1,10 @@
-name: Build Server Action
+name: Build Relay Action
 
 on:
   pull_request:
     paths:
-      - '.github/workflows/build-server.yml'
-      - 'server/**'
+      - '.github/workflows/build-relay.yml'
+      - 'relay/**'
       - 'flake.*'
       - 'go.*'
   push:
@@ -12,7 +12,7 @@ on:
 
 jobs:
   build:
-    name: Build Server
+    name: Build Relay
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -45,9 +45,9 @@ jobs:
         with:
           platforms: arm64
       - name: Run build
-        run: nix build .#packages.${{ matrix.target }}.niketsu-server --fallback
+        run: nix build .#packages.${{ matrix.target }}.niketsu-relay --fallback
       - name: Rename
-        run: mkdir out && cp result/bin/niketsu* out/${{ matrix.target }}-niketsu-server
+        run: mkdir out && cp result/bin/niketsu* out/${{ matrix.target }}-niketsu-relay
       - name: Pre-Release
         uses: softprops/action-gh-release@v1
         if: ${{ github.event_name == 'push' }}
