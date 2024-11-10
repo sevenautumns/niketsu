@@ -17,16 +17,3 @@ jobs:
         run: nix develop --command tarpaulin --out lcov --output-dir ./coverage
       - name: Send coverage to Coveralls
         uses: coverallsapp/github-action@v1
-        with:
-          parallel: true
-          flag-name: rust
-
-  finish:
-    needs: [ rust-coverage, go-coverage ]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Close parallel build
-        uses: coverallsapp/github-action@v1
-        with:
-          parallel-finished: true
-          carryforward: "rust,go"
