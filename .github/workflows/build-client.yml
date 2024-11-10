@@ -24,14 +24,14 @@ jobs:
           - x86_64-linux
         package:
           - niketsu-client
-          - niketsu-client-windows
         isMain:
           - ${{ contains(github.ref, 'main') }}
         exclude:
           - target: aarch64-linux
             package: niketsu-client
             isMain: false
-          - target: aarch64-linux
+        include:
+          - target: x86_64-linux
             package: niketsu-client-windows
     steps:
       - uses: actions/checkout@v4
@@ -54,13 +54,10 @@ jobs:
         run: nix build .#packages.${{ matrix.target }}.${{ matrix.package }} --fallback
       - name: Rename
         if: ${{ matrix.package == 'niketsu-client-windows' }}
-        run: mkdir out && cp result out/${{ matrix.target }}-niketsu-client.zip
-      - name: Rename
-        if: ${{ matrix.package != 'niketsu-client-windows' }}
-        run: mkdir out && cp result/bin/niketsu* out/${{ matrix.target }}-${{ matrix.package }}
+        run: mkdir out && cp result out/x86_64-${{ matrix.package }}.zip
       - name: Pre-Release
         uses: softprops/action-gh-release@v2
-        if: ${{ github.event_name == 'push' && matrix.package == 'niketsu-client-windows' }}
+        if: ${{ matrix.isMain && matrix.package == 'niketsu-client-windows' }}
         with:
           prerelease: true
           tag_name: nightly
