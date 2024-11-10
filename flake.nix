@@ -2,7 +2,7 @@
   description = "Niketsu Server Configuration";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-24.05";
 
     agenix = {
       url = "github:ryantm/agenix";
@@ -15,14 +15,15 @@
     devshell.url = "github:numtide/devshell";
   };
 
-  outputs = { self, nixpkgs, agenix, devshell, ... }@inputs:
+  outputs = { nixpkgs, agenix, devshell, ... }@inputs:
     let
       lib = nixpkgs.lib;
       pkgs = import nixpkgs {
         system = "x86_64-linux";
         overlays = [ devshell.overlays.default ];
       };
-    in {
+    in
+    {
       nixosConfigurations.niketsu = lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
@@ -39,21 +40,23 @@
         commands = [{
           name = "deploy-niketsu";
           category = "deploy";
-          command = let
-            known-hosts = pkgs.writeText "known_hosts" ''
-              autumnal.de ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOB5kFkv5hNVA0nbeIo1LtGZDOORTH+lXrxq8h2EmI3e
+          command =
+            let
+              known-hosts = pkgs.writeText "known_hosts" ''
+                autumnal.de ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOB5kFkv5hNVA0nbeIo1LtGZDOORTH+lXrxq8h2EmI3e
+              '';
+            in
+            ''
+              NIX_SSHOPTS="-o UserKnownHostsFile=${known-hosts}"
+              export NIX_SSHOPTS
+              nixos-rebuild \
+                --flake .#niketsu \
+                --use-remote-sudo \
+                --target-host admin@autumnal.de \
+                --build-host admin@autumnal.de \
+                --use-substitutes \
+                switch 
             '';
-          in ''
-            NIX_SSHOPTS="-o UserKnownHostsFile=${known-hosts}"
-            export NIX_SSHOPTS
-            nixos-rebuild \
-              --flake .#niketsu \
-              --use-remote-sudo \
-              --target-host admin@autumnal.de \
-              --build-host admin@autumnal.de \
-              --use-substitutes \
-              switch 
-          '';
           help = "Deploy new system config";
         }];
       });
