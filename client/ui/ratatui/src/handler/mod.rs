@@ -7,25 +7,25 @@ use ratatui::style::Style;
 use self::chat::Chat;
 use self::chat_input::ChatInput;
 use self::command::Command;
-use self::fuzzy_search::FuzzySearch;
 use self::help::Help;
 use self::login::Login;
 use self::media::MediaDir;
 use self::options::Options;
 use self::playlist::Playlist;
+use self::search::Search;
 use self::users::Users;
 use crate::view::{Mode, RatatuiView};
 
 pub(crate) mod chat;
 pub(crate) mod chat_input;
 pub(crate) mod command;
-pub(crate) mod fuzzy_search;
 pub(crate) mod help;
 pub(crate) mod login;
 pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
 pub(crate) mod playlist_browser;
+pub(crate) mod search;
 pub(crate) mod users;
 
 #[enum_dispatch]
@@ -82,7 +82,7 @@ impl Default for State {
 #[derive(Debug, Clone)]
 pub enum OverlayState {
     Login(Login),
-    FuzzySearch(FuzzySearch),
+    Search(Search),
     Option(Options),
     MediaDir(MediaDir),
     PlaylistBrowser(PlaylistBrowserOverlay),

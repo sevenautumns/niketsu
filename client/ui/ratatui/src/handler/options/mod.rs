@@ -1,10 +1,10 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 
-use super::fuzzy_search::FuzzySearch;
 use super::help::Help;
 use super::login::Login;
 use super::media::MediaDir;
 use super::playlist_browser::PlaylistBrowserOverlay;
+use super::search::Search;
 use super::{EventHandler, OverlayState};
 use crate::view::RatatuiView;
 
@@ -22,9 +22,9 @@ impl EventHandler for Options {
                     KeyCode::Char('l') => view
                         .app
                         .set_current_overlay_state(Some(OverlayState::from(Login {}))),
-                    KeyCode::Char('f') => {
+                    KeyCode::Char('/') => {
                         view.app
-                            .set_current_overlay_state(Some(OverlayState::from(FuzzySearch {})));
+                            .set_current_overlay_state(Some(OverlayState::from(Search {})));
                         view.app.fuzzy_search("".to_string());
                     }
                     KeyCode::Char('m') => view

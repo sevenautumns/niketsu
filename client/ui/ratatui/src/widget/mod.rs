@@ -9,13 +9,13 @@ pub(crate) mod chat;
 pub(crate) mod chat_input;
 pub(crate) mod command;
 pub(crate) mod database;
-pub(crate) mod fuzzy_search;
 pub(crate) mod help;
 pub(crate) mod login;
 pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
 pub(crate) mod playlist_browser;
+pub(crate) mod search;
 pub(crate) mod users;
 
 pub trait OverlayWidgetState {

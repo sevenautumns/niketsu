@@ -37,7 +37,6 @@ use crate::widget::chat::{ChatWidget, ChatWidgetState};
 use crate::widget::chat_input::{ChatInputWidget, ChatInputWidgetState};
 use crate::widget::command::{CommandInputWidget, CommandInputWidgetState};
 use crate::widget::database::{DatabaseWidget, DatabaseWidgetState};
-use crate::widget::fuzzy_search::{FuzzySearchWidget, FuzzySearchWidgetState};
 use crate::widget::help::{HelpWidget, HelpWidgetState};
 use crate::widget::login::LoginWidgetState;
 use crate::widget::media::{MediaDirWidget, MediaDirWidgetState};
@@ -45,6 +44,7 @@ use crate::widget::options::{OptionsWidget, OptionsWidgetState};
 use crate::widget::playlist::video_overlay::{VideoNameWidget, VideoNameWidgetState};
 use crate::widget::playlist::PlaylistWidgetState;
 use crate::widget::playlist_browser::{PlaylistBrowserWidget, PlaylistBrowserWidgetState};
+use crate::widget::search::{SearchWidget, SearchWidgetState};
 use crate::widget::users::{UsersWidget, UsersWidgetState};
 use crate::widget::OverlayWidgetState;
 
@@ -81,7 +81,7 @@ pub struct App {
     pub help_widget_state: HelpWidgetState,
     pub login_widget_state: LoginWidgetState,
     pub media_widget_state: MediaDirWidgetState,
-    pub fuzzy_search_widget_state: FuzzySearchWidgetState,
+    pub search_widget_state: SearchWidgetState,
     pub playlist_browser_widget_state: PlaylistBrowserWidgetState,
     pub video_name_widget_state: VideoNameWidgetState,
     pub current_search: Option<FuzzySearch>,
@@ -110,7 +110,7 @@ impl App {
             options_widget_state: OptionsWidgetState::default(),
             help_widget_state: HelpWidgetState::new(),
             login_widget_state: LoginWidgetState::new(&config),
-            fuzzy_search_widget_state: FuzzySearchWidgetState::new(),
+            search_widget_state: SearchWidgetState::new(),
             media_widget_state: MediaDirWidgetState::new(config.media_dirs),
             playlist_browser_widget_state: PlaylistBrowserWidgetState::new(),
             video_name_widget_state: VideoNameWidgetState::default(),
@@ -148,7 +148,7 @@ impl App {
     }
 
     pub fn fuzzy_search(&mut self, query: String) {
-        self.current_search = Some(self.fuzzy_search_widget_state.fuzzy_search(query));
+        self.current_search = Some(self.search_widget_state.fuzzy_search(query));
     }
 
     pub fn reset_fuzzy_search(&mut self) {
@@ -216,7 +216,7 @@ impl RatatuiView {
                     needs_update = true;
                 },
                 Some(search_result) = OptionFuture::from(self.app.current_search.as_mut()) => {
-                    self.app.fuzzy_search_widget_state.set_result(search_result);
+                    self.app.search_widget_state.set_result(search_result);
                     self.app.current_search = None;
                     needs_update = true;
                 }
@@ -327,7 +327,7 @@ impl RatatuiView {
 
         self.model.file_database.on_change(|db| {
             self.app.database_widget_state.set_file_database(db.clone());
-            self.app.fuzzy_search_widget_state.set_file_database(db);
+            self.app.search_widget_state.set_file_database(db);
         });
 
         self.model.playlist.on_change(|playlist| {
@@ -434,13 +434,13 @@ impl RatatuiView {
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(LoginWidget {}, area, &mut app.login_widget_state);
                     }
-                    OverlayState::FuzzySearch(_fuzzy_search) => {
-                        let area = app.fuzzy_search_widget_state.area(area);
+                    OverlayState::Search(_search) => {
+                        let area = app.search_widget_state.area(area);
                         f.render_widget(Clear, area);
                         f.render_stateful_widget(
-                            FuzzySearchWidget {},
+                            SearchWidget {},
                             area,
-                            &mut app.fuzzy_search_widget_state,
+                            &mut app.search_widget_state,
                         );
                     }
                     OverlayState::MediaDir(_media_dir) => {
