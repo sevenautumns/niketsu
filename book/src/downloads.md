@@ -15,6 +15,7 @@ Available for Linux and even on your Raspberry Pi! **We're inclusive, just like 
 
 ### Source
 - Available in Zip and Tar formats [here](https://github.com/sevenautumns/niketsu/releases)
+- Running the niketsu-client requires an installation of [mpv](https://mpv.io/) (preferably the latest version).
 
 ## A Note from the Makers 📝
 

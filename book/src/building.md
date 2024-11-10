@@ -17,6 +17,10 @@ podman run -p 7766:7666 niketsu-server:latest
 For the Docker aficionados, you can even customize your setup with environment variables. Dive into our [Usage Page](usage.md#Arguments) for more details.
 -->
 
+## Requirements
+
+Running the niketsu-client requires an installation of [mpv](https://mpv.io/) (preferably the latest version).
+
 ## Hand-Craft Your Source Build 🚀
 
 Join the cutting edge — build niketsu from source.
