@@ -32,7 +32,12 @@
 
   networking.networkmanager.enable = true;
 
-  nix.settings.trusted-users = [ "admin" ];
+  nix = {
+    settings.trusted-users = [ "admin" ];
+    extraOptions = ''
+      experimental-features = nix-command flakes
+    '';
+  };
 
   security.sudo.extraRules = [{
     users = [ "admin" ];
