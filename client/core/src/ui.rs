@@ -485,6 +485,7 @@ impl UiModel {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
     use std::time::Duration;
 
     use mockall::predicate::{always, eq};
@@ -590,17 +591,20 @@ mod tests {
         let file_database = MockFileDatabaseTrait::default();
 
         let user = arcstr::literal!("max");
-        let addr = Multiaddr::empty()
-            .with(Protocol::Dns("duckduckgo.com".into()))
-            .with(Protocol::Tcp(6655));
+        let addr: Cow<_> = "duckduckgo.com".into();
+        let multi_addr = Multiaddr::empty()
+            .with(Protocol::Dns(addr.clone()))
+            .with(Protocol::Udp(7766))
+            .with(Protocol::QuicV1);
         let password = String::from("passwd");
         let room = arcstr::literal!("room1");
         let config = Config {
             username: user.clone(),
+            relay: addr.to_string(),
             ..Default::default()
         };
         let endpoint = EndpointInfo {
-            addr: addr.clone(),
+            addr: multi_addr,
             password: password.clone(),
             room: room.clone(),
         };
