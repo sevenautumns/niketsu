@@ -15,6 +15,7 @@ pub struct PlaylistBrowserWidget;
 #[derive(Debug, Default)]
 pub struct PlaylistBrowserWidgetState {
     playlist_browser: PlaylistBrowser,
+    num_files: Option<usize>,
     fuzzy_result: Vec<FuzzyResult<NamedPlaylist>>,
     input_field: TextAreaWrapper,
     list_state: ListStateWrapper,
@@ -25,6 +26,7 @@ impl PlaylistBrowserWidgetState {
     pub fn new() -> Self {
         let mut widget = Self {
             playlist_browser: PlaylistBrowser::default(),
+            num_files: Default::default(),
             fuzzy_result: Default::default(),
             input_field: Default::default(),
             list_state: Default::default(),
@@ -48,6 +50,13 @@ impl PlaylistBrowserWidgetState {
 
     pub fn set_playlist_browser(&mut self, playlist_browser: PlaylistBrowser) {
         self.playlist_browser = playlist_browser;
+        self.num_files = Some(
+            self.playlist_browser
+                .playlist_map()
+                .iter()
+                .map(|(_, p)| p.iter().count())
+                .sum(),
+        );
         self.fuzzy_result = self.playlist_browser.fuzzy_search("");
         self.list_state.select(Some(0));
     }
@@ -174,12 +183,17 @@ impl StatefulWidget for PlaylistBrowserWidget {
             })
             .collect();
 
+        let filtered_files = state.fuzzy_result.len();
+        let num_files = state.num_files.unwrap_or_default();
         let playlists_block = List::new(playlists)
             .gray()
             .block(
                 Block::default()
                     .style(state.style)
-                    .title("Playlists")
+                    .title("Results")
+                    .title_top(
+                        Line::from(format!("{}/{}", filtered_files, num_files)).right_aligned(),
+                    )
                     .borders(Borders::TOP)
                     .padding(Padding::new(1, 0, 0, 1)),
             )

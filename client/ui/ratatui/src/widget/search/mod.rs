@@ -15,10 +15,10 @@ pub struct SearchWidget;
 #[derive(Debug, Default, Clone)]
 pub struct SearchWidgetState {
     file_database: FileStore,
+    num_files: Option<usize>,
     current_result: Option<Vec<FuzzyResult<FileEntry>>>,
     input_field: TextAreaWrapper,
     list_state: ListStateWrapper,
-    max_len: usize,
     style: Style,
 }
 
@@ -27,7 +27,6 @@ impl SearchWidgetState {
         let mut widget = Self::default();
         widget.setup_input_field();
         widget.list_state.select(Some(0));
-        widget.max_len = 100;
         widget
     }
 
@@ -66,11 +65,10 @@ impl SearchWidgetState {
 
     pub fn set_file_database(&mut self, file_database: FileStore) {
         self.file_database = file_database;
+        self.num_files = Some(self.file_database.len());
     }
 
     pub fn set_result(&mut self, results: Vec<FuzzyResult<FileEntry>>) {
-        let results: Vec<FuzzyResult<FileEntry>> = results.into_iter().take(self.max_len).collect();
-
         if results.is_empty() {
             self.list_state.select(None);
         } else if self.list_state.selected().is_none() {
@@ -115,7 +113,7 @@ impl SearchWidgetState {
 
     fn len(&self) -> usize {
         match self.current_result.clone() {
-            Some(vec) => std::cmp::min(self.max_len, vec.len()),
+            Some(vec) => vec.len(),
             None => 0,
         }
     }
@@ -175,7 +173,6 @@ impl StatefulWidget for SearchWidget {
         let search_result: Vec<ListItem> = match &state.current_result {
             Some(result) => result
                 .iter()
-                .take(state.max_len)
                 .map(|s| {
                     let mut text = Vec::new();
                     let name = s.entry.file_name();
@@ -199,12 +196,17 @@ impl StatefulWidget for SearchWidget {
             None => Vec::default(),
         };
 
+        let filtered_files = search_result.len();
+        let num_files = state.num_files.unwrap_or_default();
         let search_list = List::new(search_result)
             .gray()
             .block(
                 Block::default()
                     .style(state.style)
                     .title("Results")
+                    .title_top(
+                        Line::from(format!("{}/{}", filtered_files, num_files)).right_aligned(),
+                    )
                     .borders(Borders::TOP)
                     .padding(Padding::new(1, 0, 0, 1)),
             )
