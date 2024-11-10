@@ -57,7 +57,7 @@ jobs:
         run: mkdir out && cp result out/x86_64-${{ matrix.package }}.zip
       - name: Pre-Release
         uses: softprops/action-gh-release@v2
-        if: ${{ matrix.isMain && matrix.package == 'niketsu-client-windows' }}
+        if: ${{ github.event_name == 'push' && matrix.package == 'niketsu-client-windows' }}
         with:
           prerelease: true
           tag_name: nightly
