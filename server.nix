@@ -1,4 +1,4 @@
-{ config, lib, pkgs, modulesPath, ... }: {
+{ config, lib, modulesPath, ... }: {
   imports = [
     (modulesPath + "/profiles/qemu-guest.nix")
     ./niketsu.nix
@@ -32,7 +32,7 @@
 
   networking.networkmanager.enable = true;
 
-  nix.settings.trusted-users = [ "admin" "autumnal" ];
+  nix.settings.trusted-users = [ "admin" ];
 
   security.sudo.extraRules = [{
     users = [ "admin" ];
@@ -49,21 +49,6 @@
     openssh.authorizedKeys.keys = [
       "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAID6cRpwV5pivNp8GWF3uAw4yOEJIYGkfMchIUeL+3f3hAAAACXNzaDp5azUuMQ== ssh:yk5.1"
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDp9uGfZbpd/Xyk2ulzEsdCYJ6XsDHHSQbMSIb00LP/X niketsu@github.com"
-    ];
-  };
-
-  programs.fish.enable = true;
-
-  users.users.autumnal = {
-    uid = 1000;
-    isNormalUser = true;
-    extraGroups =
-      [ "wheel" "disk" "input" "audio" "video" "networkmanager" "docker" ];
-    shell = pkgs.fish;
-    home = "/home/autumnal";
-    description = "Sven Friedrich";
-    openssh.authorizedKeys.keys = [
-      "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAID6cRpwV5pivNp8GWF3uAw4yOEJIYGkfMchIUeL+3f3hAAAACXNzaDp5azUuMQ== ssh:yk5.1"
     ];
   };
 
