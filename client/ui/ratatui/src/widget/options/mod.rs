@@ -36,7 +36,7 @@ impl StatefulWidget for OptionsWidget {
         let options_overlay = Paragraph::new(vec![
             Line::from(vec![Span::raw(" h     Show help")]),
             Line::from(vec![Span::raw(" l     Open login")]),
-            Line::from(vec![Span::raw(" /     Open fuzzy search")]),
+            Line::from(vec![Span::raw(" /     Open search")]),
             Line::from(vec![Span::raw(" m     Open media paths")]),
             Line::from(vec![Span::raw(" b     Open playlist browser")]),
             Line::from(vec![Span::raw(" r     Toggle ready")]),

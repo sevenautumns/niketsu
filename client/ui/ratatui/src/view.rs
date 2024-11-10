@@ -328,6 +328,8 @@ impl RatatuiView {
         self.model.file_database.on_change(|db| {
             self.app.database_widget_state.set_file_database(db.clone());
             self.app.search_widget_state.set_file_database(db);
+            let query = self.app.search_widget_state.get_input();
+            self.app.fuzzy_search(query);
         });
 
         self.model.playlist.on_change(|playlist| {

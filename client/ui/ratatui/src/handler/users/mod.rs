@@ -17,6 +17,7 @@ impl EventHandler for Users {
                     KeyCode::Esc => {
                         view.app.set_mode(Mode::Normal);
                         view.hover_highlight();
+                        view.app.users_widget_state.reset();
                     }
                     KeyCode::Up => {
                         view.app.users_widget_state.next();

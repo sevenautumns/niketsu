@@ -60,6 +60,8 @@ pub trait MainEventHandler: EventHandler {
         self.handle(view, event);
     }
 
+    //TODO should probably be split into a select and deselect function for better
+    // control of transitions
     fn set_style(&self, view: &mut RatatuiView, style: Style);
 }
 
