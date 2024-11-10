@@ -10,10 +10,10 @@ use tui_textarea::Input;
 
 use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
 
-pub struct FuzzySearchWidget;
+pub struct SearchWidget;
 
 #[derive(Debug, Default, Clone)]
-pub struct FuzzySearchWidgetState {
+pub struct SearchWidgetState {
     file_database: FileStore,
     current_result: Option<Vec<FuzzyResult<FileEntry>>>,
     input_field: TextAreaWrapper,
@@ -22,7 +22,7 @@ pub struct FuzzySearchWidgetState {
     style: Style,
 }
 
-impl FuzzySearchWidgetState {
+impl SearchWidgetState {
     pub fn new() -> Self {
         let mut widget = Self::default();
         widget.setup_input_field();
@@ -129,7 +129,7 @@ impl FuzzySearchWidgetState {
     }
 }
 
-impl OverlayWidgetState for FuzzySearchWidgetState {
+impl OverlayWidgetState for SearchWidgetState {
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -157,8 +157,8 @@ impl OverlayWidgetState for FuzzySearchWidgetState {
     }
 }
 
-impl StatefulWidget for FuzzySearchWidget {
-    type State = FuzzySearchWidgetState;
+impl StatefulWidget for SearchWidget {
+    type State = SearchWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let outer_block = Block::default()
