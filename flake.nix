@@ -40,7 +40,7 @@
           expat
           musl
         ]);
-        LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.libclang.lib ];
+        LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.libclang.lib pkgs.mpv ];
         libraries = with pkgs; [
           mpv-unwrapped
           xorg.libX11
