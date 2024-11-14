@@ -1,7 +1,8 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 
 use super::chat_input::ChatInput;
+use super::playlist::Playlist;
 use super::users::Users;
 use super::{MainEventHandler, State};
 use crate::handler::EventHandler;
@@ -35,20 +36,9 @@ impl EventHandler for Chat {
 impl MainEventHandler for Chat {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
-            KeyCode::Right => {
-                view.app.chat_widget_state.set_style(Style::default());
-                view.app
-                    .users_widget_state
-                    .set_style(Style::default().fg(Color::Magenta));
-                view.app.set_current_state(State::from(Users {}));
-            }
-            KeyCode::Down => {
-                view.app.chat_widget_state.set_style(Style::default());
-                view.app.set_current_state(State::from(ChatInput {}));
-                view.app
-                    .chat_input_widget_state
-                    .set_style(Style::default().fg(Color::Magenta));
-            }
+            KeyCode::Up => view.transition(State::from(Users {})),
+            KeyCode::Down => view.transition(State::from(ChatInput {})),
+            KeyCode::Right => view.transition(State::from(Playlist {})),
             _ => {}
         }
     }

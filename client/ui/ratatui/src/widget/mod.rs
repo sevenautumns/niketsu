@@ -15,6 +15,7 @@ pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
 pub(crate) mod playlist_browser;
+pub(crate) mod recently;
 pub(crate) mod search;
 pub(crate) mod users;
 

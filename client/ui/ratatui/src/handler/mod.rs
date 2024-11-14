@@ -3,6 +3,7 @@ use enum_dispatch::enum_dispatch;
 use playlist::video_overlay::VideoName;
 use playlist_browser::PlaylistBrowserOverlay;
 use ratatui::style::Style;
+use recently::Recently;
 
 use self::chat::Chat;
 use self::chat_input::ChatInput;
@@ -25,6 +26,7 @@ pub(crate) mod media;
 pub(crate) mod options;
 pub(crate) mod playlist;
 pub(crate) mod playlist_browser;
+pub(crate) mod recently;
 pub(crate) mod search;
 pub(crate) mod users;
 
@@ -72,6 +74,7 @@ pub enum State {
     ChatInput(ChatInput),
     Users(Users),
     Playlist(Playlist),
+    Recently(Recently),
 }
 
 impl Default for State {
