@@ -54,7 +54,7 @@ impl PlaylistBrowserWidgetState {
             self.playlist_browser
                 .playlist_map()
                 .iter()
-                .map(|(_, p)| p.iter().count())
+                .map(|(_, p)| p.len())
                 .sum(),
         );
         self.fuzzy_result = self.playlist_browser.fuzzy_search("");

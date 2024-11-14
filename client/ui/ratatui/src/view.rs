@@ -44,6 +44,7 @@ use crate::widget::options::{OptionsWidget, OptionsWidgetState};
 use crate::widget::playlist::video_overlay::{VideoNameWidget, VideoNameWidgetState};
 use crate::widget::playlist::PlaylistWidgetState;
 use crate::widget::playlist_browser::{PlaylistBrowserWidget, PlaylistBrowserWidgetState};
+use crate::widget::recently::{RecentlyWidget, RecentlyWidgetState};
 use crate::widget::search::{SearchWidget, SearchWidgetState};
 use crate::widget::users::{UsersWidget, UsersWidgetState};
 use crate::widget::OverlayWidgetState;
@@ -84,6 +85,7 @@ pub struct App {
     pub search_widget_state: SearchWidgetState,
     pub playlist_browser_widget_state: PlaylistBrowserWidgetState,
     pub video_name_widget_state: VideoNameWidgetState,
+    pub recently_widget_state: RecentlyWidgetState,
     pub current_search: Option<FuzzySearch>,
     pub clipboard: ClipboardContext,
     mode: Mode,
@@ -114,6 +116,7 @@ impl App {
             media_widget_state: MediaDirWidgetState::new(config.media_dirs),
             playlist_browser_widget_state: PlaylistBrowserWidgetState::new(),
             video_name_widget_state: VideoNameWidgetState::default(),
+            recently_widget_state: RecentlyWidgetState::new(),
             current_search: None,
             clipboard: ctx,
             mode: Mode::Normal,
@@ -327,7 +330,8 @@ impl RatatuiView {
 
         self.model.file_database.on_change(|db| {
             self.app.database_widget_state.set_file_database(db.clone());
-            self.app.search_widget_state.set_file_database(db);
+            self.app.search_widget_state.set_file_database(db.clone());
+            self.app.recently_widget_state.set_file_database(db);
             let query = self.app.search_widget_state.get_input();
             self.app.fuzzy_search(query);
         });
@@ -369,7 +373,14 @@ impl RatatuiView {
 
         let vertical_left_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(4)].as_ref())
+            .constraints(
+                [
+                    Constraint::Percentage(25),
+                    Constraint::Min(5),
+                    Constraint::Length(4),
+                ]
+                .as_ref(),
+            )
             .split(horizontal_chunks[0]);
 
         let vertical_right_chunks = Layout::default()
@@ -377,8 +388,8 @@ impl RatatuiView {
             .constraints(
                 [
                     Constraint::Length(3),
-                    Constraint::Percentage(20),
-                    Constraint::Min(0),
+                    Constraint::Percentage(25),
+                    Constraint::Min(3),
                 ]
                 .as_ref(),
             )
@@ -391,9 +402,9 @@ impl RatatuiView {
         );
 
         f.render_stateful_widget(
-            UsersWidget,
+            RecentlyWidget,
             vertical_right_chunks[1],
-            &mut app.users_widget_state,
+            &mut app.recently_widget_state,
         );
 
         f.render_stateful_widget(
@@ -403,14 +414,20 @@ impl RatatuiView {
         );
 
         f.render_stateful_widget(
-            ChatWidget {},
+            UsersWidget,
             vertical_left_chunks[0],
+            &mut app.users_widget_state,
+        );
+
+        f.render_stateful_widget(
+            ChatWidget {},
+            vertical_left_chunks[1],
             &mut app.chat_widget_state,
         );
 
         f.render_stateful_widget(
             ChatInputWidget {},
-            vertical_left_chunks[1],
+            vertical_left_chunks[2],
             &mut app.chat_input_widget_state,
         );
 
