@@ -76,7 +76,7 @@ impl RecentlyWidgetState {
                     Ok(diff) => diff <= self.frequency.as_duration(),
                     Err(_) => false,
                 },
-                None => true,
+                None => false,
             })
             .cloned()
             .collect();

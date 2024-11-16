@@ -1,7 +1,10 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
+use ratatui::widgets::Clear;
 
-use super::EventHandler;
-use crate::view::RatatuiView;
+use super::{EventHandler, RenderHandler};
+use crate::view::{App, RatatuiView};
+use crate::widget::search::SearchWidget;
+use crate::widget::OverlayWidgetState;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Search;
@@ -38,5 +41,13 @@ impl EventHandler for Search {
                 }
             }
         }
+    }
+}
+
+impl RenderHandler for Search {
+    fn render(&self, frame: &mut ratatui::Frame, app: &mut App) {
+        let area = app.search_widget_state.area(frame.area());
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(SearchWidget {}, area, &mut app.search_widget_state);
     }
 }

@@ -3,6 +3,7 @@ use enum_dispatch::enum_dispatch;
 use playlist::video_overlay::VideoName;
 use playlist_browser::PlaylistBrowserOverlay;
 use ratatui::style::Style;
+use ratatui::Frame;
 use recently::Recently;
 
 use self::chat::Chat;
@@ -15,7 +16,7 @@ use self::options::Options;
 use self::playlist::Playlist;
 use self::search::Search;
 use self::users::Users;
-use crate::view::{Mode, RatatuiView};
+use crate::view::{App, Mode, RatatuiView};
 
 pub(crate) mod chat;
 pub(crate) mod chat_input;
@@ -67,6 +68,11 @@ pub trait MainEventHandler: EventHandler {
     fn set_style(&self, view: &mut RatatuiView, style: Style);
 }
 
+#[enum_dispatch]
+pub trait RenderHandler {
+    fn render(&self, frame: &mut Frame, app: &mut App);
+}
+
 #[enum_dispatch(MainEventHandler, EventHandler)]
 #[derive(Debug, Clone, Copy)]
 pub enum State {
@@ -83,7 +89,7 @@ impl Default for State {
     }
 }
 
-#[enum_dispatch(EventHandler)]
+#[enum_dispatch(EventHandler, RenderHandler)]
 #[derive(Debug, Clone)]
 pub enum OverlayState {
     Login(Login),
@@ -92,8 +98,8 @@ pub enum OverlayState {
     MediaDir(MediaDir),
     PlaylistBrowser(PlaylistBrowserOverlay),
     VideoName(VideoName),
-    Command(Command),
     Help(Help),
+    Command(Command),
 }
 
 impl Default for OverlayState {
