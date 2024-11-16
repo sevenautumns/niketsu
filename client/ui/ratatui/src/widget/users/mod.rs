@@ -22,12 +22,14 @@ pub struct UsersWidgetState {
     list_state: ListStateWrapper,
     vertical_scroll_state: ScrollbarState,
     scroll_length: usize,
+    hightlight_style: Style,
     style: Style,
 }
 
 impl UsersWidgetState {
     pub fn set_style(&mut self, style: Style) {
         self.style = style;
+        self.hightlight_style = Style::default().fg(Color::Cyan);
     }
 
     pub fn set_user_list(&mut self, user_list: UserList) {
@@ -67,6 +69,10 @@ impl UsersWidgetState {
             None => None,
         }
     }
+
+    pub fn reset(&mut self) {
+        self.hightlight_style = Style::default();
+    }
 }
 
 impl StatefulWidget for UsersWidget {
@@ -101,12 +107,13 @@ impl StatefulWidget for UsersWidget {
                 "Users in room {}",
                 state.user_list.get_room_name()
             )))
+            .title_bottom(Line::from(format!("({})", state.user_list.len())).right_aligned())
             .borders(Borders::ALL);
 
         let rooms_list = List::new(rooms)
             .gray()
             .block(messages_block)
-            .highlight_style(Style::default().fg(Color::Cyan));
+            .highlight_style(state.hightlight_style);
 
         let scrollbar = Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)

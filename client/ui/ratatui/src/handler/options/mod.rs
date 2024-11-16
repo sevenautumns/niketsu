@@ -1,12 +1,15 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
+use ratatui::widgets::Clear;
 
-use super::fuzzy_search::FuzzySearch;
 use super::help::Help;
 use super::login::Login;
 use super::media::MediaDir;
 use super::playlist_browser::PlaylistBrowserOverlay;
-use super::{EventHandler, OverlayState};
-use crate::view::RatatuiView;
+use super::search::Search;
+use super::{EventHandler, OverlayState, RenderHandler};
+use crate::view::{App, RatatuiView};
+use crate::widget::options::OptionsWidget;
+use crate::widget::OverlayWidgetState;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Options;
@@ -22,9 +25,9 @@ impl EventHandler for Options {
                     KeyCode::Char('l') => view
                         .app
                         .set_current_overlay_state(Some(OverlayState::from(Login {}))),
-                    KeyCode::Char('f') => {
+                    KeyCode::Char('/') => {
                         view.app
-                            .set_current_overlay_state(Some(OverlayState::from(FuzzySearch {})));
+                            .set_current_overlay_state(Some(OverlayState::from(Search {})));
                         view.app.fuzzy_search("".to_string());
                     }
                     KeyCode::Char('m') => view
@@ -53,5 +56,13 @@ impl EventHandler for Options {
                 }
             }
         }
+    }
+}
+
+impl RenderHandler for Options {
+    fn render(&self, frame: &mut ratatui::Frame, app: &mut App) {
+        let area = app.options_widget_state.area(frame.area());
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(OptionsWidget {}, area, &mut app.options_widget_state);
     }
 }

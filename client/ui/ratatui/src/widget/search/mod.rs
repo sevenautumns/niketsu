@@ -10,24 +10,23 @@ use tui_textarea::Input;
 
 use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
 
-pub struct FuzzySearchWidget;
+pub struct SearchWidget;
 
 #[derive(Debug, Default, Clone)]
-pub struct FuzzySearchWidgetState {
+pub struct SearchWidgetState {
     file_database: FileStore,
+    num_files: Option<usize>,
     current_result: Option<Vec<FuzzyResult<FileEntry>>>,
     input_field: TextAreaWrapper,
     list_state: ListStateWrapper,
-    max_len: usize,
     style: Style,
 }
 
-impl FuzzySearchWidgetState {
+impl SearchWidgetState {
     pub fn new() -> Self {
         let mut widget = Self::default();
         widget.setup_input_field();
         widget.list_state.select(Some(0));
-        widget.max_len = 100;
         widget
     }
 
@@ -66,11 +65,10 @@ impl FuzzySearchWidgetState {
 
     pub fn set_file_database(&mut self, file_database: FileStore) {
         self.file_database = file_database;
+        self.num_files = Some(self.file_database.len());
     }
 
     pub fn set_result(&mut self, results: Vec<FuzzyResult<FileEntry>>) {
-        let results: Vec<FuzzyResult<FileEntry>> = results.into_iter().take(self.max_len).collect();
-
         if results.is_empty() {
             self.list_state.select(None);
         } else if self.list_state.selected().is_none() {
@@ -115,7 +113,7 @@ impl FuzzySearchWidgetState {
 
     fn len(&self) -> usize {
         match self.current_result.clone() {
-            Some(vec) => std::cmp::min(self.max_len, vec.len()),
+            Some(vec) => vec.len(),
             None => 0,
         }
     }
@@ -129,7 +127,7 @@ impl FuzzySearchWidgetState {
     }
 }
 
-impl OverlayWidgetState for FuzzySearchWidgetState {
+impl OverlayWidgetState for SearchWidgetState {
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -157,8 +155,8 @@ impl OverlayWidgetState for FuzzySearchWidgetState {
     }
 }
 
-impl StatefulWidget for FuzzySearchWidget {
-    type State = FuzzySearchWidgetState;
+impl StatefulWidget for SearchWidget {
+    type State = SearchWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let outer_block = Block::default()
@@ -175,7 +173,6 @@ impl StatefulWidget for FuzzySearchWidget {
         let search_result: Vec<ListItem> = match &state.current_result {
             Some(result) => result
                 .iter()
-                .take(state.max_len)
                 .map(|s| {
                     let mut text = Vec::new();
                     let name = s.entry.file_name();
@@ -199,12 +196,17 @@ impl StatefulWidget for FuzzySearchWidget {
             None => Vec::default(),
         };
 
+        let filtered_files = search_result.len();
+        let num_files = state.num_files.unwrap_or_default();
         let search_list = List::new(search_result)
             .gray()
             .block(
                 Block::default()
                     .style(state.style)
                     .title("Results")
+                    .title_top(
+                        Line::from(format!("{}/{}", filtered_files, num_files)).right_aligned(),
+                    )
                     .borders(Borders::TOP)
                     .padding(Padding::new(1, 0, 0, 1)),
             )

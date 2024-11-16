@@ -1,7 +1,10 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::widgets::Clear;
 
-use super::EventHandler;
-use crate::view::RatatuiView;
+use super::{EventHandler, RenderHandler};
+use crate::view::{App, RatatuiView};
+use crate::widget::media::MediaDirWidget;
+use crate::widget::OverlayWidgetState;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MediaDir;
@@ -41,5 +44,13 @@ impl EventHandler for MediaDir {
                 }
             }
         }
+    }
+}
+
+impl RenderHandler for MediaDir {
+    fn render(&self, frame: &mut ratatui::Frame, app: &mut App) {
+        let area = app.media_widget_state.area(frame.area());
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(MediaDirWidget {}, area, &mut app.media_widget_state);
     }
 }

@@ -2,7 +2,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::style::Style;
 
 use super::chat::Chat;
-use super::playlist::Playlist;
+use super::recently::Recently;
 use super::{EventHandler, MainEventHandler, State};
 use crate::view::{Mode, RatatuiView};
 
@@ -17,6 +17,7 @@ impl EventHandler for Users {
                     KeyCode::Esc => {
                         view.app.set_mode(Mode::Normal);
                         view.hover_highlight();
+                        view.app.users_widget_state.reset();
                     }
                     KeyCode::Up => {
                         view.app.users_widget_state.next();
@@ -34,8 +35,8 @@ impl EventHandler for Users {
 impl MainEventHandler for Users {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
-            KeyCode::Down => view.transition(State::from(Playlist {})),
-            KeyCode::Left => view.transition(State::from(Chat {})),
+            KeyCode::Down => view.transition(State::from(Chat {})),
+            KeyCode::Right => view.transition(State::from(Recently {})),
             _ => {}
         }
     }

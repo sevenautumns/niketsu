@@ -1,7 +1,10 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
+use ratatui::widgets::Clear;
 
-use super::EventHandler;
-use crate::view::RatatuiView;
+use super::{EventHandler, RenderHandler};
+use crate::view::{App, RatatuiView};
+use crate::widget::playlist_browser::PlaylistBrowserWidget;
+use crate::widget::OverlayWidgetState;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PlaylistBrowserOverlay;
@@ -29,5 +32,17 @@ impl EventHandler for PlaylistBrowserOverlay {
                 }
             }
         }
+    }
+}
+
+impl RenderHandler for PlaylistBrowserOverlay {
+    fn render(&self, frame: &mut ratatui::Frame, app: &mut App) {
+        let area = app.playlist_browser_widget_state.area(frame.area());
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(
+            PlaylistBrowserWidget {},
+            area,
+            &mut app.playlist_browser_widget_state,
+        );
     }
 }

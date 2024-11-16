@@ -1,7 +1,10 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
+use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::Frame;
 
-use super::EventHandler;
-use crate::view::RatatuiView;
+use super::{EventHandler, RenderHandler};
+use crate::view::{App, RatatuiView};
+use crate::widget::command::CommandInputWidget;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Command;
@@ -25,5 +28,20 @@ impl EventHandler for Command {
                 }
             }
         }
+    }
+}
+
+impl RenderHandler for Command {
+    fn render(&self, frame: &mut Frame, app: &mut App) {
+        let area = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
+            .split(frame.area());
+
+        frame.render_stateful_widget(
+            CommandInputWidget {},
+            area[1],
+            &mut app.command_input_widget_state,
+        );
     }
 }

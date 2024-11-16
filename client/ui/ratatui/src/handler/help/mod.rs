@@ -1,7 +1,10 @@
 use crossterm::event::{Event, KeyEventKind};
+use ratatui::widgets::Clear;
 
-use super::EventHandler;
-use crate::view::RatatuiView;
+use super::{EventHandler, RenderHandler};
+use crate::view::{App, RatatuiView};
+use crate::widget::help::HelpWidget;
+use crate::widget::OverlayWidgetState;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Help;
@@ -13,5 +16,13 @@ impl EventHandler for Help {
                 view.app.reset_overlay();
             }
         }
+    }
+}
+
+impl RenderHandler for Help {
+    fn render(&self, frame: &mut ratatui::Frame, app: &mut App) {
+        let area = app.help_widget_state.area(frame.area());
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(HelpWidget {}, area, &mut app.help_widget_state);
     }
 }

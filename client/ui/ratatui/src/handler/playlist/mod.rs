@@ -4,7 +4,7 @@ use ratatui::style::Style;
 use video_overlay::VideoName;
 
 use super::chat::Chat;
-use super::users::Users;
+use super::recently::Recently;
 use super::{MainEventHandler, OverlayState, State};
 use crate::handler::EventHandler;
 use crate::view::{Mode, RatatuiView};
@@ -90,8 +90,8 @@ impl EventHandler for Playlist {
 impl MainEventHandler for Playlist {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
+            KeyCode::Up => view.transition(State::from(Recently {})),
             KeyCode::Left => view.transition(State::from(Chat {})),
-            KeyCode::Up => view.transition(State::from(Users {})),
             _ => {}
         }
     }

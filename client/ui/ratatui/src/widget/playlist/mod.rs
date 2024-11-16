@@ -131,6 +131,7 @@ impl StatefulWidget for PlaylistWidget {
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let scroll_block = Block::default()
             .title(Title::from("Playlist"))
+            .title_bottom(Line::from(format!("({})", state.playlist.len())).right_aligned())
             .borders(Borders::ALL)
             .style(state.style);
 

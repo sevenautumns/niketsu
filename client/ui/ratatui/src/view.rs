@@ -23,30 +23,28 @@ use niketsu_core::playlist::Video;
 use niketsu_core::room::RoomName;
 use niketsu_core::ui::{RoomChange, UiModel, UserInterface};
 use ratatui::prelude::*;
-use ratatui::widgets::*;
 use tokio::task::JoinHandle;
 use tracing::warn;
 
-use super::widget::login::LoginWidget;
 use super::widget::playlist::PlaylistWidget;
 use crate::handler::command::Command;
 use crate::handler::options::Options;
 use crate::handler::playlist::Playlist;
-use crate::handler::{EventHandler, MainEventHandler, OverlayState, State};
+use crate::handler::{EventHandler, MainEventHandler, OverlayState, RenderHandler, State};
 use crate::widget::chat::{ChatWidget, ChatWidgetState};
 use crate::widget::chat_input::{ChatInputWidget, ChatInputWidgetState};
-use crate::widget::command::{CommandInputWidget, CommandInputWidgetState};
+use crate::widget::command::CommandInputWidgetState;
 use crate::widget::database::{DatabaseWidget, DatabaseWidgetState};
-use crate::widget::fuzzy_search::{FuzzySearchWidget, FuzzySearchWidgetState};
-use crate::widget::help::{HelpWidget, HelpWidgetState};
+use crate::widget::help::HelpWidgetState;
 use crate::widget::login::LoginWidgetState;
-use crate::widget::media::{MediaDirWidget, MediaDirWidgetState};
-use crate::widget::options::{OptionsWidget, OptionsWidgetState};
-use crate::widget::playlist::video_overlay::{VideoNameWidget, VideoNameWidgetState};
+use crate::widget::media::MediaDirWidgetState;
+use crate::widget::options::OptionsWidgetState;
+use crate::widget::playlist::video_overlay::VideoNameWidgetState;
 use crate::widget::playlist::PlaylistWidgetState;
-use crate::widget::playlist_browser::{PlaylistBrowserWidget, PlaylistBrowserWidgetState};
+use crate::widget::playlist_browser::PlaylistBrowserWidgetState;
+use crate::widget::recently::{RecentlyWidget, RecentlyWidgetState};
+use crate::widget::search::SearchWidgetState;
 use crate::widget::users::{UsersWidget, UsersWidgetState};
-use crate::widget::OverlayWidgetState;
 
 pub struct RatatuiView {
     pub app: App,
@@ -69,7 +67,6 @@ pub enum Mode {
 }
 
 pub struct App {
-    current_state: State,
     pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
     pub users_widget_state: UsersWidgetState,
@@ -81,11 +78,14 @@ pub struct App {
     pub help_widget_state: HelpWidgetState,
     pub login_widget_state: LoginWidgetState,
     pub media_widget_state: MediaDirWidgetState,
-    pub fuzzy_search_widget_state: FuzzySearchWidgetState,
+    pub search_widget_state: SearchWidgetState,
     pub playlist_browser_widget_state: PlaylistBrowserWidgetState,
     pub video_name_widget_state: VideoNameWidgetState,
+    pub recently_widget_state: RecentlyWidgetState,
     pub current_search: Option<FuzzySearch>,
     pub clipboard: ClipboardContext,
+    state: State,
+    prev_state: Option<State>,
     mode: Mode,
     prev_mode: Option<Mode>,
 }
@@ -95,7 +95,6 @@ impl App {
         let ctx = ClipboardContext::new().unwrap();
 
         App {
-            current_state: State::from(Playlist {}),
             chat_widget_state: ChatWidgetState::default(),
             database_widget_state: DatabaseWidgetState::default(),
             users_widget_state: UsersWidgetState::default(),
@@ -110,19 +109,22 @@ impl App {
             options_widget_state: OptionsWidgetState::default(),
             help_widget_state: HelpWidgetState::new(),
             login_widget_state: LoginWidgetState::new(&config),
-            fuzzy_search_widget_state: FuzzySearchWidgetState::new(),
+            search_widget_state: SearchWidgetState::new(),
             media_widget_state: MediaDirWidgetState::new(config.media_dirs),
             playlist_browser_widget_state: PlaylistBrowserWidgetState::new(),
             video_name_widget_state: VideoNameWidgetState::default(),
+            recently_widget_state: RecentlyWidgetState::new(),
             current_search: None,
             clipboard: ctx,
+            state: State::from(Playlist {}),
+            prev_state: None,
             mode: Mode::Normal,
             prev_mode: None,
         }
     }
 
     pub fn set_current_state(&mut self, state: State) {
-        self.current_state = state;
+        self.state = state;
     }
 
     pub fn set_current_overlay_state(&mut self, state: Option<OverlayState>) {
@@ -144,11 +146,11 @@ impl App {
     }
 
     pub fn current_state(&self) -> State {
-        self.current_state
+        self.state
     }
 
     pub fn fuzzy_search(&mut self, query: String) {
-        self.current_search = Some(self.fuzzy_search_widget_state.fuzzy_search(query));
+        self.current_search = Some(self.search_widget_state.fuzzy_search(query));
     }
 
     pub fn reset_fuzzy_search(&mut self) {
@@ -216,7 +218,7 @@ impl RatatuiView {
                     needs_update = true;
                 },
                 Some(search_result) = OptionFuture::from(self.app.current_search.as_mut()) => {
-                    self.app.fuzzy_search_widget_state.set_result(search_result);
+                    self.app.search_widget_state.set_result(search_result);
                     self.app.current_search = None;
                     needs_update = true;
                 }
@@ -267,11 +269,7 @@ impl RatatuiView {
         if let Some(Ok(event)) = ct_event {
             match self.app.mode {
                 Mode::Normal => return self.handle_normal_event(&event),
-                Mode::Inspecting => self
-                    .app
-                    .current_state
-                    .clone()
-                    .handle_with_overlay(self, &event),
+                Mode::Inspecting => self.app.state.clone().handle_with_overlay(self, &event),
                 Mode::Overlay => {
                     if let Some(overlay) = self.app.current_overlay_state.clone() {
                         overlay.handle(self, &event)
@@ -304,7 +302,7 @@ impl RatatuiView {
                             .set_current_overlay_state(Some(OverlayState::from(Options {})));
                     }
                     KeyCode::Right | KeyCode::Left | KeyCode::Down | KeyCode::Up => {
-                        self.app.current_state.clone().handle_next(self, key)
+                        self.app.state.clone().handle_next(self, key)
                     }
                     _ => {}
                 }
@@ -327,7 +325,10 @@ impl RatatuiView {
 
         self.model.file_database.on_change(|db| {
             self.app.database_widget_state.set_file_database(db.clone());
-            self.app.fuzzy_search_widget_state.set_file_database(db);
+            self.app.search_widget_state.set_file_database(db.clone());
+            self.app.recently_widget_state.set_file_database(db);
+            let query = self.app.search_widget_state.get_input();
+            self.app.fuzzy_search(query);
         });
 
         self.model.playlist.on_change(|playlist| {
@@ -367,7 +368,14 @@ impl RatatuiView {
 
         let vertical_left_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(4)].as_ref())
+            .constraints(
+                [
+                    Constraint::Percentage(25),
+                    Constraint::Min(5),
+                    Constraint::Length(4),
+                ]
+                .as_ref(),
+            )
             .split(horizontal_chunks[0]);
 
         let vertical_right_chunks = Layout::default()
@@ -375,8 +383,8 @@ impl RatatuiView {
             .constraints(
                 [
                     Constraint::Length(3),
-                    Constraint::Percentage(20),
-                    Constraint::Min(0),
+                    Constraint::Percentage(25),
+                    Constraint::Min(3),
                 ]
                 .as_ref(),
             )
@@ -389,9 +397,9 @@ impl RatatuiView {
         );
 
         f.render_stateful_widget(
-            UsersWidget,
+            RecentlyWidget,
             vertical_right_chunks[1],
-            &mut app.users_widget_state,
+            &mut app.recently_widget_state,
         );
 
         f.render_stateful_widget(
@@ -401,110 +409,51 @@ impl RatatuiView {
         );
 
         f.render_stateful_widget(
-            ChatWidget {},
+            UsersWidget,
             vertical_left_chunks[0],
+            &mut app.users_widget_state,
+        );
+
+        f.render_stateful_widget(
+            ChatWidget {},
+            vertical_left_chunks[1],
             &mut app.chat_widget_state,
         );
 
         f.render_stateful_widget(
             ChatInputWidget {},
-            vertical_left_chunks[1],
+            vertical_left_chunks[2],
             &mut app.chat_input_widget_state,
         );
 
-        if let Mode::Overlay = app.mode {
-            if let Some(overlay) = &app.current_overlay_state {
-                match overlay {
-                    OverlayState::Option(_options) => {
-                        let area = app.options_widget_state.area(area);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(
-                            OptionsWidget {},
-                            area,
-                            &mut app.options_widget_state,
-                        );
-                    }
-                    OverlayState::Help(_help) => {
-                        let area = app.help_widget_state.area(area);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(HelpWidget {}, area, &mut app.help_widget_state);
-                    }
-                    OverlayState::Login(_login) => {
-                        let area = app.login_widget_state.area(area);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(LoginWidget {}, area, &mut app.login_widget_state);
-                    }
-                    OverlayState::FuzzySearch(_fuzzy_search) => {
-                        let area = app.fuzzy_search_widget_state.area(area);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(
-                            FuzzySearchWidget {},
-                            area,
-                            &mut app.fuzzy_search_widget_state,
-                        );
-                    }
-                    OverlayState::MediaDir(_media_dir) => {
-                        let area = app.media_widget_state.area(area);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(
-                            MediaDirWidget {},
-                            area,
-                            &mut app.media_widget_state,
-                        );
-                    }
-                    OverlayState::PlaylistBrowser(_media_dir) => {
-                        let area = app.playlist_browser_widget_state.area(area);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(
-                            PlaylistBrowserWidget {},
-                            area,
-                            &mut app.playlist_browser_widget_state,
-                        );
-                    }
-                    OverlayState::Command(_command) => {
-                        f.render_stateful_widget(
-                            CommandInputWidget {},
-                            main_vertical_chunks[1],
-                            &mut app.command_input_widget_state,
-                        );
-                    }
-                    OverlayState::VideoName(_) => {
-                        let area = app.video_name_widget_state.area(area);
-                        f.render_widget(Clear, area);
-                        f.render_stateful_widget(
-                            VideoNameWidget {},
-                            area,
-                            &mut app.video_name_widget_state,
-                        );
-                    }
-                }
-            }
+        if let (Mode::Overlay, Some(overlay)) = (app.mode, &app.current_overlay_state) {
+            overlay.clone().render(f, app);
         }
     }
 
-    // TODO move to app
     pub fn transition(&mut self, to: State) {
+        self.app.prev_state = Some(self.app.state);
         self.app
-            .current_state
+            .state
             .clone()
             .set_style(self, Style::default().fg(Color::default()));
-        self.app.current_state = to;
+        self.app.state = to;
         self.app
-            .current_state
+            .state
             .clone()
             .set_style(self, Style::default().fg(Color::Magenta));
     }
 
     pub fn highlight(&mut self) {
         self.app
-            .current_state
+            .state
             .clone()
             .set_style(self, Style::default().fg(Color::Cyan));
     }
 
     pub fn hover_highlight(&mut self) {
         self.app
-            .current_state
+            .state
             .clone()
             .set_style(self, Style::default().fg(Color::Magenta));
     }

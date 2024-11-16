@@ -2,9 +2,12 @@ use arcstr::ArcStr;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use niketsu_core::room::RoomName;
 use niketsu_core::ui::RoomChange;
+use ratatui::widgets::Clear;
 
-use super::EventHandler;
-use crate::view::RatatuiView;
+use super::{EventHandler, RenderHandler};
+use crate::view::{App, RatatuiView};
+use crate::widget::login::LoginWidget;
+use crate::widget::OverlayWidgetState;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Login;
@@ -34,5 +37,13 @@ impl EventHandler for Login {
                 }
             }
         }
+    }
+}
+
+impl RenderHandler for Login {
+    fn render(&self, frame: &mut ratatui::Frame, app: &mut App) {
+        let area = app.login_widget_state.area(frame.area());
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(LoginWidget {}, area, &mut app.login_widget_state);
     }
 }
