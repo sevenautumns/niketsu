@@ -1,4 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
+use niketsu_core::playlist::Video;
 use ratatui::widgets::Clear;
 
 use super::{EventHandler, RenderHandler};
@@ -20,19 +21,32 @@ impl EventHandler for Search {
                         view.app.reset_fuzzy_search();
                     }
                     KeyCode::Enter => {
-                        if let Some(video) = view.app.search_widget_state.get_selected() {
-                            if let Some(index) = view.app.playlist_widget_state.get_current_index()
-                            {
-                                view.insert(index + 1, &video.file_name().into());
+                        if let Some(videos) = view.app.search_widget_state.get_selected() {
+                            let videos_range: Vec<Video> =
+                                videos.iter().map(|v| v.file_name().into()).collect();
+                            if let Some(index) = view.app.playlist_widget_state.selected() {
+                                view.insert_range(index + 1, videos_range);
                             } else {
-                                view.insert(0, &video.file_name().into());
+                                view.insert_range(0, videos_range);
                             }
                         }
+                        view.app.reset_overlay();
+                        view.app.search_widget_state.reset_all();
+                        view.app.reset_fuzzy_search();
                     }
-                    KeyCode::Up => view.app.search_widget_state.next(),
-                    KeyCode::Down => view.app.search_widget_state.previous(),
                     KeyCode::PageUp => view.app.search_widget_state.jump_next(5),
                     KeyCode::PageDown => view.app.search_widget_state.jump_previous(5),
+                    KeyCode::Home => view.app.search_widget_state.jump_start(),
+                    KeyCode::End => view.app.search_widget_state.jump_end(),
+                    KeyCode::Up => {
+                        view.app.search_widget_state.next();
+                    }
+                    KeyCode::Down => {
+                        view.app.search_widget_state.previous();
+                    }
+                    KeyCode::Char('x') => {
+                        view.app.search_widget_state.increase_selection_offset();
+                    }
                     _ => {
                         view.app.search_widget_state.input(*key);
                         let query = view.app.search_widget_state.get_input();

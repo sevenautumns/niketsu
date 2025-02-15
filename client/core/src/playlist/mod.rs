@@ -210,6 +210,12 @@ impl Playlist {
         }
     }
 
+    pub fn insert_range(&mut self, index: usize, videos: Vec<Video>) {
+        for video in videos {
+            self.insert(index, video);
+        }
+    }
+
     pub fn append_at(&mut self, index: usize, videos: impl Iterator<Item = Video>) {
         let rest = self.playlist.split_off(index);
         self.playlist.extend(videos.collect_vec());

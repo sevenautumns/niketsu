@@ -12,6 +12,7 @@ pub(crate) mod database;
 pub(crate) mod help;
 pub(crate) mod login;
 pub(crate) mod media;
+pub(crate) mod nav;
 pub(crate) mod options;
 pub(crate) mod playlist;
 pub(crate) mod playlist_browser;
@@ -109,10 +110,6 @@ impl ListStateWrapper {
 
     fn inner(&mut self) -> &mut ListState {
         &mut self.inner
-    }
-
-    fn clone_inner(&self) -> ListState {
-        self.inner.clone()
     }
 }
 

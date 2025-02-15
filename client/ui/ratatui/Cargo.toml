@@ -19,5 +19,6 @@ textwrap = "0.16"
 tui-textarea = "0.7"
 enum_dispatch ="0.3"
 copypasta = { version = "0.10.0" }
+delegate = "0.13"
 gag = "1.0"
 

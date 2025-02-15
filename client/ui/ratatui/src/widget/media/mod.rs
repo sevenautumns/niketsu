@@ -1,11 +1,13 @@
+use delegate::delegate;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::Line;
 use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, List, ListItem, ListState, Padding, StatefulWidget, Widget};
+use ratatui::widgets::{Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
 
-use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
+use super::nav::ListNavigationState;
+use super::{OverlayWidgetState, TextAreaWrapper};
 
 pub struct MediaDirWidget;
 
@@ -13,7 +15,7 @@ pub struct MediaDirWidget;
 pub struct MediaDirWidgetState {
     media_paths: Vec<String>,
     input_field: TextAreaWrapper,
-    list_state: ListStateWrapper,
+    nav_state: ListNavigationState,
     style: Style,
 }
 
@@ -22,11 +24,12 @@ impl MediaDirWidgetState {
         let mut widget = Self {
             media_paths: paths,
             input_field: Default::default(),
-            list_state: Default::default(),
+            nav_state: Default::default(),
             style: Default::default(),
         };
         widget.setup_input_field();
-        widget.list_state.select(Some(0));
+        widget.select(Some(0));
+        widget.nav_state.set_list_len(widget.media_paths.len());
         widget
     }
 
@@ -49,10 +52,6 @@ impl MediaDirWidgetState {
         self.media_paths.clone()
     }
 
-    pub fn get_state(&self) -> ListState {
-        self.list_state.clone_inner()
-    }
-
     pub fn push_path(&mut self) {
         let path = self.input_field.get_input();
         self.media_paths.push(path);
@@ -61,7 +60,7 @@ impl MediaDirWidgetState {
     }
 
     pub fn remove_path(&mut self) {
-        if let Some(i) = self.list_state.selected() {
+        if let Some(i) = self.selected() {
             if !self.media_paths.is_empty() && i < self.media_paths.len() {
                 _ = self.media_paths.remove(i);
             }
@@ -69,35 +68,26 @@ impl MediaDirWidgetState {
     }
 
     pub fn reset_all(&mut self) {
-        self.list_state.select(Some(0));
+        self.select(Some(0));
         self.input_field = TextAreaWrapper::default();
         self.setup_input_field();
     }
 
-    pub fn next(&mut self) {
-        let len = self.len();
-        if len == 0 {
-            self.list_state.select(None);
-        } else {
-            self.list_state.overflowing_next(len);
-        }
-    }
-
-    pub fn previous(&mut self) {
-        let len = self.len();
-        if len == 0 {
-            self.list_state.select(None);
-        } else {
-            self.list_state.overflowing_previous(len);
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.media_paths.len()
-    }
-
     pub fn input(&mut self, event: impl Into<Input>) {
         self.input_field.input(event);
+    }
+
+    delegate! {
+        to self.nav_state {
+            pub fn next(&mut self);
+            pub fn previous(&mut self);
+            pub fn jump_next(&mut self, offset: usize);
+            pub fn jump_previous(&mut self, offset: usize);
+            pub fn jump_start(&mut self);
+            pub fn jump_end(&mut self);
+            pub fn selected(&self) -> Option<usize>;
+            pub fn select(&mut self, index: Option<usize>);
+        }
     }
 }
 
@@ -161,6 +151,6 @@ impl StatefulWidget for MediaDirWidget {
 
         outer_block.render(area, buf);
         state.input_field.render(layout[0], buf);
-        StatefulWidget::render(media_path_list, layout[1], buf, state.list_state.inner());
+        StatefulWidget::render(media_path_list, layout[1], buf, state.nav_state.inner());
     }
 }

@@ -1,6 +1,7 @@
 use std::cmp::Reverse;
 use std::time::{Duration, SystemTime};
 
+use delegate::delegate;
 use niketsu_core::file_database::{FileEntry, FileStore};
 use ratatui::prelude::{Buffer, Rect};
 use ratatui::style::{Color, Style, Stylize};
@@ -9,7 +10,7 @@ use ratatui::widgets::block::{Block, Title};
 use ratatui::widgets::{Borders, List, ListItem, StatefulWidget};
 use strum::{Display, EnumCount, EnumIter, FromRepr};
 
-use super::ListStateWrapper;
+use super::nav::ListNavigationState;
 
 #[derive(Debug, Default, Clone, Copy, Display, FromRepr, EnumIter, EnumCount)]
 enum Frequency {
@@ -30,6 +31,22 @@ impl Frequency {
             Frequency::Monthly => Duration::from_secs(30 * 24 * 60 * 60),
         }
     }
+
+    fn next(&self) -> Frequency {
+        match self {
+            Frequency::Daily => Frequency::Weekly,
+            Frequency::Weekly => Frequency::Monthly,
+            Frequency::Monthly => Frequency::Daily,
+        }
+    }
+
+    fn previous(&self) -> Frequency {
+        match self {
+            Frequency::Daily => Frequency::Monthly,
+            Frequency::Weekly => Frequency::Daily,
+            Frequency::Monthly => Frequency::Weekly,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -40,8 +57,7 @@ pub struct RecentlyWidgetState {
     frequency: Frequency,
     file_database: FileStore,
     recent_videos: Vec<FileEntry>,
-    num_files: Option<usize>,
-    list_state: ListStateWrapper,
+    nav_state: ListNavigationState,
     style: Style,
 }
 
@@ -57,12 +73,28 @@ impl RecentlyWidgetState {
         self.style = style;
     }
 
+    pub fn next_frequency(&mut self) {
+        self.frequency = self.frequency.next();
+        self.nav_state.reset_offset();
+        self.update_database()
+    }
+
+    pub fn previous_frequency(&mut self) {
+        self.frequency = self.frequency.previous();
+        self.nav_state.reset_offset();
+        self.update_database()
+    }
+
     pub fn set_file_database(&mut self, file_database: FileStore) {
         self.file_database = file_database;
-        self.num_files = Some(self.file_database.len());
+        self.update_database()
+    }
+
+    fn update_database(&mut self) {
         self.recent_videos = self.filter_file_database();
-        if self.len() > 0 && self.list_state.selected().is_none() {
-            self.list_state.select(Some(0));
+        self.nav_state.set_list_len(self.file_database.len());
+        if self.len() > 0 && self.selected().is_none() {
+            self.select(Some(0));
         }
     }
 
@@ -84,27 +116,37 @@ impl RecentlyWidgetState {
         file_entries
     }
 
-    fn get(&self, index: usize) -> Option<&FileEntry> {
-        self.recent_videos.get(index)
+    fn len(&self) -> usize {
+        self.recent_videos.len()
     }
 
-    pub fn next(&mut self) {
-        self.list_state.next();
-    }
-
-    pub fn previous(&mut self) {
-        self.list_state.limited_previous(self.len());
-    }
-
-    pub fn get_selected(&self) -> Option<&FileEntry> {
-        match self.list_state.selected() {
-            Some(i) => self.get(i),
+    pub fn get_selected(&mut self) -> Option<Vec<FileEntry>> {
+        match self.nav_state.selection_range() {
+            Some(range) => Some(
+                self.recent_videos
+                    .iter()
+                    .skip(range.lower)
+                    .take(range.len().saturating_add(1))
+                    .cloned()
+                    .collect(),
+            ),
             None => None,
         }
     }
 
-    fn len(&self) -> usize {
-        self.recent_videos.len()
+    delegate! {
+        to self.nav_state {
+            pub fn next(&mut self);
+            pub fn previous(&mut self);
+            pub fn jump_next(&mut self, offset: usize);
+            pub fn jump_previous(&mut self, offset: usize);
+            pub fn jump_start(&mut self);
+            pub fn jump_end(&mut self);
+            pub fn reset_offset(&mut self);
+            pub fn increase_selection_offset(&mut self);
+            pub fn selected(&self) -> Option<usize>;
+            pub fn select(&mut self, index: Option<usize>);
+        }
     }
 }
 
@@ -112,11 +154,39 @@ impl StatefulWidget for RecentlyWidget {
     type State = RecentlyWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let recently_added: Vec<ListItem> = state
-            .recent_videos
-            .iter()
-            .map(|v| ListItem::from(v.file_name()))
-            .collect();
+        let recently_added: Vec<ListItem> = match state.nav_state.selection_range() {
+            Some(range) => state
+                .recent_videos
+                .iter()
+                .take(range.lower)
+                .map(|v| ListItem::from(v.file_name()))
+                .chain(
+                    state
+                        .recent_videos
+                        .iter()
+                        .skip(range.lower)
+                        .take(range.len().saturating_add(1))
+                        .map(|v| {
+                            ListItem::from(vec![Line::style(
+                                v.file_name().into(),
+                                Style::default().fg(Color::Cyan),
+                            )])
+                        }),
+                )
+                .chain(
+                    state
+                        .recent_videos
+                        .iter()
+                        .skip(range.upper.saturating_add(1))
+                        .map(|v| ListItem::from(v.file_name())),
+                )
+                .collect(),
+            None => state
+                .recent_videos
+                .iter()
+                .map(|v| ListItem::from(v.file_name()))
+                .collect(),
+        };
 
         let list_block = Block::default()
             .title_bottom(Line::from(format!("({})", state.len())).right_aligned())
@@ -133,6 +203,6 @@ impl StatefulWidget for RecentlyWidget {
             .highlight_symbol("> ")
             .highlight_style(Style::default().fg(Color::Cyan));
 
-        StatefulWidget::render(video_list, area, buf, state.list_state.inner());
+        StatefulWidget::render(video_list, area, buf, state.nav_state.inner());
     }
 }
