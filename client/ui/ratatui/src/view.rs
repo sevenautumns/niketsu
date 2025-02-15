@@ -497,6 +497,14 @@ impl RatatuiView {
         self.model.change_playlist(updated_playlist);
     }
 
+    pub fn insert_range(&self, index: usize, videos: Vec<Video>) {
+        let mut updated_playlist = self.model.playlist.get_inner();
+        let saturated_index = std::cmp::min(index, updated_playlist.len());
+        updated_playlist.insert_range(saturated_index, videos);
+        self.model.playlist.set(updated_playlist.clone());
+        self.model.change_playlist(updated_playlist);
+    }
+
     fn remove(&self, video: &Video) {
         let mut updated_playlist = self.model.playlist.get_inner();
         if updated_playlist.remove_by_video(video).is_some() {

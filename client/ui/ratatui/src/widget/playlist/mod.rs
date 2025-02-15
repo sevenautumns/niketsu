@@ -1,27 +1,23 @@
+use delegate::delegate;
 use niketsu_core::playlist::{Playlist, Video};
 use ratatui::prelude::{Buffer, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols::scrollbar;
 use ratatui::text::Line;
 use ratatui::widgets::block::{Block, Title};
-use ratatui::widgets::{
-    Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
-};
+use ratatui::widgets::{Borders, List, ListItem, Scrollbar, ScrollbarOrientation, StatefulWidget};
 
-use super::ListStateWrapper;
+use super::nav::ListNavigationState;
+
 pub(crate) mod video_overlay;
 
-//TODO negative offset support
-//TODO state trait wrapper
 pub struct PlaylistWidget;
 
 #[derive(Debug, Default, Clone)]
 pub struct PlaylistWidgetState {
     playlist: Playlist,
     playing_video: Option<Video>,
-    list_state: ListStateWrapper,
-    vertical_scroll_state: ScrollbarState,
-    selection_offset: usize,
+    nav_state: ListNavigationState,
     clipboard: Option<Vec<Video>>,
     style: Style,
 }
@@ -29,8 +25,9 @@ pub struct PlaylistWidgetState {
 impl PlaylistWidgetState {
     pub fn set_playlist(&mut self, playlist: Playlist) {
         self.playlist = playlist;
-        if !self.playlist.is_empty() && self.list_state.selected().is_none() {
-            self.list_state.select(Some(0));
+        self.nav_state.set_list_len(self.playlist.len());
+        if !self.playlist.is_empty() && self.nav_state.selected().is_none() {
+            self.select(Some(0));
         }
     }
 
@@ -42,79 +39,23 @@ impl PlaylistWidgetState {
         self.style = style;
     }
 
-    fn set_vertical_scroll_state(&mut self) {
-        if let Some(i) = self.list_state.selected() {
-            self.vertical_scroll_state = self.vertical_scroll_state.position(i);
-        }
-    }
-
-    pub fn next(&mut self) {
-        self.selection_offset = 0;
-        self.list_state.overflowing_next(self.playlist.len());
-        self.set_vertical_scroll_state();
-    }
-
-    pub fn previous(&mut self) {
-        self.selection_offset = 0;
-        self.list_state.overflowing_previous(self.playlist.len());
-        self.set_vertical_scroll_state();
-    }
-
-    pub fn jump_next(&mut self, offset: usize) {
-        self.list_state.jump_next(offset);
-        self.set_vertical_scroll_state();
-    }
-
-    pub fn jump_previous(&mut self, offset: usize) {
-        self.list_state
-            .limited_jump_previous(offset, self.playlist.len());
-        self.set_vertical_scroll_state();
-    }
-
-    pub fn jump_start(&mut self) {
-        self.list_state.select(Some(0));
-        self.set_vertical_scroll_state();
-    }
-
-    pub fn jump_end(&mut self) {
-        self.list_state
-            .select(Some(self.playlist.len().saturating_sub(1)));
-        self.set_vertical_scroll_state();
-    }
-
-    pub fn reset_offset(&mut self) {
-        self.selection_offset = 0;
-    }
-
-    pub fn increase_selection_offset(&mut self) {
-        if let Some(i) = self.list_state.selected() {
-            if self.selection_offset.saturating_add(i) < self.playlist.len().saturating_sub(1) {
-                self.selection_offset += 1;
-            }
-        };
-    }
-
     pub fn get_current_video(&self) -> Option<&Video> {
-        match self.list_state.selected() {
+        match self.nav_state.selected() {
             Some(index) => self.playlist.get(index),
             None => None,
         }
     }
 
-    pub fn get_current_index(&self) -> Option<usize> {
-        self.list_state.selected()
-    }
-
     pub fn yank_clipboard(&mut self) -> Option<(usize, usize)> {
-        match self.list_state.selected() {
-            Some(index) => {
+        match self.nav_state.selection_range() {
+            Some(range) => {
                 self.clipboard = Some(
                     self.playlist
-                        .get_range(index, index + self.selection_offset)
+                        .get_range(range.lower, range.upper)
                         .cloned()
                         .collect(),
                 );
-                Some((index, index + self.selection_offset))
+                Some((range.lower, range.upper))
             }
             None => None,
         }
@@ -122,6 +63,21 @@ impl PlaylistWidgetState {
 
     pub fn get_clipboard(&self) -> Option<Vec<Video>> {
         self.clipboard.clone()
+    }
+
+    delegate! {
+        to self.nav_state {
+            pub fn next(&mut self);
+            pub fn previous(&mut self);
+            pub fn jump_next(&mut self, offset: usize);
+            pub fn jump_previous(&mut self, offset: usize);
+            pub fn jump_start(&mut self);
+            pub fn jump_end(&mut self);
+            pub fn reset_offset(&mut self);
+            pub fn increase_selection_offset(&mut self);
+            pub fn selected(&self) -> Option<usize>;
+            pub fn select(&mut self, index: Option<usize>);
+        }
     }
 }
 
@@ -135,25 +91,25 @@ impl StatefulWidget for PlaylistWidget {
             .borders(Borders::ALL)
             .style(state.style);
 
-        let playlist: Vec<ListItem> = match state.list_state.selected() {
-            Some(index) => state
+        let playlist: Vec<ListItem> = match state.nav_state.selection_range() {
+            Some(range) => state
                 .playlist
                 .iter()
-                .take(index)
+                .take(range.lower)
                 .map(|t| color_selection(t, state, Color::Gray, Color::Yellow))
                 .chain(
                     state
                         .playlist
                         .iter()
-                        .skip(index)
-                        .take(state.selection_offset + 1)
+                        .skip(range.lower)
+                        .take(range.len().saturating_add(1))
                         .map(|t| color_selection(t, state, Color::Cyan, Color::Cyan)),
                 )
                 .chain(
                     state
                         .playlist
                         .iter()
-                        .skip(index + state.selection_offset + 1)
+                        .skip(range.upper.saturating_add(1))
                         .map(|t| color_selection(t, state, Color::Gray, Color::Yellow)),
                 )
                 .collect(),
@@ -177,9 +133,9 @@ impl StatefulWidget for PlaylistWidget {
             .begin_symbol(None)
             .end_symbol(None);
 
-        StatefulWidget::render(list, area, buf, state.list_state.inner());
+        StatefulWidget::render(list, area, buf, state.nav_state.inner());
 
-        let mut state = state.vertical_scroll_state;
+        let mut state = state.nav_state.vertical_scroll_state();
         state = state.content_length(playlist_len);
         scrollbar.render(
             area.inner(Margin {

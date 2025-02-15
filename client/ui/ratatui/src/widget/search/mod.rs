@@ -1,3 +1,4 @@
+use delegate::delegate;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::file_database::{FileEntry, FileStore};
 use niketsu_core::util::FuzzyResult;
@@ -5,10 +6,11 @@ use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, List, ListItem, ListState, Padding, StatefulWidget, Widget};
+use ratatui::widgets::{Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
 
-use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
+use super::nav::ListNavigationState;
+use super::{OverlayWidgetState, TextAreaWrapper};
 
 pub struct SearchWidget;
 
@@ -18,7 +20,7 @@ pub struct SearchWidgetState {
     num_files: Option<usize>,
     current_result: Option<Vec<FuzzyResult<FileEntry>>>,
     input_field: TextAreaWrapper,
-    list_state: ListStateWrapper,
+    nav_state: ListNavigationState,
     style: Style,
 }
 
@@ -26,7 +28,7 @@ impl SearchWidgetState {
     pub fn new() -> Self {
         let mut widget = Self::default();
         widget.setup_input_field();
-        widget.list_state.select(Some(0));
+        widget.select(Some(0));
         widget
     }
 
@@ -45,20 +47,16 @@ impl SearchWidgetState {
         self.input_field.get_input()
     }
 
-    pub fn get_state(&self) -> ListState {
-        self.list_state.clone_inner()
-    }
-
-    pub fn get_selected(&self) -> Option<FileEntry> {
-        match self.list_state.selected() {
-            Some(i) => {
-                if let Some(result) = &self.current_result {
-                    if i < result.len() {
-                        return Some(result[i].entry.clone());
-                    }
-                }
-                None
-            }
+    pub fn get_selected(&self) -> Option<Vec<FileEntry>> {
+        match self.nav_state.selection_range() {
+            Some(range) => self.current_result.as_ref().map(|result| {
+                result
+                    .iter()
+                    .skip(range.lower)
+                    .take(range.len().saturating_add(1))
+                    .map(|r| r.entry.clone())
+                    .collect()
+            }),
             None => None,
         }
     }
@@ -66,49 +64,26 @@ impl SearchWidgetState {
     pub fn set_file_database(&mut self, file_database: FileStore) {
         self.file_database = file_database;
         self.num_files = Some(self.file_database.len());
+        self.nav_state
+            .set_list_len(self.num_files.unwrap_or_default());
     }
 
     pub fn set_result(&mut self, results: Vec<FuzzyResult<FileEntry>>) {
         if results.is_empty() {
-            self.list_state.select(None);
-        } else if self.list_state.selected().is_none() {
-            self.list_state.select(Some(0));
+            self.select(None);
+        } else if self.selected().is_none() {
+            self.select(Some(0));
         }
-        self.list_state.limit(self.len());
+        self.nav_state.limit(self.len());
         self.current_result = Some(results);
     }
 
     pub fn reset_all(&mut self) {
         self.current_result = None;
-        self.list_state.select(Some(0));
+        self.select(Some(0));
         self.input_field = TextAreaWrapper::default();
         self.setup_input_field();
-    }
-
-    pub fn next(&mut self) {
-        let len = self.len();
-        if len == 0 {
-            self.list_state.select(None);
-        } else {
-            self.list_state.overflowing_next(len);
-        }
-    }
-
-    pub fn previous(&mut self) {
-        let len = self.len();
-        if len == 0 {
-            self.list_state.select(None);
-        } else {
-            self.list_state.overflowing_previous(len);
-        }
-    }
-
-    pub fn jump_next(&mut self, offset: usize) {
-        self.list_state.jump_next(offset)
-    }
-
-    pub fn jump_previous(&mut self, offset: usize) {
-        self.list_state.limited_jump_previous(offset, self.len())
+        self.nav_state.reset_offset();
     }
 
     fn len(&self) -> usize {
@@ -124,6 +99,20 @@ impl SearchWidgetState {
 
     pub fn input(&mut self, event: impl Into<Input>) {
         self.input_field.input(event);
+    }
+
+    delegate! {
+        to self.nav_state {
+            pub fn next(&mut self);
+            pub fn previous(&mut self);
+            pub fn jump_next(&mut self, offset: usize);
+            pub fn jump_previous(&mut self, offset: usize);
+            pub fn jump_start(&mut self);
+            pub fn jump_end(&mut self);
+            pub fn selected(&self) -> Option<usize>;
+            pub fn select(&mut self, index: Option<usize>);
+            pub fn increase_selection_offset(&mut self);
+        }
     }
 }
 
@@ -171,28 +160,27 @@ impl StatefulWidget for SearchWidget {
             .split(area);
 
         let search_result: Vec<ListItem> = match &state.current_result {
-            Some(result) => result
-                .iter()
-                .map(|s| {
-                    let mut text = Vec::new();
-                    let name = s.entry.file_name();
-                    let hits = &s.hits;
-                    let mut hits_index = 0;
-                    let hits_len = hits.len();
-                    for (index, char) in name.char_indices() {
-                        if hits_index < hits_len && index == hits[hits_index] {
-                            text.push(Span::styled(
-                                char.to_string(),
-                                Style::default().fg(Color::Yellow),
-                            ));
-                            hits_index += 1;
-                        } else {
-                            text.push(Span::raw(char.to_string()));
-                        }
-                    }
-                    ListItem::new(Line::from(text))
-                })
-                .collect(),
+            Some(result) => match state.nav_state.selection_range() {
+                Some(range) => result
+                    .iter()
+                    .take(range.lower)
+                    .map(|r| color_hits(r, None))
+                    .chain(
+                        result
+                            .iter()
+                            .skip(range.lower)
+                            .take(range.len().saturating_add(1))
+                            .map(|r| color_hits(r, Some(Color::Cyan))),
+                    )
+                    .chain(
+                        result
+                            .iter()
+                            .skip(range.upper.saturating_add(1))
+                            .map(|r| color_hits(r, None)),
+                    )
+                    .collect(),
+                None => Vec::default(),
+            },
             None => Vec::default(),
         };
 
@@ -215,6 +203,29 @@ impl StatefulWidget for SearchWidget {
 
         outer_block.render(area, buf);
         state.input_field.render(layout[0], buf);
-        StatefulWidget::render(search_list, layout[1], buf, state.list_state.inner());
+        StatefulWidget::render(search_list, layout[1], buf, state.nav_state.inner());
     }
+}
+
+fn color_hits(result: &FuzzyResult<FileEntry>, color: Option<Color>) -> ListItem {
+    let mut text = Vec::new();
+    let name = result.entry.file_name();
+    let hits = &result.hits;
+    let mut hits_index = 0;
+    let hits_len = hits.len();
+    for (index, char) in name.char_indices() {
+        if hits_index < hits_len && index == hits[hits_index] {
+            text.push(Span::styled(
+                char.to_string(),
+                Style::default().fg(color.unwrap_or(Color::Yellow)),
+            ));
+            hits_index += 1;
+        } else {
+            text.push(Span::styled(
+                char.to_string(),
+                Style::default().fg(color.unwrap_or(Color::Gray)),
+            ));
+        }
+    }
+    ListItem::new(Line::from(text))
 }

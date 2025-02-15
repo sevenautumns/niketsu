@@ -26,8 +26,16 @@ impl EventHandler for PlaylistBrowserOverlay {
                         view.app.reset_overlay();
                         view.app.playlist_browser_widget_state.reset_all();
                     }
-                    KeyCode::Up => view.app.playlist_browser_widget_state.next(),
-                    KeyCode::Down => view.app.playlist_browser_widget_state.previous(),
+                    KeyCode::PageUp => view.app.playlist_browser_widget_state.jump_next(5),
+                    KeyCode::PageDown => view.app.playlist_browser_widget_state.jump_previous(5),
+                    KeyCode::Home => view.app.playlist_browser_widget_state.jump_start(),
+                    KeyCode::End => view.app.playlist_browser_widget_state.jump_end(),
+                    KeyCode::Up => {
+                        view.app.playlist_browser_widget_state.next();
+                    }
+                    KeyCode::Down => {
+                        view.app.playlist_browser_widget_state.previous();
+                    }
                     _ => view.app.playlist_browser_widget_state.input(*key),
                 }
             }

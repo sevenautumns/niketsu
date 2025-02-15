@@ -1,3 +1,4 @@
+use delegate::delegate;
 use niketsu_core::playlist::file::{NamedPlaylist, PlaylistBrowser};
 use niketsu_core::playlist::Playlist;
 use niketsu_core::util::FuzzyResult;
@@ -5,10 +6,11 @@ use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::Line;
 use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, List, ListItem, ListState, Padding, StatefulWidget, Widget};
+use ratatui::widgets::{Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
 
-use super::{ListStateWrapper, OverlayWidgetState, TextAreaWrapper};
+use super::nav::ListNavigationState;
+use super::{OverlayWidgetState, TextAreaWrapper};
 
 pub struct PlaylistBrowserWidget;
 
@@ -18,22 +20,15 @@ pub struct PlaylistBrowserWidgetState {
     num_files: Option<usize>,
     fuzzy_result: Vec<FuzzyResult<NamedPlaylist>>,
     input_field: TextAreaWrapper,
-    list_state: ListStateWrapper,
+    nav_state: ListNavigationState,
     style: Style,
 }
 
 impl PlaylistBrowserWidgetState {
     pub fn new() -> Self {
-        let mut widget = Self {
-            playlist_browser: PlaylistBrowser::default(),
-            num_files: Default::default(),
-            fuzzy_result: Default::default(),
-            input_field: Default::default(),
-            list_state: Default::default(),
-            style: Default::default(),
-        };
+        let mut widget = Self::default();
         widget.setup_input_field();
-        widget.list_state.select(Some(0));
+        widget.select(Some(0));
         widget
     }
 
@@ -58,19 +53,17 @@ impl PlaylistBrowserWidgetState {
                 .sum(),
         );
         self.fuzzy_result = self.playlist_browser.fuzzy_search("");
-        self.list_state.select(Some(0));
+        self.nav_state
+            .set_list_len(self.num_files.unwrap_or_default());
+        self.select(Some(0));
     }
 
     pub fn get_input(&self) -> String {
         self.input_field.get_input()
     }
 
-    pub fn get_state(&self) -> ListState {
-        self.list_state.clone_inner()
-    }
-
     pub fn get_playlist(&self) -> Option<Playlist> {
-        if let Some(pos) = self.list_state.selected() {
+        if let Some(pos) = self.selected() {
             if let Some(playlist) = self.fuzzy_result.get(pos) {
                 return Some(playlist.entry.playlist.get_playlist());
             }
@@ -79,40 +72,31 @@ impl PlaylistBrowserWidgetState {
     }
 
     pub fn reset_all(&mut self) {
-        self.list_state.select(Some(0));
+        self.select(Some(0));
         self.input_field = TextAreaWrapper::default();
         self.setup_input_field();
         self.fuzzy_result = self.playlist_browser.fuzzy_search("");
-    }
-
-    pub fn next(&mut self) {
-        let len = self.len();
-        if len == 0 {
-            self.list_state.select(None);
-        } else {
-            self.list_state.overflowing_next(len);
-        }
-    }
-
-    pub fn previous(&mut self) {
-        let len = self.len();
-        if len == 0 {
-            self.list_state.select(None);
-        } else {
-            self.list_state.overflowing_previous(len);
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.fuzzy_result.len()
     }
 
     pub fn input(&mut self, event: impl Into<Input>) {
         self.input_field.input(event);
         let query = self.input_field.get_input();
         self.fuzzy_result = self.playlist_browser.fuzzy_search(&query);
-        if self.list_state.selected().is_none() & !self.fuzzy_result.is_empty() {
-            self.list_state.select(Some(0));
+        if self.selected().is_none() & !self.fuzzy_result.is_empty() {
+            self.select(Some(0));
+        }
+    }
+
+    delegate! {
+        to self.nav_state {
+            pub fn next(&mut self);
+            pub fn previous(&mut self);
+            pub fn jump_next(&mut self, offset: usize);
+            pub fn jump_previous(&mut self, offset: usize);
+            pub fn jump_start(&mut self);
+            pub fn jump_end(&mut self);
+            pub fn selected(&self) -> Option<usize>;
+            pub fn select(&mut self, index: Option<usize>);
         }
     }
 }
@@ -201,7 +185,7 @@ impl StatefulWidget for PlaylistBrowserWidget {
             .highlight_symbol("> ");
 
         let mut playlist_content = Vec::<ListItem>::new();
-        if let Some(pos) = state.list_state.selected() {
+        if let Some(pos) = state.selected() {
             let current_video = state.fuzzy_result.get(pos);
             if let Some(v) = current_video {
                 playlist_content = v
@@ -231,7 +215,7 @@ impl StatefulWidget for PlaylistBrowserWidget {
             playlists_block,
             left_layout[1],
             buf,
-            state.list_state.inner(),
+            state.nav_state.inner(),
         );
         Widget::render(playlist_content_block, right_layout[0], buf);
     }

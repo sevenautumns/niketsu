@@ -51,7 +51,7 @@ impl EventHandler for Playlist {
                         view.app.playlist_widget_state.yank_clipboard();
                     }
                     KeyCode::Char('p') => {
-                        if let Some(index) = view.app.playlist_widget_state.get_current_index() {
+                        if let Some(index) = view.app.playlist_widget_state.selected() {
                             if let Some(clipboard) = view.app.playlist_widget_state.get_clipboard()
                             {
                                 view.append_at(index + 1, clipboard);
@@ -72,9 +72,7 @@ impl EventHandler for Playlist {
                         if key.modifiers == KeyModifiers::CONTROL {
                             let content = view.app.get_clipboard();
                             if let Ok(c) = content {
-                                if let Some(index) =
-                                    view.app.playlist_widget_state.get_current_index()
-                                {
+                                if let Some(index) = view.app.playlist_widget_state.selected() {
                                     view.insert(index + 1, &Video::from(c.as_str()));
                                 }
                             }
