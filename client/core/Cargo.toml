@@ -22,16 +22,16 @@ serde_millis.workspace = true
 chrono.workspace = true
 multiaddr.workspace = true
 itertools.workspace = true
+async-trait.workspace = true
+ordered-float.workspace = true
 rayon = "1.7"
 fuzzy-matcher = "0.3"
 futures = "0.3"
 num-traits = "0.2"
 whoami = "1.4"
-async-trait = "0.1"
 toml = "0.8"
 serde_yaml = "0.9"
 typed-builder = "0.20"
-ordered-float = "4"
 
 [dev-dependencies]
 tempfile = "3.6"
