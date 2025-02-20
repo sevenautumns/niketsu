@@ -15,11 +15,11 @@ arc-swap.workspace = true
 once_cell.workspace = true
 serde_json = "1.0"
 serde_millis.workspace = true
-ordered-float = "4"
+async-trait.workspace = true
+ordered-float.workspace = true
 futures = "0.3"
-async-trait = "0.1"
 enum_dispatch.workspace = true
 libp2p = { workspace = true, features = [ "dcutr", "dns", "gossipsub", "identify", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat" ] }
 futures-timer = "3.0"
-fake = "2.9.2"
+fake = "4.0"
 sha256 = "1.5"

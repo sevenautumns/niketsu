@@ -9,6 +9,6 @@ anyhow.workspace = true
 arcstr.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+async-trait.workspace = true
 nom = "8.0"
 moka = { version = "0.12", features = ["future"] }
-async-trait = "0.1"

@@ -15,9 +15,9 @@ enum_dispatch.workspace = true
 once_cell.workspace = true
 directories.workspace = true
 itertools.workspace = true
+async-trait.workspace = true
 serde_with = "3.0"
 iced = { version = "0.13", features = ["tokio", "advanced"] }
 futures = "0.3"
 toml = "0.8"
 palette = "0.7"
-async-trait = "0.1"
