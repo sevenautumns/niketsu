@@ -67,6 +67,7 @@ mod tests {
     use crate::player::MockMediaPlayerTrait;
     use crate::playlist::Video;
     use crate::ui::MockUserInterfaceTrait;
+    use crate::MockVideoServerTrait;
 
     #[tokio::test]
     async fn test_pacemaker() {
@@ -88,6 +89,7 @@ mod tests {
         let mut player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
+        let video_server = MockVideoServerTrait::default();
 
         let video = Video::from("video2");
         let position = Some(Duration::from_secs(15));
@@ -121,6 +123,7 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
+            .video_server(Box::new(video_server))
             .config(config)
             .build();
 

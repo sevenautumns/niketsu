@@ -208,7 +208,7 @@
             {
               name = "outdated";
               category = "rust";
-              command = "cargo-outdated outdated";
+              command = "cargo-outdated outdated --root-deps-only";
               help = pkgs.cargo-outdated.meta.description;
             }
             {

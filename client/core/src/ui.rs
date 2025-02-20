@@ -499,6 +499,7 @@ mod tests {
     use crate::file_database::{FileEntry, MockFileDatabaseTrait};
     use crate::player::MockMediaPlayerTrait;
     use crate::util::Observed;
+    use crate::MockVideoServerTrait;
 
     #[tokio::test]
     async fn test_playlist_change() {
@@ -506,6 +507,7 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
+        let video_server = MockVideoServerTrait::default();
 
         let user = arcstr::literal!("max");
         let playlist = Playlist::from_iter(["video1", "video2"]);
@@ -529,6 +531,7 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
+            .video_server(Box::new(video_server))
             .config(config)
             .build();
 
@@ -542,6 +545,7 @@ mod tests {
         let mut player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
+        let video_server = MockVideoServerTrait::default();
 
         let user = arcstr::literal!("max");
         let video = Video::from("video1");
@@ -576,6 +580,7 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
+            .video_server(Box::new(video_server))
             .config(config)
             .build();
 
@@ -589,6 +594,7 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
+        let video_server = MockVideoServerTrait::default();
 
         let user = arcstr::literal!("max");
         let addr: Cow<_> = "duckduckgo.com".into();
@@ -620,6 +626,7 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
+            .video_server(Box::new(video_server))
             .config(config)
             .build();
 
@@ -636,6 +643,7 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
+        let video_server = MockVideoServerTrait::default();
 
         let user = arcstr::literal!("max");
         let user_new = arcstr::literal!("moritz");
@@ -660,6 +668,7 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
+            .video_server(Box::new(video_server))
             .config(config)
             .build();
 
@@ -682,6 +691,7 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
+        let video_server = MockVideoServerTrait::default();
 
         let user = arcstr::literal!("max");
         let user_msg = String::from("hello world!");
@@ -705,6 +715,7 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
+            .video_server(Box::new(video_server))
             .config(config)
             .build();
 
@@ -718,6 +729,7 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
+        let video_server = MockVideoServerTrait::default();
 
         let config = Config::default();
 
@@ -729,6 +741,7 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
+            .video_server(Box::new(video_server))
             .config(config)
             .build();
 
@@ -745,6 +758,7 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
+        let video_server = MockVideoServerTrait::default();
 
         let paths = vec!["/videos".into(), "/music".into()];
         let paths_clone = paths.clone();
@@ -763,6 +777,7 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
+            .video_server(Box::new(video_server))
             .config(config)
             .build();
 

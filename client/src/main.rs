@@ -10,6 +10,10 @@ use niketsu_core::file_database::FileDatabase;
 use niketsu_core::logging::setup_logger;
 use niketsu_core::ui::UserInterfaceTrait;
 use niketsu_mpv::Mpv;
+use niketsu_video_server::VideoServer;
+
+#[cfg(all(not(feature = "ratatui"), not(feature = "iced")))]
+compile_error!(r#"any ui feature is required ["ratatui", "iced"]"#);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -40,6 +44,7 @@ async fn main() -> Result<()> {
     }
     let player = Mpv::new().unwrap();
     let communicator = P2PCommunicator::default();
+    let video_server = VideoServer::default();
     let mut file_database = FileDatabase::default();
     if !args.skip_database_refresh {
         file_database = FileDatabase::new(config.media_dirs.iter().map(PathBuf::from).collect());
@@ -50,6 +55,7 @@ async fn main() -> Result<()> {
         .player(Box::new(player))
         .communicator(Box::new(communicator))
         .file_database(Box::new(file_database))
+        .video_server(Box::new(video_server))
         .chat_logger(chat_logger)
         .config(config)
         .build();

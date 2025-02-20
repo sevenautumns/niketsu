@@ -1,0 +1,14 @@
+[package]
+name = "niketsu-video-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+niketsu-core.path = "../../core"
+anyhow.workspace = true
+arcstr.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+nom = "8.0"
+moka = { version = "0.12", features = ["future"] }
+async-trait = "0.1"
