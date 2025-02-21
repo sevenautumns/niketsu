@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ops::RangeInclusive;
 use std::time::Duration;
 
 use arcstr::ArcStr;
@@ -45,6 +46,8 @@ pub enum OutgoingMessage {
     UserMessage(UserMessageMsg),
     Playlist(PlaylistMsg),
     UserStatus(UserStatusMsg),
+    FileRequest(FileRequestMsg),
+    FileResponse(FileResponseMsg),
 }
 
 #[enum_dispatch(EventHandler)]
@@ -63,6 +66,8 @@ pub enum IncomingMessage {
     ServerMessage(ServerMessageMsg),
     Playlist(PlaylistMsg),
     UserStatus(UserStatusMsg),
+    FileRequest(FileRequestMsg),
+    FileResponse(FileResponseMsg),
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -522,5 +527,100 @@ impl From<UserStatus> for PlayerMessage {
 impl From<UserStatus> for OutgoingMessage {
     fn from(value: UserStatus) -> Self {
         Self::UserStatus(value)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileRequestMsg {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_id: Option<String>,
+    pub actor: ArcStr,
+    pub file: String,
+    pub range: RangeInclusive<u64>,
+}
+
+impl From<FileRequestMsg> for PlayerMessage {
+    fn from(value: FileRequestMsg) -> Self {
+        let actor = value.actor;
+        let peer_id = value.peer_id;
+        let file = value.file;
+        let range = value.range;
+        match peer_id {
+            Some(_) => PlayerMessageInner {
+                message: format!("User {actor:?} requested current video {file:?} at {range:?}"),
+                source: MessageSource::UserAction(actor),
+                level: MessageLevel::Debug,
+                timestamp: Local::now(),
+            }
+            .into(),
+            None => PlayerMessageInner {
+                message: format!("Core requested current video {file:?} at {range:?}"),
+                source: MessageSource::Internal,
+                level: MessageLevel::Debug,
+                timestamp: Local::now(),
+            }
+            .into(),
+        }
+    }
+}
+
+impl EventHandler for FileRequestMsg {
+    fn handle(self, model: &mut CoreModel) {
+        todo!()
+    }
+}
+
+impl From<FileRequestMsg> for OutgoingMessage {
+    fn from(value: FileRequestMsg) -> Self {
+        Self::FileRequest(value)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileResponseMsg {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_id: Option<String>,
+    pub actor: ArcStr,
+    pub file: String,
+    pub start: u64,
+    pub bytes: Vec<u8>,
+    pub size: usize,
+}
+
+impl From<FileResponseMsg> for PlayerMessage {
+    fn from(value: FileResponseMsg) -> Self {
+        let peer_id = value.peer_id;
+        let actor = value.actor;
+        let start = value.start;
+        match peer_id {
+            Some(_) => PlayerMessageInner {
+                message: format!("Core retrieved current video {start:?} for {actor:?}"),
+                source: MessageSource::Internal,
+                level: MessageLevel::Debug,
+                timestamp: Local::now(),
+            }
+            .into(),
+            None => PlayerMessageInner {
+                message: format!("User received current video at {start:?} from {actor:?}"),
+                source: MessageSource::UserAction(actor),
+                level: MessageLevel::Debug,
+                timestamp: Local::now(),
+            }
+            .into(),
+        }
+    }
+}
+
+impl From<FileResponseMsg> for OutgoingMessage {
+    fn from(value: FileResponseMsg) -> Self {
+        Self::FileResponse(value)
+    }
+}
+
+impl EventHandler for FileResponseMsg {
+    fn handle(self, model: &mut CoreModel) {
+        todo!();
     }
 }

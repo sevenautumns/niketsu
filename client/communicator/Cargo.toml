@@ -19,7 +19,7 @@ async-trait.workspace = true
 ordered-float.workspace = true
 futures = "0.3"
 enum_dispatch.workspace = true
-libp2p = { workspace = true, features = [ "dcutr", "dns", "gossipsub", "identify", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat" ] }
+libp2p = { workspace = true, features = [ "dcutr", "dns", "gossipsub", "identify", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat", "kad" ] }
 futures-timer = "3.0"
 fake = "4.0"
 sha256 = "1.5"
