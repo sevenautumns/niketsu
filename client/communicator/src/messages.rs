@@ -19,6 +19,8 @@ pub(super) enum NiketsuMessage {
     Playlist(PlaylistMsg),
     Status(UserStatusMsg),
     Connection(ConnectedMsg),
+    FileRequest(FileRequestMsg),
+    FileResponse(FileResponseMsg),
 }
 
 impl TryFrom<NiketsuMessage> for IncomingMessage {
@@ -38,6 +40,7 @@ impl TryFrom<NiketsuMessage> for IncomingMessage {
             NiketsuMessage::Status(m) => Ok(m.into()),
             NiketsuMessage::Connection(m) => Ok(m.into()),
             NiketsuMessage::VideoStatus(m) => Ok(m.into()),
+            NiketsuMessage::FileResponse(m) => Ok(m.into()),
             value => Err(value),
         }
     }
@@ -128,6 +131,18 @@ impl From<ConnectedMsg> for NiketsuMessage {
     }
 }
 
+impl From<FileRequestMsg> for NiketsuMessage {
+    fn from(value: FileRequestMsg) -> Self {
+        Self::FileRequest(value)
+    }
+}
+
+impl From<FileResponseMsg> for NiketsuMessage {
+    fn from(value: FileResponseMsg) -> Self {
+        Self::FileResponse(value)
+    }
+}
+
 impl From<OutgoingMessage> for NiketsuMessage {
     fn from(value: OutgoingMessage) -> Self {
         match value {
@@ -140,6 +155,8 @@ impl From<OutgoingMessage> for NiketsuMessage {
             OutgoingMessage::UserMessage(msg) => msg.into(),
             OutgoingMessage::Playlist(msg) => msg.into(),
             OutgoingMessage::UserStatus(msg) => msg.into(),
+            OutgoingMessage::FileRequest(msg) => msg.into(),
+            OutgoingMessage::FileResponse(msg) => msg.into(),
         }
     }
 }
