@@ -48,6 +48,9 @@ pub enum OutgoingMessage {
     UserStatus(UserStatusMsg),
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
+    ChunkRequest(ChunkRequestMsg),
+    ChunkResponse(ChunkResponseMsg),
+    VideoShareChange(VideoShareMsg),
 }
 
 #[enum_dispatch(EventHandler)]
@@ -68,6 +71,8 @@ pub enum IncomingMessage {
     UserStatus(UserStatusMsg),
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
+    ChunkRequest(ChunkRequestMsg),
+    ChunkResponse(ChunkResponseMsg),
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -532,43 +537,72 @@ impl From<UserStatus> for OutgoingMessage {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct FileRequestMsg {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub peer_id: Option<String>,
+pub struct ChunkRequestMsg {
+    pub uuid: uuid::Uuid,
     pub actor: ArcStr,
-    pub file: String,
+    pub video: Video,
     pub range: RangeInclusive<u64>,
+}
+
+impl EventHandler for ChunkRequestMsg {
+    fn handle(self, model: &mut CoreModel) {
+        //TODO: need to be able to identify request after response returns
+        model
+            .video_provider
+            .request_chunk(&self.video.as_str(), self.range);
+    }
+}
+
+impl From<ChunkRequestMsg> for OutgoingMessage {
+    fn from(value: ChunkRequestMsg) -> Self {
+        Self::ChunkRequest(value)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChunkResponseMsg {
+    pub uuid: uuid::Uuid,
+    pub actor: ArcStr,
+    pub video: Video,
+    pub start: u64,
+    pub bytes: Vec<u8>,
+    pub size: usize,
+}
+
+impl From<ChunkResponseMsg> for OutgoingMessage {
+    fn from(value: ChunkResponseMsg) -> Self {
+        Self::ChunkResponse(value)
+    }
+}
+
+impl EventHandler for ChunkResponseMsg {
+    fn handle(self, model: &mut CoreModel) {
+        model
+            .video_server
+            .insert_chunk(self.video.as_str(), self.start, self.bytes)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileRequestMsg {
+    pub uuid: uuid::Uuid,
+    pub actor: ArcStr,
+    pub video: Video,
 }
 
 impl From<FileRequestMsg> for PlayerMessage {
     fn from(value: FileRequestMsg) -> Self {
         let actor = value.actor;
-        let peer_id = value.peer_id;
-        let file = value.file;
-        let range = value.range;
-        match peer_id {
-            Some(_) => PlayerMessageInner {
-                message: format!("User {actor:?} requested current video {file:?} at {range:?}"),
-                source: MessageSource::UserAction(actor),
-                level: MessageLevel::Debug,
-                timestamp: Local::now(),
-            }
-            .into(),
-            None => PlayerMessageInner {
-                message: format!("Core requested current video {file:?} at {range:?}"),
-                source: MessageSource::Internal,
-                level: MessageLevel::Debug,
-                timestamp: Local::now(),
-            }
-            .into(),
+        let video = value.video;
+        PlayerMessageInner {
+            message: format!("Core received incoming video request for {video:?} for {actor:?}"),
+            source: MessageSource::UserAction(actor),
+            level: MessageLevel::Normal,
+            timestamp: Local::now(),
         }
-    }
-}
-
-impl EventHandler for FileRequestMsg {
-    fn handle(self, model: &mut CoreModel) {
-        //TODO: need to be able to identify request after response returns
-        model.video_provider.request_chunk(&self.file, self.range);
+        .into()
     }
 }
 
@@ -578,39 +612,37 @@ impl From<FileRequestMsg> for OutgoingMessage {
     }
 }
 
+impl EventHandler for FileRequestMsg {
+    fn handle(self, model: &mut CoreModel) {
+        // start video provider?
+        model.ui.player_message(self.into());
+        todo!()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FileResponseMsg {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub peer_id: Option<String>,
+    pub uuid: uuid::Uuid,
     pub actor: ArcStr,
-    pub file: String,
-    pub start: u64,
-    pub bytes: Vec<u8>,
+    pub video: Video,
     pub size: usize,
 }
 
 impl From<FileResponseMsg> for PlayerMessage {
     fn from(value: FileResponseMsg) -> Self {
-        let peer_id = value.peer_id;
         let actor = value.actor;
-        let start = value.start;
-        match peer_id {
-            Some(_) => PlayerMessageInner {
-                message: format!("Core retrieved current video {start:?} for {actor:?}"),
-                source: MessageSource::Internal,
-                level: MessageLevel::Debug,
-                timestamp: Local::now(),
-            }
-            .into(),
-            None => PlayerMessageInner {
-                message: format!("User received current video at {start:?} from {actor:?}"),
+        let video = value.video;
+        let size = value.size;
+        PlayerMessageInner {
+                message: format!(
+                    "Core received incoming video response for {video:?} with size {size:?} for {actor:?}"
+                ),
                 source: MessageSource::UserAction(actor),
                 level: MessageLevel::Debug,
                 timestamp: Local::now(),
             }
-            .into(),
-        }
+            .into()
     }
 }
 
@@ -622,8 +654,19 @@ impl From<FileResponseMsg> for OutgoingMessage {
 
 impl EventHandler for FileResponseMsg {
     fn handle(self, model: &mut CoreModel) {
-        model
-            .video_server
-            .insert_chunk(&self.file, self.start, self.bytes)
+        // start video server?
+        todo!()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoShareMsg {
+    pub video: Option<Video>,
+}
+
+impl From<VideoShareMsg> for OutgoingMessage {
+    fn from(value: VideoShareMsg) -> Self {
+        Self::VideoShareChange(value)
     }
 }
