@@ -547,9 +547,11 @@ pub struct ChunkRequestMsg {
 impl EventHandler for ChunkRequestMsg {
     fn handle(self, model: &mut CoreModel) {
         //TODO: need to be able to identify request after response returns
+        let start = *self.range.start();
+        let len = self.range.end() - self.range.start() + 1;
         model
             .video_provider
-            .request_chunk(&self.video.as_str(), self.range);
+            .request_chunk(self.video.as_str(), start, len);
     }
 }
 
