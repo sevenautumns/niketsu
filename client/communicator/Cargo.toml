@@ -23,3 +23,5 @@ libp2p = { workspace = true, features = [ "dcutr", "dns", "gossipsub", "identify
 futures-timer = "3.0"
 fake = "4.0"
 sha256 = "1.5"
+uuid = { version = "1.14.0", features = [ "v4", "serde", "fast-rng" ] } 
+

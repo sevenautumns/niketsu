@@ -1,6 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
-use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -26,6 +25,7 @@ use niketsu_core::communicator::{
 };
 use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::playlist::handler::PlaylistHandler;
+use niketsu_core::playlist::Video;
 use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
 use once_cell::sync::Lazy;
@@ -331,11 +331,6 @@ impl P2PClient {
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
             .build();
 
-        swarm
-            .behaviour_mut()
-            .kademlia
-            .set_mode(Some(kad::Mode::Server));
-
         debug!(%relay_addr, "Attempting to connect to relay");
 
         let room2 = room.clone();
@@ -423,7 +418,8 @@ struct ClientCommunicationHandler {
     delay: Duration,
     current_requests: HashMap<QueryId, FileRequestMsg>,
     pending_request_provider: Option<PeerId>,
-    pending_responses: HashMap<PeerId, ResponseChannel<MessageResponse>>,
+    pending_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
+    current_response: Option<Video>,
 }
 
 impl fmt::Debug for ClientCommunicationHandler {
@@ -457,6 +453,7 @@ impl ClientCommunicationHandler {
             current_requests: Default::default(),
             pending_responses: Default::default(),
             pending_request_provider: None,
+            current_response: None,
         }
     }
 
@@ -483,6 +480,41 @@ impl ClientCommunicationHandler {
             .map_err(anyhow::Error::from)
     }
 
+    fn handle_incoming_message(
+        &mut self,
+        msg: NiketsuMessage,
+        channel: ResponseChannel<MessageResponse>,
+    ) -> Result<()> {
+        match msg {
+            NiketsuMessage::ChunkRequest(ref cr) => {
+                debug!("Received file request");
+                self.pending_responses.insert(cr.uuid, channel);
+                self.message_sender.send(msg.clone())?;
+            }
+            NiketsuMessage::ChunkResponse(_) => {
+                debug!("Received chunk response");
+                self.message_sender.send(msg.clone())?;
+            }
+            NiketsuMessage::FileResponse(_) => {
+                debug!("Received file response");
+                self.message_sender.send(msg.clone())?;
+            }
+            NiketsuMessage::FileRequest(_) => {
+                debug!("Received file request");
+                self.message_sender.send(msg.clone())?;
+            }
+            _ => {
+                self.swarm.send_response(
+                    channel,
+                    MessageResponse(Response::Status(StatusResponse::Err)),
+                )?;
+                bail!("Did not expect direct message {msg:?}");
+            }
+        }
+
+        Ok(())
+    }
+
     fn handle_video_status(&mut self, mut msg: VideoStatusMsg) -> Result<()> {
         if self.is_seeking {
             debug!("can not determine client position during seek");
@@ -502,9 +534,13 @@ impl ClientCommunicationHandler {
     }
 
     fn reset_requests_responses(&mut self) {
-        self.pending_request_provider = None;
+        if let Some(video) = self.current_response.clone() {
+            self.swarm.stop_providing(video);
+        }
         self.pending_responses = Default::default();
+        self.current_response = None;
         self.current_requests = Default::default();
+        self.pending_request_provider = None;
     }
 }
 
@@ -577,7 +613,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
                     "Received gossipsub message",
                 );
                 if let Err(error) = self.handle_broadcast(peer_id, message.data) {
-                    error!(%error, "Failed to handle incoming message");
+                    error!(%error, "Failed to handle broadcast message");
                 }
             }
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
@@ -586,14 +622,8 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 request_response::Message::Request {
                     request, channel, ..
                 } => {
-                    if let Err(error) = self.message_sender.send(request.0) {
-                        error!(%error, "Failed to send direct message to core");
-                    }
-                    if let Err(e) = self.swarm.send_response(
-                        channel,
-                        MessageResponse(Response::Status(StatusResponse::Ok)),
-                    ) {
-                        warn!(error = ?e)
+                    if let Err(error) = self.handle_incoming_message(request.0, channel) {
+                        error!(%error, "Failed to handle incoming message");
                     }
                 }
                 request_response::Message::Response { response, .. } => {
@@ -680,6 +710,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
             )) => match self.current_requests.get(&id) {
                 Some(request) => {
                     if let Some(provider) = self.pending_request_provider {
+                        debug!("Already have provider");
                         self.swarm
                             .behaviour_mut()
                             .message_request_response
@@ -688,7 +719,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
                                 MessageRequest(NiketsuMessage::FileRequest(request.clone())),
                             );
                     } else if let Some(provider) = providers.iter().next() {
-                        info!("Found providers");
+                        debug!("Found providers");
                         self.pending_request_provider = Some(*provider);
 
                         self.swarm
@@ -728,40 +759,55 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 self.swarm.send_request(&self.host, msg);
                 return Ok(());
             }
-            NiketsuMessage::Select(ref s) => {
+            NiketsuMessage::Select(_) => {
                 self.reset_requests_responses();
-                //TODO: this should be called once file-sharing is enabled
-                if let Some(video) = &s.video {
-                    let filename = video.as_str().as_bytes().to_vec();
-                    let id = self
-                        .swarm
-                        .behaviour_mut()
-                        .kademlia
-                        .start_providing(filename.into());
-                    debug!(?id, "Providing file");
+            }
+            NiketsuMessage::VideoShare(ref vs) => {
+                match &vs.video {
+                    Some(video) => {
+                        self.current_response = Some(video.clone());
+                        self.swarm.start_providing(video.clone())?;
+                    }
+                    None => {
+                        self.reset_requests_responses();
+                    }
                 }
+                return Ok(());
+            }
+            NiketsuMessage::ChunkRequest(cr) => {
+                //TODO handle issues with provider
+                match self.pending_request_provider {
+                    Some(provider) => self
+                        .swarm
+                        .send_request(&provider, NiketsuMessage::ChunkRequest(cr)),
+                    None => bail!("No provider available for chunk request"),
+                }
+                return Ok(());
+            }
+            NiketsuMessage::ChunkResponse(cr) => {
+                if let Some(channel) = self.pending_responses.remove(&cr.uuid) {
+                    let msg = NiketsuMessage::ChunkResponse(cr);
+                    self.swarm
+                        .send_response(channel, MessageResponse(Response::Message(msg)))?;
+                }
+                return Ok(());
             }
             NiketsuMessage::FileRequest(fr) => {
                 let id = self
                     .swarm
                     .behaviour_mut()
                     .kademlia
-                    .get_providers(fr.file.clone().into_bytes().into());
+                    .get_providers(fr.video.as_str().as_bytes().to_vec().into());
                 debug!(?id, "Getting providers for file ...");
-                self.current_requests.insert(id, fr);
+                self.current_requests.insert(id, fr.clone());
                 return Ok(());
             }
-            NiketsuMessage::FileResponse(fr) => {
-                let peer_id_str = fr.clone().peer_id.unwrap();
-                match PeerId::from_str(&peer_id_str) {
-                    Ok(peer_id) => {
-                        if let Some(channel) = self.pending_responses.remove(&peer_id) {
-                            let msg = NiketsuMessage::FileResponse(fr);
-                            self.swarm
-                                .send_response(channel, MessageResponse(Response::Message(msg)))?;
-                        }
-                    }
-                    Err(e) => bail!(e),
+            NiketsuMessage::FileResponse(ref fr) => {
+                if let Some(channel) = self.pending_responses.remove(&fr.uuid) {
+                    self.swarm
+                        .send_response(channel, MessageResponse(Response::Message(msg)))?;
+                } else {
+                    bail!("Cannot send file response if response channel does not exist");
                 }
                 return Ok(());
             }
@@ -771,13 +817,15 @@ impl CommunicationHandler for ClientCommunicationHandler {
     }
 }
 
-trait Sender<T, TResponse> {
+trait SwarmHandler<T, TResponse> {
     fn send_request(&mut self, peer_id: &PeerId, msg: T);
     fn send_response(&mut self, channel: ResponseChannel<TResponse>, msg: TResponse) -> Result<()>;
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: T) -> Result<()>;
+    fn start_providing(&mut self, video: Video) -> Result<()>;
+    fn stop_providing(&mut self, video: Video);
 }
 
-impl Sender<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
+impl SwarmHandler<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
     fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) {
         // ignores outbound id
         self.behaviour_mut()
@@ -823,6 +871,30 @@ impl Sender<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
             },
         }
     }
+
+    fn start_providing(&mut self, video: Video) -> Result<()> {
+        let filename = video.as_str().as_bytes().to_vec();
+        let res = self
+            .behaviour_mut()
+            .kademlia
+            .start_providing(filename.clone().into());
+
+        match res {
+            Ok(id) => {
+                debug!(?filename, ?id, "Successfully started providing file");
+                Ok(())
+            }
+            Err(e) => bail!("Failed to start providing {e:?}"),
+        }
+    }
+
+    fn stop_providing(&mut self, video: Video) {
+        let filename = video.as_str().as_bytes().to_vec();
+        self.behaviour_mut()
+            .kademlia
+            .stop_providing(&filename.clone().into());
+        debug!(?filename, "Stopped providing file");
+    }
 }
 
 struct HostCommunicationHandler {
@@ -836,9 +908,10 @@ struct HostCommunicationHandler {
     playlist: PlaylistMsg,
     select: SelectMsg,
     users: HashMap<PeerId, UserStatus>,
-    current_requests: HashMap<QueryId, FileRequestMsg>,
+    current_request: HashMap<QueryId, FileRequestMsg>,
     pending_request_provider: Option<PeerId>,
-    pending_responses: HashMap<PeerId, ResponseChannel<MessageResponse>>,
+    pending_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
+    current_response: Option<Video>,
 }
 
 impl fmt::Debug for HostCommunicationHandler {
@@ -892,9 +965,10 @@ impl HostCommunicationHandler {
             playlist,
             users: HashMap::default(),
             select,
-            current_requests: Default::default(),
+            current_request: Default::default(),
             pending_request_provider: None,
             pending_responses: Default::default(),
+            current_response: None,
         }
     }
 
@@ -1064,14 +1138,22 @@ impl HostCommunicationHandler {
                 self.handle_new_playlist(&playlist, peer_id)?;
                 self.playlist = playlist;
             }
-            NiketsuMessage::FileRequest(_) => {
+            NiketsuMessage::ChunkRequest(cr) => {
                 debug!("Received file request");
-                self.pending_responses.insert(peer_id, channel);
+                self.pending_responses.insert(cr.uuid, channel);
                 self.message_sender.send(msg.clone())?;
                 return Ok(());
             }
+            NiketsuMessage::ChunkResponse(_) => {
+                debug!("Received chunk response");
+                self.message_sender.send(msg.clone())?;
+            }
             NiketsuMessage::FileResponse(_) => {
                 debug!("Received file response");
+                self.message_sender.send(msg.clone())?;
+            }
+            NiketsuMessage::FileRequest(_) => {
+                debug!("Received file request");
                 self.message_sender.send(msg.clone())?;
             }
             _ => {
@@ -1111,9 +1193,13 @@ impl HostCommunicationHandler {
     }
 
     fn reset_requests_responses(&mut self) {
-        self.pending_request_provider = None;
+        if let Some(video) = self.current_response.clone() {
+            self.swarm.stop_providing(video);
+        }
         self.pending_responses = Default::default();
-        self.current_requests = Default::default();
+        self.current_response = None;
+        self.current_request = Default::default();
+        self.pending_request_provider = None;
     }
 }
 
@@ -1223,9 +1309,10 @@ impl CommunicationHandler for HostCommunicationHandler {
                         })),
                     ..
                 },
-            )) => match self.current_requests.remove(&id) {
+            )) => match self.current_request.get(&id) {
                 Some(request) => {
                     if let Some(provider) = self.pending_request_provider {
+                        debug!("Already have provider");
                         self.swarm
                             .behaviour_mut()
                             .message_request_response
@@ -1234,7 +1321,7 @@ impl CommunicationHandler for HostCommunicationHandler {
                                 MessageRequest(NiketsuMessage::FileRequest(request.clone())),
                             );
                     } else if let Some(provider) = providers.iter().next() {
-                        info!("Found providers");
+                        debug!("Found providers");
                         self.pending_request_provider = Some(*provider);
 
                         self.swarm
@@ -1285,27 +1372,52 @@ impl CommunicationHandler for HostCommunicationHandler {
                 self.reset_requests_responses();
                 return Ok(());
             }
+            NiketsuMessage::VideoShare(ref vs) => {
+                match &vs.video {
+                    Some(video) => {
+                        self.current_response = Some(video.clone());
+                        self.swarm.start_providing(video.clone())?;
+                    }
+                    None => {
+                        self.reset_requests_responses();
+                    }
+                }
+                return Ok(());
+            }
+            NiketsuMessage::ChunkRequest(cr) => {
+                //TODO handle issues with provider
+                match self.pending_request_provider {
+                    Some(provider) => self
+                        .swarm
+                        .send_request(&provider, NiketsuMessage::ChunkRequest(cr)),
+                    None => bail!("No provider available for chunk request"),
+                }
+                return Ok(());
+            }
+            NiketsuMessage::ChunkResponse(cr) => {
+                if let Some(channel) = self.pending_responses.remove(&cr.uuid) {
+                    let msg = NiketsuMessage::ChunkResponse(cr);
+                    self.swarm
+                        .send_response(channel, MessageResponse(Response::Message(msg)))?;
+                }
+                return Ok(());
+            }
             NiketsuMessage::FileRequest(fr) => {
                 let id = self
                     .swarm
                     .behaviour_mut()
                     .kademlia
-                    .get_providers(fr.file.clone().into_bytes().into());
+                    .get_providers(fr.video.as_str().as_bytes().to_vec().into());
                 debug!(?id, "Getting providers for file ...");
-                self.current_requests.insert(id, fr);
+                self.current_request.insert(id, fr.clone());
                 return Ok(());
             }
-            NiketsuMessage::FileResponse(fr) => {
-                let peer_id_str = fr.clone().peer_id.unwrap();
-                match PeerId::from_str(&peer_id_str) {
-                    Ok(peer_id) => {
-                        if let Some(channel) = self.pending_responses.remove(&peer_id) {
-                            let msg = NiketsuMessage::FileResponse(fr);
-                            self.swarm
-                                .send_response(channel, MessageResponse(Response::Message(msg)))?;
-                        }
-                    }
-                    Err(e) => bail!(e),
+            NiketsuMessage::FileResponse(ref fr) => {
+                if let Some(channel) = self.pending_responses.remove(&fr.uuid) {
+                    self.swarm
+                        .send_response(channel, MessageResponse(Response::Message(msg)))?;
+                } else {
+                    bail!("Cannot send file response if response channel does not exist");
                 }
                 return Ok(());
             }
