@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
-use niketsu_core::file_database::FileStore;
+use niketsu_core::file_database::{FilePathSearch, FileStore};
 use niketsu_core::log;
 use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait};
 use niketsu_core::playlist::Video;
@@ -449,7 +449,7 @@ impl MediaPlayerTrait for Mpv {
         self.status.file.clone()
     }
 
-    fn maybe_reload_video(&mut self, db: &FileStore) {
+    fn maybe_reload_video(&mut self, f: &dyn FilePathSearch) {
         if !matches!(self.status.file_load_status, FileLoadStatus::NotLoaded) {
             return;
         }
@@ -457,7 +457,7 @@ impl MediaPlayerTrait for Mpv {
             self.unload_video();
             return;
         };
-        let Some(path) = load.to_path_str(db) else {
+        let Some(path) = load.to_path_str(f) else {
             debug!(video = ?load, "get path from video");
             self.unload_video();
             return;

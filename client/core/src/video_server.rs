@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use tracing::trace;
 
-use crate::{CoreModel, EventHandler};
+use crate::{CoreModel, EventHandler, FilePathSearch, MediaPlayerTrait};
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -26,6 +26,7 @@ pub enum VideoServerEvent {
 
 #[derive(Debug, Clone)]
 pub struct ChunkRequest {
+    // TODO either use file_name or filename everywhere
     pub file_name: ArcStr,
     pub start: u64,
     pub length: u64,
@@ -45,8 +46,32 @@ pub struct ServerOnline {
 }
 
 impl EventHandler for ServerOnline {
-    fn handle(self, _model: &mut CoreModel) {
+    fn handle(self, model: &mut CoreModel) {
         trace!("video server online");
-        todo!()
+        let file = VideoServerFile::from(self);
+        model.player.maybe_reload_video(&file);
+    }
+}
+
+pub struct VideoServerFile {
+    file_name: ArcStr,
+    addr: SocketAddr,
+}
+
+impl FilePathSearch for VideoServerFile {
+    fn get_file_path(&self, filename: &str) -> Option<String> {
+        if self.file_name.eq(filename) {
+            return Some(format!("http://{}", self.addr));
+        }
+        None
+    }
+}
+
+impl From<ServerOnline> for VideoServerFile {
+    fn from(server: ServerOnline) -> Self {
+        Self {
+            file_name: server.file_name,
+            addr: server.addr,
+        }
     }
 }

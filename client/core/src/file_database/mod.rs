@@ -326,6 +326,10 @@ impl PartialEq for FileStore {
     }
 }
 
+pub trait FilePathSearch {
+    fn get_file_path(&self, filename: &str) -> Option<String>;
+}
+
 impl FileStore {
     pub fn len(&self) -> usize {
         self.store.len()
@@ -350,6 +354,13 @@ impl FileStore {
 
     pub fn fuzzy_search(&self, query: String) -> FuzzySearch {
         FuzzySearch::new(query, self.clone())
+    }
+}
+
+impl FilePathSearch for FileStore {
+    fn get_file_path(&self, filename: &str) -> Option<String> {
+        self.find_file(filename)
+            .and_then(|entry| entry.path().as_os_str().to_str().map(str::to_string))
     }
 }
 
