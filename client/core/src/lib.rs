@@ -7,12 +7,14 @@ use once_cell::sync::Lazy;
 use player::wrapper::MediaPlayerWrapper;
 use playlist::handler::PlaylistHandler;
 use tracing::{info, trace};
+use video_provider::VideoProviderTrait;
 
 use self::communicator::*;
 use self::file_database::*;
 use self::heartbeat::Pacemaker;
 use self::player::*;
 use self::ui::*;
+use self::video_provider::*;
 use self::video_server::*;
 
 pub mod builder;
@@ -27,6 +29,7 @@ pub mod room;
 pub mod ui;
 pub mod user;
 pub mod util;
+pub mod video_provider;
 pub mod video_server;
 
 pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =
@@ -44,6 +47,7 @@ pub struct CoreModel {
     pub ui: Box<dyn UserInterfaceTrait>,
     pub database: Box<dyn FileDatabaseTrait>,
     pub video_server: Box<dyn VideoServerTrait>,
+    pub video_provider: Box<dyn VideoProviderTrait>,
     pub playlist: PlaylistHandler,
     chat_logger: Option<ChatLogger>,
     pub config: Config,
@@ -98,6 +102,10 @@ impl Core {
                 video_server = self.model.video_server.event() => {
                     trace!("handle video server event");
                     video_server.handle(&mut self.model);
+                }
+                video_provider = self.model.video_provider.event() => {
+                    trace!("handle video provider event");
+                    video_provider.handle(&mut self.model);
                 }
                 beat = pacemaker.recv() => {
                     trace!("handle pacemaker event");

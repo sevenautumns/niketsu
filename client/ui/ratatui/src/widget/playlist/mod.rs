@@ -19,6 +19,7 @@ pub struct PlaylistWidgetState {
     playing_video: Option<Video>,
     nav_state: ListNavigationState,
     clipboard: Option<Vec<Video>>,
+    video_share: bool,
     style: Style,
 }
 
@@ -65,6 +66,10 @@ impl PlaylistWidgetState {
         self.clipboard.clone()
     }
 
+    pub fn toggle_video_share(&mut self) {
+        self.video_share = !self.video_share
+    }
+
     delegate! {
         to self.nav_state {
             pub fn next(&mut self);
@@ -85,7 +90,13 @@ impl StatefulWidget for PlaylistWidget {
     type State = PlaylistWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let video_share = match state.video_share {
+            true => Line::styled("sharing", Style::default().fg(Color::Green)),
+            false => Line::styled("not sharing", Style::default().fg(Color::Red)),
+        };
+
         let scroll_block = Block::default()
+            .title_top(video_share.right_aligned())
             .title(Title::from("Playlist"))
             .title_bottom(Line::from(format!("({})", state.playlist.len())).right_aligned())
             .borders(Borders::ALL)

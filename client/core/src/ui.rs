@@ -36,6 +36,7 @@ pub trait UserInterfaceTrait: std::fmt::Debug + Send {
     fn player_message(&mut self, msg: PlayerMessage);
     fn username_change(&mut self, username: ArcStr);
     fn abort(&mut self);
+    fn video_share(&mut self, video_share: bool);
 
     async fn event(&mut self) -> UserInterfaceEvent;
 }
@@ -49,6 +50,7 @@ pub enum UserInterfaceEvent {
     UserChange,
     UserMessage,
     FileDatabaseChange,
+    VideoShareChange,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,6 +266,18 @@ impl EventHandler for FileDatabaseChange {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoShareChange {
+    pub video_share: bool,
+}
+
+impl EventHandler for VideoShareChange {
+    fn handle(self, model: &mut CoreModel) {
+        trace!("video share change message");
+        todo!();
+    }
+}
+
 #[derive(Debug)]
 pub struct UserInterface {
     model: UiModel,
@@ -285,6 +299,7 @@ impl UserInterface {
             playing_video: Observed::<_>::default_with_notify(&notify),
             user_list: Observed::<_>::default_with_notify(&notify),
             user: Observed::<_>::new(user, &notify),
+            video_share: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(1000), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -345,6 +360,10 @@ impl UserInterfaceTrait for UserInterface {
         self.model.running.set(false);
     }
 
+    fn video_share(&mut self, video_share: bool) {
+        self.model.video_share.set(video_share)
+    }
+
     async fn event(&mut self) -> UserInterfaceEvent {
         self.ui_events.recv().await.expect("ui event stream ended")
     }
@@ -359,6 +378,7 @@ pub struct UiModel {
     pub user_list: Observed<UserList>,
     pub user: Observed<UserStatus>,
     pub messages: Observed<RingBuffer<PlayerMessage>>,
+    pub video_share: Observed<bool>,
     pub events: MpscSender<UserInterfaceEvent>,
     pub running: Observed<bool>,
     pub notify: Arc<Notify>,
@@ -481,6 +501,25 @@ impl UiModel {
             .map_err(anyhow::Error::from);
         crate::log!(res)
     }
+
+    pub fn start_server(&self) {
+        trace!("start server");
+        // self.events.send(UserInterfaceEvent::)
+    }
+
+    pub fn video_share_toggle(&self) {
+        trace!("toggle video sharing");
+        let mut video_share = self.video_share.get_inner();
+        video_share = !video_share;
+        self.video_share.set(video_share);
+        let res = self
+            .events
+            .send(UserInterfaceEvent::VideoShareChange(VideoShareChange {
+                video_share,
+            }))
+            .map_err(anyhow::Error::from);
+        crate::log!(res)
+    }
 }
 
 #[cfg(test)]
@@ -499,7 +538,7 @@ mod tests {
     use crate::file_database::{FileEntry, MockFileDatabaseTrait};
     use crate::player::MockMediaPlayerTrait;
     use crate::util::Observed;
-    use crate::MockVideoServerTrait;
+    use crate::{MockVideoProviderTrait, MockVideoServerTrait};
 
     #[tokio::test]
     async fn test_playlist_change() {
@@ -508,6 +547,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
         let video_server = MockVideoServerTrait::default();
+        let video_provider = MockVideoProviderTrait::default();
 
         let user = arcstr::literal!("max");
         let playlist = Playlist::from_iter(["video1", "video2"]);
@@ -532,6 +572,7 @@ mod tests {
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
             .video_server(Box::new(video_server))
+            .video_provider(Box::new(video_provider))
             .config(config)
             .build();
 
@@ -546,6 +587,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
         let video_server = MockVideoServerTrait::default();
+        let video_provider = MockVideoProviderTrait::default();
 
         let user = arcstr::literal!("max");
         let video = Video::from("video1");
@@ -581,6 +623,7 @@ mod tests {
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
             .video_server(Box::new(video_server))
+            .video_provider(Box::new(video_provider))
             .config(config)
             .build();
 
@@ -595,6 +638,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
         let video_server = MockVideoServerTrait::default();
+        let video_provider = MockVideoProviderTrait::default();
 
         let user = arcstr::literal!("max");
         let addr: Cow<_> = "duckduckgo.com".into();
@@ -627,6 +671,7 @@ mod tests {
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
             .video_server(Box::new(video_server))
+            .video_provider(Box::new(video_provider))
             .config(config)
             .build();
 
@@ -644,6 +689,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
         let video_server = MockVideoServerTrait::default();
+        let video_provider = MockVideoProviderTrait::default();
 
         let user = arcstr::literal!("max");
         let user_new = arcstr::literal!("moritz");
@@ -669,6 +715,7 @@ mod tests {
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
             .video_server(Box::new(video_server))
+            .video_provider(Box::new(video_provider))
             .config(config)
             .build();
 
@@ -692,6 +739,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
         let video_server = MockVideoServerTrait::default();
+        let video_provider = MockVideoProviderTrait::default();
 
         let user = arcstr::literal!("max");
         let user_msg = String::from("hello world!");
@@ -716,6 +764,7 @@ mod tests {
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
             .video_server(Box::new(video_server))
+            .video_provider(Box::new(video_provider))
             .config(config)
             .build();
 
@@ -730,6 +779,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
         let video_server = MockVideoServerTrait::default();
+        let video_provider = MockVideoProviderTrait::default();
 
         let config = Config::default();
 
@@ -742,6 +792,7 @@ mod tests {
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
             .video_server(Box::new(video_server))
+            .video_provider(Box::new(video_provider))
             .config(config)
             .build();
 
@@ -759,6 +810,7 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
         let video_server = MockVideoServerTrait::default();
+        let video_provider = MockVideoProviderTrait::default();
 
         let paths = vec!["/videos".into(), "/music".into()];
         let paths_clone = paths.clone();
@@ -778,6 +830,7 @@ mod tests {
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
             .video_server(Box::new(video_server))
+            .video_provider(Box::new(video_provider))
             .config(config)
             .build();
 
@@ -801,6 +854,7 @@ mod tests {
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user, &notify),
+            video_share: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -828,6 +882,7 @@ mod tests {
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user, &notify),
+            video_share: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -855,6 +910,7 @@ mod tests {
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user.clone(), &notify),
+            video_share: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -879,6 +935,7 @@ mod tests {
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
+            video_share: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -908,6 +965,7 @@ mod tests {
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
+            video_share: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -933,6 +991,7 @@ mod tests {
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
+            video_share: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -958,6 +1017,7 @@ mod tests {
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
+            video_share: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -984,6 +1044,7 @@ mod tests {
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
+            video_share: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1010,6 +1071,7 @@ mod tests {
             playlist: Observed::new(Playlist::default(), &notify),
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
+            video_share: Observed::new(false, &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
