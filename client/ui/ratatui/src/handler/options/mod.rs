@@ -38,8 +38,12 @@ impl EventHandler for Options {
                     )),
                     KeyCode::Char('r') => {
                         view.model.user_ready_toggle();
-                        //TODO needs to be changed once ready toggling works better
                         view.app.users_widget_state.toggle_ready();
+                        view.app.reset_overlay();
+                    }
+                    KeyCode::Char('f') => {
+                        view.model.video_share_toggle();
+                        view.app.playlist_widget_state.toggle_video_share();
                         view.app.reset_overlay();
                     }
                     KeyCode::Char('s') => {

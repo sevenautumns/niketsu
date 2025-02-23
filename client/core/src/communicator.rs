@@ -567,7 +567,8 @@ impl From<FileRequestMsg> for PlayerMessage {
 
 impl EventHandler for FileRequestMsg {
     fn handle(self, model: &mut CoreModel) {
-        todo!()
+        //TODO: need to be able to identify request after response returns
+        model.video_provider.request_chunk(&self.file, self.range);
     }
 }
 
@@ -621,6 +622,8 @@ impl From<FileResponseMsg> for OutgoingMessage {
 
 impl EventHandler for FileResponseMsg {
     fn handle(self, model: &mut CoreModel) {
-        todo!();
+        model
+            .video_server
+            .insert_chunk(&self.file, self.start, self.bytes)
     }
 }

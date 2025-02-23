@@ -484,7 +484,6 @@ impl ClientCommunicationHandler {
     }
 
     fn handle_video_status(&mut self, mut msg: VideoStatusMsg) -> Result<()> {
-        // TODO delete this
         if self.is_seeking {
             debug!("can not determine client position during seek");
             return Ok(());

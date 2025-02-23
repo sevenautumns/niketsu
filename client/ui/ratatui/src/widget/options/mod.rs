@@ -40,6 +40,7 @@ impl StatefulWidget for OptionsWidget {
             Line::from(vec![Span::raw(" m     Open media paths")]),
             Line::from(vec![Span::raw(" b     Open playlist browser")]),
             Line::from(vec![Span::raw(" r     Toggle ready")]),
+            Line::from(vec![Span::raw(" f     Toggle file request")]),
             Line::from(vec![Span::raw(" s     Start file db update")]),
             Line::from(vec![Span::raw(" p     Stop file db update")]),
         ])
