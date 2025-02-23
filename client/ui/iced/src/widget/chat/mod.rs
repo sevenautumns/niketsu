@@ -21,7 +21,7 @@ pub struct ChatWidget<'a> {
     base: Element<'a, ChatWidgetMessage>,
 }
 
-impl<'a> ChatWidget<'a> {
+impl ChatWidget<'_> {
     pub fn new(state: &ChatWidgetState) -> Self {
         let mut column = Column::new()
             .spacing(SPACING)
@@ -57,7 +57,7 @@ impl<'a> ChatWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<ChatWidgetMessage, Theme, Renderer> for ChatWidget<'a> {
+impl iced::advanced::Widget<ChatWidgetMessage, Theme, Renderer> for ChatWidget<'_> {
     fn size(&self) -> iced::Size<Length> {
         self.base.as_widget().size()
     }

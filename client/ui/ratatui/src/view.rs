@@ -352,6 +352,8 @@ impl RatatuiView {
         self.model.playing_video.on_change(|video| {
             self.app.playlist_widget_state.set_playing_video(video);
         });
+
+        //TODO: change video share?
     }
 
     fn render(f: &mut Frame, app: &mut App) {
