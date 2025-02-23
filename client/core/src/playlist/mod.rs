@@ -7,7 +7,7 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::file_database::FileStore;
+use crate::FilePathSearch;
 
 pub mod file;
 pub mod handler;
@@ -50,12 +50,9 @@ impl VideoInner {
         matches!(self, Self::Url(_))
     }
 
-    pub fn to_path_str(&self, db: &FileStore) -> Option<String> {
+    pub fn to_path_str(&self, f: &dyn FilePathSearch) -> Option<String> {
         match self {
-            VideoInner::File(name) => match db.find_file(name) {
-                Some(entry) => Some(entry.path().as_os_str().to_str()?.to_string()),
-                _ => None,
-            },
+            VideoInner::File(name) => f.get_file_path(name),
             VideoInner::Url(url) => Some(url.as_str().to_string()),
         }
     }
@@ -244,6 +241,7 @@ mod tests {
 
     use super::*;
     use crate::file_database::FileEntry;
+    use crate::FileStore;
 
     #[test]
     fn test_is_url() {

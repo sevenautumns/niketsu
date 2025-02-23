@@ -11,6 +11,7 @@ use super::playlist::Video;
 use super::{CoreModel, EventHandler};
 use crate::file_database::FileStore;
 use crate::playlist::file::PlaylistBrowser;
+use crate::FilePathSearch;
 
 pub mod wrapper;
 
@@ -29,7 +30,7 @@ pub trait MediaPlayerTrait: std::fmt::Debug + Send {
     // for this we need to move the file_loaded out of the player
     fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore);
     fn unload_video(&mut self);
-    fn maybe_reload_video(&mut self, db: &FileStore);
+    fn maybe_reload_video(&mut self, f: &dyn FilePathSearch);
     fn playing_video(&self) -> Option<Video>;
     fn video_loaded(&self) -> bool;
     async fn event(&mut self) -> MediaPlayerEvent;

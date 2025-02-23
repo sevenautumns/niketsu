@@ -6,7 +6,7 @@ use tracing::trace;
 
 use super::MediaPlayerTrait;
 use crate::playlist::Video;
-use crate::{FileStore, MediaPlayerEvent, PlayerPositionChange};
+use crate::{FilePathSearch, FileStore, MediaPlayerEvent, PlayerPositionChange};
 
 const MAXIMUM_DELAY: Duration = Duration::from_secs(20);
 
@@ -125,8 +125,8 @@ impl MediaPlayerTrait for MediaPlayerWrapper {
         self.player.unload_video()
     }
 
-    fn maybe_reload_video(&mut self, db: &FileStore) {
-        self.player.maybe_reload_video(db)
+    fn maybe_reload_video(&mut self, f: &dyn FilePathSearch) {
+        self.player.maybe_reload_video(f)
     }
 
     fn playing_video(&self) -> Option<Video> {
