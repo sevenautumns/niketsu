@@ -35,7 +35,7 @@ impl std::fmt::Debug for ElementOverlayConfig {
     }
 }
 
-impl<'a, 'b, M> iced::advanced::Overlay<M, Theme, Renderer> for ElementOverlay<'a, 'b, M> {
+impl<M> iced::advanced::Overlay<M, Theme, Renderer> for ElementOverlay<'_, '_, M> {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> iced::advanced::layout::Node {
         let padding = self.config.min_padding * 2.0;
         let limits = iced::advanced::layout::Limits::new(Size::ZERO, bounds)

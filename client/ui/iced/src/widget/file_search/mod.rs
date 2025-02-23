@@ -98,7 +98,7 @@ impl<'a> FileSearchWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSearchWidget<'a> {
+impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSearchWidget<'_> {
     fn size(&self) -> iced::Size<Length> {
         self.button.as_widget().size()
     }
