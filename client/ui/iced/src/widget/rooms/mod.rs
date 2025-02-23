@@ -18,7 +18,7 @@ pub struct RoomsWidget<'a> {
     base: Element<'a, Message>,
 }
 
-impl<'a> RoomsWidget<'a> {
+impl RoomsWidget<'_> {
     pub fn new(state: &UsersWidgetState, this_user: &UserStatus) -> Self {
         let elements: Vec<_> = state
             .users
@@ -45,7 +45,7 @@ impl<'a> RoomsWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for RoomsWidget<'a> {
+impl iced::advanced::Widget<Message, Theme, Renderer> for RoomsWidget<'_> {
     fn size(&self) -> iced::Size<Length> {
         self.base.as_widget().size()
     }

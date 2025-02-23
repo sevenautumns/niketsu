@@ -1,7 +1,7 @@
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, Poll, Waker};
 
 use anyhow::Result;
 use futures::Future;
@@ -60,12 +60,7 @@ impl FuzzySearch {
     }
 
     pub fn poll(&mut self) -> Option<Vec<FuzzyResult<FileEntry>>> {
-        // TODO replace with Waker::noop when
-        // https://github.com/rust-lang/rust/issues/98286 lands
-        const VTABLE: RawWakerVTable = RawWakerVTable::new(|_| RAW, |_| {}, |_| {}, |_| {});
-        const RAW: RawWaker = RawWaker::new(std::ptr::null(), &VTABLE);
-        let waker = unsafe { Waker::from_raw(RAW) };
-        let mut ctx = Context::from_waker(&waker);
+        let mut ctx = Context::from_waker(Waker::noop());
         let poll = Pin::new(&mut self.handle).poll(&mut ctx);
         match poll {
             Poll::Ready(Ok(res)) => Some(res),

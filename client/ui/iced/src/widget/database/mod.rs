@@ -16,7 +16,7 @@ pub struct DatabaseWidget<'a> {
     base: Element<'a, DatabaseWidgetMessage>,
 }
 
-impl<'a> DatabaseWidget<'a> {
+impl DatabaseWidget<'_> {
     pub fn new(state: &DatabaseWidgetState) -> Self {
         let finished = 1.0 == state.ratio;
         let main: Element<_, _> = match finished {
@@ -75,7 +75,7 @@ impl<'a> DatabaseWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<DatabaseWidgetMessage, Theme, Renderer> for DatabaseWidget<'a> {
+impl iced::advanced::Widget<DatabaseWidgetMessage, Theme, Renderer> for DatabaseWidget<'_> {
     fn size(&self) -> iced::Size<Length> {
         self.base.as_widget().size()
     }

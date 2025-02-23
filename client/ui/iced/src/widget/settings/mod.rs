@@ -50,7 +50,7 @@ impl<'a> SettingsWidget<'a> {
         }
     }
 
-    pub fn view(state: &'a SettingsWidgetState) -> Element<SettingsWidgetMessage> {
+    pub fn view(state: &'a SettingsWidgetState) -> Element<'a, SettingsWidgetMessage> {
         let text_size = *TEXT_SIZE.load_full();
 
         let file_paths: Vec<_> = state
@@ -179,7 +179,7 @@ impl<'a> SettingsWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<SettingsWidgetMessage, Theme, Renderer> for SettingsWidget<'a> {
+impl iced::advanced::Widget<SettingsWidgetMessage, Theme, Renderer> for SettingsWidget<'_> {
     fn size(&self) -> iced::Size<Length> {
         self.button.as_widget().size()
     }

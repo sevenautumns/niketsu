@@ -103,7 +103,7 @@ impl<'a> MainView<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<Message, Theme, Renderer> for MainView<'a> {
+impl iced::advanced::Widget<Message, Theme, Renderer> for MainView<'_> {
     fn size(&self) -> iced::Size<Length> {
         self.base.as_widget().size()
     }

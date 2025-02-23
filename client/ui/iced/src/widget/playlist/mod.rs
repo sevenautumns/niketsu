@@ -28,7 +28,7 @@ pub struct PlaylistWidget<'a> {
     state: PlaylistWidgetState,
 }
 
-impl<'a> PlaylistWidget<'a> {
+impl PlaylistWidget<'_> {
     pub fn new(state: PlaylistWidgetState, playing: Option<Video>) -> Self {
         // TODO Add context menu
 
@@ -250,7 +250,7 @@ impl<'a> PlaylistWidget<'a> {
     }
 }
 
-impl<'a> iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for PlaylistWidget<'a> {
+impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for PlaylistWidget<'_> {
     fn tag(&self) -> iced::advanced::widget::tree::Tag {
         iced::advanced::widget::tree::Tag::of::<InnerState>()
     }
@@ -576,7 +576,7 @@ pub struct InsertHint<'a> {
     pos: iced::Point,
 }
 
-impl<'a> Default for InsertHint<'a> {
+impl Default for InsertHint<'_> {
     fn default() -> Self {
         Self {
             rule: Rule::horizontal(1).style(FileRuleTheme::theme),
@@ -585,7 +585,7 @@ impl<'a> Default for InsertHint<'a> {
     }
 }
 
-impl<'a> InsertHint<'a> {
+impl InsertHint<'_> {
     pub fn new(pos: iced::Point) -> Self {
         Self {
             pos,

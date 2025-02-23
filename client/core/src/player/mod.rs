@@ -165,7 +165,7 @@ impl EventHandler for PlayerFileEnd {
         trace!("player file end");
 
         let current_video = model.playlist.get_current_video();
-        if current_video.as_ref().map_or(true, |c| c.ne(&self.0)) {
+        if current_video.as_ref().is_none_or(|c| c.ne(&self.0)) {
             warn!(
                 playlist_video = ?current_video,
                 mpv_video = ?self.0,
