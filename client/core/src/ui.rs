@@ -10,6 +10,7 @@ use enum_dispatch::enum_dispatch;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
+use tracing::instrument::WithSubscriber;
 use tracing::{trace, Level};
 
 use super::communicator::{EndpointInfo, PlaylistMsg, SelectMsg, UserMessageMsg};
@@ -23,6 +24,7 @@ use crate::playlist::file::PlaylistBrowser;
 use crate::playlist::Playlist;
 use crate::room::{RoomName, UserList};
 use crate::util::{Observed, RingBuffer};
+use crate::{FileRequestMsg, OutgoingMessage, VideoShareMsg};
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -51,6 +53,7 @@ pub enum UserInterfaceEvent {
     UserMessage,
     FileDatabaseChange,
     VideoShareChange,
+    VideoRequest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,7 +277,93 @@ pub struct VideoShareChange {
 impl EventHandler for VideoShareChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video share change message");
-        todo!();
+        // check if video sharing is active from video provider?
+        // send back info to ui?
+        // let video_share = todo!();
+        // if !video_share {
+        //     model
+        //         .communicator
+        //         .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
+        //             video: None,
+        //         }));
+        //     return;
+        // }
+
+        // let Some(current_video) = model.player.playing_video() else {
+        //     model.ui.player_message(
+        //         PlayerMessageInner {
+        //             message: "Can not provide video if none is loaded".into(),
+        //             source: MessageSource::Internal,
+        //             level: MessageLevel::Error,
+        //             timestamp: Local::now(),
+        //         }
+        //         .into(),
+        //     );
+        //     return;
+        // };
+
+        // if model.database.find_file(current_video.as_str()).is_none() {
+        //     model.ui.player_message(
+        //         PlayerMessageInner {
+        //             message: "Can not provide current video. Not found in file database".into(),
+        //             source: MessageSource::Internal,
+        //             level: MessageLevel::Error,
+        //             timestamp: Local::now(),
+        //         }
+        //         .into(),
+        //     );
+        //     return;
+        // };
+
+        // model
+        //     .communicator
+        //     .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
+        //         video: Some(current_video),
+        //     }))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoRequest {}
+
+impl EventHandler for VideoRequest {
+    fn handle(self, model: &mut CoreModel) {
+        trace!("video file request message");
+        let actor = model.config.username.clone();
+
+        let Some(current_video) = model.player.playing_video() else {
+            model.ui.player_message(
+                PlayerMessageInner {
+                    message: "Can not request video if none is loaded".into(),
+                    source: MessageSource::Internal,
+                    level: MessageLevel::Error,
+                    timestamp: Local::now(),
+                }
+                .into(),
+            );
+            return;
+        };
+
+        if model.database.find_file(current_video.as_str()).is_some() {
+            model.ui.player_message(
+                PlayerMessageInner {
+                    message: "Video is available in file database. Video is not requested".into(),
+                    source: MessageSource::Internal,
+                    level: MessageLevel::Error,
+                    timestamp: Local::now(),
+                }
+                .into(),
+            );
+            return;
+        };
+
+        model
+            .communicator
+            .send(OutgoingMessage::FileRequest(FileRequestMsg {
+                uuid: uuid::Uuid::new_v4(),
+                actor,
+                video: current_video,
+            }))
     }
 }
 
@@ -509,14 +598,24 @@ impl UiModel {
 
     pub fn video_share_toggle(&self) {
         trace!("toggle video sharing");
-        let mut video_share = self.video_share.get_inner();
-        video_share = !video_share;
-        self.video_share.set(video_share);
+        //TODO: get video share info from core?
+        // let mut video_share = self.video_share.get_inner();
+        // video_share = !video_share;
+        // self.video_share.set(video_share);
+        // let res = self
+        //     .events
+        //     .send(UserInterfaceEvent::VideoShareChange(VideoShareChange {
+        //         video_share,
+        //     }))
+        //     .map_err(anyhow::Error::from);
+        // crate::log!(res)
+    }
+
+    pub fn video_file_request(&self) {
+        trace!("send video file request");
         let res = self
             .events
-            .send(UserInterfaceEvent::VideoShareChange(VideoShareChange {
-                video_share,
-            }))
+            .send(UserInterfaceEvent::VideoRequest(VideoRequest {}))
             .map_err(anyhow::Error::from);
         crate::log!(res)
     }

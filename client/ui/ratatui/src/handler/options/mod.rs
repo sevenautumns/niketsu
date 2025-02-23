@@ -46,6 +46,10 @@ impl EventHandler for Options {
                         view.app.playlist_widget_state.toggle_video_share();
                         view.app.reset_overlay();
                     }
+                    KeyCode::Char('x') => {
+                        view.model.video_file_request();
+                        view.app.reset_overlay();
+                    }
                     KeyCode::Char('s') => {
                         view.model.start_db_update();
                         view.app.reset_overlay();
