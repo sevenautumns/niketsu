@@ -484,12 +484,22 @@ impl ClientCommunicationHandler {
         &mut self,
         msg: NiketsuMessage,
         channel: ResponseChannel<MessageResponse>,
+        peer_id: PeerId,
     ) -> Result<()> {
+        if peer_id == self.host {
+            self.message_sender.send(msg.clone())?;
+            return self.swarm.send_response(
+                channel,
+                MessageResponse(Response::Status(StatusResponse::Ok)),
+            );
+        }
+
         match msg {
             NiketsuMessage::ChunkRequest(ref cr) => {
                 debug!("Received file request");
                 self.pending_responses.insert(cr.uuid, channel);
                 self.message_sender.send(msg.clone())?;
+                return Ok(());
             }
             NiketsuMessage::ChunkResponse(_) => {
                 debug!("Received chunk response");
@@ -512,7 +522,10 @@ impl ClientCommunicationHandler {
             }
         }
 
-        Ok(())
+        self.swarm.send_response(
+            channel,
+            MessageResponse(Response::Status(StatusResponse::Ok)),
+        )
     }
 
     fn handle_video_status(&mut self, mut msg: VideoStatusMsg) -> Result<()> {
@@ -617,12 +630,12 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 }
             }
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(
-                request_response::Event::Message { message, .. },
+                request_response::Event::Message { message, peer },
             )) => match message {
                 request_response::Message::Request {
                     request, channel, ..
                 } => {
-                    if let Err(error) = self.handle_incoming_message(request.0, channel) {
+                    if let Err(error) = self.handle_incoming_message(request.0, channel, peer) {
                         error!(%error, "Failed to handle incoming message");
                     }
                 }
