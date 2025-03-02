@@ -382,6 +382,7 @@ impl From<SelectMsg> for PlayerMessage {
     }
 }
 
+// TODO: switch off video sharing ...
 impl EventHandler for SelectMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(select = ?self, "received");
@@ -539,7 +540,7 @@ impl From<UserStatus> for OutgoingMessage {
 #[serde(rename_all = "camelCase")]
 pub struct ChunkRequestMsg {
     pub uuid: uuid::Uuid,
-    pub actor: ArcStr,
+    pub actor: Option<ArcStr>,
     pub video: Video,
     pub range: RangeInclusive<u64>,
 }
@@ -551,7 +552,7 @@ impl EventHandler for ChunkRequestMsg {
         let len = self.range.end() - self.range.start() + 1;
         model
             .video_provider
-            .request_chunk(self.video.as_str(), start, len);
+            .request_chunk(self.uuid, self.video.as_str(), start, len);
     }
 }
 
@@ -565,11 +566,10 @@ impl From<ChunkRequestMsg> for OutgoingMessage {
 #[serde(rename_all = "camelCase")]
 pub struct ChunkResponseMsg {
     pub uuid: uuid::Uuid,
-    pub actor: ArcStr,
+    pub actor: Option<ArcStr>,
     pub video: Video,
     pub start: u64,
     pub bytes: Vec<u8>,
-    pub size: usize,
 }
 
 impl From<ChunkResponseMsg> for OutgoingMessage {
@@ -599,7 +599,7 @@ impl From<FileRequestMsg> for PlayerMessage {
         let actor = value.actor;
         let video = value.video;
         PlayerMessageInner {
-            message: format!("Core received incoming video request for {video:?} for {actor:?}"),
+            message: format!("Received video request for {video:?} for {actor:?}"),
             source: MessageSource::UserAction(actor),
             level: MessageLevel::Normal,
             timestamp: Local::now(),
@@ -616,9 +616,48 @@ impl From<FileRequestMsg> for OutgoingMessage {
 
 impl EventHandler for FileRequestMsg {
     fn handle(self, model: &mut CoreModel) {
-        // start video provider?
-        model.ui.player_message(self.into());
-        todo!()
+        trace!("received file request");
+        model.ui.player_message(self.clone().into());
+        let Some(file_name) = model.video_provider.file_name() else {
+            model
+                .communicator
+                .send(OutgoingMessage::UserMessage(UserMessageMsg {
+                    actor: arcstr::literal!("server message"),
+                    message: "File provider is not ready yet. Try again later".into(),
+                }));
+            return;
+        };
+
+        if !file_name.as_str().eq(self.video.as_str()) {
+            model
+                .communicator
+                .send(OutgoingMessage::UserMessage(UserMessageMsg {
+                    actor: arcstr::literal!("server message"),
+                    message: "File provider is currently providing another file. Try again later"
+                        .into(),
+                }));
+            return;
+        }
+
+        let Some(size) = model.video_provider.size() else {
+            model
+                .communicator
+                .send(OutgoingMessage::UserMessage(UserMessageMsg {
+                    actor: arcstr::literal!("server message"),
+                    message: "File provider has no info on the file. Try again later".into(),
+                }));
+            return;
+        };
+
+        let response = FileResponseMsg {
+            uuid: self.uuid.clone(),
+            actor: self.actor.clone(),
+            video: file_name.as_str().into(),
+            size: size as usize,
+        };
+        model
+            .communicator
+            .send(OutgoingMessage::FileResponse(response));
     }
 }
 
@@ -656,8 +695,10 @@ impl From<FileResponseMsg> for OutgoingMessage {
 
 impl EventHandler for FileResponseMsg {
     fn handle(self, model: &mut CoreModel) {
-        // start video server?
-        todo!()
+        trace!("received file response message");
+        model
+            .video_server
+            .start_server(ArcStr::from(self.video.as_str()), self.size as u64);
     }
 }
 

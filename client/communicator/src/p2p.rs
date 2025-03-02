@@ -32,7 +32,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha256::digest;
 use tokio::spawn;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::messages::NiketsuMessage;
 use crate::CONNECT_TIMEOUT;
@@ -89,16 +89,6 @@ impl InitRequest {
 pub(crate) struct InitResponse {
     status: StatusResponse,
     peer_id: Option<PeerId>, // peer id of room if found
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct FileRequest {
-    filename: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct FileResponse {
-    file: Vec<u8>,
 }
 
 #[async_trait]
@@ -418,7 +408,8 @@ struct ClientCommunicationHandler {
     delay: Duration,
     current_requests: HashMap<QueryId, FileRequestMsg>,
     pending_request_provider: Option<PeerId>,
-    pending_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
+    pending_chunk_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
+    pending_file_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
     current_response: Option<Video>,
 }
 
@@ -451,7 +442,8 @@ impl ClientCommunicationHandler {
             is_seeking: false,
             delay: Duration::default(),
             current_requests: Default::default(),
-            pending_responses: Default::default(),
+            pending_chunk_responses: Default::default(),
+            pending_file_responses: Default::default(),
             pending_request_provider: None,
             current_response: None,
         }
@@ -487,6 +479,10 @@ impl ClientCommunicationHandler {
         peer_id: PeerId,
     ) -> Result<()> {
         if peer_id == self.host {
+            if let NiketsuMessage::ChunkRequest(ref cr) = msg {
+                self.pending_chunk_responses.insert(cr.uuid, channel);
+                return Ok(());
+            }
             self.message_sender.send(msg.clone())?;
             return self.swarm.send_response(
                 channel,
@@ -497,7 +493,7 @@ impl ClientCommunicationHandler {
         match msg {
             NiketsuMessage::ChunkRequest(ref cr) => {
                 debug!("Received file request");
-                self.pending_responses.insert(cr.uuid, channel);
+                self.pending_chunk_responses.insert(cr.uuid, channel);
                 self.message_sender.send(msg.clone())?;
                 return Ok(());
             }
@@ -509,9 +505,11 @@ impl ClientCommunicationHandler {
                 debug!("Received file response");
                 self.message_sender.send(msg.clone())?;
             }
-            NiketsuMessage::FileRequest(_) => {
+            NiketsuMessage::FileRequest(ref cr) => {
                 debug!("Received file request");
+                self.pending_file_responses.insert(cr.uuid, channel);
                 self.message_sender.send(msg.clone())?;
+                return Ok(());
             }
             _ => {
                 self.swarm.send_response(
@@ -526,6 +524,28 @@ impl ClientCommunicationHandler {
             channel,
             MessageResponse(Response::Status(StatusResponse::Ok)),
         )
+    }
+
+    fn handle_incoming_response(&mut self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
+        match msg.0 {
+            Response::Status(status_response) => {
+                debug!(?status_response, "Received status response")
+            }
+            Response::Message(niketsu_message) => match niketsu_message {
+                NiketsuMessage::ChunkResponse(_) => {
+                    debug!("Received chunk response");
+                    self.message_sender.send(niketsu_message.clone())?;
+                }
+                NiketsuMessage::FileResponse(_) => {
+                    debug!("Received file response");
+                    self.message_sender.send(niketsu_message.clone())?;
+                }
+                _ => {
+                    bail!("Did not expect direct message {niketsu_message:?} from {peer_id:?}");
+                }
+            },
+        }
+        Ok(())
     }
 
     fn handle_video_status(&mut self, mut msg: VideoStatusMsg) -> Result<()> {
@@ -550,7 +570,7 @@ impl ClientCommunicationHandler {
         if let Some(video) = self.current_response.clone() {
             self.swarm.stop_providing(video);
         }
-        self.pending_responses = Default::default();
+        self.pending_chunk_responses = Default::default();
         self.current_response = None;
         self.current_requests = Default::default();
         self.pending_request_provider = None;
@@ -635,12 +655,17 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 request_response::Message::Request {
                     request, channel, ..
                 } => {
-                    if let Err(error) = self.handle_incoming_message(request.0, channel, peer) {
+                    let req = request.0;
+                    trace!(?req, "Received request");
+                    if let Err(error) = self.handle_incoming_message(req, channel, peer) {
                         error!(%error, "Failed to handle incoming message");
                     }
                 }
                 request_response::Message::Response { response, .. } => {
                     debug!(?response, "Received response");
+                    if let Err(error) = self.handle_incoming_response(response, peer) {
+                        error!(%error, "Failed to handle incoming message");
+                    }
                 }
             },
             SwarmEvent::ConnectionEstablished {
@@ -798,12 +823,13 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 return Ok(());
             }
             NiketsuMessage::ChunkResponse(cr) => {
-                if let Some(channel) = self.pending_responses.remove(&cr.uuid) {
+                if let Some(channel) = self.pending_chunk_responses.remove(&cr.uuid) {
                     let msg = NiketsuMessage::ChunkResponse(cr);
                     self.swarm
                         .send_response(channel, MessageResponse(Response::Message(msg)))?;
+                    return Ok(());
                 }
-                return Ok(());
+                bail!("No access to response channel for chunk response");
             }
             NiketsuMessage::FileRequest(fr) => {
                 let id = self
@@ -816,7 +842,7 @@ impl CommunicationHandler for ClientCommunicationHandler {
                 return Ok(());
             }
             NiketsuMessage::FileResponse(ref fr) => {
-                if let Some(channel) = self.pending_responses.remove(&fr.uuid) {
+                if let Some(channel) = self.pending_file_responses.remove(&fr.uuid) {
                     self.swarm
                         .send_response(channel, MessageResponse(Response::Message(msg)))?;
                 } else {
@@ -923,7 +949,8 @@ struct HostCommunicationHandler {
     users: HashMap<PeerId, UserStatus>,
     current_request: HashMap<QueryId, FileRequestMsg>,
     pending_request_provider: Option<PeerId>,
-    pending_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
+    pending_chunk_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
+    pending_file_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
     current_response: Option<Video>,
 }
 
@@ -980,7 +1007,8 @@ impl HostCommunicationHandler {
             select,
             current_request: Default::default(),
             pending_request_provider: None,
-            pending_responses: Default::default(),
+            pending_chunk_responses: Default::default(),
+            pending_file_responses: Default::default(),
             current_response: None,
         }
     }
@@ -1133,9 +1161,9 @@ impl HostCommunicationHandler {
 
     fn handle_incoming_message(
         &mut self,
-        peer_id: PeerId,
         mut msg: NiketsuMessage,
         channel: ResponseChannel<MessageResponse>,
+        peer_id: PeerId,
     ) -> Result<()> {
         match msg.clone() {
             NiketsuMessage::Status(status) => {
@@ -1153,7 +1181,7 @@ impl HostCommunicationHandler {
             }
             NiketsuMessage::ChunkRequest(cr) => {
                 debug!("Received file request");
-                self.pending_responses.insert(cr.uuid, channel);
+                self.pending_chunk_responses.insert(cr.uuid, channel);
                 self.message_sender.send(msg.clone())?;
                 return Ok(());
             }
@@ -1165,9 +1193,11 @@ impl HostCommunicationHandler {
                 debug!("Received file response");
                 self.message_sender.send(msg.clone())?;
             }
-            NiketsuMessage::FileRequest(_) => {
+            NiketsuMessage::FileRequest(cr) => {
                 debug!("Received file request");
+                self.pending_file_responses.insert(cr.uuid, channel);
                 self.message_sender.send(msg.clone())?;
+                return Ok(());
             }
             _ => {
                 bail!("Host received unexpected direct message: {msg:?}");
@@ -1178,6 +1208,28 @@ impl HostCommunicationHandler {
             channel,
             MessageResponse(Response::Status(StatusResponse::Ok)),
         )
+    }
+
+    fn handle_incoming_response(&mut self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
+        match msg.0 {
+            Response::Status(status_response) => {
+                debug!(?status_response, "Received status response")
+            }
+            Response::Message(niketsu_message) => match niketsu_message {
+                NiketsuMessage::ChunkResponse(_) => {
+                    debug!("Received chunk response");
+                    self.message_sender.send(niketsu_message.clone())?;
+                }
+                NiketsuMessage::FileResponse(_) => {
+                    debug!("Received file response");
+                    self.message_sender.send(niketsu_message.clone())?;
+                }
+                _ => {
+                    bail!("Did not expect direct message {niketsu_message:?} from {peer_id:?}");
+                }
+            },
+        }
+        Ok(())
     }
 
     fn handle_broadcast(&mut self, msg: Vec<u8>, peer_id: &PeerId) -> Result<()> {
@@ -1209,7 +1261,7 @@ impl HostCommunicationHandler {
         if let Some(video) = self.current_response.clone() {
             self.swarm.stop_providing(video);
         }
-        self.pending_responses = Default::default();
+        self.pending_chunk_responses = Default::default();
         self.current_response = None;
         self.current_request = Default::default();
         self.pending_request_provider = None;
@@ -1266,12 +1318,17 @@ impl CommunicationHandler for HostCommunicationHandler {
                 request_response::Message::Request {
                     request, channel, ..
                 } => {
-                    if let Err(error) = self.handle_incoming_message(peer, request.0, channel) {
+                    let req = request.0;
+                    trace!(?req, "Received request");
+                    if let Err(error) = self.handle_incoming_message(req, channel, peer) {
                         error!(%error, "Failed to handle incoming message");
                     }
                 }
                 request_response::Message::Response { response, .. } => {
                     debug!(?response, "Received response");
+                    if let Err(error) = self.handle_incoming_response(response, peer) {
+                        error!(%error, "Failed to handle incoming message");
+                    }
                 }
             },
             SwarmEvent::IncomingConnection { local_addr, .. } => {
@@ -1408,7 +1465,7 @@ impl CommunicationHandler for HostCommunicationHandler {
                 return Ok(());
             }
             NiketsuMessage::ChunkResponse(cr) => {
-                if let Some(channel) = self.pending_responses.remove(&cr.uuid) {
+                if let Some(channel) = self.pending_chunk_responses.remove(&cr.uuid) {
                     let msg = NiketsuMessage::ChunkResponse(cr);
                     self.swarm
                         .send_response(channel, MessageResponse(Response::Message(msg)))?;
@@ -1426,7 +1483,7 @@ impl CommunicationHandler for HostCommunicationHandler {
                 return Ok(());
             }
             NiketsuMessage::FileResponse(ref fr) => {
-                if let Some(channel) = self.pending_responses.remove(&fr.uuid) {
+                if let Some(channel) = self.pending_file_responses.remove(&fr.uuid) {
                     self.swarm
                         .send_response(channel, MessageResponse(Response::Message(msg)))?;
                 } else {

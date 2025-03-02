@@ -353,7 +353,9 @@ impl RatatuiView {
             self.app.playlist_widget_state.set_playing_video(video);
         });
 
-        //TODO: change video share?
+        self.model.video_share.on_change(|sharing| {
+            self.app.playlist_widget_state.set_video_share(sharing);
+        });
     }
 
     fn render(f: &mut Frame, app: &mut App) {

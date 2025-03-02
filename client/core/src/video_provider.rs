@@ -9,14 +9,19 @@ use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender};
 use tracing::{trace, warn};
 const CHUNK_SIZE: usize = 512_000;
 
-use crate::{CoreModel, EventHandler, FileEntry};
+use crate::{CoreModel, EventHandler, FileEntry, OutgoingMessage, VideoShareMsg};
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait VideoProviderTrait: std::fmt::Debug + Send {
     fn start_providing(&mut self, file: FileEntry);
     fn stop_providing(&mut self);
-    fn request_chunk(&mut self, file_name: &str, start: u64, len: u64);
+    fn request_chunk(&mut self, uuid: uuid::Uuid, file_name: &str, start: u64, len: u64);
+    fn set_sharing(&mut self, sharing: bool);
+    fn size(&self) -> Option<u64>;
+    fn sharing(&self) -> bool;
+    fn file_name(&self) -> Option<ArcStr>;
+    fn update(&mut self, file_name: ArcStr, size: u64);
     async fn event(&mut self) -> VideoProviderEvent;
 }
 
@@ -29,15 +34,26 @@ pub enum VideoProviderEvent {
 
 #[derive(Debug, Clone)]
 pub struct ChunkResponse {
+    pub uuid: uuid::Uuid,
     pub file_name: ArcStr,
     pub start: u64,
     pub bytes: Vec<u8>,
 }
 
 impl EventHandler for ChunkResponse {
-    fn handle(self, _model: &mut CoreModel) {
+    fn handle(self, model: &mut CoreModel) {
         trace!("video provider chunk response");
-        todo!()
+        model
+            .communicator
+            .send(crate::OutgoingMessage::ChunkResponse(
+                crate::ChunkResponseMsg {
+                    uuid: self.uuid,
+                    actor: Some(model.config.username.clone()),
+                    video: self.file_name.as_str().into(),
+                    start: self.start,
+                    bytes: self.bytes,
+                },
+            ));
     }
 }
 
@@ -48,15 +64,26 @@ pub struct FileReady {
 }
 
 impl EventHandler for FileReady {
-    fn handle(self, _model: &mut CoreModel) {
+    fn handle(self, model: &mut CoreModel) {
         trace!("video provider ready");
-        todo!()
+        model
+            .video_provider
+            .update(self.file_name.clone(), self.size);
+        model.ui.video_share(true);
+        model
+            .communicator
+            .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
+                video: Some(self.file_name.as_str().into()),
+            }))
     }
 }
 
 #[derive(Debug, Default)]
 pub struct VideoProvider {
     file_handle: Option<FileHandle>,
+    file_name: Option<ArcStr>,
+    sharing: bool,
+    size: Option<u64>,
 }
 
 #[async_trait]
@@ -71,14 +98,35 @@ impl VideoProviderTrait for VideoProvider {
         self.file_handle.take();
     }
 
-    fn request_chunk(&mut self, file_name: &str, start: u64, len: u64) {
+    fn request_chunk(&mut self, uuid: uuid::Uuid, file_name: &str, start: u64, len: u64) {
         let Some(handle) = self.file_handle.as_mut() else {
             return;
         };
         if !handle.file_name.eq(file_name) {
             return;
         }
-        handle.send(Request { start, len })
+        handle.send(Request { uuid, start, len })
+    }
+
+    fn set_sharing(&mut self, sharing: bool) {
+        self.sharing = sharing;
+    }
+
+    fn size(&self) -> Option<u64> {
+        self.size
+    }
+
+    fn sharing(&self) -> bool {
+        self.sharing
+    }
+
+    fn file_name(&self) -> Option<ArcStr> {
+        self.file_name.clone()
+    }
+
+    fn update(&mut self, file_name: ArcStr, size: u64) {
+        self.file_name = Some(file_name);
+        self.size = Some(size);
     }
 
     async fn event(&mut self) -> VideoProviderEvent {
@@ -90,11 +138,13 @@ impl VideoProviderTrait for VideoProvider {
 }
 
 struct Request {
+    uuid: uuid::Uuid,
     start: u64,
     len: u64,
 }
 
 struct Response {
+    uuid: uuid::Uuid,
     start: u64,
     bytes: Vec<u8>,
 }
@@ -141,7 +191,8 @@ impl FileServer {
             Ok(_) => {}
         }
         let start = request.start;
-        Response { start, bytes }
+        let uuid = request.uuid;
+        Response { uuid, start, bytes }
     }
 }
 
@@ -164,8 +215,9 @@ impl FileHandle {
             }
             // TODO what to do if we receive `None` here
             // TODO this can only happen if the FileServer died
-            Some(Response { start, bytes }) = self.resp_rx.recv() => {
+            Some(Response { uuid, start, bytes }) = self.resp_rx.recv() => {
                 ChunkResponse {
+                    uuid,
                     file_name: self.file_name.clone(),
                     start,
                     bytes,

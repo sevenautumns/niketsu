@@ -187,12 +187,29 @@ impl TcpServer {
         }
     }
 
+    async fn get_listener(ports: RangeInclusive<u16>) -> Option<TcpListener> {
+        let mut listener = None;
+
+        for port in ports {
+            let addr = format!("127.0.0.1:{}", port);
+            match TcpListener::bind(&addr).await {
+                Ok(l) => {
+                    listener = Some(l);
+                    break;
+                }
+                Err(_) => {}
+            }
+        }
+
+        listener
+    }
+
     fn server_loop(self) -> TcpServerHandle {
         let (_terminator, mut rx) = tokio::sync::mpsc::channel(1);
         let (addr_tx, addr_rx) = tokio::sync::mpsc::channel(1);
         let cache = self.cache.clone();
         tokio::spawn(async move {
-            let listener = TcpListener::bind("127.0.0.1").await.unwrap();
+            let listener = TcpServer::get_listener(6600..=6700).await.unwrap();
 
             let addr = listener.local_addr().unwrap();
             addr_tx.send(addr).await.unwrap();
