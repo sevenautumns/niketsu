@@ -10,7 +10,6 @@ use enum_dispatch::enum_dispatch;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tokio::sync::Notify;
-use tracing::instrument::WithSubscriber;
 use tracing::{trace, Level};
 
 use super::communicator::{EndpointInfo, PlaylistMsg, SelectMsg, UserMessageMsg};
@@ -271,55 +270,52 @@ impl EventHandler for FileDatabaseChange {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoShareChange {
-    pub video_share: bool,
+    // pub video_share: bool,
 }
 
 impl EventHandler for VideoShareChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video share change message");
-        // check if video sharing is active from video provider?
-        // send back info to ui?
-        // let video_share = todo!();
-        // if !video_share {
-        //     model
-        //         .communicator
-        //         .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
-        //             video: None,
-        //         }));
-        //     return;
-        // }
+        if model.video_provider.sharing() {
+            model
+                .communicator
+                .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
+                    video: None,
+                }));
+            model.video_provider.set_sharing(false);
+            model.ui.video_share(false);
+            return;
+        }
 
-        // let Some(current_video) = model.player.playing_video() else {
-        //     model.ui.player_message(
-        //         PlayerMessageInner {
-        //             message: "Can not provide video if none is loaded".into(),
-        //             source: MessageSource::Internal,
-        //             level: MessageLevel::Error,
-        //             timestamp: Local::now(),
-        //         }
-        //         .into(),
-        //     );
-        //     return;
-        // };
+        let Some(current_video) = model.player.playing_video() else {
+            model.ui.player_message(
+                PlayerMessageInner {
+                    message: "Can not provide video if none is loaded".into(),
+                    source: MessageSource::Internal,
+                    level: MessageLevel::Error,
+                    timestamp: Local::now(),
+                }
+                .into(),
+            );
+            return;
+        };
 
-        // if model.database.find_file(current_video.as_str()).is_none() {
-        //     model.ui.player_message(
-        //         PlayerMessageInner {
-        //             message: "Can not provide current video. Not found in file database".into(),
-        //             source: MessageSource::Internal,
-        //             level: MessageLevel::Error,
-        //             timestamp: Local::now(),
-        //         }
-        //         .into(),
-        //     );
-        //     return;
-        // };
+        let Some(file) = model.database.find_file(current_video.as_str()) else {
+            model.ui.player_message(
+                PlayerMessageInner {
+                    message: "Can not provide current video. Not found in file database".into(),
+                    source: MessageSource::Internal,
+                    level: MessageLevel::Error,
+                    timestamp: Local::now(),
+                }
+                .into(),
+            );
+            return;
+        };
 
-        // model
-        //     .communicator
-        //     .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
-        //         video: Some(current_video),
-        //     }))
+        model.video_provider.set_sharing(true);
+        model.ui.video_share(true);
+        model.video_provider.start_providing(file);
     }
 }
 
@@ -591,24 +587,18 @@ impl UiModel {
         crate::log!(res)
     }
 
-    pub fn start_server(&self) {
-        trace!("start server");
-        // self.events.send(UserInterfaceEvent::)
-    }
-
     pub fn video_share_toggle(&self) {
         trace!("toggle video sharing");
-        //TODO: get video share info from core?
         // let mut video_share = self.video_share.get_inner();
         // video_share = !video_share;
         // self.video_share.set(video_share);
-        // let res = self
-        //     .events
-        //     .send(UserInterfaceEvent::VideoShareChange(VideoShareChange {
-        //         video_share,
-        //     }))
-        //     .map_err(anyhow::Error::from);
-        // crate::log!(res)
+        let res = self
+            .events
+            .send(UserInterfaceEvent::VideoShareChange(VideoShareChange {
+                // video_share,
+            }))
+            .map_err(anyhow::Error::from);
+        crate::log!(res)
     }
 
     pub fn video_file_request(&self) {

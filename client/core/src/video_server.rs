@@ -1,11 +1,13 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, ops::RangeInclusive};
 
 use arcstr::ArcStr;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use tracing::trace;
 
-use crate::{CoreModel, EventHandler, FilePathSearch, MediaPlayerTrait};
+use crate::{
+    ChunkRequestMsg, CoreModel, EventHandler, FilePathSearch, MediaPlayerTrait, OutgoingMessage,
+};
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -33,9 +35,16 @@ pub struct ChunkRequest {
 }
 
 impl EventHandler for ChunkRequest {
-    fn handle(self, _model: &mut CoreModel) {
+    fn handle(self, model: &mut CoreModel) {
         trace!("video server chunk request");
-        todo!()
+        model
+            .communicator
+            .send(OutgoingMessage::ChunkRequest(ChunkRequestMsg {
+                uuid: uuid::Uuid::new_v4(),
+                actor: Some(model.config.username.clone()),
+                video: self.file_name.as_str().into(),
+                range: RangeInclusive::new(self.start, self.start + self.length),
+            }))
     }
 }
 

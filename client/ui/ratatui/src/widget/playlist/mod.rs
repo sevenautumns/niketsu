@@ -66,8 +66,8 @@ impl PlaylistWidgetState {
         self.clipboard.clone()
     }
 
-    pub fn toggle_video_share(&mut self) {
-        self.video_share = !self.video_share
+    pub fn set_video_share(&mut self, sharing: bool) {
+        self.video_share = sharing
     }
 
     delegate! {
