@@ -9,7 +9,7 @@ use enum_dispatch::enum_dispatch;
 use multiaddr::Multiaddr;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
-use tracing::trace;
+use tracing::{debug, trace};
 
 use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
@@ -382,7 +382,6 @@ impl From<SelectMsg> for PlayerMessage {
     }
 }
 
-// TODO: switch off video sharing ...
 impl EventHandler for SelectMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(select = ?self, "received");
@@ -390,9 +389,29 @@ impl EventHandler for SelectMsg {
         if let Some(playlist_video) = playlist_video.clone() {
             model.playlist.select_playing(&playlist_video);
             PlaylistBrowser::save(&model.config.room, &model.playlist);
-            model
-                .player
-                .load_video(playlist_video, self.position, model.database.all_files());
+            model.player.load_video(
+                playlist_video.clone(),
+                self.position,
+                model.database.all_files(),
+            );
+            if model.config.auto_share && model.video_provider.sharing() {
+                if let Some(file) = model.database.find_file(playlist_video.as_str()) {
+                    model.video_provider.start_providing(file);
+                    model
+                        .communicator
+                        .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
+                            video: Some(playlist_video),
+                        }));
+                }
+            } else {
+                model
+                    .communicator
+                    .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
+                        video: None,
+                    }));
+                model.video_provider.stop_providing();
+                model.ui.video_share(false);
+            }
         } else {
             model.playlist.unload_playing();
             PlaylistBrowser::save(&model.config.room, &model.playlist);
@@ -547,7 +566,6 @@ pub struct ChunkRequestMsg {
 
 impl EventHandler for ChunkRequestMsg {
     fn handle(self, model: &mut CoreModel) {
-        //TODO: need to be able to identify request after response returns
         let start = *self.range.start();
         let len = self.range.end() - self.range.start() + 1;
         model
@@ -618,17 +636,26 @@ impl EventHandler for FileRequestMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received file request");
         model.ui.player_message(self.clone().into());
+        let failed_response = OutgoingMessage::FileResponse(FileResponseMsg {
+            uuid: self.uuid,
+            actor: model.config.username.clone(),
+            video: None,
+            size: 0,
+        });
+
         let Some(file_name) = model.video_provider.file_name() else {
+            model.communicator.send(failed_response);
             model
                 .communicator
                 .send(OutgoingMessage::UserMessage(UserMessageMsg {
                     actor: arcstr::literal!("server message"),
-                    message: "File provider is not ready yet. Try again later".into(),
+                    message: "File provider is currently not sharing. Try again later".into(),
                 }));
             return;
         };
 
         if !file_name.as_str().eq(self.video.as_str()) {
+            model.communicator.send(failed_response);
             model
                 .communicator
                 .send(OutgoingMessage::UserMessage(UserMessageMsg {
@@ -640,6 +667,7 @@ impl EventHandler for FileRequestMsg {
         }
 
         let Some(size) = model.video_provider.size() else {
+            model.communicator.send(failed_response);
             model
                 .communicator
                 .send(OutgoingMessage::UserMessage(UserMessageMsg {
@@ -649,15 +677,15 @@ impl EventHandler for FileRequestMsg {
             return;
         };
 
-        let response = FileResponseMsg {
+        let success_response = FileResponseMsg {
             uuid: self.uuid.clone(),
-            actor: self.actor.clone(),
-            video: file_name.as_str().into(),
+            actor: model.config.username.clone(),
+            video: Some(file_name.as_str().into()),
             size: size as usize,
         };
         model
             .communicator
-            .send(OutgoingMessage::FileResponse(response));
+            .send(OutgoingMessage::FileResponse(success_response));
     }
 }
 
@@ -666,7 +694,7 @@ impl EventHandler for FileRequestMsg {
 pub struct FileResponseMsg {
     pub uuid: uuid::Uuid,
     pub actor: ArcStr,
-    pub video: Video,
+    pub video: Option<Video>,
     pub size: usize,
 }
 
@@ -674,16 +702,13 @@ impl From<FileResponseMsg> for PlayerMessage {
     fn from(value: FileResponseMsg) -> Self {
         let actor = value.actor;
         let video = value.video;
-        let size = value.size;
         PlayerMessageInner {
-                message: format!(
-                    "Core received incoming video response for {video:?} with size {size:?} for {actor:?}"
-                ),
-                source: MessageSource::UserAction(actor),
-                level: MessageLevel::Debug,
-                timestamp: Local::now(),
-            }
-            .into()
+            message: format!("Received video response for {video:?} from {actor:?}"),
+            source: MessageSource::UserAction(actor),
+            level: MessageLevel::Debug,
+            timestamp: Local::now(),
+        }
+        .into()
     }
 }
 
@@ -696,9 +721,15 @@ impl From<FileResponseMsg> for OutgoingMessage {
 impl EventHandler for FileResponseMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received file response message");
-        model
-            .video_server
-            .start_server(ArcStr::from(self.video.as_str()), self.size as u64);
+        model.ui.player_message(self.clone().into());
+        match self.video {
+            Some(video) => {
+                model
+                    .video_server
+                    .start_server(ArcStr::from(video.as_str()), self.size as u64);
+            }
+            None => debug!("file response contains no video"),
+        }
     }
 }
 

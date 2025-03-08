@@ -282,7 +282,7 @@ impl EventHandler for VideoShareChange {
                 .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
                     video: None,
                 }));
-            model.video_provider.set_sharing(false);
+            model.video_provider.stop_providing();
             model.ui.video_share(false);
             return;
         }
@@ -313,9 +313,8 @@ impl EventHandler for VideoShareChange {
             return;
         };
 
-        model.video_provider.set_sharing(true);
-        model.ui.video_share(true);
         model.video_provider.start_providing(file);
+        model.ui.video_share(true);
     }
 }
 

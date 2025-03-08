@@ -17,7 +17,6 @@ pub trait VideoProviderTrait: std::fmt::Debug + Send {
     fn start_providing(&mut self, file: FileEntry);
     fn stop_providing(&mut self);
     fn request_chunk(&mut self, uuid: uuid::Uuid, file_name: &str, start: u64, len: u64);
-    fn set_sharing(&mut self, sharing: bool);
     fn size(&self) -> Option<u64>;
     fn sharing(&self) -> bool;
     fn file_name(&self) -> Option<ArcStr>;
@@ -92,10 +91,14 @@ impl VideoProviderTrait for VideoProvider {
         self.stop_providing();
         let handle = FileServer::run(file);
         self.file_handle = Some(handle);
+        self.sharing = true;
     }
 
     fn stop_providing(&mut self) {
         self.file_handle.take();
+        self.sharing = false;
+        self.size = None;
+        self.file_name = None;
     }
 
     fn request_chunk(&mut self, uuid: uuid::Uuid, file_name: &str, start: u64, len: u64) {
@@ -106,10 +109,6 @@ impl VideoProviderTrait for VideoProvider {
             return;
         }
         handle.send(Request { uuid, start, len })
-    }
-
-    fn set_sharing(&mut self, sharing: bool) {
-        self.sharing = sharing;
     }
 
     fn size(&self) -> Option<u64> {
