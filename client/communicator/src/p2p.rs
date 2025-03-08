@@ -20,8 +20,8 @@ use libp2p::{
     StreamProtocol,
 };
 use niketsu_core::communicator::{
-    ConnectedMsg, FileRequestMsg, PlaylistMsg, SelectMsg, StartMsg, UserStatusListMsg,
-    VideoStatusMsg,
+    ConnectedMsg, FileRequestMsg, PlaylistMsg, SelectMsg, StartMsg, UserMessageMsg,
+    UserStatusListMsg, VideoStatusMsg,
 };
 use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::playlist::handler::PlaylistHandler;
@@ -479,20 +479,45 @@ impl ClientCommunicationHandler {
         peer_id: PeerId,
     ) -> Result<()> {
         if peer_id == self.host {
-            if let NiketsuMessage::ChunkRequest(ref cr) = msg {
-                self.pending_chunk_responses.insert(cr.uuid, channel);
-                return Ok(());
-            }
+            self.handle_incoming_host_message(msg, channel)
+        } else {
+            self.handle_incoming_client_message(msg, channel)
+        }
+    }
+
+    fn handle_incoming_host_message(
+        &mut self,
+        msg: NiketsuMessage,
+        channel: ResponseChannel<MessageResponse>,
+    ) -> Result<()> {
+        if let NiketsuMessage::ChunkRequest(ref cr) = msg {
+            debug!("Received chunk request");
+            self.pending_chunk_responses.insert(cr.uuid, channel);
             self.message_sender.send(msg.clone())?;
-            return self.swarm.send_response(
-                channel,
-                MessageResponse(Response::Status(StatusResponse::Ok)),
-            );
+            return Ok(());
+        } else if let NiketsuMessage::FileRequest(ref fr) = msg {
+            debug!("Received file request");
+            self.pending_file_responses.insert(fr.uuid, channel);
+            self.message_sender.send(msg.clone())?;
+            return Ok(());
         }
 
+        // host message are processed by the core
+        self.message_sender.send(msg.clone())?;
+        return self.swarm.send_response(
+            channel,
+            MessageResponse(Response::Status(StatusResponse::Ok)),
+        );
+    }
+
+    fn handle_incoming_client_message(
+        &mut self,
+        msg: NiketsuMessage,
+        channel: ResponseChannel<MessageResponse>,
+    ) -> Result<()> {
         match msg {
             NiketsuMessage::ChunkRequest(ref cr) => {
-                debug!("Received file request");
+                debug!("Received chunk request");
                 self.pending_chunk_responses.insert(cr.uuid, channel);
                 self.message_sender.send(msg.clone())?;
                 return Ok(());
@@ -529,7 +554,13 @@ impl ClientCommunicationHandler {
     fn handle_incoming_response(&mut self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
         match msg.0 {
             Response::Status(status_response) => {
-                debug!(?status_response, "Received status response")
+                debug!(?status_response, "Received status response");
+                match status_response {
+                    StatusResponse::NotProvidingErr => {
+                        self.pending_request_provider.take();
+                    }
+                    _ => {}
+                }
             }
             Response::Message(niketsu_message) => match niketsu_message {
                 NiketsuMessage::ChunkResponse(_) => {
@@ -773,6 +804,26 @@ impl CommunicationHandler for ClientCommunicationHandler {
                     warn!("Found providers but no request?")
                 }
             },
+            SwarmEvent::Behaviour(BehaviourEvent::Kademlia(
+                kad::Event::OutboundQueryProgressed {
+                    result:
+                        kad::QueryResult::GetProviders(Ok(
+                            kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. },
+                        )),
+                    ..
+                },
+            )) => {
+                debug!("no providers found");
+                if let Err(err) =
+                    self.message_sender
+                        .send(NiketsuMessage::UserMessage(UserMessageMsg {
+                            actor: arcstr::literal!("server"),
+                            message: "No providers found for the requested file".into(),
+                        }))
+                {
+                    debug!(?err, "Failed to send message to core");
+                }
+            }
             event => debug!(?event, "Received non-captured event"),
         }
     }
@@ -843,8 +894,15 @@ impl CommunicationHandler for ClientCommunicationHandler {
             }
             NiketsuMessage::FileResponse(ref fr) => {
                 if let Some(channel) = self.pending_file_responses.remove(&fr.uuid) {
-                    self.swarm
-                        .send_response(channel, MessageResponse(Response::Message(msg)))?;
+                    if fr.video.is_none() {
+                        self.swarm.send_response(
+                            channel,
+                            MessageResponse(Response::Status(StatusResponse::NotProvidingErr)),
+                        )?;
+                    } else {
+                        self.swarm
+                            .send_response(channel, MessageResponse(Response::Message(msg)))?;
+                    }
                 } else {
                     bail!("Cannot send file response if response channel does not exist");
                 }
@@ -1213,7 +1271,13 @@ impl HostCommunicationHandler {
     fn handle_incoming_response(&mut self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
         match msg.0 {
             Response::Status(status_response) => {
-                debug!(?status_response, "Received status response")
+                debug!(?status_response, "Received status response");
+                match status_response {
+                    StatusResponse::NotProvidingErr => {
+                        self.pending_request_provider.take();
+                    }
+                    _ => {}
+                }
             }
             Response::Message(niketsu_message) => match niketsu_message {
                 NiketsuMessage::ChunkResponse(_) => {
@@ -1407,6 +1471,26 @@ impl CommunicationHandler for HostCommunicationHandler {
                     warn!("Found providers but no request?")
                 }
             },
+            SwarmEvent::Behaviour(BehaviourEvent::Kademlia(
+                kad::Event::OutboundQueryProgressed {
+                    result:
+                        kad::QueryResult::GetProviders(Ok(
+                            kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. },
+                        )),
+                    ..
+                },
+            )) => {
+                debug!("no providers found");
+                if let Err(err) =
+                    self.message_sender
+                        .send(NiketsuMessage::UserMessage(UserMessageMsg {
+                            actor: arcstr::literal!("server"),
+                            message: "No providers found for the requested file".into(),
+                        }))
+                {
+                    debug!(?err, "Failed to send message to core");
+                }
+            }
             event => debug!(?event, "Received non-captured event"),
         }
     }
@@ -1484,8 +1568,15 @@ impl CommunicationHandler for HostCommunicationHandler {
             }
             NiketsuMessage::FileResponse(ref fr) => {
                 if let Some(channel) = self.pending_file_responses.remove(&fr.uuid) {
-                    self.swarm
-                        .send_response(channel, MessageResponse(Response::Message(msg)))?;
+                    if fr.video.is_none() {
+                        self.swarm.send_response(
+                            channel,
+                            MessageResponse(Response::Status(StatusResponse::NotProvidingErr)),
+                        )?;
+                    } else {
+                        self.swarm
+                            .send_response(channel, MessageResponse(Response::Message(msg)))?;
+                    }
                 } else {
                     bail!("Cannot send file response if response channel does not exist");
                 }

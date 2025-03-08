@@ -30,6 +30,8 @@ pub struct Config {
     pub password: String,
     #[serde(default)]
     pub auto_connect: bool,
+    #[serde(default)]
+    pub auto_share: bool,
 }
 
 impl Default for Config {
@@ -43,6 +45,7 @@ impl Default for Config {
             room: Default::default(),
             password: Default::default(),
             auto_connect: Default::default(),
+            auto_share: Default::default(),
         }
     }
 }
