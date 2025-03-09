@@ -315,11 +315,10 @@ impl Mpv {
         // TODO is this seeking good? apparently we would get a seek otherwise
         self.status.seeking = true;
 
-        let replace = CString::new("replace").expect("Got invalid UTF-8");
         let start = self.status.load_position.as_secs_f64();
         let options = format!("start={start}");
         let options = CString::new(options).expect("Got invalid UTF-8");
-        let res = self.send_command(&[&cmd, &path, &replace, c"0", &options]);
+        let res = self.send_command(&[&cmd, &path, c"replace", c"0", &options]);
         self.status.file_load_status = FileLoadStatus::Loading;
         log!(res)
     }
@@ -439,9 +438,7 @@ impl MediaPlayerTrait for Mpv {
         self.status.file_load_status = FileLoadStatus::NotLoaded;
 
         let cmd: CString = MpvCommand::Loadfile.into();
-        let path = CString::new("null://").expect("got invalid utf-8");
-        let replace = CString::new("replace").expect("got invalid utf-8");
-        let res = self.send_command(&[&cmd, &path, &replace]);
+        let res = self.send_command(&[&cmd, c"null://", c"replace"]);
         log!(res)
     }
 
@@ -480,18 +477,5 @@ impl MediaPlayerTrait for Mpv {
                 return event;
             }
         }
-    }
-}
-
-pub trait MpvBool {
-    fn into_mpv_bool(self) -> &'static str;
-}
-
-impl MpvBool for bool {
-    fn into_mpv_bool(self) -> &'static str {
-        if self {
-            return "yes";
-        }
-        "no"
     }
 }
