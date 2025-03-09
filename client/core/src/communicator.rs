@@ -330,11 +330,10 @@ impl EventHandler for SeekMsg {
         let playlist_video = Video::from(self.video.as_str());
         model.playlist.select_playing(&playlist_video);
         PlaylistBrowser::save(&model.config.room, &model.playlist);
-        // TODO make this more readable
         if model
             .player
             .playing_video()
-            .is_some_and(|v| v.as_str().eq(playlist_video.as_str()))
+            .is_some_and(|v| playlist_video.eq(&v))
         {
             model.player.set_position(self.position);
         } else {
@@ -385,40 +384,35 @@ impl From<SelectMsg> for PlayerMessage {
 impl EventHandler for SelectMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(select = ?self, "received");
-        let playlist_video = self.video.as_ref().map(|f| Video::from(f.as_str()));
-        if let Some(playlist_video) = playlist_video.clone() {
-            model.playlist.select_playing(&playlist_video);
-            PlaylistBrowser::save(&model.config.room, &model.playlist);
-            model.player.load_video(
-                playlist_video.clone(),
-                self.position,
-                model.database.all_files(),
-            );
+        let mut sharing = false;
+        if let Some(video) = &self.video {
+            model.playlist.select_playing(video);
+            let store = model.database.all_files();
+            model.player.load_video(video.clone(), self.position, store);
+
             if model.config.auto_share && model.video_provider.sharing() {
-                if let Some(file) = model.database.find_file(playlist_video.as_str()) {
+                if let Some(file) = model.database.find_file(video.as_str()) {
                     model.video_provider.start_providing(file);
-                    model
-                        .communicator
-                        .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
-                            video: Some(playlist_video),
-                        }));
+                    let msg = VideoShareMsg::new(video.clone());
+                    model.communicator.send(msg.into());
                     model.ui.video_share(true);
+                    sharing = true;
                 }
-            } else {
-                model
-                    .communicator
-                    .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
-                        video: None,
-                    }));
-                model.video_provider.stop_providing();
-                model.ui.video_share(false);
             }
         } else {
             model.playlist.unload_playing();
-            PlaylistBrowser::save(&model.config.room, &model.playlist);
             model.player.unload_video();
         }
-        model.ui.video_change(playlist_video);
+
+        if !sharing {
+            let msg = VideoShareMsg { video: None };
+            model.communicator.send(msg.into());
+            model.video_provider.stop_providing();
+            model.ui.video_share(false);
+        }
+
+        PlaylistBrowser::save(&model.config.room, &model.playlist);
+        model.ui.video_change(self.video.clone());
         model.ui.player_message(PlayerMessage::from(self));
     }
 }
@@ -608,6 +602,7 @@ impl EventHandler for ChunkResponseMsg {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FileRequestMsg {
+    // TODO check if we need the uuid
     pub uuid: uuid::Uuid,
     pub actor: ArcStr,
     pub video: Video,
@@ -635,7 +630,7 @@ impl From<FileRequestMsg> for OutgoingMessage {
 
 impl EventHandler for FileRequestMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!("received file request");
+        trace!(file_request = ?self, "received");
         model.ui.player_message(self.clone().into());
         let failed_response = OutgoingMessage::FileResponse(FileResponseMsg {
             uuid: self.uuid,
@@ -646,47 +641,42 @@ impl EventHandler for FileRequestMsg {
 
         let Some(file_name) = model.video_provider.file_name() else {
             model.communicator.send(failed_response);
-            model
-                .communicator
-                .send(OutgoingMessage::UserMessage(UserMessageMsg {
-                    actor: arcstr::literal!("server message"),
-                    message: "File provider is currently not sharing. Try again later".into(),
-                }));
+            let msg = OutgoingMessage::UserMessage(UserMessageMsg {
+                actor: arcstr::literal!("server message"),
+                message: "File provider is currently not sharing. Try again later".into(),
+            });
+            model.communicator.send(msg);
             return;
         };
 
         if !file_name.as_str().eq(self.video.as_str()) {
             model.communicator.send(failed_response);
-            model
-                .communicator
-                .send(OutgoingMessage::UserMessage(UserMessageMsg {
-                    actor: arcstr::literal!("server message"),
-                    message: "File provider is currently providing another file. Try again later"
-                        .into(),
-                }));
+            let msg = OutgoingMessage::UserMessage(UserMessageMsg {
+                actor: arcstr::literal!("server message"),
+                message: "File provider is currently providing another file. Try again later"
+                    .into(),
+            });
+            model.communicator.send(msg);
             return;
         }
 
         let Some(size) = model.video_provider.size() else {
             model.communicator.send(failed_response);
-            model
-                .communicator
-                .send(OutgoingMessage::UserMessage(UserMessageMsg {
-                    actor: arcstr::literal!("server message"),
-                    message: "File provider has no info on the file. Try again later".into(),
-                }));
+            let msg = OutgoingMessage::UserMessage(UserMessageMsg {
+                actor: arcstr::literal!("server message"),
+                message: "File provider has no info on the file. Try again later".into(),
+            });
+            model.communicator.send(msg);
             return;
         };
 
         let success_response = FileResponseMsg {
-            uuid: self.uuid.clone(),
+            uuid: self.uuid,
             actor: model.config.username.clone(),
             video: Some(file_name.as_str().into()),
-            size: size as usize,
+            size,
         };
-        model
-            .communicator
-            .send(OutgoingMessage::FileResponse(success_response));
+        model.communicator.send(success_response.into());
     }
 }
 
@@ -696,7 +686,7 @@ pub struct FileResponseMsg {
     pub uuid: uuid::Uuid,
     pub actor: ArcStr,
     pub video: Option<Video>,
-    pub size: usize,
+    pub size: u64,
 }
 
 impl From<FileResponseMsg> for PlayerMessage {
@@ -725,19 +715,24 @@ impl EventHandler for FileResponseMsg {
         model.ui.player_message(self.clone().into());
         match self.video {
             Some(video) => {
-                model
-                    .video_server
-                    .start_server(ArcStr::from(video.as_str()), self.size as u64);
+                let video = ArcStr::from(video.as_str());
+                model.video_server.start_server(video, self.size);
             }
             None => debug!("file response contains no video"),
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoShareMsg {
     pub video: Option<Video>,
+}
+
+impl VideoShareMsg {
+    pub fn new(video: Video) -> Self {
+        Self { video: Some(video) }
+    }
 }
 
 impl From<VideoShareMsg> for OutgoingMessage {
