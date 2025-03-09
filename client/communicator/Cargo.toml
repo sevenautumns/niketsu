@@ -25,3 +25,5 @@ fake = "4.0"
 sha256 = "1.5"
 uuid = { version = "1.14.0", features = [ "v4", "serde", "fast-rng" ] } 
 
+# FIXME https://github.com/eira-fransham/crunchy/issues/13
+crunchy = "=0.2.2"
