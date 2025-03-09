@@ -20,7 +20,6 @@ pub trait VideoProviderTrait: std::fmt::Debug + Send {
     fn size(&self) -> Option<u64>;
     fn sharing(&self) -> bool;
     fn file_name(&self) -> Option<ArcStr>;
-    fn update(&mut self, file_name: ArcStr, size: u64);
     async fn event(&mut self) -> VideoProviderEvent;
 }
 
@@ -65,9 +64,6 @@ pub struct FileReady {
 impl EventHandler for FileReady {
     fn handle(self, model: &mut CoreModel) {
         trace!("video provider ready");
-        model
-            .video_provider
-            .update(self.file_name.clone(), self.size);
         model.ui.video_share(true);
         model
             .communicator
@@ -80,9 +76,6 @@ impl EventHandler for FileReady {
 #[derive(Debug, Default)]
 pub struct VideoProvider {
     file_handle: Option<FileHandle>,
-    file_name: Option<ArcStr>,
-    sharing: bool,
-    size: Option<u64>,
 }
 
 #[async_trait]
@@ -91,14 +84,10 @@ impl VideoProviderTrait for VideoProvider {
         self.stop_providing();
         let handle = FileServer::run(file);
         self.file_handle = Some(handle);
-        self.sharing = true;
     }
 
     fn stop_providing(&mut self) {
         self.file_handle.take();
-        self.sharing = false;
-        self.size = None;
-        self.file_name = None;
     }
 
     fn request_chunk(&mut self, uuid: uuid::Uuid, file_name: &str, start: u64, len: u64) {
@@ -112,20 +101,15 @@ impl VideoProviderTrait for VideoProvider {
     }
 
     fn size(&self) -> Option<u64> {
-        self.size
+        self.file_handle.as_ref().and_then(|f| f.size)
     }
 
     fn sharing(&self) -> bool {
-        self.sharing
+        self.file_handle.is_some()
     }
 
     fn file_name(&self) -> Option<ArcStr> {
-        self.file_name.clone()
-    }
-
-    fn update(&mut self, file_name: ArcStr, size: u64) {
-        self.file_name = Some(file_name);
-        self.size = Some(size);
+        self.file_handle.as_ref().map(|f| f.file_name.clone())
     }
 
     async fn event(&mut self) -> VideoProviderEvent {
@@ -172,6 +156,7 @@ impl FileServer {
             file_rx,
             req_tx,
             resp_rx,
+            size: None,
         }
     }
 
@@ -199,6 +184,7 @@ impl FileServer {
 struct FileHandle {
     file_name: ArcStr,
     file_rx: Receiver<u64>,
+    size: Option<u64>,
     req_tx: UnboundedSender<Request>,
     resp_rx: UnboundedReceiver<Response>,
 }
@@ -207,6 +193,7 @@ impl FileHandle {
     async fn event(&mut self) -> VideoProviderEvent {
         tokio::select! {
             Some(size) = self.file_rx.recv() => {
+                self.size = Some(size);
                 FileReady {
                     file_name: self.file_name.clone(),
                     size,
