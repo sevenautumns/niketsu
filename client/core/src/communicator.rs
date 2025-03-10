@@ -402,6 +402,7 @@ impl EventHandler for SelectMsg {
                         .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
                             video: Some(playlist_video),
                         }));
+                    model.ui.video_share(true);
                 }
             } else {
                 model
