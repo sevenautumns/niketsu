@@ -163,6 +163,7 @@ pub struct PlayerFileEnd(pub Video);
 impl EventHandler for PlayerFileEnd {
     fn handle(self, model: &mut CoreModel) {
         trace!("player file end");
+        model.video_server.stop_server();
 
         let current_video = model.playlist.get_current_video();
         if current_video.as_ref().is_none_or(|c| c.ne(&self.0)) {
