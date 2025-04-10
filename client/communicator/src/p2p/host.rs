@@ -58,6 +58,16 @@ impl HostSwarmEvent {
             SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
                 HostSwarmEvent::Kademlia(event)
             }
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                endpoint,
+                cause,
+                ..
+            } => HostSwarmEvent::ConnectionClosed(ConnectionClosed {
+                peer_id,
+                cause,
+                endpoint,
+            }),
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 HostSwarmEvent::ConnectionEstablished(ConnectionEstablished { peer_id })
             }
@@ -385,9 +395,7 @@ impl HostCoreMessageHandler for FileResponseMsg {
 
 impl HostCoreMessageHandler for NiketsuMessage {
     fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        handler
-            .swarm
-            .try_broadcast(handler.topic.clone(), self)
+        handler.swarm.try_broadcast(handler.topic.clone(), self)
     }
 }
 
