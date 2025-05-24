@@ -1,5 +1,5 @@
 use std::ops::{Deref, Range, RangeBounds};
-use std::slice::Iter;
+use std::slice::{Iter, SliceIndex};
 use std::sync::Arc;
 
 use arcstr::ArcStr;
@@ -221,6 +221,10 @@ impl Playlist {
 
     pub fn remove_range<R: RangeBounds<usize>>(&mut self, range: R) -> Vec<Video> {
         self.playlist.drain(range).collect_vec()
+    }
+
+    pub fn reverse_range<R: SliceIndex<[Video], Output = [Video]>>(&mut self, range: R) {
+        self.playlist[range].reverse();
     }
 
     pub fn contains(&mut self, video: &Video) -> bool {
