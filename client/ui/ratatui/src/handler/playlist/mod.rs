@@ -51,10 +51,20 @@ impl EventHandler for Playlist {
                         view.app.playlist_widget_state.yank_clipboard();
                     }
                     KeyCode::Char('p') => {
-                        if let Some(index) = view.app.playlist_widget_state.selected() {
-                            if let Some(clipboard) = view.app.playlist_widget_state.get_clipboard()
+                        if let Some(clipboard) = view.app.playlist_widget_state.get_clipboard() {
+                            let index = match view.app.playlist_widget_state.selected() {
+                                Some(i) => i.saturating_add(1),
+                                None => 0,
+                            };
+                            view.append_at(index, clipboard);
+
+                            if let Some(len) = view.app.playlist_widget_state.get_clipboard_length()
                             {
-                                view.append_at(index + 1, clipboard);
+                                view.app.playlist_widget_state.increase_list_len(len);
+                                view.app.playlist_widget_state.previous();
+                                view.app
+                                    .playlist_widget_state
+                                    .increase_selection_offset_by(len.saturating_sub(1));
                             }
                         }
                     }
@@ -66,6 +76,11 @@ impl EventHandler for Playlist {
                             view.app.set_mode(Mode::Overlay);
                             view.app
                                 .set_current_overlay_state(Some(OverlayState::from(VideoName {})));
+                        }
+                    }
+                    KeyCode::Char('r') => {
+                        if let Some(index) = view.app.playlist_widget_state.yank_clipboard() {
+                            view.reverse_range(index);
                         }
                     }
                     KeyCode::Char('v') => {

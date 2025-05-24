@@ -40,6 +40,11 @@ impl PlaylistWidgetState {
         self.style = style;
     }
 
+    // workaround, since playlist updates are delayed from core
+    pub fn increase_list_len(&mut self, len: usize) {
+        self.nav_state.set_list_len(self.playlist.len() + len);
+    }
+
     pub fn get_current_video(&self) -> Option<&Video> {
         match self.nav_state.selected() {
             Some(index) => self.playlist.get(index),
@@ -66,6 +71,10 @@ impl PlaylistWidgetState {
         self.clipboard.clone()
     }
 
+    pub fn get_clipboard_length(&mut self) -> Option<usize> {
+        self.clipboard.as_mut().map(|cb| cb.len())
+    }
+
     pub fn set_video_share(&mut self, sharing: bool) {
         self.video_share = sharing
     }
@@ -80,6 +89,7 @@ impl PlaylistWidgetState {
             pub fn jump_end(&mut self);
             pub fn reset_offset(&mut self);
             pub fn increase_selection_offset(&mut self);
+            pub fn increase_selection_offset_by(&mut self, size: usize);
             pub fn selected(&self) -> Option<usize>;
             pub fn select(&mut self, index: Option<usize>);
         }

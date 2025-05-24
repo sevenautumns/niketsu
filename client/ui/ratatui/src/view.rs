@@ -524,6 +524,13 @@ impl RatatuiView {
         self.model.change_playlist(updated_playlist);
     }
 
+    pub fn reverse_range(&self, positions: (usize, usize)) {
+        let mut updated_playlist = self.model.playlist.get_inner();
+        updated_playlist.reverse_range(positions.0..=positions.1);
+        self.model.playlist.set(updated_playlist.clone());
+        self.model.change_playlist(updated_playlist);
+    }
+
     pub fn append_at(&self, index: usize, videos: Vec<Video>) {
         let mut updated_playlist = self.model.playlist.get_inner();
         updated_playlist.append_at(index, videos.into_iter());
@@ -534,6 +541,7 @@ impl RatatuiView {
     fn move_to(&mut self, video: &Video, index: usize) {
         let mut updated_playlist = self.model.playlist.get_inner();
         updated_playlist.move_video(video, index);
+        self.model.playlist.set(updated_playlist.clone());
         self.model.change_playlist(updated_playlist);
     }
 
