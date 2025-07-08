@@ -9,7 +9,7 @@ use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender};
 use tracing::{trace, warn};
 const CHUNK_SIZE: usize = 512_000;
 
-use crate::{CoreModel, EventHandler, FileEntry, OutgoingMessage, VideoShareMsg};
+use crate::{CoreModel, EventHandler, FileEntry, VideoShareMsg};
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -47,7 +47,7 @@ impl EventHandler for ChunkResponse {
                 crate::ChunkResponseMsg {
                     uuid: self.uuid,
                     actor: Some(model.config.username.clone()),
-                    video: self.file_name.as_str().into(),
+                    video: (&self.file_name).into(),
                     start: self.start,
                     bytes: self.bytes,
                 },
@@ -65,11 +65,12 @@ impl EventHandler for FileReady {
     fn handle(self, model: &mut CoreModel) {
         trace!("video provider ready");
         model.ui.video_share(true);
-        model
-            .communicator
-            .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
-                video: Some(self.file_name.as_str().into()),
-            }))
+        model.communicator.send(
+            VideoShareMsg {
+                video: Some((&self.file_name).into()),
+            }
+            .into(),
+        )
     }
 }
 

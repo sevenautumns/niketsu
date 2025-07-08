@@ -103,7 +103,7 @@ impl HostSwarmEventHandler for gossipsub::Event {
 impl HostSwarmEventHandler for request_response::Event<MessageRequest, MessageResponse> {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
         match self {
-            request_response::Event::Message { peer, message } => match message {
+            request_response::Event::Message { peer, message, .. } => match message {
                 request_response::Message::Request {
                     request, channel, ..
                 } => {

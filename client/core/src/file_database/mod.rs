@@ -505,7 +505,7 @@ mod tests {
                 dirs_finished: AtomicUsize::new(0),
             }),
             store: Default::default(),
-            paths: BTreeSet::from([dir.into_path(), dir2.into_path(), dir3.into_path()]),
+            paths: BTreeSet::from([dir.keep(), dir2.keep(), dir3.keep()]),
             last_progress_event: Default::default(),
             stopped: true,
         };

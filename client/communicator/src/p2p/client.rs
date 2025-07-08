@@ -155,7 +155,7 @@ impl ClientSwarmEventHandler for gossipsub::Event {
 impl ClientSwarmEventHandler for request_response::Event<MessageRequest, MessageResponse> {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
         match self {
-            request_response::Event::Message { peer, message } => match message {
+            request_response::Event::Message { peer, message, .. } => match message {
                 request_response::Message::Request {
                     request, channel, ..
                 } => {
