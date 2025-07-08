@@ -1,15 +1,15 @@
 use std::time::Instant;
 
-use iced::advanced::widget::Operation;
 use iced::advanced::Widget;
-use iced::keyboard::key::Named;
+use iced::advanced::widget::Operation;
 use iced::keyboard::Key;
+use iced::keyboard::key::Named;
 use iced::widget::scrollable::Id;
-use iced::widget::{rich_text, span, Button, Column, Container, Row, Scrollable, Text, TextInput};
+use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput, rich_text, span};
 use iced::{Element, Event, Length, Renderer, Theme, Vector};
 use itertools::Itertools;
-use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::file_database::FileEntry;
+use niketsu_core::file_database::fuzzy::FuzzySearch;
 use niketsu_core::util::FuzzyResult;
 
 use self::message::{

@@ -6,14 +6,14 @@ use once_cell::sync::OnceCell;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{Level, Subscriber};
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::Layer;
 use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt::format::{DefaultVisitor, Writer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Layer;
 
-use crate::ui::{MessageSource, PlayerMessage, PlayerMessageInner};
 use crate::PROJECT_DIRS;
+use crate::ui::{MessageSource, PlayerMessage, PlayerMessageInner};
 
 static FILE_GUARD: OnceCell<WorkerGuard> = OnceCell::new();
 

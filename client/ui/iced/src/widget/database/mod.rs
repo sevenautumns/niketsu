@@ -6,9 +6,9 @@ use iced::{Element, Event, Length, Rectangle, Renderer, Theme};
 use niketsu_core::file_database::FileStore;
 
 use self::message::{DatabaseWidgetMessage, StartDbUpdate, StopDbUpdate};
+use crate::TEXT_SIZE;
 use crate::message::Message;
 use crate::styling::{ContainerBorder, FileButton, FileProgressBar};
-use crate::TEXT_SIZE;
 
 pub mod message;
 

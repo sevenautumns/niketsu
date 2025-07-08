@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use arcstr::ArcStr;
 use multiaddr::{Multiaddr, PeerId, Protocol};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use tracing::{debug, warn};
 
+use crate::PROJECT_DIRS;
 use crate::room::RoomName;
 use crate::user::UserStatus;
-use crate::PROJECT_DIRS;
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone, Debug)]

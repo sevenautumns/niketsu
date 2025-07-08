@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use futures::StreamExt;
@@ -9,7 +9,7 @@ use libp2p::core::ConnectedPoint;
 use libp2p::kad::{self, QueryId};
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
-use libp2p::{dcutr, gossipsub, ping, PeerId};
+use libp2p::{PeerId, dcutr, gossipsub, ping};
 use niketsu_core::communicator::{
     ChunkRequestMsg, ChunkResponseMsg, ConnectedMsg, FileRequestMsg, FileResponseMsg, PlaylistMsg,
     SeekMsg, SelectMsg, UserMessageMsg, UserStatusMsg, VideoShareMsg, VideoStatusMsg,
@@ -39,7 +39,7 @@ enum ClientSwarmEvent {
     ConnectionEstablished(ConnectionEstablished),
     ConnectionClosed(ConnectionClosed),
     OutgoingConnectionError(OutgoingConnectionError),
-    Other(SwarmEvent<BehaviourEvent>),
+    Other(Box<SwarmEvent<BehaviourEvent>>),
 }
 
 impl ClientSwarmEvent {
@@ -85,7 +85,7 @@ impl ClientSwarmEvent {
                 peer_id,
                 error,
             }),
-            _ => ClientSwarmEvent::Other(event),
+            _ => ClientSwarmEvent::Other(Box::new(event)),
         }
     }
 }
@@ -175,7 +175,9 @@ impl ClientSwarmEventHandler for request_response::Event<MessageRequest, Message
             request_response::Event::OutboundFailure { peer, error, .. } => {
                 let host = handler.host;
                 if peer == handler.host {
-                    warn!("Outbound failure for request response with peer: error: {error:?} from {peer:?} where host {host:?}");
+                    warn!(
+                        "Outbound failure for request response with peer: error: {error:?} from {peer:?} where host {host:?}"
+                    );
                     // self.core_receiver.close();
                 }
             }
@@ -317,7 +319,7 @@ impl ClientSwarmEventHandler for OutgoingConnectionError {
     }
 }
 
-impl ClientSwarmEventHandler for SwarmEvent<BehaviourEvent> {
+impl ClientSwarmEventHandler for Box<SwarmEvent<BehaviourEvent>> {
     fn handle_swarm_event(self, _handler: &mut ClientCommunicationHandler) {
         debug!(event = ?self, "Received not captured event")
     }

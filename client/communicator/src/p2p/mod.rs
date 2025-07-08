@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use futures::stream::StreamExt;
@@ -10,11 +10,11 @@ use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
-    dcutr, gossipsub, identify, identity, kad, noise, ping, relay, tcp, yamux, Multiaddr, PeerId,
-    StreamProtocol,
+    Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, identity, kad, noise, ping,
+    relay, tcp, yamux,
 };
-use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::playlist::Video;
+use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::room::RoomName;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -22,8 +22,8 @@ use sha256::digest;
 use tokio::spawn;
 use tracing::{debug, info};
 
-use crate::messages::NiketsuMessage;
 use crate::CONNECT_TIMEOUT;
+use crate::messages::NiketsuMessage;
 
 mod client;
 mod host;

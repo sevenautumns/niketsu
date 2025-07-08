@@ -43,7 +43,7 @@ enum HostSwarmEvent {
     Kademlia(kad::Event),
     ConnectionEstablished(ConnectionEstablished),
     ConnectionClosed(ConnectionClosed),
-    Other(SwarmEvent<BehaviourEvent>),
+    Other(Box<SwarmEvent<BehaviourEvent>>),
 }
 
 impl HostSwarmEvent {
@@ -71,7 +71,7 @@ impl HostSwarmEvent {
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 HostSwarmEvent::ConnectionEstablished(ConnectionEstablished { peer_id })
             }
-            _ => HostSwarmEvent::Other(event),
+            _ => HostSwarmEvent::Other(Box::new(event)),
         }
     }
 }
@@ -239,7 +239,7 @@ impl HostSwarmEventHandler for ConnectionClosed {
     }
 }
 
-impl HostSwarmEventHandler for SwarmEvent<BehaviourEvent> {
+impl HostSwarmEventHandler for Box<SwarmEvent<BehaviourEvent>> {
     fn handle_swarm_event(self, _handler: &mut HostCommunicationHandler) {
         debug!(event = ?self, "Received not captured event")
     }

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use iced::advanced::widget::Operation;
 use iced::mouse::Cursor;
 use iced::widget::scrollable::Id;
-use iced::widget::{row, Button, Column, Container, Row, Scrollable, Space, Text};
+use iced::widget::{Button, Column, Container, Row, Scrollable, Space, Text, row};
 use iced::{Element, Length, Rectangle, Renderer, Theme};
 use niketsu_core::room::UserList;
 use niketsu_core::user::UserStatus;

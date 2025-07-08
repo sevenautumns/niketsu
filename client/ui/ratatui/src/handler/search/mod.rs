@@ -4,8 +4,8 @@ use ratatui::widgets::Clear;
 
 use super::{EventHandler, RenderHandler};
 use crate::view::{App, RatatuiView};
-use crate::widget::search::SearchWidget;
 use crate::widget::OverlayWidgetState;
+use crate::widget::search::SearchWidget;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Search;

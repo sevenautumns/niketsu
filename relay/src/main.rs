@@ -3,7 +3,7 @@ use clap::Parser;
 use libp2p::identity::Keypair;
 use tracing::{info, warn};
 
-use crate::cli::{setup_logger, Args};
+use crate::cli::{Args, setup_logger};
 use crate::config::Config;
 mod cli;
 mod config;

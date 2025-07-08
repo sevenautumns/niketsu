@@ -1,6 +1,6 @@
 use enum_dispatch::enum_dispatch;
-use iced::widget::scrollable::RelativeOffset;
 use iced::Task;
+use iced::widget::scrollable::RelativeOffset;
 use niketsu_core::ui::UiModel;
 
 use super::ChatWidgetState;

@@ -87,7 +87,8 @@ impl StatefulWidget for UsersWidget {
                     true => arcstr::format!("{} (me)", u.name),
                     false => u.name.clone(),
                 };
-                let user_line = match u.ready {
+
+                match u.ready {
                     true => ListItem::new(vec![Line::styled(
                         name.to_string(),
                         Style::default().fg(Color::Green),
@@ -96,8 +97,7 @@ impl StatefulWidget for UsersWidget {
                         name.to_string(),
                         Style::default().fg(Color::Red),
                     )]),
-                };
-                user_line
+                }
             })
             .collect();
 

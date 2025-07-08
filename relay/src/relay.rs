@@ -6,13 +6,13 @@ use std::time::Duration;
 use anyhow::Result;
 use async_std::stream::StreamExt;
 use async_std::sync::RwLock;
-use bcrypt::{hash, verify, DEFAULT_COST};
-use libp2p::core::multiaddr::Protocol;
+use bcrypt::{DEFAULT_COST, hash, verify};
 use libp2p::core::Multiaddr;
+use libp2p::core::multiaddr::Protocol;
 use libp2p::identity::Keypair;
 use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
-use libp2p::{identify, noise, ping, relay, tcp, yamux, PeerId, StreamProtocol, Swarm};
+use libp2p::{PeerId, StreamProtocol, Swarm, identify, noise, ping, relay, tcp, yamux};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 

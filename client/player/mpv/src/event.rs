@@ -1,6 +1,6 @@
 #![allow(non_upper_case_globals)]
 
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Poll, Waker};
@@ -12,8 +12,8 @@ use tracing::trace;
 
 use super::bindings::mpv_event;
 use super::{Mpv, MpvHandle, MpvProperty};
-use crate::bindings::*;
 use crate::FileLoadStatus;
+use crate::bindings::*;
 
 unsafe extern "C" fn on_mpv_event(_: *mut c_void) {
     if let Some(waker) = EVENT_WAKER.load().as_ref() {
@@ -244,11 +244,15 @@ impl PropertyValue {
         match typ {
             mpv_format::MPV_FORMAT_STRING => {
                 let mut string = CString::default();
-                CStr::from_ptr(data as *mut c_char).clone_into(&mut string);
+                unsafe { CStr::from_ptr(data as *mut c_char).clone_into(&mut string) };
                 Some(PropertyValue::String(string))
             }
-            mpv_format::MPV_FORMAT_FLAG => Some(PropertyValue::Flag(*(data as *mut i64))),
-            mpv_format::MPV_FORMAT_DOUBLE => Some(PropertyValue::Double(*(data as *mut f64))),
+            mpv_format::MPV_FORMAT_FLAG => {
+                Some(PropertyValue::Flag(unsafe { *(data as *mut i64) }))
+            }
+            mpv_format::MPV_FORMAT_DOUBLE => {
+                Some(PropertyValue::Double(unsafe { *(data as *mut f64) }))
+            }
             _ => Option::None,
         }
     }

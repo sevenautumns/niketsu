@@ -106,6 +106,7 @@ impl From<&ArcStr> for VideoInner {
 // TODO implement diffing with https://crates.io/crates/comparable
 #[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Playlist {
+    // #[serde(flatten)]
     playlist: Vec<Video>,
 }
 
@@ -246,8 +247,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::file_database::FileEntry;
     use crate::FileStore;
+    use crate::file_database::FileEntry;
 
     #[test]
     fn test_is_url() {

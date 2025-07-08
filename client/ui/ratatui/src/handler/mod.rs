@@ -2,8 +2,8 @@ use crossterm::event::{Event, KeyCode, KeyEvent};
 use enum_dispatch::enum_dispatch;
 use playlist::video_overlay::VideoName;
 use playlist_browser::PlaylistBrowserOverlay;
-use ratatui::style::Style;
 use ratatui::Frame;
+use ratatui::style::Style;
 use recently::Recently;
 
 use self::chat::Chat;

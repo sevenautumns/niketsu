@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use arcstr::ArcStr;
 use async_trait::async_trait;
 use moka::future::Cache;
@@ -11,8 +11,8 @@ use niketsu_core::video_server::{ChunkRequest, ServerOnline, VideoServerEvent, V
 use nom::{IResult, Parser};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Notify;
+use tokio::sync::mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender};
 use tracing::{debug, trace, warn};
 
 const CHUNK_SIZE: u64 = 512_000;

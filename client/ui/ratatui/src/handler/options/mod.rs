@@ -8,8 +8,8 @@ use super::playlist_browser::PlaylistBrowserOverlay;
 use super::search::Search;
 use super::{EventHandler, OverlayState, RenderHandler};
 use crate::view::{App, RatatuiView};
-use crate::widget::options::OptionsWidget;
 use crate::widget::OverlayWidgetState;
+use crate::widget::options::OptionsWidget;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Options;

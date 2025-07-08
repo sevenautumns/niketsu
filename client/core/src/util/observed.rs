@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use arc_swap::ArcSwap;
 use tokio::sync::Notify;
@@ -90,7 +90,7 @@ mod tests {
     use std::sync::Arc;
 
     use tokio::sync::Notify;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     use super::*;
 

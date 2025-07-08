@@ -7,10 +7,10 @@ use once_cell::sync::{Lazy, OnceCell};
 use strum::Display;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::Layer;
 use tracing_subscriber::filter::Targets;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Layer;
 
 pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =
     Lazy::new(|| ProjectDirs::from("de", "autumnal", "niketsu-relay"));

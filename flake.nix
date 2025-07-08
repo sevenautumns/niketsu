@@ -140,17 +140,13 @@
             cargo-nextest
             cargo-tarpaulin
             cargo-watch
+            treefmt
+            nixfmt-rfc-style
             mdbook
             yt-dlp
           ];
         };
         checks = {
-          nixpkgs-fmt = pkgs.runCommand "nixpkgs-fmt" {
-            nativeBuildInputs = [ pkgs.nixpkgs-fmt ];
-          } "nixpkgs-fmt --check ${./.}; touch $out";
-          cargo-fmt = pkgs.runCommand "cargo-fmt" {
-            nativeBuildInputs = [ rust-toolchain ];
-          } "cd ${./.}; cargo fmt --check; touch $out";
           cargo-clippy = naersk-lib.buildPackage {
             src = ./.;
             nativeBuildInputs = with pkgs; [ rustPlatform.bindgenHook ];
