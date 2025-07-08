@@ -1,25 +1,25 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use arcstr::ArcStr;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
-use fake::faker::company::en::Buzzword;
 use fake::Fake;
+use fake::faker::company::en::Buzzword;
 use futures::StreamExt;
 use libp2p::core::ConnectedPoint;
 use libp2p::kad::{self, QueryId};
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, SwarmEvent};
-use libp2p::{gossipsub, Multiaddr, PeerId, Swarm};
+use libp2p::{Multiaddr, PeerId, Swarm, gossipsub};
 use niketsu_core::communicator::{
     ChunkRequestMsg, ChunkResponseMsg, ConnectedMsg, FileRequestMsg, FileResponseMsg, PlaylistMsg,
     SelectMsg, StartMsg, UserMessageMsg, UserStatusListMsg, UserStatusMsg, VideoShareMsg,
     VideoStatusMsg,
 };
-use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::playlist::Video;
+use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
 use tracing::{debug, error, trace, warn};
@@ -483,7 +483,6 @@ impl HostSwarmRequestHandler for PlaylistMsg {
             )?;
             return Err(anyhow::Error::from(err));
         }
-        handler.playlist = self.clone();
 
         if let Err(err) = handler.swarm.try_broadcast(handler.topic.clone(), msg) {
             handler.swarm.send_response(
@@ -494,10 +493,13 @@ impl HostSwarmRequestHandler for PlaylistMsg {
         }
 
         match handler.handle_new_playlist(&self, peer_id) {
-            Ok(_) => handler.swarm.send_response(
-                channel,
-                MessageResponse(Response::Status(StatusResponse::Ok)),
-            ),
+            Ok(_) => {
+                handler.playlist = self.clone();
+                handler.swarm.send_response(
+                    channel,
+                    MessageResponse(Response::Status(StatusResponse::Ok)),
+                )
+            }
             Err(_) => handler.swarm.send_response(
                 channel,
                 MessageResponse(Response::Status(StatusResponse::Err)),
