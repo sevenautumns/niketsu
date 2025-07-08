@@ -151,6 +151,7 @@
             src = ./.;
             nativeBuildInputs = with pkgs; [ rustPlatform.bindgenHook ];
             mode = "clippy";
+            C_INCLUDE_PATH = "$C_INCLUDE_PATH:${pkgs.mpv}/include";
           };
         };
       }
