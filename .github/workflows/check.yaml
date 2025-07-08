@@ -52,5 +52,5 @@ jobs:
           name: niketsu
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - name: Run verify commands
-        run: nix develop --fallback --command nextest run
+        run: nix develop --fallback --command cargo nextest run
 
