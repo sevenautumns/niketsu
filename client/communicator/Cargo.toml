@@ -1,7 +1,7 @@
 [package]
 name = "niketsu-communicator"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 niketsu-core.path = "../core"
@@ -14,6 +14,7 @@ im.workspace = true
 arc-swap.workspace = true
 once_cell.workspace = true
 serde_json = "1.0"
+bitcode = { version = "0.6", features = ["serde"] }
 serde_millis.workspace = true
 async-trait.workspace = true
 ordered-float.workspace = true
@@ -24,6 +25,3 @@ futures-timer = "3.0"
 fake = "4.0"
 sha256 = "1.5"
 uuid = { version = "1.14.0", features = [ "v4", "serde", "fast-rng" ] } 
-
-# FIXME https://github.com/eira-fransham/crunchy/issues/13
-crunchy = "=0.2.2"

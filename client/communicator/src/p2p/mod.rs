@@ -150,7 +150,7 @@ impl SwarmHandler<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
         match res {
             Ok(_) => Ok(()),
             Err(e) => match e {
-                PublishError::InsufficientPeers => {
+                PublishError::NoPeersSubscribedToTopic => {
                     debug!("Gossipsub insufficient peers. Publishing when no one is connected");
                     Ok(())
                 }

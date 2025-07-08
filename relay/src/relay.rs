@@ -73,7 +73,7 @@ pub fn new(config: Config) -> Result<Relay> {
     quic_config.max_idle_timeout = 5 * 1000;
 
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
-        .with_async_std()
+        .with_tokio()
         .with_tcp(
             tcp::Config::default(),
             noise::Config::new,
@@ -162,7 +162,7 @@ impl Relay {
                     debug!(?error, "Connection closed due to an error");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::InitRequestResponse(
-                    request_response::Event::Message { peer, message },
+                    request_response::Event::Message { peer, message, .. },
                 )) => match message {
                     request_response::Message::Request {
                         request, channel, ..

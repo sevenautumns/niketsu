@@ -103,6 +103,7 @@ impl From<&ArcStr> for VideoInner {
     }
 }
 
+// TODO implement diffing with https://crates.io/crates/comparable
 #[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Playlist {
     playlist: Vec<Video>,
@@ -215,7 +216,8 @@ impl Playlist {
 
     pub fn append_at(&mut self, index: usize, videos: impl Iterator<Item = Video>) {
         let rest = self.playlist.split_off(index);
-        self.playlist.extend(videos.collect_vec());
+        let videos = videos.filter(|v| !self.contains(v)).collect_vec();
+        self.playlist.extend(videos);
         self.playlist.extend(rest);
     }
 
