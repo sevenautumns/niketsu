@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 use arcstr::ArcStr;
 
-pub(crate) use crate::user::UserStatus;
 pub(crate) use crate::UserStatusListMsg;
+pub(crate) use crate::user::UserStatus;
 
 pub type RoomName = ArcStr;
 

@@ -3,12 +3,12 @@ use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use directories::ProjectDirs;
 use iced::Theme;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, DeserializeFromStr, FromInto, SerializeDisplay};
+use serde_with::{DeserializeFromStr, FromInto, SerializeDisplay, serde_as};
 use tracing::{debug, warn};
 
 pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =

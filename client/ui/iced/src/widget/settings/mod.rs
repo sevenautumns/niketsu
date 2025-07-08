@@ -1,9 +1,9 @@
 use iced::advanced::widget::Operation;
-use iced::keyboard::key::Named;
 use iced::keyboard::Key;
+use iced::keyboard::key::Named;
 use iced::widget::{
-    button, checkbox, column, pick_list, row, text, text_input, Button, Column, Container,
-    Scrollable, Space, Text,
+    Button, Column, Container, Scrollable, Space, Text, button, checkbox, column, pick_list, row,
+    text, text_input,
 };
 use iced::{Element, Length, Renderer, Theme, Vector};
 use message::ThemeChange;
@@ -15,11 +15,11 @@ use self::message::{
     SettingsWidgetMessage, UsernameInput,
 };
 use super::overlay::ElementOverlayConfig;
+use crate::TEXT_SIZE;
 use crate::config::IcedConfig;
 use crate::message::Message;
 use crate::styling::FileButton;
 use crate::widget::overlay::ElementOverlay;
-use crate::TEXT_SIZE;
 
 pub mod message;
 

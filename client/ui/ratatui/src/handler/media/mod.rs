@@ -3,8 +3,8 @@ use ratatui::widgets::Clear;
 
 use super::{EventHandler, RenderHandler};
 use crate::view::{App, RatatuiView};
-use crate::widget::media::MediaDirWidget;
 use crate::widget::OverlayWidgetState;
+use crate::widget::media::MediaDirWidget;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MediaDir;

@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use bindgen::callbacks::{DeriveInfo, ParseCallbacks};
 use bindgen::EnumVariation;
+use bindgen::callbacks::{DeriveInfo, ParseCallbacks};
 
 fn main() -> Result<()> {
     let outdir = std::env::var_os("OUT_DIR").context("No outdir found")?;

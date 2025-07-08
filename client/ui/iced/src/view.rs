@@ -11,6 +11,7 @@ use niketsu_core::ui::{UiModel, UserInterface};
 use niketsu_core::user::UserStatus;
 use tokio::sync::Notify;
 
+use super::PreExistingTokioRuntime;
 use super::main_window::MainView;
 use super::message::Message;
 use super::widget::chat::ChatWidgetState;
@@ -18,7 +19,6 @@ use super::widget::database::DatabaseWidgetState;
 use super::widget::playlist::PlaylistWidgetState;
 use super::widget::rooms::UsersWidgetState;
 use super::widget::settings::SettingsWidgetState;
-use super::PreExistingTokioRuntime;
 use crate::config::IcedConfig;
 use crate::message::{MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;

@@ -7,7 +7,7 @@ use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
 use iced::mouse::Cursor;
 use iced::widget::text::Wrapping;
-use iced::widget::{button, text, Column, Rule};
+use iced::widget::{Column, Rule, button, text};
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use niketsu_core::file_database::FileStore;
 use niketsu_core::playlist::{Playlist, *};
@@ -442,7 +442,12 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
             _ => {}
         }
 
-        let inner_status = self.base.as_widget_mut().on_event(
+        // match status {
+        //     iced::event::Status::Ignored => inner_status,
+        //     iced::event::Status::Captured => status,
+        // }
+        // TODO properly figure out if we captured something or not
+        self.base.as_widget_mut().on_event(
             &mut state.children[0],
             event,
             layout,
@@ -451,14 +456,7 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
             clipboard,
             shell,
             viewport,
-        );
-
-        // match status {
-        //     iced::event::Status::Ignored => inner_status,
-        //     iced::event::Status::Captured => status,
-        // }
-        // TODO properly figure out if we captured something or not
-        inner_status
+        )
     }
 
     fn overlay<'b>(

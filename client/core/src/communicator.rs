@@ -15,8 +15,8 @@ use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
 use crate::player::MediaPlayerTrait;
-use crate::playlist::file::PlaylistBrowser;
 use crate::playlist::Playlist;
+use crate::playlist::file::PlaylistBrowser;
 use crate::room::{RoomName, UserList};
 use crate::user::UserStatus;
 

@@ -1,6 +1,6 @@
 use delegate::delegate;
-use niketsu_core::playlist::file::{NamedPlaylist, PlaylistBrowser};
 use niketsu_core::playlist::Playlist;
+use niketsu_core::playlist::file::{NamedPlaylist, PlaylistBrowser};
 use niketsu_core::util::FuzzyResult;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
@@ -48,8 +48,8 @@ impl PlaylistBrowserWidgetState {
         self.num_files = Some(
             self.playlist_browser
                 .playlist_map()
-                .iter()
-                .map(|(_, p)| p.len())
+                .values()
+                .map(|p| p.len())
                 .sum(),
         );
         self.fuzzy_result = self.playlist_browser.fuzzy_search("");
@@ -175,9 +175,7 @@ impl StatefulWidget for PlaylistBrowserWidget {
                 Block::default()
                     .style(state.style)
                     .title("Results")
-                    .title_top(
-                        Line::from(format!("{}/{}", filtered_files, num_files)).right_aligned(),
-                    )
+                    .title_top(Line::from(format!("{filtered_files}/{num_files}")).right_aligned())
                     .borders(Borders::TOP)
                     .padding(Padding::new(1, 0, 0, 1)),
             )

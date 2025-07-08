@@ -4,17 +4,17 @@ use std::fs::FileType;
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use once_cell::sync::Lazy;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use tokio::sync::Semaphore;
 
 use super::handler::PlaylistHandler;
+use crate::PROJECT_DIRS;
 use crate::room::RoomName;
 use crate::util::FuzzyResult;
-use crate::PROJECT_DIRS;
 
 static PLAYLIST_FOLDER: Lazy<Option<PathBuf>> =
     Lazy::new(|| PROJECT_DIRS.as_ref().map(|p| p.data_dir().join("playlist")));

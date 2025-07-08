@@ -9,9 +9,9 @@ use iced::{Element, Length, Rectangle, Renderer, Task, Theme};
 use niketsu_core::ui::{MessageSource, PlayerMessage};
 
 use self::message::{ChatWidgetMessage, MessageInput, ScrollMessages, SendMessage};
+use crate::RingBuffer;
 use crate::message::Message;
 use crate::styling::{ContainerBorder, MessageColor};
-use crate::RingBuffer;
 
 pub mod message;
 

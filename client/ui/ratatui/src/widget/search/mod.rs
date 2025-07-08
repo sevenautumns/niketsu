@@ -192,9 +192,7 @@ impl StatefulWidget for SearchWidget {
                 Block::default()
                     .style(state.style)
                     .title("Results")
-                    .title_top(
-                        Line::from(format!("{}/{}", filtered_files, num_files)).right_aligned(),
-                    )
+                    .title_top(Line::from(format!("{filtered_files}/{num_files}")).right_aligned())
                     .borders(Borders::TOP)
                     .padding(Padding::new(1, 0, 0, 1)),
             )

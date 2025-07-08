@@ -1,6 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
-use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::Frame;
+use ratatui::layout::{Constraint, Direction, Layout};
 
 use super::{EventHandler, RenderHandler};
 use crate::view::{App, RatatuiView};

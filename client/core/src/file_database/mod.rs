@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use arcstr::ArcStr;
@@ -397,8 +397,8 @@ mod tests {
     use std::fs::File;
 
     use anyhow::Result;
-    use tempfile::{tempdir, TempDir};
-    use tokio::time::{sleep, Duration};
+    use tempfile::{TempDir, tempdir};
+    use tokio::time::{Duration, sleep};
 
     use super::*;
 

@@ -11,15 +11,15 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use futures::future::OptionFuture;
 use futures::{Future, StreamExt};
 use gag::Gag;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::fuzzy::FuzzySearch;
-use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::playlist::Video;
+use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::room::RoomName;
 use niketsu_core::ui::{RoomChange, UiModel, UserInterface};
 use ratatui::prelude::*;
@@ -39,8 +39,8 @@ use crate::widget::help::HelpWidgetState;
 use crate::widget::login::LoginWidgetState;
 use crate::widget::media::MediaDirWidgetState;
 use crate::widget::options::OptionsWidgetState;
-use crate::widget::playlist::video_overlay::VideoNameWidgetState;
 use crate::widget::playlist::PlaylistWidgetState;
+use crate::widget::playlist::video_overlay::VideoNameWidgetState;
 use crate::widget::playlist_browser::PlaylistBrowserWidgetState;
 use crate::widget::recently::{RecentlyWidget, RecentlyWidgetState};
 use crate::widget::search::SearchWidgetState;

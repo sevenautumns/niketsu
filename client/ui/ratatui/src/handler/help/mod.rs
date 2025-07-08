@@ -3,8 +3,8 @@ use ratatui::widgets::Clear;
 
 use super::{EventHandler, RenderHandler};
 use crate::view::{App, RatatuiView};
-use crate::widget::help::HelpWidget;
 use crate::widget::OverlayWidgetState;
+use crate::widget::help::HelpWidget;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Help;

@@ -6,8 +6,8 @@ use ratatui::widgets::Clear;
 
 use super::{EventHandler, RenderHandler};
 use crate::view::{App, RatatuiView};
-use crate::widget::login::LoginWidget;
 use crate::widget::OverlayWidgetState;
+use crate::widget::login::LoginWidget;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Login;

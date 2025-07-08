@@ -4,8 +4,8 @@ use ratatui::widgets::Clear;
 use super::EventHandler;
 use crate::handler::RenderHandler;
 use crate::view::{App, RatatuiView};
-use crate::widget::playlist::video_overlay::VideoNameWidget;
 use crate::widget::OverlayWidgetState;
+use crate::widget::playlist::video_overlay::VideoNameWidget;
 
 #[derive(Debug, Clone, Copy)]
 pub struct VideoName;

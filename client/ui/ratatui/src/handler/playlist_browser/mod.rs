@@ -3,8 +3,8 @@ use ratatui::widgets::Clear;
 
 use super::{EventHandler, RenderHandler};
 use crate::view::{App, RatatuiView};
-use crate::widget::playlist_browser::PlaylistBrowserWidget;
 use crate::widget::OverlayWidgetState;
+use crate::widget::playlist_browser::PlaylistBrowserWidget;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PlaylistBrowserOverlay;

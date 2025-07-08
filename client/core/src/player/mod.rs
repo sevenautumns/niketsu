@@ -9,9 +9,9 @@ use super::communicator::{
 };
 use super::playlist::Video;
 use super::{CoreModel, EventHandler};
+use crate::FilePathSearch;
 use crate::file_database::FileStore;
 use crate::playlist::file::PlaylistBrowser;
-use crate::FilePathSearch;
 
 pub mod wrapper;
 
