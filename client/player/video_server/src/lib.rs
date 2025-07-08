@@ -20,6 +20,9 @@ const TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_RETRY: usize = 3;
 const CACHE_ENTRIES: u64 = 100;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Default)]
 pub struct VideoServer {
     server: Option<TcpServerHandle>,
@@ -332,9 +335,13 @@ fn parse_range_header(input: &str) -> IResult<&str, Vec<Range>> {
 
 fn parse_range(input: &str) -> IResult<&str, Range> {
     use nom::bytes::complete::tag;
-    use nom::character::complete::u64;
+    use nom::character::complete::{space0, u64};
     use nom::combinator::{map, opt};
-    use nom::sequence::separated_pair;
+    use nom::sequence::{preceded, separated_pair};
 
-    map(separated_pair(opt(u64), tag("-"), opt(u64)), Range::from).parse(input)
+    preceded(
+        space0,
+        map(separated_pair(opt(u64), tag("-"), opt(u64)), Range::from),
+    )
+    .parse(input)
 }
