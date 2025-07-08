@@ -210,7 +210,7 @@ impl Playlist {
     }
 
     pub fn insert_range(&mut self, index: usize, videos: Vec<Video>) {
-        for video in videos {
+        for video in videos.into_iter().rev() {
             self.insert(index, video);
         }
     }
