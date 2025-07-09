@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -5,6 +6,7 @@ use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use futures::stream::StreamExt;
 use libp2p::gossipsub::PublishError;
+use libp2p::kad::QueryId;
 use libp2p::kad::store::MemoryStore;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
@@ -13,6 +15,9 @@ use libp2p::{
     Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, identity, kad, noise, ping,
     relay, tcp, yamux,
 };
+use niketsu_core::communicator::{
+    ChunkResponseMsg, FileRequestMsg, FileResponseMsg, UserMessageMsg,
+};
 use niketsu_core::playlist::Video;
 use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::room::RoomName;
@@ -20,7 +25,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha256::digest;
 use tokio::spawn;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::CONNECT_TIMEOUT;
 use crate::messages::NiketsuMessage;
@@ -84,7 +89,7 @@ pub(crate) struct InitResponse {
 
 #[async_trait]
 #[enum_dispatch]
-pub(crate) trait CommunicationHandler {
+pub(crate) trait CommunicationHandlerTrait {
     async fn run(&mut self);
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>);
     fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()>;
@@ -94,11 +99,16 @@ pub(crate) trait CommunicationHandler {
         channel: ResponseChannel<MessageResponse>,
         peer_id: PeerId,
     ) -> Result<()>;
-    fn handle_swarm_response(&mut self, msg: MessageResponse, peer_id: PeerId) -> Result<()>;
+    fn handle_swarm_response(&mut self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
+        debug!(message = ?msg, peer = ?peer_id, "Received response");
+        let swarm_response = SwarmResponse::from(msg);
+        swarm_response.handle_swarm_response(self.handler())
+    }
     fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()>;
+    fn handler(&mut self) -> &mut CommunicationHandler;
 }
 
-#[enum_dispatch(CommunicationHandler)]
+#[enum_dispatch(CommunicationHandlerTrait)]
 pub(crate) enum Handler {
     Client(client::ClientCommunicationHandler),
     Host(host::HostCommunicationHandler),
@@ -471,5 +481,169 @@ impl P2PClient {
     pub(crate) fn send(&self, msg: NiketsuMessage) -> Result<()> {
         debug!(?msg, "Sending message");
         Ok(self.sender.send(msg)?)
+    }
+}
+
+pub(crate) struct CommunicationHandler {
+    swarm: Swarm<Behaviour>,
+    topic: gossipsub::IdentTopic,
+    host: PeerId,
+    core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
+    message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+    current_requests: HashMap<QueryId, FileRequestMsg>,
+    pending_request_provider: Option<PeerId>,
+    pending_chunk_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
+    pending_file_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
+    current_response: Option<Video>,
+}
+
+impl CommunicationHandler {
+    pub fn new(
+        swarm: Swarm<Behaviour>,
+        topic: gossipsub::IdentTopic,
+        host: PeerId,
+        core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
+        message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+    ) -> Self {
+        Self {
+            swarm,
+            topic,
+            host,
+            core_receiver,
+            message_sender,
+            current_requests: Default::default(),
+            pending_chunk_responses: Default::default(),
+            pending_file_responses: Default::default(),
+            pending_request_provider: None,
+            current_response: None,
+        }
+    }
+}
+
+#[enum_dispatch()]
+trait SwarmResponseHandler {
+    fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()>;
+}
+
+#[enum_dispatch(SwarmResponseHandler)]
+enum SwarmResponse {
+    Status(StatusResponse),
+    ChunkResponse(ChunkResponseMsg),
+    FileResponse(FileResponseMsg),
+    Other(NiketsuMessage),
+}
+
+impl SwarmResponse {
+    fn from(message: MessageResponse) -> Self {
+        match message.0 {
+            Response::Status(msg) => SwarmResponse::Status(msg),
+            Response::Message(niketsu_message) => match niketsu_message {
+                NiketsuMessage::FileResponse(msg) => SwarmResponse::FileResponse(msg),
+                NiketsuMessage::ChunkResponse(msg) => SwarmResponse::ChunkResponse(msg),
+                msg => SwarmResponse::Other(msg),
+            },
+        }
+    }
+}
+
+impl SwarmResponseHandler for StatusResponse {
+    fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()> {
+        debug!(?self, "Received status response");
+        if self == StatusResponse::NotProvidingErr {
+            handler.pending_request_provider.take();
+        }
+        Ok(())
+    }
+}
+
+impl SwarmResponseHandler for ChunkResponseMsg {
+    fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()> {
+        handler
+            .message_sender
+            .send(self.clone().into())
+            .map_err(anyhow::Error::from)
+    }
+}
+
+impl SwarmResponseHandler for FileResponseMsg {
+    fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()> {
+        handler
+            .message_sender
+            .send(self.clone().into())
+            .map_err(anyhow::Error::from)
+    }
+}
+
+impl SwarmResponseHandler for NiketsuMessage {
+    fn handle_swarm_response(self, _handler: &mut CommunicationHandler) -> Result<()> {
+        bail!("Did not expect response {self:?}");
+    }
+}
+
+#[enum_dispatch]
+pub(crate) trait SwarmEventHandler {
+    fn handle_swarm_event(self, handler: &mut CommunicationHandler);
+}
+
+impl SwarmEventHandler for kad::Event {
+    fn handle_swarm_event(self, handler: &mut CommunicationHandler) {
+        match self {
+            kad::Event::OutboundQueryProgressed {
+                id,
+                result:
+                    kad::QueryResult::GetProviders(Ok(kad::GetProvidersOk::FoundProviders {
+                        providers,
+                        ..
+                    })),
+                ..
+            } => match handler.current_requests.get(&id) {
+                Some(request) => {
+                    if let Some(provider) = handler.pending_request_provider {
+                        debug!("Already have provider");
+                        handler
+                            .swarm
+                            .behaviour_mut()
+                            .message_request_response
+                            .send_request(
+                                &provider,
+                                MessageRequest(NiketsuMessage::FileRequest(request.clone())),
+                            );
+                    } else if let Some(provider) = providers.iter().next() {
+                        debug!("Found providers");
+                        handler.pending_request_provider = Some(*provider);
+
+                        handler
+                            .swarm
+                            .behaviour_mut()
+                            .message_request_response
+                            .send_request(
+                                provider,
+                                MessageRequest(NiketsuMessage::FileRequest(request.clone())),
+                            );
+                    }
+                }
+                None => warn!("Found providers but no request?"),
+            },
+            kad::Event::OutboundQueryProgressed {
+                result:
+                    kad::QueryResult::GetProviders(Ok(
+                        kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. },
+                    )),
+                ..
+            } => {
+                debug!("No kademlia providers found");
+                if let Err(err) =
+                    handler
+                        .message_sender
+                        .send(NiketsuMessage::UserMessage(UserMessageMsg {
+                            actor: const { arcstr::literal!("server") },
+                            message: "No providers found for the requested file".into(),
+                        }))
+                {
+                    debug!(?err, "Failed to send message to core");
+                }
+            }
+            kad_event => debug!(?kad_event, "Received non handled kademlia event"),
+        }
     }
 }

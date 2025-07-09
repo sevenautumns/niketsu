@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
@@ -6,20 +5,19 @@ use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use futures::StreamExt;
 use libp2p::core::ConnectedPoint;
-use libp2p::kad::{self, QueryId};
+use libp2p::kad::{self};
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
 use libp2p::{PeerId, dcutr, gossipsub, ping};
 use niketsu_core::communicator::{
     ChunkRequestMsg, ChunkResponseMsg, ConnectedMsg, FileRequestMsg, FileResponseMsg, PlaylistMsg,
-    SeekMsg, SelectMsg, UserMessageMsg, UserStatusMsg, VideoShareMsg, VideoStatusMsg,
+    SeekMsg, SelectMsg, UserStatusMsg, VideoShareMsg, VideoStatusMsg,
 };
-use niketsu_core::playlist::Video;
 use tracing::{debug, error, info, trace, warn};
 
 use super::{
-    Behaviour, BehaviourEvent, CommunicationHandler, MessageResponse, Response, StatusResponse,
-    SwarmHandler,
+    Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait, MessageResponse,
+    Response, StatusResponse, SwarmEventHandler, SwarmHandler,
 };
 use crate::messages::NiketsuMessage;
 use crate::p2p::MessageRequest;
@@ -93,7 +91,7 @@ impl ClientSwarmEvent {
 impl ClientSwarmEventHandler for ping::Event {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
         debug!("Received ping!");
-        if self.peer != handler.host {
+        if self.peer != handler.handler.host {
             return;
         }
 
@@ -116,6 +114,7 @@ impl ClientSwarmEventHandler for dcutr::Event {
 
                 info!("Established direct connection. Closing connection to relay");
                 handler
+                    .handler
                     .swarm
                     .behaviour_mut()
                     .gossipsub
@@ -173,8 +172,8 @@ impl ClientSwarmEventHandler for request_response::Event<MessageRequest, Message
                 }
             },
             request_response::Event::OutboundFailure { peer, error, .. } => {
-                let host = handler.host;
-                if peer == handler.host {
+                let host = handler.handler.host;
+                if peer == handler.handler.host {
                     warn!(
                         "Outbound failure for request response with peer: error: {error:?} from {peer:?} where host {host:?}"
                     );
@@ -191,66 +190,7 @@ impl ClientSwarmEventHandler for request_response::Event<MessageRequest, Message
 
 impl ClientSwarmEventHandler for kad::Event {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        match self {
-            kad::Event::OutboundQueryProgressed {
-                id,
-                result:
-                    kad::QueryResult::GetProviders(Ok(kad::GetProvidersOk::FoundProviders {
-                        providers,
-                        ..
-                    })),
-                ..
-            } => match handler.current_requests.get(&id) {
-                Some(request) => {
-                    if let Some(provider) = handler.pending_request_provider {
-                        debug!("Already have provider");
-                        handler
-                            .swarm
-                            .behaviour_mut()
-                            .message_request_response
-                            .send_request(
-                                &provider,
-                                MessageRequest(NiketsuMessage::FileRequest(request.clone())),
-                            );
-                    } else if let Some(provider) = providers.iter().next() {
-                        debug!("Found providers");
-                        handler.pending_request_provider = Some(*provider);
-
-                        handler
-                            .swarm
-                            .behaviour_mut()
-                            .message_request_response
-                            .send_request(
-                                provider,
-                                MessageRequest(NiketsuMessage::FileRequest(request.clone())),
-                            );
-                    }
-                }
-                None => {
-                    warn!("Found providers but no request?")
-                }
-            },
-            kad::Event::OutboundQueryProgressed {
-                result:
-                    kad::QueryResult::GetProviders(Ok(
-                        kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. },
-                    )),
-                ..
-            } => {
-                debug!("No kademlia providers found");
-                if let Err(err) =
-                    handler
-                        .message_sender
-                        .send(NiketsuMessage::UserMessage(UserMessageMsg {
-                            actor: arcstr::literal!("server"),
-                            message: "No providers found for the requested file".into(),
-                        }))
-                {
-                    debug!(?err, "Failed to send message to core");
-                }
-            }
-            kad_event => debug!(?kad_event, "Received non handled kademlia event"),
-        }
+        SwarmEventHandler::handle_swarm_event(self, &mut handler.handler);
     }
 }
 
@@ -262,7 +202,7 @@ struct ConnectionEstablished {
 
 impl ClientSwarmEventHandler for ConnectionEstablished {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        if self.peer_id != handler.host {
+        if self.peer_id != handler.handler.host {
             return;
         }
 
@@ -271,7 +211,7 @@ impl ClientSwarmEventHandler for ConnectionEstablished {
         }
 
         info!(%self.connection_id, ?self.endpoint, "Connection to host established!");
-        if let Err(error) = handler.message_sender.send(ConnectedMsg.into()) {
+        if let Err(error) = handler.handler.message_sender.send(ConnectedMsg.into()) {
             warn!(%error, "Failed to send connected message to core");
         }
     }
@@ -285,9 +225,11 @@ struct ConnectionClosed {
 
 impl ClientSwarmEventHandler for ConnectionClosed {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        if self.peer_id == handler.host && !handler.swarm.is_connected(&self.peer_id) {
-            warn!(?self.cause, ?self.peer_id, host = %handler.host, %self.connection_id, "Connection to host closed");
-            handler.core_receiver.close();
+        if self.peer_id == handler.handler.host
+            && !handler.handler.swarm.is_connected(&self.peer_id)
+        {
+            warn!(?self.cause, ?self.peer_id, host = %handler.handler.host, %self.connection_id, "Connection to host closed");
+            handler.handler.core_receiver.close();
         }
     }
 }
@@ -312,9 +254,9 @@ impl ClientSwarmEventHandler for OutgoingConnectionError {
             }
         }
 
-        if pid == handler.host {
-            warn!(?self.error, ?self.peer_id, host = %handler.host, %self.connection_id, "Connection error to host");
-            handler.core_receiver.close();
+        if pid == handler.handler.host {
+            warn!(?self.error, ?self.peer_id, host = %handler.handler.host, %self.connection_id, "Connection error to host");
+            handler.handler.core_receiver.close();
         }
     }
 }
@@ -363,14 +305,20 @@ impl ClientCoreMessage {
 
 impl ClientCoreMessageHandler for UserStatusMsg {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        handler.swarm.send_request(&handler.host, self.into());
+        handler
+            .handler
+            .swarm
+            .send_request(&handler.handler.host, self.into());
         Ok(())
     }
 }
 
 impl ClientCoreMessageHandler for PlaylistMsg {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        handler.swarm.send_request(&handler.host, self.into());
+        handler
+            .handler
+            .swarm
+            .send_request(&handler.handler.host, self.into());
         Ok(())
     }
 }
@@ -389,8 +337,9 @@ impl ClientCoreMessageHandler for SelectMsg {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
         handler.reset_requests_responses();
         handler
+            .handler
             .swarm
-            .try_broadcast(handler.topic.clone(), self.into())
+            .try_broadcast(handler.handler.topic.clone(), self.into())
     }
 }
 
@@ -398,8 +347,8 @@ impl ClientCoreMessageHandler for VideoShareMsg {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
         match &self.video {
             Some(video) => {
-                handler.current_response = Some(video.clone());
-                handler.swarm.start_providing(video.clone())
+                handler.handler.current_response = Some(video.clone());
+                handler.handler.swarm.start_providing(video.clone())
             }
             None => {
                 handler.reset_requests_responses();
@@ -411,9 +360,9 @@ impl ClientCoreMessageHandler for VideoShareMsg {
 impl ClientCoreMessageHandler for ChunkRequestMsg {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
         //TODO handle issues with provider
-        match handler.pending_request_provider {
+        match handler.handler.pending_request_provider {
             Some(provider) => {
-                handler.swarm.send_request(&provider, self.into());
+                handler.handler.swarm.send_request(&provider, self.into());
                 Ok(())
             }
             None => bail!("No provider available for chunk request"),
@@ -423,9 +372,10 @@ impl ClientCoreMessageHandler for ChunkRequestMsg {
 
 impl ClientCoreMessageHandler for ChunkResponseMsg {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        if let Some(channel) = handler.pending_chunk_responses.remove(&self.uuid) {
+        if let Some(channel) = handler.handler.pending_chunk_responses.remove(&self.uuid) {
             let msg = NiketsuMessage::ChunkResponse(self);
             return handler
+                .handler
                 .swarm
                 .send_response(channel, MessageResponse(Response::Message(msg)));
         }
@@ -436,29 +386,31 @@ impl ClientCoreMessageHandler for ChunkResponseMsg {
 impl ClientCoreMessageHandler for FileRequestMsg {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
         let id = handler
+            .handler
             .swarm
             .behaviour_mut()
             .kademlia
             .get_providers(self.video.as_str().as_bytes().to_vec().into());
         debug!(?id, "Getting providers for file ...");
-        handler.current_requests.insert(id, self.clone());
+        handler.handler.current_requests.insert(id, self.clone());
         Ok(())
     }
 }
 
 impl ClientCoreMessageHandler for FileResponseMsg {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        let Some(channel) = handler.pending_file_responses.remove(&self.uuid) else {
+        let Some(channel) = handler.handler.pending_file_responses.remove(&self.uuid) else {
             bail!("Cannot send file response if response channel does not exist");
         };
 
         if self.video.is_none() {
-            handler.swarm.send_response(
+            handler.handler.swarm.send_response(
                 channel,
                 MessageResponse(Response::Status(StatusResponse::NotProvidingErr)),
             )
         } else {
             handler
+                .handler
                 .swarm
                 .send_response(channel, MessageResponse(Response::Message(self.into())))
         }
@@ -467,7 +419,10 @@ impl ClientCoreMessageHandler for FileResponseMsg {
 
 impl ClientCoreMessageHandler for NiketsuMessage {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        handler.swarm.try_broadcast(handler.topic.clone(), self)
+        handler
+            .handler
+            .swarm
+            .try_broadcast(handler.handler.topic.clone(), self)
     }
 }
 
@@ -482,14 +437,16 @@ pub(crate) trait ClientSwarmRequestHandler {
         &self,
         channel: ResponseChannel<MessageResponse>,
         handler: &mut ClientCommunicationHandler,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        self.handle_swarm_client_request(channel, handler)
+    }
     fn handle_swarm_request(
         &self,
         peer_id: PeerId,
         channel: ResponseChannel<MessageResponse>,
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
-        if peer_id == handler.host {
+        if peer_id == handler.handler.host {
             self.handle_swarm_host_request(channel, handler)
         } else {
             self.handle_swarm_client_request(channel, handler)
@@ -520,20 +477,12 @@ impl ClientSwarmRequestHandler for ChunkRequestMsg {
         channel: ResponseChannel<MessageResponse>,
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
-        handler.pending_chunk_responses.insert(self.uuid, channel);
         handler
-            .message_sender
-            .send(self.clone().into())
-            .map_err(anyhow::Error::from)
-    }
-
-    fn handle_swarm_host_request(
-        &self,
-        channel: ResponseChannel<MessageResponse>,
-        handler: &mut ClientCommunicationHandler,
-    ) -> Result<()> {
-        handler.pending_chunk_responses.insert(self.uuid, channel);
+            .handler
+            .pending_chunk_responses
+            .insert(self.uuid, channel);
         handler
+            .handler
             .message_sender
             .send(self.clone().into())
             .map_err(anyhow::Error::from)
@@ -546,20 +495,12 @@ impl ClientSwarmRequestHandler for FileRequestMsg {
         channel: ResponseChannel<MessageResponse>,
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
-        handler.pending_file_responses.insert(self.uuid, channel);
         handler
-            .message_sender
-            .send(self.clone().into())
-            .map_err(anyhow::Error::from)
-    }
-
-    fn handle_swarm_host_request(
-        &self,
-        channel: ResponseChannel<MessageResponse>,
-        handler: &mut ClientCommunicationHandler,
-    ) -> Result<()> {
-        handler.pending_file_responses.insert(self.uuid, channel);
+            .handler
+            .pending_file_responses
+            .insert(self.uuid, channel);
         handler
+            .handler
             .message_sender
             .send(self.clone().into())
             .map_err(anyhow::Error::from)
@@ -572,7 +513,7 @@ impl ClientSwarmRequestHandler for NiketsuMessage {
         channel: ResponseChannel<MessageResponse>,
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
-        handler.swarm.send_response(
+        handler.handler.swarm.send_response(
             channel,
             MessageResponse(Response::Status(StatusResponse::Err)),
         )?;
@@ -586,7 +527,7 @@ impl ClientSwarmRequestHandler for NiketsuMessage {
     ) -> Result<()> {
         if let (NiketsuMessage::FileResponse(_), NiketsuMessage::ChunkResponse(_)) = (&self, &self)
         {
-            handler.swarm.send_response(
+            handler.handler.swarm.send_response(
                 channel,
                 MessageResponse(Response::Status(StatusResponse::Err)),
             )?;
@@ -594,76 +535,16 @@ impl ClientSwarmRequestHandler for NiketsuMessage {
         }
 
         // typically, any host message is processed by the core
-        match handler.message_sender.send(self.clone()) {
-            Ok(_) => handler.swarm.send_response(
+        match handler.handler.message_sender.send(self.clone()) {
+            Ok(_) => handler.handler.swarm.send_response(
                 channel,
                 MessageResponse(Response::Status(StatusResponse::Ok)),
             ),
-            Err(_) => handler.swarm.send_response(
+            Err(_) => handler.handler.swarm.send_response(
                 channel,
                 MessageResponse(Response::Status(StatusResponse::Err)),
             ),
         }
-    }
-}
-
-#[enum_dispatch()]
-trait ClientSwarmResponseHandler {
-    fn handle_swarm_response(self, handler: &mut ClientCommunicationHandler) -> Result<()>;
-}
-
-#[enum_dispatch(ClientSwarmResponseHandler)]
-enum ClientSwarmResponse {
-    Status(StatusResponse),
-    ChunkResponse(ChunkResponseMsg),
-    FileResponse(FileResponseMsg),
-    Other(NiketsuMessage),
-}
-
-impl ClientSwarmResponse {
-    fn from(message: MessageResponse) -> Self {
-        match message.0 {
-            Response::Status(msg) => ClientSwarmResponse::Status(msg),
-            Response::Message(niketsu_message) => match niketsu_message {
-                NiketsuMessage::FileResponse(msg) => ClientSwarmResponse::FileResponse(msg),
-                NiketsuMessage::ChunkResponse(msg) => ClientSwarmResponse::ChunkResponse(msg),
-                msg => ClientSwarmResponse::Other(msg),
-            },
-        }
-    }
-}
-
-impl ClientSwarmResponseHandler for StatusResponse {
-    fn handle_swarm_response(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        debug!(?self, "Received status response");
-        if self == StatusResponse::NotProvidingErr {
-            handler.pending_request_provider.take();
-        }
-        Ok(())
-    }
-}
-
-impl ClientSwarmResponseHandler for ChunkResponseMsg {
-    fn handle_swarm_response(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        handler
-            .message_sender
-            .send(self.clone().into())
-            .map_err(anyhow::Error::from)
-    }
-}
-
-impl ClientSwarmResponseHandler for FileResponseMsg {
-    fn handle_swarm_response(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        handler
-            .message_sender
-            .send(self.clone().into())
-            .map_err(anyhow::Error::from)
-    }
-}
-
-impl ClientSwarmResponseHandler for NiketsuMessage {
-    fn handle_swarm_response(self, _handler: &mut ClientCommunicationHandler) -> Result<()> {
-        bail!("Did not expect response {self:?}");
     }
 }
 
@@ -713,7 +594,7 @@ impl ClientSwarmBroadcastHandler for VideoStatusMsg {
         peer_id: PeerId,
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
-        if peer_id != handler.host {
+        if peer_id != handler.handler.host {
             bail!("Received video status from non-host peer: {peer_id:?}")
         }
 
@@ -731,6 +612,7 @@ impl ClientSwarmBroadcastHandler for VideoStatusMsg {
         }
 
         handler
+            .handler
             .message_sender
             .send(video_status.into())
             .map_err(anyhow::Error::from)
@@ -745,6 +627,7 @@ impl ClientSwarmBroadcastHandler for SelectMsg {
     ) -> Result<()> {
         handler.reset_requests_responses();
         handler
+            .handler
             .message_sender
             .send(self.into())
             .map_err(anyhow::Error::from)
@@ -759,6 +642,7 @@ impl ClientSwarmBroadcastHandler for SeekMsg {
     ) -> Result<()> {
         handler.is_seeking = true;
         handler
+            .handler
             .message_sender
             .send(self.into())
             .map_err(anyhow::Error::from)
@@ -776,6 +660,7 @@ impl ClientSwarmBroadcastHandler for PassthroughMsg {
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
         handler
+            .handler
             .message_sender
             .send(self.niketsu_msg.clone())
             .map_err(anyhow::Error::from)
@@ -789,6 +674,7 @@ impl ClientSwarmBroadcastHandler for NiketsuMessage {
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
         handler
+            .handler
             .message_sender
             .send(self)
             .map_err(anyhow::Error::from)
@@ -796,21 +682,12 @@ impl ClientSwarmBroadcastHandler for NiketsuMessage {
 }
 
 pub(crate) struct ClientCommunicationHandler {
-    swarm: Swarm<Behaviour>,
-    topic: gossipsub::IdentTopic,
-    host: PeerId,
+    handler: CommunicationHandler,
     host_conn: Option<ConnectionId>,
     relay_conn: Option<ConnectionId>,
-    core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
-    message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
     video_status: VideoStatusMsg,
     is_seeking: bool,
     delay: Duration,
-    current_requests: HashMap<QueryId, FileRequestMsg>,
-    pending_request_provider: Option<PeerId>,
-    pending_chunk_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
-    pending_file_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
-    current_response: Option<Video>,
 }
 
 impl ClientCommunicationHandler {
@@ -821,43 +698,35 @@ impl ClientCommunicationHandler {
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
     ) -> Self {
+        let handler = CommunicationHandler::new(swarm, topic, host, core_receiver, message_sender);
         Self {
-            swarm,
-            topic,
-            host,
+            handler,
             host_conn: None,
             relay_conn: None,
-            core_receiver,
-            message_sender,
             video_status: VideoStatusMsg::default(),
             is_seeking: false,
             delay: Duration::default(),
-            current_requests: Default::default(),
-            pending_chunk_responses: Default::default(),
-            pending_file_responses: Default::default(),
-            pending_request_provider: None,
-            current_response: None,
         }
     }
 
     fn reset_requests_responses(&mut self) {
-        if let Some(video) = self.current_response.clone() {
-            self.swarm.stop_providing(video);
+        if let Some(video) = self.handler.current_response.clone() {
+            self.handler.swarm.stop_providing(video);
         }
-        self.pending_chunk_responses = Default::default();
-        self.current_response = None;
-        self.current_requests = Default::default();
-        self.pending_request_provider = None;
+        self.handler.pending_chunk_responses = Default::default();
+        self.handler.current_response = None;
+        self.handler.current_requests = Default::default();
+        self.handler.pending_request_provider = None;
     }
 }
 
 #[async_trait]
-impl CommunicationHandler for ClientCommunicationHandler {
+impl CommunicationHandlerTrait for ClientCommunicationHandler {
     async fn run(&mut self) {
         loop {
             tokio::select! {
-                event = self.swarm.select_next_some() => self.handle_swarm_event(event),
-                msg = self.core_receiver.recv() => match msg {
+                event = self.handler.swarm.select_next_some() => self.handle_swarm_event(event),
+                msg = self.handler.core_receiver.recv() => match msg {
                     Some(msg) => {
                         debug!(?msg, "Message from core");
                         if let Err(error) = self.handle_core_message(msg) {
@@ -874,13 +743,13 @@ impl CommunicationHandler for ClientCommunicationHandler {
     }
 
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
-        debug!(?event, host = %self.host, peer = %self.swarm.local_peer_id(), "Handling swarm event");
+        debug!(?event, host = %self.handler.host, peer = %self.handler.swarm.local_peer_id(), "Handling swarm event");
         let client_event = ClientSwarmEvent::from(event);
         client_event.handle_swarm_event(self);
     }
 
     fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
-        debug!(?msg, host = %self.host, peer = %self.swarm.local_peer_id(), "Handling core message");
+        debug!(?msg, host = %self.handler.host, peer = %self.handler.swarm.local_peer_id(), "Handling core message");
         let core_message = ClientCoreMessage::from(msg);
         core_message.handle_core_message(self)
     }
@@ -896,16 +765,14 @@ impl CommunicationHandler for ClientCommunicationHandler {
         swarm_request.handle_swarm_request(peer_id, channel, self)
     }
 
-    fn handle_swarm_response(&mut self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
-        debug!(message = ?msg, peer = ?peer_id, "Received response");
-        let swarm_response = ClientSwarmResponse::from(msg);
-        swarm_response.handle_swarm_response(self)
-    }
-
     fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()> {
         let niketsu_msg: NiketsuMessage = msg.try_into()?;
         debug!(message = ?niketsu_msg, "Received broadcast");
         let swarm_broadcast = ClientSwarmBroadcast::from(niketsu_msg);
         swarm_broadcast.handle_swarm_broadcast(peer_id, self)
+    }
+
+    fn handler(&mut self) -> &mut CommunicationHandler {
+        &mut self.handler
     }
 }
