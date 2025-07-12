@@ -13,6 +13,7 @@ use niketsu_core::communicator::{
     ChunkRequestMsg, ChunkResponseMsg, ConnectedMsg, FileRequestMsg, FileResponseMsg, PlaylistMsg,
     SeekMsg, SelectMsg, UserStatusMsg, VideoShareMsg, VideoStatusMsg,
 };
+use niketsu_core::log_err_msg;
 use tracing::{debug, error, info, trace, warn};
 
 use super::{
@@ -120,9 +121,10 @@ impl ClientSwarmEventHandler for dcutr::Event {
                     .gossipsub
                     .add_explicit_peer(&self.remote_peer_id);
             }
-            Err(error) => {
-                error!(%self.remote_peer_id, %error, "Direct connection (hole punching) failed");
-            }
+            Err(error) => error!(
+                %self.remote_peer_id, %error,
+                "Direct connection (hole punching) failed"
+            ),
         }
     }
 }
@@ -138,10 +140,8 @@ impl ClientSwarmEventHandler for gossipsub::Event {
                 debug!(%message_id, %message_id, msg = %String::from_utf8_lossy(&message.data),
                     "Received gossipsub message",
                 );
-                if let Err(error) = handler.handle_swarm_broadcast(message.data, propagation_source)
-                {
-                    error!(%error, "Failed to handle broadcast message");
-                }
+                let res = handler.handle_swarm_broadcast(message.data, propagation_source);
+                log_err_msg!(res, "Failed to handle broadcast message");
             }
             gossipsub_event => debug!(
                 ?gossipsub_event,
@@ -160,24 +160,19 @@ impl ClientSwarmEventHandler for request_response::Event<MessageRequest, Message
                 } => {
                     let req = request.0;
                     trace!(?req, "Received request");
-                    if let Err(error) = handler.handle_swarm_request(req, channel, peer) {
-                        error!(%error, "Failed to handle incoming message");
-                    }
+                    let res = handler.handle_swarm_request(req, channel, peer);
+                    log_err_msg!(res, "Failed to handle incoming message");
                 }
                 request_response::Message::Response { response, .. } => {
                     debug!(?response, "Received response");
-                    if let Err(error) = handler.handle_swarm_response(response, peer) {
-                        error!(%error, "Failed to handle incoming message");
-                    }
+                    let res = handler.handle_swarm_response(response, peer);
+                    log_err_msg!(res, "Failed to handle incoming message");
                 }
             },
             request_response::Event::OutboundFailure { peer, error, .. } => {
                 let host = handler.handler.host;
                 if peer == handler.handler.host {
-                    warn!(
-                        "Outbound failure for request response with peer: error: {error:?} from {peer:?} where host {host:?}"
-                    );
-                    // self.core_receiver.close();
+                    warn!(%error, %peer, %host, "Outbound failure for request response" );
                 }
             }
             request_response_event => debug!(
@@ -348,7 +343,7 @@ impl ClientCoreMessageHandler for VideoShareMsg {
         match &self.video {
             Some(video) => {
                 handler.handler.current_response = Some(video.clone());
-                handler.handler.swarm.start_providing(video.clone())
+                handler.handler.swarm.start_providing(video)
             }
             None => {
                 handler.reset_requests_responses();
@@ -710,7 +705,7 @@ impl ClientCommunicationHandler {
 
     fn reset_requests_responses(&mut self) {
         if let Some(video) = self.handler.current_response.clone() {
-            self.handler.swarm.stop_providing(video);
+            self.handler.swarm.stop_providing(&video);
         }
         self.handler.pending_chunk_responses = Default::default();
         self.handler.current_response = None;
@@ -728,9 +723,8 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
                 msg = self.handler.core_receiver.recv() => match msg {
                     Some(msg) => {
                         debug!(?msg, "Message from core");
-                        if let Err(error) = self.handle_core_message(msg) {
-                            error!(%error, "Handling message caused error");
-                        }
+                        let res = self.handle_core_message(msg);
+                        log_err_msg!(res, "Handling message caused error");
                     },
                     None => {
                         debug!("Channel of core closed. Stopping p2p client event loop");

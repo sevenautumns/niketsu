@@ -124,7 +124,7 @@ impl Core {
 }
 
 #[macro_export]
-macro_rules! log {
+macro_rules! log_err {
     ($result:expr) => {
         if let Err(error) = $result {
             tracing::error!(%error);
@@ -135,6 +135,24 @@ macro_rules! log {
             Ok(ok_val) => ok_val,
             Err(error) => {
                 tracing::error!(%error);
+                $default
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! log_err_msg {
+    ($result:expr, $msg:expr) => {
+        if let Err(error) = $result {
+            tracing::error!(%error, $msg);
+        }
+    };
+    ($result:expr, $default:expr, $msg:expr) => {
+        match $result {
+            Ok(ok_val) => ok_val,
+            Err(error) => {
+                tracing::error!(%error, $msg);
                 $default
             }
         }

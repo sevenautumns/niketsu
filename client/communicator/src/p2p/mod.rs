@@ -120,8 +120,8 @@ trait SwarmHandler<T, TResponse> {
     fn send_request(&mut self, peer_id: &PeerId, msg: T);
     fn send_response(&mut self, channel: ResponseChannel<TResponse>, msg: TResponse) -> Result<()>;
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: T) -> Result<()>;
-    fn start_providing(&mut self, video: Video) -> Result<()>;
-    fn stop_providing(&mut self, video: Video);
+    fn start_providing(&mut self, video: &Video) -> Result<()>;
+    fn stop_providing(&mut self, video: &Video);
 }
 
 impl SwarmHandler<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
@@ -171,7 +171,7 @@ impl SwarmHandler<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
         }
     }
 
-    fn start_providing(&mut self, video: Video) -> Result<()> {
+    fn start_providing(&mut self, video: &Video) -> Result<()> {
         let filename = video.as_str().as_bytes().to_vec();
         let res = self
             .behaviour_mut()
@@ -187,7 +187,7 @@ impl SwarmHandler<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
         }
     }
 
-    fn stop_providing(&mut self, video: Video) {
+    fn stop_providing(&mut self, video: &Video) {
         let filename = video.as_str().as_bytes().to_vec();
         self.behaviour_mut()
             .kademlia

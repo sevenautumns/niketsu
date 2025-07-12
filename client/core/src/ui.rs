@@ -481,7 +481,7 @@ impl UiModel {
                 ready: user.ready,
             }))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 
     pub fn change_username(&self, name: ArcStr) {
@@ -496,7 +496,7 @@ impl UiModel {
                 ready: user.ready,
             }))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 
     pub fn send_message(&self, msg: String) {
@@ -519,7 +519,7 @@ impl UiModel {
                 message: msg,
             }))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 
     pub fn change_db_paths(&self, paths: Vec<PathBuf>) {
@@ -530,7 +530,7 @@ impl UiModel {
                 FileDatabaseChange::ChangePaths(paths),
             ))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 
     pub fn start_db_update(&self) {
@@ -541,7 +541,7 @@ impl UiModel {
                 FileDatabaseChange::StartUpdate,
             ))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 
     pub fn stop_db_update(&self) {
@@ -552,7 +552,7 @@ impl UiModel {
                 FileDatabaseChange::StopUpdate,
             ))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 
     pub fn change_room(&self, request: RoomChange) {
@@ -561,7 +561,7 @@ impl UiModel {
             .events
             .send(UserInterfaceEvent::RoomChange(request))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 
     pub fn change_video(&self, video: Video) {
@@ -571,7 +571,7 @@ impl UiModel {
             .events
             .send(UserInterfaceEvent::VideoChange(VideoChange { video }))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 
     pub fn change_playlist(&self, playlist: Playlist) {
@@ -583,7 +583,7 @@ impl UiModel {
                 playlist,
             }))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 
     pub fn video_share_toggle(&self) {
@@ -597,7 +597,7 @@ impl UiModel {
                 // video_share,
             }))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 
     pub fn video_file_request(&self) {
@@ -606,7 +606,7 @@ impl UiModel {
             .events
             .send(UserInterfaceEvent::VideoRequest(VideoRequest {}))
             .map_err(anyhow::Error::from);
-        crate::log!(res)
+        crate::log_err!(res)
     }
 }
 
