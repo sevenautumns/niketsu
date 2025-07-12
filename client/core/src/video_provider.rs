@@ -30,12 +30,23 @@ pub enum VideoProviderEvent {
     FileReady,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ChunkResponse {
     pub uuid: uuid::Uuid,
     pub file_name: ArcStr,
     pub start: u64,
     pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for ChunkResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChunkResponse")
+            .field("uuid", &self.uuid)
+            .field("file_name", &self.file_name)
+            .field("start", &self.start)
+            .field("bytes", &"[not shown]")
+            .finish()
+    }
 }
 
 impl EventHandler for ChunkResponse {
