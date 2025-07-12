@@ -656,29 +656,3 @@ impl SwarmEventHandler for kad::Event {
         }
     }
 }
-
-impl SwarmEventHandler for mdns::Event {
-    fn handle_swarm_event(self, handler: &mut CommunicationHandler) {
-        match self {
-            mdns::Event::Discovered(nodes) => {
-                for node in nodes {
-                    if let Err(err) = handler.swarm.dial(node.1.clone()) {
-                        warn!(?node, ?err, "Failed to dial mDNS node");
-                    } else {
-                        handler
-                            .swarm
-                            .behaviour_mut()
-                            .kademlia
-                            .add_address(&node.0, node.1);
-                        handler
-                            .swarm
-                            .behaviour_mut()
-                            .gossipsub
-                            .add_explicit_peer(&node.0);
-                    }
-                }
-            }
-            mdns::Event::Expired(nodes) => debug!(?nodes, "Nodes in mDNS expired"),
-        }
-    }
-}
