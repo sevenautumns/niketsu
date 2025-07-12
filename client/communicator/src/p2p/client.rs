@@ -8,7 +8,7 @@ use libp2p::core::ConnectedPoint;
 use libp2p::kad::{self};
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
-use libp2p::{PeerId, dcutr, gossipsub, ping};
+use libp2p::{PeerId, dcutr, gossipsub, mdns, ping};
 use niketsu_core::communicator::{
     ChunkRequestMsg, ChunkResponseMsg, ConnectedMsg, FileRequestMsg, FileResponseMsg, PlaylistMsg,
     SeekMsg, SelectMsg, UserStatusMsg, VideoShareMsg, VideoStatusMsg,
@@ -34,6 +34,7 @@ enum ClientSwarmEvent {
     GossipSub(gossipsub::Event),
     MessageRequestResponse(request_response::Event<MessageRequest, MessageResponse>),
     Kademlia(kad::Event),
+    Mdns(mdns::Event),
     ConnectionEstablished(ConnectionEstablished),
     ConnectionClosed(ConnectionClosed),
     OutgoingConnectionError(OutgoingConnectionError),
@@ -54,6 +55,7 @@ impl ClientSwarmEvent {
             SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
                 ClientSwarmEvent::Kademlia(event)
             }
+            SwarmEvent::Behaviour(BehaviourEvent::Mdns(event)) => ClientSwarmEvent::Mdns(event),
             SwarmEvent::ConnectionEstablished {
                 peer_id,
                 connection_id,
@@ -189,6 +191,12 @@ impl ClientSwarmEventHandler for request_response::Event<MessageRequest, Message
 }
 
 impl ClientSwarmEventHandler for kad::Event {
+    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
+        SwarmEventHandler::handle_swarm_event(self, &mut handler.handler);
+    }
+}
+
+impl ClientSwarmEventHandler for mdns::Event {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
         SwarmEventHandler::handle_swarm_event(self, &mut handler.handler);
     }
@@ -525,8 +533,7 @@ impl ClientSwarmRequestHandler for NiketsuMessage {
         channel: ResponseChannel<MessageResponse>,
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
-        if let (NiketsuMessage::FileResponse(_), NiketsuMessage::ChunkResponse(_)) = (&self, &self)
-        {
+        if let NiketsuMessage::FileResponse(_) | NiketsuMessage::ChunkResponse(_) = &self {
             handler.handler.swarm.send_response(
                 channel,
                 MessageResponse(Response::Status(StatusResponse::Err)),

@@ -12,8 +12,8 @@ use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
-    Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, identity, kad, noise, ping,
-    relay, tcp, yamux,
+    Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, identity, kad, mdns, noise,
+    ping, relay, tcp, yamux,
 };
 use niketsu_core::communicator::{
     ChunkResponseMsg, FileRequestMsg, FileResponseMsg, UserMessageMsg,
@@ -45,6 +45,7 @@ pub(crate) struct Behaviour {
     message_request_response: request_response::cbor::Behaviour<MessageRequest, MessageResponse>,
     init_request_response: request_response::cbor::Behaviour<InitRequest, InitResponse>,
     kademlia: kad::Behaviour<MemoryStore>,
+    mdns: mdns::tokio::Behaviour,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -419,6 +420,10 @@ impl P2PClient {
                         keypair.public().to_peer_id(),
                         MemoryStore::new(key.public().to_peer_id()),
                     ),
+                    mdns: mdns::tokio::Behaviour::new(
+                        mdns::Config::default(),
+                        key.public().to_peer_id(),
+                    )?,
                 })
             })?
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
@@ -644,6 +649,32 @@ impl SwarmEventHandler for kad::Event {
                 }
             }
             kad_event => debug!(?kad_event, "Received non handled kademlia event"),
+        }
+    }
+}
+
+impl SwarmEventHandler for mdns::Event {
+    fn handle_swarm_event(self, handler: &mut CommunicationHandler) {
+        match self {
+            mdns::Event::Discovered(nodes) => {
+                for node in nodes {
+                    if let Err(err) = handler.swarm.dial(node.1.clone()) {
+                        warn!(?node, ?err, "Failed to dial mDNS node");
+                    } else {
+                        handler
+                            .swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .add_address(&node.0, node.1);
+                        handler
+                            .swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .add_explicit_peer(&node.0);
+                    }
+                }
+            }
+            mdns::Event::Expired(nodes) => debug!(?nodes, "Nodes in mDNS expired"),
         }
     }
 }
