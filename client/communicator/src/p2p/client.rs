@@ -8,7 +8,7 @@ use libp2p::core::ConnectedPoint;
 use libp2p::kad::{self};
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
-use libp2p::{PeerId, dcutr, gossipsub, mdns, ping};
+use libp2p::{PeerId, dcutr, gossipsub, ping};
 use niketsu_core::communicator::{
     ChunkRequestMsg, ChunkResponseMsg, ConnectedMsg, FileRequestMsg, FileResponseMsg, PlaylistMsg,
     SeekMsg, SelectMsg, UserStatusMsg, VideoShareMsg, VideoStatusMsg,
@@ -34,7 +34,6 @@ enum ClientSwarmEvent {
     GossipSub(gossipsub::Event),
     MessageRequestResponse(request_response::Event<MessageRequest, MessageResponse>),
     Kademlia(kad::Event),
-    Mdns(mdns::Event),
     ConnectionEstablished(ConnectionEstablished),
     ConnectionClosed(ConnectionClosed),
     OutgoingConnectionError(OutgoingConnectionError),
@@ -55,7 +54,6 @@ impl ClientSwarmEvent {
             SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
                 ClientSwarmEvent::Kademlia(event)
             }
-            SwarmEvent::Behaviour(BehaviourEvent::Mdns(event)) => ClientSwarmEvent::Mdns(event),
             SwarmEvent::ConnectionEstablished {
                 peer_id,
                 connection_id,
@@ -196,12 +194,6 @@ impl ClientSwarmEventHandler for kad::Event {
     }
 }
 
-impl ClientSwarmEventHandler for mdns::Event {
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        SwarmEventHandler::handle_swarm_event(self, &mut handler.handler);
-    }
-}
-
 struct ConnectionEstablished {
     peer_id: PeerId,
     connection_id: ConnectionId,
@@ -216,11 +208,11 @@ impl ClientSwarmEventHandler for ConnectionEstablished {
 
         if self.endpoint.is_relayed() {
             handler.relay_conn = Some(self.connection_id);
-        }
-
-        info!(%self.connection_id, ?self.endpoint, "Connection to host established!");
-        if let Err(error) = handler.handler.message_sender.send(ConnectedMsg.into()) {
-            warn!(%error, "Failed to send connected message to core");
+        } else {
+            info!(%self.connection_id, ?self.endpoint, "Direct connection to host established!");
+            if let Err(error) = handler.handler.message_sender.send(ConnectedMsg.into()) {
+                warn!(%error, "Failed to send connected message to core");
+            }
         }
     }
 }

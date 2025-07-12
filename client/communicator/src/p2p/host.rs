@@ -136,7 +136,34 @@ impl HostSwarmEventHandler for kad::Event {
 
 impl HostSwarmEventHandler for mdns::Event {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        SwarmEventHandler::handle_swarm_event(self, &mut handler.handler);
+        match self {
+            mdns::Event::Discovered(nodes) => {
+                for node in nodes {
+                    // only works if host has established connection via relay beforehand
+                    if !handler.is_connected_user(node.0) {
+                        return;
+                    }
+
+                    if let Err(err) = handler.handler.swarm.dial(node.1.clone()) {
+                        warn!(?node, ?err, "Failed to dial mDNS node");
+                    } else {
+                        handler
+                            .handler
+                            .swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .add_address(&node.0, node.1);
+                        handler
+                            .handler
+                            .swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .add_explicit_peer(&node.0);
+                    }
+                }
+            }
+            mdns::Event::Expired(nodes) => debug!(?nodes, "Nodes in mDNS expired"),
+        }
     }
 }
 
@@ -147,6 +174,8 @@ struct ConnectionEstablished {
 impl HostSwarmEventHandler for ConnectionEstablished {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
         debug!(%self.peer_id, "New client established connection");
+
+        handler.users.entry(self.peer_id).or_insert(None);
         if let Err(error) = handler.send_init_status(self.peer_id) {
             error!(%error, "Failed to send initial messages to client");
         }
@@ -605,7 +634,7 @@ pub(crate) struct HostCommunicationHandler {
     status_list: UserStatusListMsg,
     playlist: PlaylistMsg,
     select: SelectMsg,
-    users: HashMap<PeerId, UserStatus>,
+    users: HashMap<PeerId, Option<UserStatus>>,
 }
 
 impl HostCommunicationHandler {
@@ -662,11 +691,13 @@ impl HostCommunicationHandler {
 
     fn update_status(&mut self, status: UserStatus, peer_id: PeerId) {
         self.status_list.users.replace(status.clone());
-        self.users.insert(peer_id, status);
+        self.users.insert(peer_id, Some(status));
     }
 
-    fn remove_peer(&mut self, status: &UserStatus, peer_id: &PeerId) {
-        self.status_list.users.remove(status);
+    fn remove_peer(&mut self, status: &Option<UserStatus>, peer_id: &PeerId) {
+        if let Some(s) = status {
+            self.status_list.users.remove(s);
+        }
         self.users.remove(peer_id);
     }
 
@@ -683,8 +714,14 @@ impl HostCommunicationHandler {
         buzzword
     }
 
+    // user that already sent status message and is known
     fn is_established_user(&self, peer_id: PeerId) -> bool {
-        self.users.contains_key(&peer_id)
+        self.users.get(&peer_id).is_some_and(|s| s.is_some())
+    }
+
+    // user that established connection but did not sent status yet
+    fn is_connected_user(&self, peer_id: PeerId) -> bool {
+        self.users.get(&peer_id).is_some_and(|s| s.is_none())
     }
 
     fn username_exists(&self, name: ArcStr) -> bool {
@@ -695,14 +732,14 @@ impl HostCommunicationHandler {
         let mut new_status = status.clone();
 
         if self.is_established_user(peer_id) {
+            // user name change, remove old status and update user map
             if !self.username_exists(status.name.clone()) {
-                // user name change, remove old status and update user map
                 let users = self.users.clone(); // is there any other way to avoid mut/immut borrow?
                 let old_status = users.get(&peer_id).expect("User should exist");
                 self.remove_peer(old_status, &peer_id);
             }
             // otherwise, typical user status update, only need to update map & list
-        } else {
+        } else if self.is_connected_user(peer_id) {
             // new user
             if self.username_exists(status.name.clone()) {
                 // username needs to be force changed to avoid duplicate user names
@@ -726,10 +763,13 @@ impl HostCommunicationHandler {
             let mut start_msg = NiketsuMessage::Start(StartMsg {
                 actor: arcstr::literal!("server"),
             });
-            if let Some(user) = self.users.get(&peer_id) {
-                start_msg = NiketsuMessage::Start(StartMsg {
-                    actor: user.name.clone(),
-                });
+            if let Some(status) = self.users.get(&peer_id) {
+                let actor = match status {
+                    Some(s) => s.name.clone(),
+                    None => arcstr::literal!("unknown"),
+                };
+
+                start_msg = NiketsuMessage::Start(StartMsg { actor });
             }
             self.handler.message_sender.send(start_msg.clone())?;
             self.handler
