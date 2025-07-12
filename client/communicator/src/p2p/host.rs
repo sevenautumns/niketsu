@@ -724,7 +724,7 @@ impl HostCommunicationHandler {
         if self.all_users_ready() {
             debug!("All users area ready. Publishing start to gossipsub");
             let mut start_msg = NiketsuMessage::Start(StartMsg {
-                actor: arcstr::literal!("Sever"),
+                actor: arcstr::literal!("server"),
             });
             if let Some(user) = self.users.get(&peer_id) {
                 start_msg = NiketsuMessage::Start(StartMsg {

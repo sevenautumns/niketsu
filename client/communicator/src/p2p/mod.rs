@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use arcstr::ArcStr;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use futures::stream::StreamExt;
@@ -523,6 +524,15 @@ impl CommunicationHandler {
             current_response: None,
         }
     }
+
+    pub fn send_chat_message(&self, actor: ArcStr, message: String) -> Result<()> {
+        self.message_sender
+            .send(NiketsuMessage::UserMessage(UserMessageMsg {
+                actor,
+                message,
+            }))
+            .map_err(|err| anyhow::anyhow!(err))
+    }
 }
 
 #[enum_dispatch()]
@@ -604,7 +614,8 @@ impl SwarmEventHandler for kad::Event {
             } => match handler.current_requests.get(&id) {
                 Some(request) => {
                     if let Some(provider) = handler.pending_request_provider {
-                        debug!("Already have provider");
+                        debug!("Provider already exists");
+
                         handler
                             .swarm
                             .behaviour_mut()
@@ -614,7 +625,7 @@ impl SwarmEventHandler for kad::Event {
                                 MessageRequest(NiketsuMessage::FileRequest(request.clone())),
                             );
                     } else if let Some(provider) = providers.iter().next() {
-                        debug!("Found providers");
+                        debug!("Providers found");
                         handler.pending_request_provider = Some(*provider);
 
                         handler
@@ -630,21 +641,14 @@ impl SwarmEventHandler for kad::Event {
                 None => warn!("Found providers but no request?"),
             },
             kad::Event::OutboundQueryProgressed {
-                result:
-                    kad::QueryResult::GetProviders(Ok(
-                        kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. },
-                    )),
+                result: kad::QueryResult::GetProviders(Err(err)),
                 ..
             } => {
-                debug!("No kademlia providers found");
-                if let Err(err) =
-                    handler
-                        .message_sender
-                        .send(NiketsuMessage::UserMessage(UserMessageMsg {
-                            actor: const { arcstr::literal!("server") },
-                            message: "No providers found for the requested file".into(),
-                        }))
-                {
+                debug!(?err, "No kademlia providers found");
+                if let Err(err) = handler.send_chat_message(
+                    arcstr::literal!("server"),
+                    "No providers found for the requested file".into(),
+                ) {
                     debug!(?err, "Failed to send message to core");
                 }
             }
