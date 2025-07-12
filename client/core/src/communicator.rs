@@ -575,7 +575,7 @@ impl From<ChunkRequestMsg> for OutgoingMessage {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChunkResponseMsg {
     pub uuid: uuid::Uuid,
@@ -583,6 +583,18 @@ pub struct ChunkResponseMsg {
     pub video: Video,
     pub start: u64,
     pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for ChunkResponseMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChunkResponseMsg")
+            .field("uuid", &self.uuid)
+            .field("actor", &self.actor)
+            .field("video", &self.video)
+            .field("start", &self.start)
+            .field("bytes", &"[not shown]")
+            .finish()
+    }
 }
 
 impl From<ChunkResponseMsg> for OutgoingMessage {
