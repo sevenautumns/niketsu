@@ -12,7 +12,7 @@ use libp2p::core::ConnectedPoint;
 use libp2p::kad::{self};
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, SwarmEvent};
-use libp2p::{Multiaddr, PeerId, Swarm, gossipsub};
+use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use niketsu_core::communicator::{
     ChunkRequestMsg, ChunkResponseMsg, ConnectedMsg, FileRequestMsg, FileResponseMsg, PlaylistMsg,
     SelectMsg, StartMsg, UserStatusListMsg, UserStatusMsg, VideoShareMsg, VideoStatusMsg,
@@ -39,6 +39,7 @@ enum HostSwarmEvent {
     GossipSub(gossipsub::Event),
     MessageRequestResponse(request_response::Event<MessageRequest, MessageResponse>),
     Kademlia(kad::Event),
+    Mdns(mdns::Event),
     ConnectionEstablished(ConnectionEstablished),
     ConnectionClosed(ConnectionClosed),
     Other(Box<SwarmEvent<BehaviourEvent>>),
@@ -69,6 +70,7 @@ impl HostSwarmEvent {
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 HostSwarmEvent::ConnectionEstablished(ConnectionEstablished { peer_id })
             }
+            SwarmEvent::Behaviour(BehaviourEvent::Mdns(event)) => HostSwarmEvent::Mdns(event),
             _ => HostSwarmEvent::Other(Box::new(event)),
         }
     }
@@ -127,6 +129,12 @@ impl HostSwarmEventHandler for request_response::Event<MessageRequest, MessageRe
 }
 
 impl HostSwarmEventHandler for kad::Event {
+    fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
+        SwarmEventHandler::handle_swarm_event(self, &mut handler.handler);
+    }
+}
+
+impl HostSwarmEventHandler for mdns::Event {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
         SwarmEventHandler::handle_swarm_event(self, &mut handler.handler);
     }
