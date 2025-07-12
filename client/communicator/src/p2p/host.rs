@@ -17,6 +17,7 @@ use niketsu_core::communicator::{
     ChunkRequestMsg, ChunkResponseMsg, ConnectedMsg, FileRequestMsg, FileResponseMsg, PlaylistMsg,
     SelectMsg, StartMsg, UserStatusListMsg, UserStatusMsg, VideoShareMsg, VideoStatusMsg,
 };
+use niketsu_core::log_err_msg;
 use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
@@ -87,10 +88,8 @@ impl HostSwarmEventHandler for gossipsub::Event {
                 debug!(%message_id, %message_id, msg = %String::from_utf8_lossy(&message.data),
                     "Received gossipsub message",
                 );
-                if let Err(error) = handler.handle_swarm_broadcast(message.data, propagation_source)
-                {
-                    error!(%error, "Failed to handle broadcast message");
-                }
+                let res = handler.handle_swarm_broadcast(message.data, propagation_source);
+                log_err_msg!(res, "Failed to handle broadcast message")
             }
             gossipsub_event => debug!(
                 ?gossipsub_event,
@@ -109,15 +108,13 @@ impl HostSwarmEventHandler for request_response::Event<MessageRequest, MessageRe
                 } => {
                     let req = request.0;
                     trace!(?req, "Received request");
-                    if let Err(error) = handler.handle_swarm_request(req, channel, peer) {
-                        error!(%error, "Failed to handle incoming message");
-                    }
+                    let res = handler.handle_swarm_request(req, channel, peer);
+                    log_err_msg!(res, "Failed to handle incoming message")
                 }
                 request_response::Message::Response { response, .. } => {
                     debug!(?response, "Received response");
-                    if let Err(error) = handler.handle_swarm_response(response, peer) {
-                        error!(%error, "Failed to handle incoming message");
-                    }
+                    let res = handler.handle_swarm_response(response, peer);
+                    log_err_msg!(res, "Failed to handle incoming message")
                 }
             },
             request_response_event => debug!(
@@ -176,9 +173,8 @@ impl HostSwarmEventHandler for ConnectionEstablished {
         debug!(%self.peer_id, "New client established connection");
 
         handler.users.entry(self.peer_id).or_insert(None);
-        if let Err(error) = handler.send_init_status(self.peer_id) {
-            error!(%error, "Failed to send initial messages to client");
-        }
+        let res = handler.send_init_status(self.peer_id);
+        log_err_msg!(res, "Failed to send initial messages to client");
     }
 }
 
@@ -199,18 +195,15 @@ impl HostSwarmEventHandler for ConnectionClosed {
             if let Some(status) = users.get(&self.peer_id) {
                 handler.remove_peer(status, &self.peer_id);
                 let status_list = NiketsuMessage::StatusList(handler.status_list.clone());
-                if let Err(error) = handler.handler.message_sender.send(status_list.clone()) {
-                    error!(%error, "Failed to send status list to core");
-                }
-                if let Err(error) = handler
+                let res = handler.handler.message_sender.send(status_list.clone());
+                log_err_msg!(res, "Failed to send status list to core");
+                let res = handler
                     .handler
                     .swarm
-                    .try_broadcast(handler.handler.topic.clone(), status_list)
-                {
-                    error!(%error, "Failed to broadcast status list");
-                }
+                    .try_broadcast(handler.handler.topic.clone(), status_list);
+                log_err_msg!(res, "Failed to broadcast status list");
             } else {
-                warn!("Expected peer to be included in list");
+                warn!(?self.peer_id, "Expected peer to be included in list");
             }
         }
     }
@@ -311,11 +304,9 @@ impl HostCoreMessageHandler for VideoShareMsg {
         match &self.video {
             Some(video) => {
                 handler.handler.current_response = Some(video.clone());
-                handler.handler.swarm.start_providing(video.clone())?;
+                handler.handler.swarm.start_providing(video)?;
             }
-            None => {
-                handler.reset_requests_responses();
-            }
+            None => handler.reset_requests_responses(),
         }
         Ok(())
     }
@@ -510,12 +501,13 @@ impl HostSwarmRequestHandler for ChunkRequestMsg {
         channel: ResponseChannel<MessageResponse>,
         handler: &mut HostCommunicationHandler,
     ) -> Result<()> {
-        let msg = NiketsuMessage::ChunkRequest(self.clone());
+        let uuid = self.uuid;
+        let msg = NiketsuMessage::ChunkRequest(self);
         handler.handler.message_sender.send(msg)?;
         handler
             .handler
             .pending_chunk_responses
-            .insert(self.uuid, channel);
+            .insert(uuid, channel);
         Ok(())
     }
 }
@@ -596,7 +588,7 @@ impl HostSwarmBroadcastHandler for SelectMsg {
         handler: &mut HostCommunicationHandler,
     ) -> Result<()> {
         let msg = NiketsuMessage::Select(self.clone());
-        handler.select = self.clone();
+        handler.select = self;
         handler.handler.message_sender.send(msg)?;
         handler.handle_all_users_ready(peer_id)?;
         handler.reset_requests_responses();
@@ -836,7 +828,7 @@ impl HostCommunicationHandler {
 
     fn reset_requests_responses(&mut self) {
         if let Some(video) = self.handler.current_response.clone() {
-            self.handler.swarm.stop_providing(video);
+            self.handler.swarm.stop_providing(&video);
         }
         self.handler.pending_chunk_responses = Default::default();
         self.handler.current_response = None;
@@ -858,9 +850,8 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
                 msg = self.handler.core_receiver.recv() => match msg {
                     Some(msg) => {
                         debug!(?msg, "core message");
-                        if let Err(error) = self.handle_core_message(msg) {
-                            error!(%error, "Handling message caused error");
-                        }
+                        let res = self.handle_core_message(msg);
+                        log_err_msg!(res, "Handling message caused error");
                     },
                     None => {
                         debug!("Channel of core closed. Stopping p2p client event loop");

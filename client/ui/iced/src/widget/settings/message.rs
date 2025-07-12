@@ -4,7 +4,7 @@ use arcstr::ArcStr;
 use enum_dispatch::enum_dispatch;
 use iced::{Task, Theme};
 use niketsu_core::config::Config;
-use niketsu_core::log;
+use niketsu_core::log_err;
 use niketsu_core::room::RoomName;
 use niketsu_core::ui::{RoomChange, UiModel};
 
@@ -105,7 +105,7 @@ pub struct ConnectApplyCloseSave;
 impl SettingsWidgetMessageTrait for ConnectApplyCloseSave {
     fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
         ConnectApplyClose.handle(state, model);
-        log!(state.config().save());
+        log_err!(state.config().save());
     }
 }
 
@@ -115,7 +115,7 @@ pub struct ApplyCloseSave;
 impl SettingsWidgetMessageTrait for ApplyCloseSave {
     fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
         ApplyClose.handle(state, model);
-        log!(state.config().save());
+        log_err!(state.config().save());
     }
 }
 

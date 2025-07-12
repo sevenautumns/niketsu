@@ -6,7 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
 use niketsu_core::file_database::{FilePathSearch, FileStore};
-use niketsu_core::log;
+use niketsu_core::log_err;
 use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait};
 use niketsu_core::playlist::Video;
 use strum::{AsRefStr, EnumString};
@@ -320,7 +320,7 @@ impl Mpv {
         let options = CString::new(options).expect("Got invalid UTF-8");
         let res = self.send_command(&[&cmd, &path, c"replace", c"0", &options]);
         self.status.file_load_status = FileLoadStatus::Loading;
-        log!(res)
+        log_err!(res)
     }
 
     fn get_duration(&mut self) -> Option<Duration> {
@@ -345,7 +345,7 @@ impl MediaPlayerTrait for Mpv {
     fn start(&mut self) {
         self.status.paused = false;
         if self.status.file.is_some() {
-            log!(self.set_property(MpvProperty::Pause, false.into()))
+            log_err!(self.set_property(MpvProperty::Pause, false.into()))
         }
     }
 
@@ -353,25 +353,25 @@ impl MediaPlayerTrait for Mpv {
         self.status.paused = true;
         if self.status.file.is_some() {
             let res = self.set_property(MpvProperty::Pause, true.into());
-            log!(res)
+            log_err!(res)
         }
     }
 
     fn is_paused(&self) -> Option<bool> {
         self.status.file.as_ref()?;
-        let paused = log!(self.get_property_flag(MpvProperty::Pause), true);
+        let paused = log_err!(self.get_property_flag(MpvProperty::Pause), true);
         Some(paused)
     }
 
     fn set_speed(&mut self, speed: f64) {
         self.status.speed = speed;
         let res = self.set_property(MpvProperty::Speed, PropertyValue::Double(speed));
-        log!(res)
+        log_err!(res)
     }
 
     fn get_speed(&self) -> f64 {
         let speed = self.get_property_f64(MpvProperty::Speed);
-        log!(speed, 1.0)
+        log_err!(speed, 1.0)
     }
 
     fn set_position(&mut self, pos: Duration) {
@@ -388,7 +388,7 @@ impl MediaPlayerTrait for Mpv {
             MpvProperty::PlaybackTime,
             PropertyValue::Double(pos.as_secs_f64()),
         );
-        log!(res)
+        log_err!(res)
     }
 
     fn get_position(&mut self) -> Option<Duration> {
@@ -439,7 +439,7 @@ impl MediaPlayerTrait for Mpv {
 
         let cmd: CString = MpvCommand::Loadfile.into();
         let res = self.send_command(&[&cmd, c"null://", c"replace"]);
-        log!(res)
+        log_err!(res)
     }
 
     fn playing_video(&self) -> Option<Video> {

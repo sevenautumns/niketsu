@@ -73,11 +73,12 @@ impl Connected {
     }
 
     fn send(&mut self, msg: NiketsuMessage) -> std::result::Result<(), Connection> {
-        if let Err(error) = self.p2p.send(msg) {
-            error!(%error, "Connection error");
-            return Err(Connection::Disconnected(Disconnected::now(Some(error))));
-        }
-        Ok(())
+        self.p2p
+            .send(msg)
+            .inspect_err(|error| error!(%error, "Connection error"))
+            .map_err(Some)
+            .map_err(Disconnected::now)
+            .map_err(Connection::Disconnected)
     }
 }
 
