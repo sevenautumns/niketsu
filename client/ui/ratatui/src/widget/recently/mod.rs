@@ -92,8 +92,8 @@ impl RecentlyWidgetState {
 
     fn update_database(&mut self) {
         self.recent_videos = self.filter_file_database();
-        self.nav_state.set_list_len(self.file_database.len());
-        if self.len() > 0 && self.selected().is_none() {
+        self.nav_state.set_list_len(self.len());
+        if self.len() > 0 && self.selected().map_or(true, |size| size >= self.len()) {
             self.select(Some(0));
         }
     }
