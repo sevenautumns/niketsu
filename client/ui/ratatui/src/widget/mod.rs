@@ -39,7 +39,7 @@ impl ListStateWrapper {
     }
 
     fn overflowing_next(&mut self, len: usize) {
-        let i = match self.inner.selected() {
+        let index = match self.inner.selected() {
             Some(i) => {
                 if i == 0 {
                     len.saturating_sub(1)
@@ -49,7 +49,7 @@ impl ListStateWrapper {
             }
             None => 0,
         };
-        self.inner.select(Some(i));
+        self.inner.select(Some(index));
     }
 
     fn jump_next(&mut self, offset: usize) {
@@ -59,7 +59,7 @@ impl ListStateWrapper {
     }
 
     fn overflowing_previous(&mut self, len: usize) {
-        let i = match self.inner.selected() {
+        let index = match self.inner.selected() {
             Some(i) => {
                 if i >= len.saturating_sub(1) {
                     0
@@ -69,11 +69,11 @@ impl ListStateWrapper {
             }
             None => 0,
         };
-        self.inner.select(Some(i));
+        self.inner.select(Some(index));
     }
 
     fn limited_previous(&mut self, len: usize) {
-        let i = match self.inner.selected() {
+        let index = match self.inner.selected() {
             Some(i) => {
                 if i >= len.saturating_sub(1) {
                     len.saturating_sub(1)
@@ -83,7 +83,7 @@ impl ListStateWrapper {
             }
             None => 0,
         };
-        self.inner.select(Some(i));
+        self.inner.select(Some(index));
     }
 
     fn limited_jump_previous(&mut self, offset: usize, len: usize) {

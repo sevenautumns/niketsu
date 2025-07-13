@@ -36,6 +36,16 @@ impl PlaylistWidgetState {
         self.playing_video = playing_video;
     }
 
+    pub fn jump_to_playing_video(&mut self) {
+        let Some(video) = &self.playing_video else {
+            return;
+        };
+
+        if let Some(index) = self.playlist.find(video) {
+            self.select(Some(index));
+        }
+    }
+
     pub fn set_style(&mut self, style: Style) {
         self.style = style;
     }

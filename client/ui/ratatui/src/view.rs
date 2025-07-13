@@ -92,10 +92,7 @@ pub struct App {
 
 impl App {
     fn new(config: Config) -> App {
-        let clipboard = match Clipboard::new() {
-            Ok(cb) => Some(cb),
-            Err(_) => None,
-        };
+        let clipboard = Clipboard::new().ok();
 
         App {
             chat_widget_state: ChatWidgetState::default(),
