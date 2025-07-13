@@ -89,6 +89,8 @@ impl EventHandler for Playlist {
                             if let Ok(c) = content {
                                 if let Some(index) = view.app.playlist_widget_state.selected() {
                                     view.insert(index + 1, &Video::from(c.as_str()));
+                                } else {
+                                    view.insert(0, &Video::from(c.as_str()));
                                 }
                             }
                         }

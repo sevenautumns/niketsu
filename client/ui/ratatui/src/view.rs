@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use arboard::Clipboard;
 use arcstr::ArcStr;
-use copypasta::{ClipboardContext, ClipboardProvider};
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEventKind,
 };
@@ -83,7 +83,7 @@ pub struct App {
     pub video_name_widget_state: VideoNameWidgetState,
     pub recently_widget_state: RecentlyWidgetState,
     pub current_search: Option<FuzzySearch>,
-    pub clipboard: ClipboardContext,
+    pub clipboard: Option<Clipboard>,
     state: State,
     prev_state: Option<State>,
     mode: Mode,
@@ -92,7 +92,10 @@ pub struct App {
 
 impl App {
     fn new(config: Config) -> App {
-        let ctx = ClipboardContext::new().unwrap();
+        let clipboard = match Clipboard::new() {
+            Ok(cb) => Some(cb),
+            Err(_) => None,
+        };
 
         App {
             chat_widget_state: ChatWidgetState::default(),
@@ -115,7 +118,7 @@ impl App {
             video_name_widget_state: VideoNameWidgetState::default(),
             recently_widget_state: RecentlyWidgetState::new(),
             current_search: None,
-            clipboard: ctx,
+            clipboard,
             state: State::from(Playlist {}),
             prev_state: None,
             mode: Mode::Normal,
@@ -158,9 +161,10 @@ impl App {
     }
 
     pub fn get_clipboard(&mut self) -> Result<String> {
-        self.clipboard
-            .get_contents()
-            .map_err(|e| anyhow::anyhow!("{e:?}"))
+        match &mut self.clipboard {
+            Some(cb) => cb.get_text().map_err(|e| anyhow::anyhow!("{e:?}")),
+            None => bail!("Clipboard not initialized"),
+        }
     }
 }
 
