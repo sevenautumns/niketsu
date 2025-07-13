@@ -83,6 +83,9 @@ impl EventHandler for Playlist {
                             view.reverse_range(index);
                         }
                     }
+                    KeyCode::Backspace => {
+                        view.app.playlist_widget_state.jump_to_playing_video();
+                    }
                     KeyCode::Char('v') => {
                         if key.modifiers == KeyModifiers::CONTROL {
                             let content = view.app.get_clipboard();
