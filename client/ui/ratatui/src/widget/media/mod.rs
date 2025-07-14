@@ -29,11 +29,12 @@ impl MediaDirWidgetState {
         };
         widget.setup_input_field();
         widget.select(Some(0));
-        widget.nav_state.set_list_len(widget.media_paths.len());
+        widget.update_len();
         widget
     }
 
     fn setup_input_field(&mut self) {
+        self.input_field = TextAreaWrapper::default();
         self.input_field
             .with_block(
                 Block::default()
@@ -42,6 +43,10 @@ impl MediaDirWidgetState {
             )
             .with_placeholder("Enter a path separated by /")
             .highlight(Style::default(), self.style.dark_gray().on_white());
+    }
+
+    fn update_len(&mut self) {
+        self.nav_state.set_list_len(self.media_paths.len());
     }
 
     pub fn get_input(&self) -> String {
@@ -55,7 +60,7 @@ impl MediaDirWidgetState {
     pub fn push_path(&mut self) {
         let path = self.input_field.get_input();
         self.media_paths.push(path);
-        self.input_field = TextAreaWrapper::new("Input".into(), "".into());
+        self.update_len();
         self.setup_input_field();
     }
 
