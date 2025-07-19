@@ -164,7 +164,7 @@ impl SwarmHandler<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
                 debug!("Gossipsub insufficient peers. Publishing when no one is connected")
             }
             Err(err) => return Err(anyhow::Error::from(err)),
-            Ok(_) => {}
+            _ => {}
         }
         Ok(())
     }
@@ -239,7 +239,6 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
         if let Some(peer_id) = peer_info.host {
             info!(%peer_id, "Dialing peer");
             let peer_addr = relay_addr
-                .clone()
                 .with(Protocol::P2pCircuit)
                 .with(Protocol::P2p(peer_id));
 
@@ -328,8 +327,7 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
         password: String,
     ) -> Result<PeerInfo> {
         info!("Dialing relay for identify exchange");
-        self.dial(relay_addr.clone())
-            .context("Failed to dial relay")?;
+        self.dial(relay_addr).context("Failed to dial relay")?;
 
         // time out is already set in the communicator, so this could be dropped
         let host_peer_id =
@@ -427,10 +425,7 @@ impl P2PClient {
         let host = swarm
             .establish_conection(relay_addr.clone(), room.clone(), password.clone())
             .await?;
-        info!(
-            peer_id = %swarm.local_peer_id(),
-            "Starting client with peer id",
-        );
+        info!(peer_id = %swarm.local_peer_id(), "Starting client with peer id");
 
         let topic_hash = digest(format!("{room}|{password}"));
         let topic = gossipsub::IdentTopic::new(topic_hash); // can topics be discovered of new nodes?
@@ -558,12 +553,9 @@ impl CommonCommunication {
     }
 
     pub fn send_chat_message(&self, actor: ArcStr, message: String) -> Result<()> {
-        self.message_sender
-            .send(NiketsuMessage::UserMessage(UserMessageMsg {
-                actor,
-                message,
-            }))
-            .map_err(|err| anyhow::anyhow!(err))
+        let msg = UserMessageMsg { actor, message };
+        self.message_sender.send(NiketsuMessage::UserMessage(msg))?;
+        Ok(())
     }
 }
 

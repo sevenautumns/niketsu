@@ -313,33 +313,24 @@ impl HostSwarmRequestHandler for UserStatusMsg {
     ) -> Result<()> {
         handler.handle_status(self.clone(), peer_id);
         if let Err(err) = handler.handle_all_users_ready(peer_id) {
-            handler.handler.swarm.send_response(
-                channel,
-                MessageResponse(Response::Status(StatusResponse::Err)),
-            )?;
+            let resp = MessageResponse(Response::Status(StatusResponse::Err));
+            handler.handler.swarm.send_response(channel, resp)?;
             return Err(err);
         }
 
         let msg = NiketsuMessage::StatusList(handler.status_list.clone());
         if let Err(err) = handler.handler.message_sender.send(msg.clone()) {
-            handler.handler.swarm.send_response(
-                channel,
-                MessageResponse(Response::Status(StatusResponse::Err)),
-            )?;
+            let resp = MessageResponse(Response::Status(StatusResponse::Err));
+            handler.handler.swarm.send_response(channel, resp)?;
             return Err(anyhow::Error::from(err));
         }
 
         let topic = handler.handler.topic.clone();
-        match handler.handler.swarm.try_broadcast(topic, msg) {
-            Ok(_) => handler.handler.swarm.send_response(
-                channel,
-                MessageResponse(Response::Status(StatusResponse::Ok)),
-            ),
-            Err(_) => handler.handler.swarm.send_response(
-                channel,
-                MessageResponse(Response::Status(StatusResponse::Err)),
-            ),
-        }
+        let resp = match handler.handler.swarm.try_broadcast(topic, msg) {
+            Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
+            Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
+        };
+        handler.handler.swarm.send_response(channel, resp)
     }
 }
 
@@ -352,29 +343,23 @@ impl HostSwarmRequestHandler for PlaylistMsg {
     ) -> Result<()> {
         let msg = NiketsuMessage::Playlist(self.clone());
         if let Err(err) = handler.handler.message_sender.send(msg.clone()) {
-            handler.handler.swarm.send_response(
-                channel,
-                MessageResponse(Response::Status(StatusResponse::Err)),
-            )?;
+            let resp = MessageResponse(Response::Status(StatusResponse::Err));
+            handler.handler.swarm.send_response(channel, resp)?;
             return Err(anyhow::Error::from(err));
         }
 
         let topic = handler.handler.topic.clone();
         if let Err(err) = handler.handler.swarm.try_broadcast(topic, msg) {
-            handler.handler.swarm.send_response(
-                channel,
-                MessageResponse(Response::Status(StatusResponse::Err)),
-            )?;
+            let resp = MessageResponse(Response::Status(StatusResponse::Err));
+            handler.handler.swarm.send_response(channel, resp)?;
             return Err(err);
         }
 
         match handler.handle_new_playlist(&self, peer_id) {
             Ok(_) => {
-                handler.playlist = self.clone();
-                handler.handler.swarm.send_response(
-                    channel,
-                    MessageResponse(Response::Status(StatusResponse::Ok)),
-                )
+                handler.playlist = self;
+                let resp = MessageResponse(Response::Status(StatusResponse::Ok));
+                handler.handler.swarm.send_response(channel, resp)
             }
             Err(_) => handler.handler.swarm.send_response(
                 channel,
@@ -442,11 +427,8 @@ impl HostSwarmBroadcastHandler for PassthroughMsg {
         _peer_id: PeerId,
         handler: &mut HostCommunicationHandler,
     ) -> Result<()> {
-        handler
-            .handler
-            .message_sender
-            .send(self.niketsu_msg)
-            .map_err(anyhow::Error::from)
+        handler.handler.message_sender.send(self.niketsu_msg)?;
+        Ok(())
     }
 }
 
@@ -589,9 +571,8 @@ impl HostCommunicationHandler {
                     name: new_username,
                     ready: status.ready,
                 };
-                self.handler
-                    .swarm
-                    .send_request(&peer_id, NiketsuMessage::Status(new_status.clone()));
+                let msg = NiketsuMessage::Status(new_status.clone());
+                self.handler.swarm.send_request(&peer_id, msg);
             }
         }
 
@@ -651,14 +632,12 @@ impl HostCommunicationHandler {
             }
         }
 
-        new_playlist
-            .playlist
-            .get(new_position)
-            .map(|new_select| SelectMsg {
-                actor: arcstr::format!("host"),
-                position: Duration::ZERO,
-                video: Some(new_select.clone()),
-            })
+        let new_select = new_playlist.playlist.get(new_position)?;
+        Some(SelectMsg {
+            actor: arcstr::format!("host"),
+            position: Duration::ZERO,
+            video: Some(new_select.clone()),
+        })
     }
 
     fn handle_new_playlist(&mut self, playlist: &PlaylistMsg, peer_id: PeerId) -> Result<()> {
@@ -680,17 +659,11 @@ impl HostCommunicationHandler {
         } else {
             debug!(?peer_id, "Dialing mDNS node");
 
-            self.handler
-                .swarm
-                .behaviour_mut()
-                .kademlia
-                .add_address(&peer_id, addr.clone());
+            let kad = &mut self.handler.swarm.behaviour_mut().kademlia;
+            kad.add_address(&peer_id, addr.clone());
 
-            self.handler
-                .swarm
-                .behaviour_mut()
-                .gossipsub
-                .add_explicit_peer(&peer_id);
+            let gossip = &mut self.handler.swarm.behaviour_mut().gossipsub;
+            gossip.add_explicit_peer(&peer_id);
         }
         Ok(())
     }
