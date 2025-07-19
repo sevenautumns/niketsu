@@ -69,10 +69,8 @@ impl FileShareConsumer {
 
         let Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) = result else {
             debug!(?result, "No kademlia providers found");
-            let res = base.send_chat_message(
-                arcstr::literal!("server"),
-                "No providers found for the requested file".into(),
-            );
+            let msg = "No providers found for the requested file".into();
+            let res = base.send_chat_message(arcstr::literal!("server"), msg);
             return log_err_msg!(res, "Failed to send message to core");
         };
 
@@ -235,7 +233,9 @@ impl FileShareSwarmRequestHandler for ChunkRequestMsg {
         handler: &mut CommunicationHandler,
     ) -> Result<()> {
         let Some(FileShare::Provider(provider)) = &mut handler.file_share else {
-            bail!("No active file share provider");
+            debug!("Got chunk request despite no active provider");
+            let resp = MessageResponse(Response::Status(StatusResponse::NotProvidingErr));
+            return handler.base.swarm.send_response(channel, resp);
         };
         provider.pending_chunk_responses.insert(self.uuid, channel);
         handler.message_sender.send(self.clone().into())?;
@@ -250,7 +250,9 @@ impl FileShareSwarmRequestHandler for FileRequestMsg {
         handler: &mut CommunicationHandler,
     ) -> Result<()> {
         let Some(FileShare::Provider(provider)) = &mut handler.file_share else {
-            bail!("No active file share provider");
+            warn!(msg = ?self, "Got file request despite no active provider");
+            let resp = MessageResponse(Response::Status(StatusResponse::NotProvidingErr));
+            return handler.base.swarm.send_response(channel, resp);
         };
         provider.pending_file_responses.insert(self.uuid, channel);
         handler.message_sender.send(self.clone().into())?;

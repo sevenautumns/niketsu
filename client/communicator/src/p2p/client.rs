@@ -119,12 +119,8 @@ impl ClientSwarmEventHandler for dcutr::Event {
                     handler.handler.swarm.close_connection(conn);
                 }
 
-                handler
-                    .handler
-                    .swarm
-                    .behaviour_mut()
-                    .gossipsub
-                    .add_explicit_peer(&self.remote_peer_id);
+                let gossip = &mut handler.handler.swarm.behaviour_mut().gossipsub;
+                gossip.add_explicit_peer(&self.remote_peer_id);
             }
             Err(error) => error!(
                 %self.remote_peer_id, %error,
@@ -218,12 +214,8 @@ impl ClientSwarmEventHandler for ConnectionEstablished {
             return;
         }
 
-        handler
-            .handler
-            .swarm
-            .behaviour_mut()
-            .gossipsub
-            .add_explicit_peer(&self.peer_id);
+        let gossip = &mut handler.handler.swarm.behaviour_mut().gossipsub;
+        gossip.add_explicit_peer(&self.peer_id);
 
         if self.endpoint.is_relayed() {
             handler.relay_conn = Some(self.connection_id);
@@ -401,11 +393,8 @@ impl ClientSwarmBroadcastHandler for VideoStatusMsg {
             }
         }
 
-        handler
-            .handler
-            .message_sender
-            .send(video_status.into())
-            .map_err(anyhow::Error::from)
+        handler.handler.message_sender.send(video_status.into())?;
+        Ok(())
     }
 }
 
@@ -416,11 +405,8 @@ impl ClientSwarmBroadcastHandler for SelectMsg {
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
         handler.handler.reset_requests_responses();
-        handler
-            .handler
-            .message_sender
-            .send(self.into())
-            .map_err(anyhow::Error::from)
+        handler.handler.message_sender.send(self.into())?;
+        Ok(())
     }
 }
 
@@ -431,11 +417,8 @@ impl ClientSwarmBroadcastHandler for SeekMsg {
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
         handler.is_seeking = true;
-        handler
-            .handler
-            .message_sender
-            .send(self.into())
-            .map_err(anyhow::Error::from)
+        handler.handler.message_sender.send(self.into())?;
+        Ok(())
     }
 }
 
@@ -449,11 +432,8 @@ impl ClientSwarmBroadcastHandler for PassthroughMsg {
         _peer_id: PeerId,
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
-        handler
-            .handler
-            .message_sender
-            .send(self.niketsu_msg.clone())
-            .map_err(anyhow::Error::from)
+        handler.handler.message_sender.send(self.niketsu_msg)?;
+        Ok(())
     }
 }
 
@@ -463,11 +443,8 @@ impl ClientSwarmBroadcastHandler for NiketsuMessage {
         _peer_id: PeerId,
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
-        handler
-            .handler
-            .message_sender
-            .send(self)
-            .map_err(anyhow::Error::from)
+        handler.handler.message_sender.send(self)?;
+        Ok(())
     }
 }
 
