@@ -144,7 +144,7 @@ impl SwarmHandler<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
 
         match res {
             Ok(_) => {
-                debug!("Successfully send response status");
+                debug!("Successfully sent response status");
                 Ok(())
             }
             Err(e) => bail!("Failed to send response status {e:?}"),

@@ -114,6 +114,10 @@ impl ClientSwarmEventHandler for dcutr::Event {
                 handler.host_conn = Some(res);
 
                 info!("Established direct connection. Closing connection to relay");
+                if let Some(conn) = handler.relay_conn {
+                    handler.handler.swarm.close_connection(conn);
+                }
+
                 handler
                     .handler
                     .swarm
@@ -175,6 +179,18 @@ impl ClientSwarmEventHandler for request_response::Event<MessageRequest, Message
                     warn!(%error, %peer, %host, "Outbound failure for request response" );
                 }
             }
+            request_response::Event::ResponseSent {
+                peer,
+                connection_id,
+                request_id,
+            } => {
+                debug!(
+                    ?peer,
+                    ?connection_id,
+                    ?request_id,
+                    "Received response sent event"
+                );
+            }
             request_response_event => debug!(
                 ?request_response_event,
                 "Received request response event that is not handled"
@@ -201,13 +217,20 @@ impl ClientSwarmEventHandler for ConnectionEstablished {
             return;
         }
 
+        handler
+            .handler
+            .swarm
+            .behaviour_mut()
+            .gossipsub
+            .add_explicit_peer(&self.peer_id);
+
         if self.endpoint.is_relayed() {
             handler.relay_conn = Some(self.connection_id);
         } else {
             info!(%self.connection_id, ?self.endpoint, "Direct connection to host established!");
-            if let Err(error) = handler.handler.message_sender.send(ConnectedMsg.into()) {
-                warn!(%error, "Failed to send connected message to core");
-            }
+        }
+        if let Err(error) = handler.handler.message_sender.send(ConnectedMsg.into()) {
+            warn!(%error, "Failed to send connected message to core");
         }
     }
 }
@@ -249,7 +272,7 @@ impl ClientSwarmEventHandler for OutgoingConnectionError {
             }
         }
 
-        if pid == handler.handler.host {
+        if pid == handler.handler.host && !handler.handler.swarm.is_connected(&pid) {
             warn!(?self.error, ?self.peer_id, host = %handler.handler.host, %self.connection_id, "Connection error to host");
             handler.handler.core_receiver.close();
         }
@@ -380,13 +403,14 @@ impl ClientCoreMessageHandler for ChunkResponseMsg {
 
 impl ClientCoreMessageHandler for FileRequestMsg {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
+        debug!(?self.video, "Requesting file");
+
         let id = handler
             .handler
             .swarm
             .behaviour_mut()
             .kademlia
             .get_providers(self.video.as_str().as_bytes().to_vec().into());
-        debug!(?id, "Getting providers for file ...");
         handler.handler.current_requests.insert(id, self.clone());
         Ok(())
     }
@@ -394,6 +418,8 @@ impl ClientCoreMessageHandler for FileRequestMsg {
 
 impl ClientCoreMessageHandler for FileResponseMsg {
     fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
+        debug!(?self, "Responding to file request ...");
+
         let Some(channel) = handler.handler.pending_file_responses.remove(&self.uuid) else {
             bail!("Cannot send file response if response channel does not exist");
         };
@@ -727,7 +753,7 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
                         log_err_msg!(res, "Handling message caused error");
                     },
                     None => {
-                        debug!("Channel of core closed. Stopping p2p client event loop");
+                        error!("Channel of core closed. Stopping p2p client event loop");
                         break
                     }
                 },
