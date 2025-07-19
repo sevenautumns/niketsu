@@ -15,8 +15,8 @@ use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use niketsu_core::communicator::{
-    ChunkRequestMsg, ChunkResponseMsg, ConnectedMsg, FileRequestMsg, FileResponseMsg, PlaylistMsg,
-    SelectMsg, StartMsg, UserStatusListMsg, UserStatusMsg, VideoShareMsg, VideoStatusMsg,
+    ConnectedMsg, PlaylistMsg, SelectMsg, StartMsg, UserStatusListMsg, UserStatusMsg,
+    VideoStatusMsg,
 };
 use niketsu_core::log_err_msg;
 use niketsu_core::playlist::handler::PlaylistHandler;
@@ -24,12 +24,14 @@ use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
 use tracing::{debug, error, trace, warn};
 
+use super::file_share::FileShareEventHandler;
 use super::{
     Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait, MessageResponse,
-    Response, StatusResponse, SwarmEventHandler, SwarmHandler,
+    Response, StatusResponse, SwarmHandler,
 };
 use crate::messages::NiketsuMessage;
 use crate::p2p::MessageRequest;
+use crate::p2p::file_share::{FileShareCoreMessageHandler, FileShareSwarmRequestHandler};
 
 #[enum_dispatch]
 pub(crate) trait HostSwarmEventHandler {
@@ -134,7 +136,7 @@ impl HostSwarmEventHandler for request_response::Event<MessageRequest, MessageRe
 
 impl HostSwarmEventHandler for kad::Event {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        SwarmEventHandler::handle_swarm_event(self, &mut handler.handler);
+        FileShareEventHandler::handle_event(self, &mut handler.handler);
     }
 }
 
@@ -225,15 +227,13 @@ impl HostSwarmEventHandler for ConnectionClosed {
         } else if !handler.handler.swarm.is_connected(&self.peer_id) {
             debug!("User connection stopped and user removed from map");
             let users = handler.users.clone();
+            let topic = handler.handler.topic.clone();
             if let Some(status) = users.get(&self.peer_id) {
                 handler.remove_peer(status, &self.peer_id);
                 let status_list = NiketsuMessage::StatusList(handler.status_list.clone());
                 let res = handler.handler.message_sender.send(status_list.clone());
                 log_err_msg!(res, "Failed to send status list to core");
-                let res = handler
-                    .handler
-                    .swarm
-                    .try_broadcast(handler.handler.topic.clone(), status_list);
+                let res = handler.handler.swarm.try_broadcast(topic, status_list);
                 log_err_msg!(res, "Failed to broadcast status list");
             } else {
                 warn!(?self.peer_id, "Expected peer to be included in list");
@@ -253,37 +253,6 @@ pub(crate) trait HostCoreMessageHandler {
     fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()>;
 }
 
-#[enum_dispatch(HostCoreMessageHandler)]
-enum HostCoreMessage {
-    UserStatus(UserStatusMsg),
-    VideoStatus(VideoStatusMsg),
-    Playlist(PlaylistMsg),
-    Select(SelectMsg),
-    VideoShare(VideoShareMsg),
-    ChunkRequest(ChunkRequestMsg),
-    ChunkResponse(ChunkResponseMsg),
-    FileRequest(FileRequestMsg),
-    FileResponse(FileResponseMsg),
-    Other(NiketsuMessage),
-}
-
-impl HostCoreMessage {
-    fn from(message: NiketsuMessage) -> Self {
-        match message {
-            NiketsuMessage::VideoStatus(msg) => HostCoreMessage::VideoStatus(msg),
-            NiketsuMessage::Select(msg) => HostCoreMessage::Select(msg),
-            NiketsuMessage::Playlist(msg) => HostCoreMessage::Playlist(msg),
-            NiketsuMessage::Status(msg) => HostCoreMessage::UserStatus(msg),
-            NiketsuMessage::FileRequest(msg) => HostCoreMessage::FileRequest(msg),
-            NiketsuMessage::FileResponse(msg) => HostCoreMessage::FileResponse(msg),
-            NiketsuMessage::ChunkRequest(msg) => HostCoreMessage::ChunkRequest(msg),
-            NiketsuMessage::ChunkResponse(msg) => HostCoreMessage::ChunkResponse(msg),
-            NiketsuMessage::VideoShare(msg) => HostCoreMessage::VideoShare(msg),
-            msg => HostCoreMessage::Other(msg),
-        }
-    }
-}
-
 impl HostCoreMessageHandler for UserStatusMsg {
     fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
         let peer_id = handler.handler.host;
@@ -291,10 +260,8 @@ impl HostCoreMessageHandler for UserStatusMsg {
         handler.handle_all_users_ready(peer_id)?;
         let niketsu_msg = NiketsuMessage::StatusList(handler.status_list.clone());
         handler.handler.message_sender.send(niketsu_msg.clone())?; // is this necessary?
-        handler
-            .handler
-            .swarm
-            .try_broadcast(handler.handler.topic.clone(), niketsu_msg)
+        let topic = handler.handler.topic.clone();
+        handler.handler.swarm.try_broadcast(topic, niketsu_msg)
     }
 }
 
@@ -302,115 +269,27 @@ impl HostCoreMessageHandler for PlaylistMsg {
     fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
         handler.handle_new_playlist(&self, handler.handler.host)?;
         handler.playlist = self.clone();
-        handler
-            .handler
-            .swarm
-            .try_broadcast(handler.handler.topic.clone(), self.into())
+        let topic = handler.handler.topic.clone();
+        handler.handler.swarm.try_broadcast(topic, self.into())
     }
 }
 
 impl HostCoreMessageHandler for VideoStatusMsg {
     fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
         handler.select.position = self.position.unwrap_or_default();
-        handler
-            .handler
-            .swarm
-            .try_broadcast(handler.handler.topic.clone(), self.into())
+        let topic = handler.handler.topic.clone();
+        handler.handler.swarm.try_broadcast(topic, self.into())
     }
 }
 
 impl HostCoreMessageHandler for SelectMsg {
     fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
         handler.select = self.clone();
-        handler
-            .handler
-            .swarm
-            .try_broadcast(handler.handler.topic.clone(), self.into())?;
+        let topic = handler.handler.topic.clone();
+        handler.handler.swarm.try_broadcast(topic, self.into())?;
         handler.handle_all_users_ready(handler.handler.host)?;
-        handler.reset_requests_responses();
+        handler.handler.reset_requests_responses();
         Ok(())
-    }
-}
-
-impl HostCoreMessageHandler for VideoShareMsg {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        match &self.video {
-            Some(video) => {
-                handler.handler.current_response = Some(video.clone());
-                handler.handler.swarm.start_providing(video)?;
-            }
-            None => handler.reset_requests_responses(),
-        }
-        Ok(())
-    }
-}
-
-impl HostCoreMessageHandler for ChunkRequestMsg {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        //TODO handle issues with provider
-        match handler.handler.pending_request_provider {
-            Some(provider) => handler.handler.swarm.send_request(&provider, self.into()),
-            None => bail!("No provider available for chunk request"),
-        }
-        Ok(())
-    }
-}
-
-impl HostCoreMessageHandler for ChunkResponseMsg {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        if let Some(channel) = handler.handler.pending_chunk_responses.remove(&self.uuid) {
-            handler
-                .handler
-                .swarm
-                .send_response(channel, MessageResponse(Response::Message(self.into())))?;
-        }
-        Ok(())
-    }
-}
-
-impl HostCoreMessageHandler for FileRequestMsg {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        debug!(?self.video, "Requesting file");
-
-        let id = handler
-            .handler
-            .swarm
-            .behaviour_mut()
-            .kademlia
-            .get_providers(self.video.as_str().as_bytes().to_vec().into());
-        handler.handler.current_requests.insert(id, self);
-        Ok(())
-    }
-}
-
-impl HostCoreMessageHandler for FileResponseMsg {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        debug!(?self, "Responding to file request ...");
-
-        if let Some(channel) = handler.handler.pending_file_responses.remove(&self.uuid) {
-            if self.video.is_none() {
-                handler.handler.swarm.send_response(
-                    channel,
-                    MessageResponse(Response::Status(StatusResponse::NotProvidingErr)),
-                )
-            } else {
-                handler
-                    .handler
-                    .swarm
-                    .send_response(channel, MessageResponse(Response::Message(self.into())))
-            }
-        } else {
-            bail!("Cannot send file response if response channel does not exist");
-        }
-    }
-}
-
-impl HostCoreMessageHandler for NiketsuMessage {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        handler
-            .handler
-            .swarm
-            .try_broadcast(handler.handler.topic.clone(), self)
     }
 }
 
@@ -422,27 +301,6 @@ pub(crate) trait HostSwarmRequestHandler {
         channel: ResponseChannel<MessageResponse>,
         handler: &mut HostCommunicationHandler,
     ) -> Result<()>;
-}
-
-#[enum_dispatch(HostSwarmRequestHandler)]
-enum HostSwarmRequest {
-    UserStatus(UserStatusMsg),
-    Playlist(PlaylistMsg),
-    ChunkRequest(ChunkRequestMsg),
-    FileRequest(FileRequestMsg),
-    Other(NiketsuMessage),
-}
-
-impl HostSwarmRequest {
-    fn from(message: NiketsuMessage) -> Self {
-        match message {
-            NiketsuMessage::Playlist(msg) => HostSwarmRequest::Playlist(msg),
-            NiketsuMessage::Status(msg) => HostSwarmRequest::UserStatus(msg),
-            NiketsuMessage::FileRequest(msg) => HostSwarmRequest::FileRequest(msg),
-            NiketsuMessage::ChunkRequest(msg) => HostSwarmRequest::ChunkRequest(msg),
-            msg => HostSwarmRequest::Other(msg),
-        }
-    }
 }
 
 impl HostSwarmRequestHandler for UserStatusMsg {
@@ -470,11 +328,8 @@ impl HostSwarmRequestHandler for UserStatusMsg {
             return Err(anyhow::Error::from(err));
         }
 
-        match handler
-            .handler
-            .swarm
-            .try_broadcast(handler.handler.topic.clone(), msg)
-        {
+        let topic = handler.handler.topic.clone();
+        match handler.handler.swarm.try_broadcast(topic, msg) {
             Ok(_) => handler.handler.swarm.send_response(
                 channel,
                 MessageResponse(Response::Status(StatusResponse::Ok)),
@@ -503,11 +358,8 @@ impl HostSwarmRequestHandler for PlaylistMsg {
             return Err(anyhow::Error::from(err));
         }
 
-        if let Err(err) = handler
-            .handler
-            .swarm
-            .try_broadcast(handler.handler.topic.clone(), msg)
-        {
+        let topic = handler.handler.topic.clone();
+        if let Err(err) = handler.handler.swarm.try_broadcast(topic, msg) {
             handler.handler.swarm.send_response(
                 channel,
                 MessageResponse(Response::Status(StatusResponse::Err)),
@@ -528,56 +380,6 @@ impl HostSwarmRequestHandler for PlaylistMsg {
                 MessageResponse(Response::Status(StatusResponse::Err)),
             ),
         }
-    }
-}
-
-impl HostSwarmRequestHandler for ChunkRequestMsg {
-    fn handle_swarm_request(
-        self,
-        _peer_id: PeerId,
-        channel: ResponseChannel<MessageResponse>,
-        handler: &mut HostCommunicationHandler,
-    ) -> Result<()> {
-        let uuid = self.uuid;
-        let msg = NiketsuMessage::ChunkRequest(self);
-        handler.handler.message_sender.send(msg)?;
-        handler
-            .handler
-            .pending_chunk_responses
-            .insert(uuid, channel);
-        Ok(())
-    }
-}
-
-impl HostSwarmRequestHandler for FileRequestMsg {
-    fn handle_swarm_request(
-        self,
-        _peer_id: PeerId,
-        channel: ResponseChannel<MessageResponse>,
-        handler: &mut HostCommunicationHandler,
-    ) -> Result<()> {
-        let msg = NiketsuMessage::FileRequest(self.clone());
-        handler.handler.message_sender.send(msg)?;
-        handler
-            .handler
-            .pending_file_responses
-            .insert(self.uuid, channel);
-        Ok(())
-    }
-}
-
-impl HostSwarmRequestHandler for NiketsuMessage {
-    fn handle_swarm_request(
-        self,
-        _peer_id: PeerId,
-        channel: ResponseChannel<MessageResponse>,
-        handler: &mut HostCommunicationHandler,
-    ) -> Result<()> {
-        handler.handler.swarm.send_response(
-            channel,
-            MessageResponse(Response::Status(StatusResponse::Err)),
-        )?;
-        bail!("Host received unexpected direct message: {self:?}");
     }
 }
 
@@ -628,7 +430,7 @@ impl HostSwarmBroadcastHandler for SelectMsg {
         handler.select = self;
         handler.handler.message_sender.send(msg)?;
         handler.handle_all_users_ready(peer_id)?;
-        handler.reset_requests_responses();
+        handler.handler.reset_requests_responses();
         Ok(())
     }
 }
@@ -709,18 +511,15 @@ impl HostCommunicationHandler {
         let status_list = self.status_list.clone();
         debug!(?status_list, "Sending initial status");
 
-        self.handler
-            .swarm
-            .send_request(&peer_id, NiketsuMessage::Playlist(self.playlist.clone()));
+        let msg = NiketsuMessage::Playlist(self.playlist.clone());
+        self.handler.swarm.send_request(&peer_id, msg);
 
-        self.handler
-            .swarm
-            .send_request(&peer_id, NiketsuMessage::Select(self.select.clone()));
+        let msg = NiketsuMessage::Select(self.select.clone());
+        self.handler.swarm.send_request(&peer_id, msg);
 
-        self.handler.swarm.try_broadcast(
-            self.handler.topic.clone(),
-            NiketsuMessage::StatusList(self.status_list.clone()),
-        )
+        let topic = self.handler.topic.clone();
+        let msg = NiketsuMessage::StatusList(self.status_list.clone());
+        self.handler.swarm.try_broadcast(topic, msg)
     }
 
     fn update_status(&mut self, status: UserStatus, peer_id: PeerId) {
@@ -806,9 +605,8 @@ impl HostCommunicationHandler {
                 start_msg = NiketsuMessage::Start(StartMsg { actor });
             }
             self.handler.message_sender.send(start_msg.clone())?;
-            self.handler
-                .swarm
-                .try_broadcast(self.handler.topic.clone(), start_msg)?;
+            let topic = self.handler.topic.clone();
+            self.handler.swarm.try_broadcast(topic, start_msg)?;
         }
         Ok(())
     }
@@ -860,22 +658,11 @@ impl HostCommunicationHandler {
             self.select = select_msg.clone();
             let msg: NiketsuMessage = select_msg.into();
             self.handler.message_sender.send(msg.clone())?;
-            self.handler
-                .swarm
-                .try_broadcast(self.handler.topic.clone(), msg)?;
+            let topic = self.handler.topic.clone();
+            self.handler.swarm.try_broadcast(topic, msg)?;
             self.handle_all_users_ready(peer_id)?;
         }
         Ok(())
-    }
-
-    fn reset_requests_responses(&mut self) {
-        if let Some(video) = self.handler.current_response.clone() {
-            self.handler.swarm.stop_providing(&video);
-        }
-        self.handler.pending_chunk_responses = Default::default();
-        self.handler.current_response = None;
-        self.handler.current_requests = Default::default();
-        self.handler.pending_request_provider = None;
     }
 
     fn dial_peer(&mut self, peer_id: PeerId, addr: &Multiaddr) -> Result<()> {
@@ -925,9 +712,10 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
         }
 
         loop {
+            let base = &mut self.handler.base;
             tokio::select! {
-                event = self.handler.swarm.select_next_some() => self.handle_swarm_event(event),
-                msg = self.handler.core_receiver.recv() => match msg {
+                event = base.swarm.select_next_some() => self.handle_swarm_event(event),
+                msg = base.core_receiver.recv() => match msg {
                     Some(msg) => {
                         debug!(?msg, "core message");
                         let res = self.handle_core_message(msg);
@@ -950,8 +738,20 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
 
     fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
         debug!(host = %self.handler.host, ?msg, "Handling core message");
-        let core_message = HostCoreMessage::from(msg);
-        core_message.handle_core_message(self)
+        use FileShareCoreMessageHandler as FH;
+        use NiketsuMessage::*;
+        match msg {
+            VideoStatus(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
+            Select(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
+            Playlist(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
+            Status(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
+            FileRequest(msg) => FH::handle_core_message(msg, &mut self.handler),
+            FileResponse(msg) => FH::handle_core_message(msg, &mut self.handler),
+            ChunkRequest(msg) => FH::handle_core_message(msg, &mut self.handler),
+            ChunkResponse(msg) => FH::handle_core_message(msg, &mut self.handler),
+            VideoShare(msg) => FH::handle_core_message(msg, &mut self.handler),
+            msg => msg.broadcast(&mut self.handler),
+        }
     }
 
     fn handle_swarm_request(
@@ -961,8 +761,15 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
         peer_id: PeerId,
     ) -> Result<()> {
         debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
-        let swarm_request = HostSwarmRequest::from(msg);
-        swarm_request.handle_swarm_request(peer_id, channel, self)
+        use NiketsuMessage::*;
+        use {FileShareSwarmRequestHandler as FH, HostSwarmRequestHandler as SH};
+        match msg {
+            Playlist(msg) => SH::handle_swarm_request(msg, peer_id, channel, self),
+            Status(msg) => SH::handle_swarm_request(msg, peer_id, channel, self),
+            FileRequest(msg) => FH::handle_swarm_request(msg, channel, &mut self.handler),
+            ChunkRequest(msg) => FH::handle_swarm_request(msg, channel, &mut self.handler),
+            msg => msg.respond_with_err(channel, &mut self.handler),
+        }
     }
 
     fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()> {
