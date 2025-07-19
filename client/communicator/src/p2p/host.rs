@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
@@ -10,6 +10,7 @@ use fake::faker::company::en::Buzzword;
 use futures::StreamExt;
 use libp2p::core::ConnectedPoint;
 use libp2p::kad::{self};
+use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
@@ -91,6 +92,12 @@ impl HostSwarmEventHandler for gossipsub::Event {
                 let res = handler.handle_swarm_broadcast(message.data, propagation_source);
                 log_err_msg!(res, "Failed to handle broadcast message")
             }
+            gossipsub::Event::Subscribed { peer_id, topic } => {
+                if topic == handler.handler.topic.hash() {
+                    let res = handler.send_init_status(peer_id);
+                    log_err_msg!(res, "Failed to send initial messages to client");
+                }
+            }
             gossipsub_event => debug!(
                 ?gossipsub_event,
                 "Received gossipsub event that is not handled"
@@ -135,31 +142,47 @@ impl HostSwarmEventHandler for mdns::Event {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
         match self {
             mdns::Event::Discovered(nodes) => {
-                for node in nodes {
-                    // only works if host has established connection via relay beforehand
-                    if !handler.is_connected_user(node.0) {
-                        return;
-                    }
+                // Fortunately, this discovers all local multiaddr, so we need to prioritize
+                // and try not to dial all of them ...
+                debug!(?nodes, "mDNS discovered some nodes");
+                let mut peer_map: BTreeMap<PeerId, Vec<Multiaddr>> = BTreeMap::new();
 
-                    if let Err(err) = handler.handler.swarm.dial(node.1.clone()) {
-                        warn!(?node, ?err, "Failed to dial mDNS node");
-                    } else {
-                        handler
-                            .handler
-                            .swarm
-                            .behaviour_mut()
-                            .kademlia
-                            .add_address(&node.0, node.1);
-                        handler
-                            .handler
-                            .swarm
-                            .behaviour_mut()
-                            .gossipsub
-                            .add_explicit_peer(&node.0);
+                for (peer, addr) in nodes {
+                    peer_map.entry(peer).or_default().push(addr);
+                }
+
+                for addrs in peer_map.values_mut() {
+                    addrs.sort_by_key(|addr| {
+                        if addr.iter().any(|p| matches!(p, Protocol::Tcp(_))) {
+                            0
+                        } else if addr.iter().any(|p| matches!(p, Protocol::QuicV1)) {
+                            1
+                        } else {
+                            2
+                        }
+                    });
+                }
+
+                for (peer, addrs) in peer_map {
+                    for addr in addrs {
+                        debug!(?peer, ?addr, "Handling node and peer");
+                        // put into map until relay connection established
+                        // make sure not to overload dialing all multiaddr
+                        handler.mdns_users.insert(peer, addr);
+                        if handler.dial_on_new_connection(peer).is_ok() {
+                            let res = handler.send_init_status(peer);
+                            log_err_msg!(res, "Failed to send initial messages to client");
+                            break;
+                        }
                     }
                 }
             }
-            mdns::Event::Expired(nodes) => debug!(?nodes, "Nodes in mDNS expired"),
+            mdns::Event::Expired(nodes) => {
+                for node in nodes {
+                    debug!(?node, "Nodes in mDNS expired");
+                    handler.mdns_users.remove(&node.0);
+                }
+            }
         }
     }
 }
@@ -172,7 +195,17 @@ impl HostSwarmEventHandler for ConnectionEstablished {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
         debug!(%self.peer_id, "New client established connection");
 
-        handler.users.entry(self.peer_id).or_insert(None);
+        // Skip if already connected to avoid spam
+        if handler.users.contains_key(&self.peer_id) {
+            return;
+        }
+
+        handler.users.insert(self.peer_id, None);
+
+        if let Err(err) = handler.dial_on_new_connection(self.peer_id) {
+            debug!(?err);
+        }
+
         let res = handler.send_init_status(self.peer_id);
         log_err_msg!(res, "Failed to send initial messages to client");
     }
@@ -337,6 +370,8 @@ impl HostCoreMessageHandler for ChunkResponseMsg {
 
 impl HostCoreMessageHandler for FileRequestMsg {
     fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
+        debug!(?self.video, "Requesting file");
+
         let id = handler
             .handler
             .swarm
@@ -350,6 +385,8 @@ impl HostCoreMessageHandler for FileRequestMsg {
 
 impl HostCoreMessageHandler for FileResponseMsg {
     fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
+        debug!(?self, "Responding to file request ...");
+
         if let Some(channel) = handler.handler.pending_file_responses.remove(&self.uuid) {
             if self.video.is_none() {
                 handler.handler.swarm.send_response(
@@ -627,6 +664,7 @@ pub(crate) struct HostCommunicationHandler {
     playlist: PlaylistMsg,
     select: SelectMsg,
     users: HashMap<PeerId, Option<UserStatus>>,
+    mdns_users: HashMap<PeerId, Multiaddr>,
 }
 
 impl HostCommunicationHandler {
@@ -663,10 +701,14 @@ impl HostCommunicationHandler {
             playlist,
             users: HashMap::default(),
             select,
+            mdns_users: HashMap::default(),
         }
     }
 
     fn send_init_status(&mut self, peer_id: PeerId) -> Result<()> {
+        let status_list = self.status_list.clone();
+        debug!(?status_list, "Sending initial status");
+
         self.handler
             .swarm
             .send_request(&peer_id, NiketsuMessage::Playlist(self.playlist.clone()));
@@ -835,6 +877,44 @@ impl HostCommunicationHandler {
         self.handler.current_requests = Default::default();
         self.handler.pending_request_provider = None;
     }
+
+    fn dial_peer(&mut self, peer_id: PeerId, addr: &Multiaddr) -> Result<()> {
+        if let Err(err) = self.handler.swarm.dial(addr.clone()) {
+            warn!(?peer_id, ?err, "Failed to dial mDNS node");
+            bail!("Failed to dial mDNS node");
+        } else {
+            debug!(?peer_id, "Dialing mDNS node");
+
+            self.handler
+                .swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(&peer_id, addr.clone());
+
+            self.handler
+                .swarm
+                .behaviour_mut()
+                .gossipsub
+                .add_explicit_peer(&peer_id);
+        }
+        Ok(())
+    }
+
+    fn dial_on_new_connection(&mut self, peer_id: PeerId) -> Result<()> {
+        let mdns_users = self.mdns_users.clone();
+        let Some(addr) = mdns_users.get(&peer_id) else {
+            debug!(?peer_id, "peer_id not in mdns users");
+            bail!("peer_id not in mDNS users. Not dialing");
+        };
+
+        // only works if host has established connection via relay beforehand
+        if !self.is_connected_user(peer_id) {
+            debug!(?peer_id, "peer not connected via relay");
+            bail!("peer is not connected via relay. Not dialing");
+        }
+
+        self.dial_peer(peer_id, addr)
+    }
 }
 
 #[async_trait]
@@ -854,7 +934,7 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
                         log_err_msg!(res, "Handling message caused error");
                     },
                     None => {
-                        debug!("Channel of core closed. Stopping p2p client event loop");
+                        error!("Channel of core closed. Stopping p2p host event loop");
                         break
                     },
                 },
