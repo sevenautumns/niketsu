@@ -1,13 +1,13 @@
-use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use arcstr::ArcStr;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
+use file_share::{FileShare, FileShareSwarmResponseHandler};
 use futures::stream::StreamExt;
 use libp2p::gossipsub::PublishError;
-use libp2p::kad::QueryId;
 use libp2p::kad::store::MemoryStore;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
@@ -16,9 +16,7 @@ use libp2p::{
     Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, identity, kad, mdns, noise,
     ping, relay, tcp, yamux,
 };
-use niketsu_core::communicator::{
-    ChunkResponseMsg, FileRequestMsg, FileResponseMsg, UserMessageMsg,
-};
+use niketsu_core::communicator::UserMessageMsg;
 use niketsu_core::playlist::Video;
 use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::room::RoomName;
@@ -26,12 +24,13 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha256::digest;
 use tokio::spawn;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::CONNECT_TIMEOUT;
 use crate::messages::NiketsuMessage;
 
 mod client;
+mod file_share;
 mod host;
 
 static KEYPAIR: Lazy<identity::Keypair> = Lazy::new(identity::Keypair::generate_ed25519);
@@ -103,8 +102,16 @@ pub(crate) trait CommunicationHandlerTrait {
     ) -> Result<()>;
     fn handle_swarm_response(&mut self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
         debug!(message = ?msg, peer = ?peer_id, "Received response");
-        let swarm_response = SwarmResponse::from(msg);
-        swarm_response.handle_swarm_response(self.handler())
+        use FileShareSwarmResponseHandler as FH;
+        let handler = self.handler();
+        match msg.0 {
+            Response::Status(msg) => FH::handle_swarm_response(msg, handler),
+            Response::Message(niketsu_message) => match niketsu_message {
+                NiketsuMessage::FileResponse(msg) => FH::handle_swarm_response(msg, handler),
+                NiketsuMessage::ChunkResponse(msg) => FH::handle_swarm_response(msg, handler),
+                msg => bail!("Did not expect response {msg:?}"),
+            },
+        }
     }
     fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()>;
     fn handler(&mut self) -> &mut CommunicationHandler;
@@ -127,9 +134,8 @@ trait SwarmHandler<T, TResponse> {
 impl SwarmHandler<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
     fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) {
         // ignores outbound id
-        self.behaviour_mut()
-            .message_request_response
-            .send_request(peer_id, MessageRequest(msg));
+        let req_resp = &mut self.behaviour_mut().message_request_response;
+        req_resp.send_request(peer_id, MessageRequest(msg));
     }
 
     fn send_response(
@@ -137,61 +143,48 @@ impl SwarmHandler<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
         channel: ResponseChannel<MessageResponse>,
         msg: MessageResponse,
     ) -> Result<()> {
-        let res = self
-            .behaviour_mut()
-            .message_request_response
-            .send_response(channel, msg);
+        let req_resp = &mut self.behaviour_mut().message_request_response;
+        let res = req_resp.send_response(channel, msg);
 
         match res {
-            Ok(_) => {
-                debug!("Successfully sent response status");
-                Ok(())
-            }
+            Ok(_) => debug!("Successfully sent response status"),
             Err(e) => bail!("Failed to send response status {e:?}"),
         }
+        Ok(())
     }
 
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()> {
         // ignores message id and insufficient peer error
 
-        let res = self
-            .behaviour_mut()
-            .gossipsub
-            .publish(topic.clone(), Vec::<u8>::try_from(msg)?);
+        let gossip = &mut self.behaviour_mut().gossipsub;
+        let res = gossip.publish(topic.clone(), Vec::<u8>::try_from(msg)?);
 
         match res {
-            Ok(_) => Ok(()),
-            Err(e) => match e {
-                PublishError::NoPeersSubscribedToTopic => {
-                    debug!("Gossipsub insufficient peers. Publishing when no one is connected");
-                    Ok(())
-                }
-                err => Err(anyhow::Error::from(err)),
-            },
+            Err(PublishError::NoPeersSubscribedToTopic) => {
+                debug!("Gossipsub insufficient peers. Publishing when no one is connected")
+            }
+            Err(err) => return Err(anyhow::Error::from(err)),
+            Ok(_) => {}
         }
+        Ok(())
     }
 
     fn start_providing(&mut self, video: &Video) -> Result<()> {
         let filename = video.as_str().as_bytes().to_vec();
-        let res = self
-            .behaviour_mut()
-            .kademlia
-            .start_providing(filename.clone().into());
+        let kad = &mut self.behaviour_mut().kademlia;
+        let res = kad.start_providing(filename.clone().into());
 
         match res {
-            Ok(id) => {
-                debug!(?filename, ?id, "Successfully started providing file");
-                Ok(())
-            }
+            Ok(id) => debug!(?filename, ?id, "Successfully started providing file"),
             Err(e) => bail!("Failed to start providing {e:?}"),
         }
+        Ok(())
     }
 
     fn stop_providing(&mut self, video: &Video) {
         let filename = video.as_str().as_bytes().to_vec();
-        self.behaviour_mut()
-            .kademlia
-            .stop_providing(&filename.clone().into());
+        let kad = &mut self.behaviour_mut().kademlia;
+        kad.stop_providing(&filename.clone().into());
         debug!(?filename, "Stopped providing file");
     }
 }
@@ -251,9 +244,8 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
                 .with(Protocol::P2p(peer_id));
 
             self.dial(peer_addr.clone()).unwrap();
-            self.behaviour_mut()
-                .kademlia
-                .add_address(&peer_id, peer_addr);
+            let kad = &mut self.behaviour_mut().kademlia;
+            kad.add_address(&peer_id, peer_addr);
             return Ok(peer_id);
         }
 
@@ -287,9 +279,9 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
                 })) => {
                     debug!(%observed_addr, "Relay told us our observed address");
                     debug!("Sending new room request to relay");
-                    self.behaviour_mut()
-                        .init_request_response
-                        .send_request(&peer_id, InitRequest::new(room.clone(), password.clone()));
+                    let req_resp = &mut self.behaviour_mut().init_request_response;
+                    let req = InitRequest::new(room.clone(), password.clone());
+                    req_resp.send_request(&peer_id, req);
                     learned_observed_addr = true;
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::InitRequestResponse(
@@ -301,12 +293,8 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
                                 host_peer_id = response.peer_id;
                                 learned_host_peer_id = true;
                             }
-                            StatusResponse::Err => {
-                                bail!("Authentication failed");
-                            }
-                            _ => {
-                                bail!("Received unexpected response from relay")
-                            }
+                            StatusResponse::Err => bail!("Authentication failed"),
+                            _ => bail!("Received unexpected response from relay"),
                         }
                     }
                 }
@@ -491,19 +479,56 @@ impl P2PClient {
 }
 
 pub(crate) struct CommunicationHandler {
+    base: CommonCommunication,
+    file_share: Option<FileShare>,
+}
+
+impl CommunicationHandler {
+    pub fn new(
+        swarm: Swarm<Behaviour>,
+        topic: gossipsub::IdentTopic,
+        host: PeerId,
+        core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
+        message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+    ) -> Self {
+        let base = CommonCommunication::new(swarm, topic, host, core_receiver, message_sender);
+        Self {
+            base,
+            file_share: None,
+        }
+    }
+
+    fn reset_requests_responses(&mut self) {
+        if let Some(FileShare::Provider(provider)) = &self.file_share {
+            self.base.swarm.stop_providing(provider.video());
+        }
+        self.file_share.take();
+    }
+}
+
+impl Deref for CommunicationHandler {
+    type Target = CommonCommunication;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
+
+impl DerefMut for CommunicationHandler {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.base
+    }
+}
+
+pub(crate) struct CommonCommunication {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
     host: PeerId,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
-    current_requests: HashMap<QueryId, FileRequestMsg>,
-    pending_request_provider: Option<PeerId>,
-    pending_chunk_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
-    pending_file_responses: HashMap<uuid::Uuid, ResponseChannel<MessageResponse>>,
-    current_response: Option<Video>,
 }
 
-impl CommunicationHandler {
+impl CommonCommunication {
     pub fn new(
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
@@ -517,11 +542,6 @@ impl CommunicationHandler {
             host,
             core_receiver,
             message_sender,
-            current_requests: Default::default(),
-            pending_chunk_responses: Default::default(),
-            pending_file_responses: Default::default(),
-            pending_request_provider: None,
-            current_response: None,
         }
     }
 
@@ -535,124 +555,31 @@ impl CommunicationHandler {
     }
 }
 
-#[enum_dispatch()]
-trait SwarmResponseHandler {
-    fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()>;
-}
-
-#[enum_dispatch(SwarmResponseHandler)]
-enum SwarmResponse {
-    Status(StatusResponse),
-    ChunkResponse(ChunkResponseMsg),
-    FileResponse(FileResponseMsg),
-    Other(NiketsuMessage),
-}
-
-impl SwarmResponse {
-    fn from(message: MessageResponse) -> Self {
-        match message.0 {
-            Response::Status(msg) => SwarmResponse::Status(msg),
-            Response::Message(niketsu_message) => match niketsu_message {
-                NiketsuMessage::FileResponse(msg) => SwarmResponse::FileResponse(msg),
-                NiketsuMessage::ChunkResponse(msg) => SwarmResponse::ChunkResponse(msg),
-                msg => SwarmResponse::Other(msg),
-            },
-        }
+impl NiketsuMessage {
+    fn broadcast(self, handler: &mut CommunicationHandler) -> Result<()> {
+        let topic = handler.topic.clone();
+        handler.swarm.try_broadcast(topic, self)
     }
-}
 
-impl SwarmResponseHandler for StatusResponse {
-    fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()> {
-        debug!(?self, "Received status response");
-        if self == StatusResponse::NotProvidingErr {
-            handler.pending_request_provider.take();
-        }
-        Ok(())
+    fn respond_with_err(
+        self,
+        channel: ResponseChannel<MessageResponse>,
+        handler: &mut CommunicationHandler,
+    ) -> Result<()> {
+        let resp = MessageResponse(Response::Status(StatusResponse::Err));
+        handler.swarm.send_response(channel, resp)?;
+        bail!("Host received unexpected direct message: {self:?}");
     }
-}
 
-impl SwarmResponseHandler for ChunkResponseMsg {
-    fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()> {
-        handler
-            .message_sender
-            .send(self.clone().into())
-            .map_err(anyhow::Error::from)
-    }
-}
-
-impl SwarmResponseHandler for FileResponseMsg {
-    fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()> {
-        handler
-            .message_sender
-            .send(self.clone().into())
-            .map_err(anyhow::Error::from)
-    }
-}
-
-impl SwarmResponseHandler for NiketsuMessage {
-    fn handle_swarm_response(self, _handler: &mut CommunicationHandler) -> Result<()> {
-        bail!("Did not expect response {self:?}");
-    }
-}
-
-#[enum_dispatch]
-pub(crate) trait SwarmEventHandler {
-    fn handle_swarm_event(self, handler: &mut CommunicationHandler);
-}
-
-impl SwarmEventHandler for kad::Event {
-    fn handle_swarm_event(self, handler: &mut CommunicationHandler) {
-        match self {
-            kad::Event::OutboundQueryProgressed {
-                id,
-                result:
-                    kad::QueryResult::GetProviders(Ok(kad::GetProvidersOk::FoundProviders {
-                        providers,
-                        ..
-                    })),
-                ..
-            } => match handler.current_requests.get(&id) {
-                Some(request) => {
-                    if let Some(provider) = handler.pending_request_provider {
-                        debug!("Provider already exists");
-
-                        handler
-                            .swarm
-                            .behaviour_mut()
-                            .message_request_response
-                            .send_request(
-                                &provider,
-                                MessageRequest(NiketsuMessage::FileRequest(request.clone())),
-                            );
-                    } else if let Some(provider) = providers.iter().next() {
-                        debug!("Providers found");
-                        handler.pending_request_provider = Some(*provider);
-
-                        handler
-                            .swarm
-                            .behaviour_mut()
-                            .message_request_response
-                            .send_request(
-                                provider,
-                                MessageRequest(NiketsuMessage::FileRequest(request.clone())),
-                            );
-                    }
-                }
-                None => warn!("Found providers but no request?"),
-            },
-            kad::Event::OutboundQueryProgressed {
-                result: kad::QueryResult::GetProviders(Err(err)),
-                ..
-            } => {
-                debug!(?err, "No kademlia providers found");
-                if let Err(err) = handler.send_chat_message(
-                    arcstr::literal!("server"),
-                    "No providers found for the requested file".into(),
-                ) {
-                    debug!(?err, "Failed to send message to core");
-                }
-            }
-            kad_event => debug!(?kad_event, "Received non handled kademlia event"),
-        }
+    fn send_to_core(
+        self,
+        channel: ResponseChannel<MessageResponse>,
+        handler: &mut CommunicationHandler,
+    ) -> Result<()> {
+        let resp = match handler.message_sender.send(self.clone()) {
+            Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
+            Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
+        };
+        handler.swarm.send_response(channel, resp)
     }
 }
