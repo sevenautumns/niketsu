@@ -24,14 +24,14 @@ use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
 use tracing::{debug, error, trace, warn};
 
-use super::file_share::FileShareEventHandler;
+use super::file_share::{FileShareEventHandler, FileShareRequest, FileShareResponseResult};
 use super::{
     Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait, MessageResponse,
     Response, StatusResponse, SwarmHandler,
 };
 use crate::messages::NiketsuMessage;
 use crate::p2p::MessageRequest;
-use crate::p2p::file_share::{FileShareCoreMessageHandler, FileShareSwarmRequestHandler};
+use crate::p2p::file_share::FileShareCoreMessageHandler;
 
 #[enum_dispatch]
 pub(crate) trait HostSwarmEventHandler {
@@ -42,6 +42,7 @@ pub(crate) trait HostSwarmEventHandler {
 enum HostSwarmEvent {
     GossipSub(gossipsub::Event),
     MessageRequestResponse(request_response::Event<MessageRequest, MessageResponse>),
+    FileShareRequestResponse(request_response::Event<FileShareRequest, FileShareResponseResult>),
     Kademlia(kad::Event),
     Mdns(mdns::Event),
     ConnectionEstablished(ConnectionEstablished),
@@ -57,6 +58,9 @@ impl HostSwarmEvent {
             }
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(event)) => {
                 HostSwarmEvent::MessageRequestResponse(event)
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::FileshareRequestResponse(event)) => {
+                HostSwarmEvent::FileShareRequestResponse(event)
             }
             SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
                 HostSwarmEvent::Kademlia(event)
@@ -125,6 +129,12 @@ impl HostSwarmEventHandler for request_response::Event<MessageRequest, MessageRe
                 "Received request response event that is not handled"
             ),
         }
+    }
+}
+
+impl HostSwarmEventHandler for request_response::Event<FileShareRequest, FileShareResponseResult> {
+    fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
+        FileShareEventHandler::handle_event(self, &mut handler.handler);
     }
 }
 
@@ -314,14 +324,14 @@ impl HostSwarmRequestHandler for UserStatusMsg {
         handler.handle_status(self.clone(), peer_id);
         if let Err(err) = handler.handle_all_users_ready(peer_id) {
             let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            handler.handler.swarm.send_response(channel, resp)?;
+            handler.handler.swarm.send_message_response(channel, resp)?;
             return Err(err);
         }
 
         let msg = NiketsuMessage::StatusList(handler.status_list.clone());
         if let Err(err) = handler.handler.message_sender.send(msg.clone()) {
             let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            handler.handler.swarm.send_response(channel, resp)?;
+            handler.handler.swarm.send_message_response(channel, resp)?;
             return Err(anyhow::Error::from(err));
         }
 
@@ -330,7 +340,7 @@ impl HostSwarmRequestHandler for UserStatusMsg {
             Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
             Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
         };
-        handler.handler.swarm.send_response(channel, resp)
+        handler.handler.swarm.send_message_response(channel, resp)
     }
 }
 
@@ -344,14 +354,14 @@ impl HostSwarmRequestHandler for PlaylistMsg {
         let msg = NiketsuMessage::Playlist(self.clone());
         if let Err(err) = handler.handler.message_sender.send(msg.clone()) {
             let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            handler.handler.swarm.send_response(channel, resp)?;
+            handler.handler.swarm.send_message_response(channel, resp)?;
             return Err(anyhow::Error::from(err));
         }
 
         let topic = handler.handler.topic.clone();
         if let Err(err) = handler.handler.swarm.try_broadcast(topic, msg) {
             let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            handler.handler.swarm.send_response(channel, resp)?;
+            handler.handler.swarm.send_message_response(channel, resp)?;
             return Err(err);
         }
 
@@ -359,9 +369,9 @@ impl HostSwarmRequestHandler for PlaylistMsg {
             Ok(_) => {
                 handler.playlist = self;
                 let resp = MessageResponse(Response::Status(StatusResponse::Ok));
-                handler.handler.swarm.send_response(channel, resp)
+                handler.handler.swarm.send_message_response(channel, resp)
             }
-            Err(_) => handler.handler.swarm.send_response(
+            Err(_) => handler.handler.swarm.send_message_response(
                 channel,
                 MessageResponse(Response::Status(StatusResponse::Err)),
             ),
@@ -742,13 +752,11 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
         peer_id: PeerId,
     ) -> Result<()> {
         debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
+        use HostSwarmRequestHandler as SH;
         use NiketsuMessage::*;
-        use {FileShareSwarmRequestHandler as FH, HostSwarmRequestHandler as SH};
         match msg {
             Playlist(msg) => SH::handle_swarm_request(msg, peer_id, channel, self),
             Status(msg) => SH::handle_swarm_request(msg, peer_id, channel, self),
-            FileRequest(msg) => FH::handle_swarm_request(msg, channel, &mut self.handler),
-            ChunkRequest(msg) => FH::handle_swarm_request(msg, channel, &mut self.handler),
             msg => msg.respond_with_err(channel, &mut self.handler),
         }
     }
@@ -758,9 +766,5 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
         debug!(message = ?niketsu_msg, "Handling broadcast message from swarm");
         let swarm_broadcast = HostSwarmBroadcast::from(niketsu_msg);
         swarm_broadcast.handle_swarm_broadcast(peer_id, self)
-    }
-
-    fn handler(&mut self) -> &mut CommunicationHandler {
-        &mut self.handler
     }
 }
