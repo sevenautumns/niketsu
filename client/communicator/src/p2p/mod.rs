@@ -5,12 +5,12 @@ use anyhow::{Context, Result, bail};
 use arcstr::ArcStr;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
-use file_share::{FileShare, FileShareSwarmResponseHandler};
+use file_share::{FileShare, FileShareRequest, FileShareResponseResult};
 use futures::stream::StreamExt;
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
 use libp2p::multiaddr::Protocol;
-use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
+use libp2p::request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
     Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, identity, kad, mdns, noise,
@@ -42,6 +42,8 @@ pub(crate) struct Behaviour {
     dcutr: dcutr::Behaviour,
     ping: ping::Behaviour,
     gossipsub: gossipsub::Behaviour,
+    fileshare_request_response:
+        request_response::cbor::Behaviour<FileShareRequest, FileShareResponseResult>,
     message_request_response: request_response::cbor::Behaviour<MessageRequest, MessageResponse>,
     init_request_response: request_response::cbor::Behaviour<InitRequest, InitResponse>,
     kademlia: kad::Behaviour<MemoryStore>,
@@ -102,19 +104,15 @@ pub(crate) trait CommunicationHandlerTrait {
     ) -> Result<()>;
     fn handle_swarm_response(&mut self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
         debug!(message = ?msg, peer = ?peer_id, "Received response");
-        use FileShareSwarmResponseHandler as FH;
-        let handler = self.handler();
         match msg.0 {
-            Response::Status(msg) => FH::handle_swarm_response(msg, handler),
             Response::Message(niketsu_message) => match niketsu_message {
-                NiketsuMessage::FileResponse(msg) => FH::handle_swarm_response(msg, handler),
-                NiketsuMessage::ChunkResponse(msg) => FH::handle_swarm_response(msg, handler),
+                NiketsuMessage::FileResponse(_) | NiketsuMessage::ChunkResponse(_) => Ok(()),
                 msg => bail!("Did not expect response {msg:?}"),
             },
+            _ => Ok(()),
         }
     }
     fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()>;
-    fn handler(&mut self) -> &mut CommunicationHandler;
 }
 
 #[enum_dispatch(CommunicationHandlerTrait)]
@@ -123,27 +121,58 @@ pub(crate) enum Handler {
     Host(host::HostCommunicationHandler),
 }
 
-trait SwarmHandler<T, TResponse> {
-    fn send_request(&mut self, peer_id: &PeerId, msg: T);
-    fn send_response(&mut self, channel: ResponseChannel<TResponse>, msg: TResponse) -> Result<()>;
-    fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: T) -> Result<()>;
+trait SwarmHandler {
+    fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) -> OutboundRequestId;
+    fn send_file_request(&mut self, peer_id: &PeerId, msg: FileShareRequest) -> OutboundRequestId;
+    fn send_message_response(
+        &mut self,
+        channel: ResponseChannel<MessageResponse>,
+        msg: MessageResponse,
+    ) -> Result<()>;
+    fn send_file_response(
+        &mut self,
+        channel: ResponseChannel<FileShareResponseResult>,
+        msg: FileShareResponseResult,
+    ) -> Result<()>;
+    fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()>;
     fn start_providing(&mut self, video: &Video) -> Result<()>;
     fn stop_providing(&mut self, video: &Video);
 }
 
-impl SwarmHandler<NiketsuMessage, MessageResponse> for Swarm<Behaviour> {
-    fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) {
+impl SwarmHandler for Swarm<Behaviour> {
+    fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) -> OutboundRequestId {
         // ignores outbound id
         let req_resp = &mut self.behaviour_mut().message_request_response;
-        req_resp.send_request(peer_id, MessageRequest(msg));
+        req_resp.send_request(peer_id, MessageRequest(msg))
     }
 
-    fn send_response(
+    fn send_file_request(&mut self, peer_id: &PeerId, msg: FileShareRequest) -> OutboundRequestId {
+        // ignores outbound id
+        let req_resp = &mut self.behaviour_mut().fileshare_request_response;
+        req_resp.send_request(peer_id, msg)
+    }
+
+    fn send_message_response(
         &mut self,
         channel: ResponseChannel<MessageResponse>,
         msg: MessageResponse,
     ) -> Result<()> {
         let req_resp = &mut self.behaviour_mut().message_request_response;
+        let res = req_resp.send_response(channel, msg);
+
+        match res {
+            Ok(_) => debug!("Successfully sent response status"),
+            Err(e) => bail!("Failed to send response status {e:?}"),
+        }
+        Ok(())
+    }
+
+    fn send_file_response(
+        &mut self,
+        channel: ResponseChannel<FileShareResponseResult>,
+        msg: FileShareResponseResult,
+    ) -> Result<()> {
+        let req_resp = &mut self.behaviour_mut().fileshare_request_response;
         let res = req_resp.send_response(channel, msg);
 
         match res {
@@ -395,6 +424,11 @@ impl P2PClient {
                         request_response::Config::default()
                             .with_request_timeout(Duration::from_secs(5)),
                     ),
+                    fileshare_request_response: request_response::cbor::Behaviour::new(
+                        [(StreamProtocol::new("/fileshare/1"), ProtocolSupport::Full)],
+                        request_response::Config::default()
+                            .with_request_timeout(Duration::from_secs(5)),
+                    ),
                     init_request_response: request_response::cbor::Behaviour::new(
                         [(
                             StreamProtocol::new("/authorisation/1"),
@@ -571,7 +605,7 @@ impl NiketsuMessage {
         handler: &mut CommunicationHandler,
     ) -> Result<()> {
         let resp = MessageResponse(Response::Status(StatusResponse::Err));
-        handler.swarm.send_response(channel, resp)?;
+        handler.swarm.send_message_response(channel, resp)?;
         bail!("Host received unexpected direct message: {self:?}");
     }
 
@@ -584,6 +618,6 @@ impl NiketsuMessage {
             Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
             Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
         };
-        handler.swarm.send_response(channel, resp)
+        handler.swarm.send_message_response(channel, resp)
     }
 }

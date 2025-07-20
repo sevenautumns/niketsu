@@ -15,14 +15,14 @@ use niketsu_core::communicator::{
 use niketsu_core::log_err_msg;
 use tracing::{debug, error, info, trace, warn};
 
-use super::file_share::FileShareEventHandler;
+use super::file_share::{FileShareEventHandler, FileShareRequest, FileShareResponseResult};
 use super::{
     Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait, MessageResponse,
     SwarmHandler,
 };
 use crate::messages::NiketsuMessage;
 use crate::p2p::MessageRequest;
-use crate::p2p::file_share::{FileShareCoreMessageHandler, FileShareSwarmRequestHandler};
+use crate::p2p::file_share::FileShareCoreMessageHandler;
 
 #[enum_dispatch]
 pub(crate) trait ClientSwarmEventHandler {
@@ -35,6 +35,7 @@ enum ClientSwarmEvent {
     Dcutr(dcutr::Event),
     GossipSub(gossipsub::Event),
     MessageRequestResponse(request_response::Event<MessageRequest, MessageResponse>),
+    FileShareRequestResponse(request_response::Event<FileShareRequest, FileShareResponseResult>),
     Kademlia(kad::Event),
     ConnectionEstablished(ConnectionEstablished),
     ConnectionClosed(ConnectionClosed),
@@ -52,6 +53,9 @@ impl ClientSwarmEvent {
             }
             SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(event)) => {
                 ClientSwarmEvent::MessageRequestResponse(event)
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::FileshareRequestResponse(event)) => {
+                ClientSwarmEvent::FileShareRequestResponse(event)
             }
             SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
                 ClientSwarmEvent::Kademlia(event)
@@ -193,6 +197,14 @@ impl ClientSwarmEventHandler for request_response::Event<MessageRequest, Message
                 "Received request response event that is not handled"
             ),
         }
+    }
+}
+
+impl ClientSwarmEventHandler
+    for request_response::Event<FileShareRequest, FileShareResponseResult>
+{
+    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
+        FileShareEventHandler::handle_event(self, &mut handler.handler);
     }
 }
 
@@ -538,11 +550,7 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
         peer_id: PeerId,
     ) -> Result<()> {
         debug!("Received swarm request {msg:?}");
-        use FileShareSwarmRequestHandler as FH;
-        use NiketsuMessage::*;
         match msg {
-            FileRequest(msg) => FH::handle_swarm_request(msg, channel, &mut self.handler),
-            ChunkRequest(msg) => FH::handle_swarm_request(msg, channel, &mut self.handler),
             msg if peer_id == self.handler.host => msg.send_to_core(channel, &mut self.handler),
             msg => msg.respond_with_err(channel, &mut self.handler),
         }
@@ -553,9 +561,5 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
         debug!(message = ?niketsu_msg, "Received broadcast");
         let swarm_broadcast = ClientSwarmBroadcast::from(niketsu_msg);
         swarm_broadcast.handle_swarm_broadcast(peer_id, self)
-    }
-
-    fn handler(&mut self) -> &mut CommunicationHandler {
-        &mut self.handler
     }
 }

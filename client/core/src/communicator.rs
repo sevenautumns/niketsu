@@ -73,6 +73,7 @@ pub enum IncomingMessage {
     FileResponse(FileResponseMsg),
     ChunkRequest(ChunkRequestMsg),
     ChunkResponse(ChunkResponseMsg),
+    VideoProviderStopped(VideoProviderStoppedMsg),
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -750,5 +751,15 @@ impl VideoShareMsg {
 impl From<VideoShareMsg> for OutgoingMessage {
     fn from(value: VideoShareMsg) -> Self {
         Self::VideoShareChange(value)
+    }
+}
+
+#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoProviderStoppedMsg;
+
+impl EventHandler for VideoProviderStoppedMsg {
+    fn handle(self, model: &mut CoreModel) {
+        model.video_server.stop_server();
     }
 }

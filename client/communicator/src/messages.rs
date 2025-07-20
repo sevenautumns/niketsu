@@ -24,6 +24,7 @@ pub(super) enum NiketsuMessage {
     ChunkRequest(ChunkRequestMsg),
     ChunkResponse(ChunkResponseMsg),
     VideoShare(VideoShareMsg),
+    VideoProviderStopped(VideoProviderStoppedMsg),
 }
 
 impl TryFrom<NiketsuMessage> for IncomingMessage {
