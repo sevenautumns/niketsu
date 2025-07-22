@@ -51,8 +51,8 @@ pub enum UserInterfaceEvent {
     UserChange,
     UserMessage,
     FileDatabaseChange,
-    VideoShareChange,
-    VideoRequest,
+    FileShareChange,
+    FileRequest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -269,11 +269,11 @@ impl EventHandler for FileDatabaseChange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VideoShareChange {
+pub struct FileShareChange {
     // pub video_share: bool,
 }
 
-impl EventHandler for VideoShareChange {
+impl EventHandler for FileShareChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video share change message");
         if model.video_provider.sharing() {
@@ -319,9 +319,9 @@ impl EventHandler for VideoShareChange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VideoRequest {}
+pub struct FileRequest {}
 
-impl EventHandler for VideoRequest {
+impl EventHandler for FileRequest {
     fn handle(self, model: &mut CoreModel) {
         trace!("video file request message");
         let actor = model.config.username.clone();
@@ -593,7 +593,7 @@ impl UiModel {
         // self.video_share.set(video_share);
         let res = self
             .events
-            .send(UserInterfaceEvent::VideoShareChange(VideoShareChange {
+            .send(UserInterfaceEvent::FileShareChange(FileShareChange {
                 // video_share,
             }))
             .map_err(anyhow::Error::from);
@@ -604,7 +604,7 @@ impl UiModel {
         trace!("send video file request");
         let res = self
             .events
-            .send(UserInterfaceEvent::VideoRequest(VideoRequest {}))
+            .send(UserInterfaceEvent::FileRequest(FileRequest {}))
             .map_err(anyhow::Error::from);
         crate::log_err!(res)
     }

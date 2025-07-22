@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
 use libp2p::kad::QueryId;
+use libp2p::multiaddr::Protocol;
 use libp2p::request_response::ResponseChannel;
 use libp2p::{PeerId, kad};
 use niketsu_core::communicator::{
@@ -9,7 +10,7 @@ use niketsu_core::communicator::{
 };
 use niketsu_core::log_err_msg;
 use niketsu_core::playlist::Video;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use super::{CommonCommunication, CommunicationHandler, MessageResponse};
 use crate::NiketsuMessage;
@@ -45,7 +46,9 @@ impl FileShareProvider {
 #[derive(Debug, Default)]
 pub struct FileShareConsumer {
     current_requests: HashMap<QueryId, FileRequestMsg>,
-    pending_request_provider: Option<PeerId>,
+    current_request_provider: Option<PeerId>,
+    request_providers: Option<HashSet<PeerId>>,
+    is_requesting: bool,
 }
 
 impl FileShareConsumer {
@@ -58,6 +61,12 @@ impl FileShareConsumer {
             return debug!(?event, "Received non handled kademlia event");
         };
 
+        if let Ok(kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. }) = result {
+            debug!(?result, "Kademlia did not return new providers");
+            self.request_file(id, base);
+            return;
+        };
+
         let Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) = result else {
             debug!(?result, "No kademlia providers found");
             let res = base.send_chat_message(
@@ -67,36 +76,53 @@ impl FileShareConsumer {
             return log_err_msg!(res, "Failed to send message to core");
         };
 
+        self.request_providers = Some(providers.clone());
+        self.request_file(id, base);
+    }
+
+    fn request_file(&mut self, id: &QueryId, base: &mut CommonCommunication) {
+        debug!("Requesting file from providers");
+
+        if self.is_requesting {
+            debug!("File is already being shared. No need for further actions");
+            return;
+        }
+
         let Some(request) = self.current_requests.get(id) else {
             warn!("Found providers but no request?");
             return;
         };
 
-        if let Some(provider) = self.pending_request_provider {
-            debug!("Provider already exists");
+        if let Some(provider) = &self.request_providers {
+            if let Some(p) = provider.iter().next() {
+                debug!("Provider found");
+                self.current_request_provider = Some(*p);
 
-            base.swarm
-                .behaviour_mut()
-                .message_request_response
-                .send_request(
-                    &provider,
-                    MessageRequest(NiketsuMessage::FileRequest(request.clone())),
-                );
-            return;
+                let connect = base.swarm.is_connected(p);
+                println!("Is connected: {connect:?}, {provider:?}");
+
+                if !base.swarm.is_connected(p) {
+                    let relayed_peer = base
+                        .relay_addr
+                        .clone()
+                        .with(Protocol::P2pCircuit)
+                        .with(Protocol::P2p(base.host));
+                    if let Err(err) = base.swarm.dial(relayed_peer) {
+                        error!(?err, "Failed to dial file provider");
+                    }
+                }
+
+                base.swarm
+                    .behaviour_mut()
+                    .message_request_response
+                    .send_request(
+                        p,
+                        MessageRequest(NiketsuMessage::FileRequest(request.clone())),
+                    );
+                self.is_requesting = true;
+            }
         }
-
-        if let Some(provider) = providers.iter().next() {
-            debug!("Providers found");
-            self.pending_request_provider = Some(*provider);
-
-            base.swarm
-                .behaviour_mut()
-                .message_request_response
-                .send_request(
-                    provider,
-                    MessageRequest(NiketsuMessage::FileRequest(request.clone())),
-                );
-        }
+        println!("NO PROCVIDERS");
     }
 }
 
@@ -148,7 +174,7 @@ impl FileShareCoreMessageHandler for ChunkRequestMsg {
         let Some(FileShare::Consumer(consumer)) = &mut handler.file_share else {
             bail!("No active file share consumer");
         };
-        let Some(provider) = consumer.pending_request_provider else {
+        let Some(provider) = consumer.current_request_provider else {
             bail!("No provider available for chunk request")
         };
         handler.swarm.send_request(&provider, self.into());
@@ -159,8 +185,12 @@ impl FileShareCoreMessageHandler for ChunkRequestMsg {
 impl FileShareCoreMessageHandler for FileRequestMsg {
     fn handle_core_message(self, handler: &mut CommunicationHandler) -> Result<()> {
         debug!(?self.video, "Requesting file");
-        handler.reset_requests_responses();
+
         let mut consumer = FileShareConsumer::default();
+        if let Some(FileShare::Consumer(c)) = &handler.file_share {
+            consumer.request_providers = c.request_providers.clone();
+        }
+        handler.reset_requests_responses();
 
         let kademlia = &mut handler.base.swarm.behaviour_mut().kademlia;
         let id = kademlia.get_providers(self.video.as_str().as_bytes().to_vec().into());
@@ -239,7 +269,8 @@ impl FileShareSwarmResponseHandler for StatusResponse {
             let Some(FileShare::Consumer(consumer)) = &mut handler.file_share else {
                 bail!("No active file share consumer");
             };
-            consumer.pending_request_provider.take();
+            // FIXME: this might not work since all potential providers are lost
+            consumer.current_request_provider.take();
         }
         Ok(())
     }

@@ -129,6 +129,10 @@ impl MediaPlayerTrait for MediaPlayerWrapper {
         self.player.maybe_reload_video(f)
     }
 
+    fn reload_video(&mut self, f: &dyn FilePathSearch, filename: &str) {
+        self.player.reload_video(f, filename)
+    }
+
     fn playing_video(&self) -> Option<Video> {
         self.player.playing_video()
     }

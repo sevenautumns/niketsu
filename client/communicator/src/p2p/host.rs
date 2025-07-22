@@ -71,9 +71,9 @@ impl HostSwarmEvent {
                 cause,
                 endpoint,
             }),
-            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                HostSwarmEvent::ConnectionEstablished(ConnectionEstablished { peer_id })
-            }
+            SwarmEvent::ConnectionEstablished {
+                peer_id, endpoint, ..
+            } => HostSwarmEvent::ConnectionEstablished(ConnectionEstablished { peer_id, endpoint }),
             SwarmEvent::Behaviour(BehaviourEvent::Mdns(event)) => HostSwarmEvent::Mdns(event),
             _ => HostSwarmEvent::Other(Box::new(event)),
         }
@@ -93,12 +93,6 @@ impl HostSwarmEventHandler for gossipsub::Event {
                 );
                 let res = handler.handle_swarm_broadcast(message.data, propagation_source);
                 log_err_msg!(res, "Failed to handle broadcast message")
-            }
-            gossipsub::Event::Subscribed { peer_id, topic } => {
-                if topic == handler.handler.topic.hash() {
-                    let res = handler.send_init_status(peer_id);
-                    log_err_msg!(res, "Failed to send initial messages to client");
-                }
             }
             gossipsub_event => debug!(
                 ?gossipsub_event,
@@ -191,22 +185,29 @@ impl HostSwarmEventHandler for mdns::Event {
 
 struct ConnectionEstablished {
     peer_id: PeerId,
+    endpoint: ConnectedPoint,
 }
 
 impl HostSwarmEventHandler for ConnectionEstablished {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
         debug!(%self.peer_id, "New client established connection");
 
-        // Skip if already connected to avoid spam
+        // Skip if already connected to avoid spam (mDNS dial triggers new connections)
         if handler.users.contains_key(&self.peer_id) {
             return;
         }
 
         handler.users.insert(self.peer_id, None);
-
         if let Err(err) = handler.dial_on_new_connection(self.peer_id) {
             debug!(?err);
         }
+
+        handler
+            .handler
+            .swarm
+            .behaviour_mut()
+            .kademlia
+            .add_address(&self.peer_id, self.endpoint.get_remote_address().clone());
 
         let res = handler.send_init_status(self.peer_id);
         log_err_msg!(res, "Failed to send initial messages to client");
@@ -221,7 +222,7 @@ struct ConnectionClosed {
 
 impl HostSwarmEventHandler for ConnectionClosed {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        if handler.relay == (*self.endpoint.get_remote_address()) {
+        if handler.relay_addr == (*self.endpoint.get_remote_address()) {
             error!(?self.endpoint, ?self.cause, "Connection of host to relay server closed");
             handler.handler.core_receiver.close();
         } else if !handler.handler.swarm.is_connected(&self.peer_id) {
@@ -461,7 +462,7 @@ impl HostSwarmBroadcastHandler for NiketsuMessage {
 
 pub(crate) struct HostCommunicationHandler {
     handler: CommunicationHandler,
-    relay: Multiaddr,
+    relay_addr: Multiaddr,
     status_list: UserStatusListMsg,
     playlist: PlaylistMsg,
     select: SelectMsg,
@@ -475,7 +476,7 @@ impl HostCommunicationHandler {
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
         host: PeerId,
-        relay: Multiaddr,
+        relay_addr: Multiaddr,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
         room: RoomName,
@@ -492,10 +493,17 @@ impl HostCommunicationHandler {
         };
         message_sender.send(playlist.clone().into()).ok();
         message_sender.send(select.clone().into()).ok();
-        let handler = CommunicationHandler::new(swarm, topic, host, core_receiver, message_sender);
+        let handler = CommunicationHandler::new(
+            swarm,
+            topic,
+            host,
+            relay_addr.clone(),
+            core_receiver,
+            message_sender,
+        );
         Self {
             handler,
-            relay,
+            relay_addr,
             status_list: UserStatusListMsg {
                 room_name: room,
                 users: BTreeSet::default(),

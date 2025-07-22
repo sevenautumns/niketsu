@@ -8,7 +8,7 @@ use libp2p::core::ConnectedPoint;
 use libp2p::kad::{self};
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
-use libp2p::{PeerId, dcutr, gossipsub, ping};
+use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, ping};
 use niketsu_core::communicator::{
     ConnectedMsg, PlaylistMsg, SeekMsg, SelectMsg, UserStatusMsg, VideoStatusMsg,
 };
@@ -229,6 +229,12 @@ impl ClientSwarmEventHandler for ConnectionEstablished {
             handler.relay_conn = Some(self.connection_id);
         } else {
             info!(%self.connection_id, ?self.endpoint, "Direct connection to host established!");
+            handler
+                .handler
+                .swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(&self.peer_id, self.endpoint.get_remote_address().clone());
         }
         if let Err(error) = handler.handler.message_sender.send(ConnectedMsg.into()) {
             warn!(%error, "Failed to send connected message to core");
@@ -479,10 +485,18 @@ impl ClientCommunicationHandler {
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
         host: PeerId,
+        relay_addr: Multiaddr,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
     ) -> Self {
-        let handler = CommunicationHandler::new(swarm, topic, host, core_receiver, message_sender);
+        let handler = CommunicationHandler::new(
+            swarm,
+            topic,
+            host,
+            relay_addr,
+            core_receiver,
+            message_sender,
+        );
         Self {
             handler,
             host_conn: None,
