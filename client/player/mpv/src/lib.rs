@@ -450,12 +450,25 @@ impl MediaPlayerTrait for Mpv {
         if !matches!(self.status.file_load_status, FileLoadStatus::NotLoaded) {
             return;
         }
+
         let Some(load) = &self.status.file else {
             self.unload_video();
             return;
         };
+
         let Some(path) = load.to_path_str(f) else {
             debug!(video = ?load, "get path from video");
+            self.unload_video();
+            return;
+        };
+
+        let path = CString::new(path).expect("got invalid utf-8");
+        self.replace_video(path);
+    }
+
+    fn reload_video(&mut self, f: &dyn FilePathSearch, filename: &str) {
+        let Some(path) = f.get_file_path(filename) else {
+            debug!(?filename, "failed to get path for file");
             self.unload_video();
             return;
         };

@@ -59,7 +59,7 @@ impl EventHandler for ServerOnline {
     fn handle(self, model: &mut CoreModel) {
         trace!("video server online");
         let file = VideoServerFile::from(self);
-        model.player.maybe_reload_video(&file);
+        model.player.reload_video(&file, &file.file_name);
     }
 }
 

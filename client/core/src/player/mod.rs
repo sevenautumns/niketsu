@@ -31,6 +31,7 @@ pub trait MediaPlayerTrait: std::fmt::Debug + Send {
     fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore);
     fn unload_video(&mut self);
     fn maybe_reload_video(&mut self, f: &dyn FilePathSearch);
+    fn reload_video(&mut self, f: &dyn FilePathSearch, filename: &str);
     fn playing_video(&self) -> Option<Video>;
     fn video_loaded(&self) -> bool;
     async fn event(&mut self) -> MediaPlayerEvent;
