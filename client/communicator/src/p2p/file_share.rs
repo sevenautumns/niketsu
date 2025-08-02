@@ -15,7 +15,7 @@ use tracing::{debug, error, warn};
 
 use super::{CommonCommunication, CommunicationHandler};
 use crate::NiketsuMessage;
-use crate::p2p::{MessageRequest, SwarmHandler};
+use crate::p2p::SwarmHandler;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum FileShareRequest {
@@ -60,7 +60,8 @@ impl FileShareProvider {
 
 #[derive(Debug, Default)]
 pub struct FileShareConsumer {
-    current_requests: HashMap<QueryId, FileRequestMsg>,
+    file_requests: HashMap<QueryId, FileRequestMsg>,
+    chunk_requests: HashSet<OutboundRequestId>,
     current_request_provider: Option<PeerId>,
     request_providers: Option<HashSet<PeerId>>,
     is_requesting: bool,
@@ -101,7 +102,7 @@ impl FileShareConsumer {
             return;
         }
 
-        let Some(request) = self.current_requests.get(id) else {
+        let Some(request) = self.file_requests.get(id) else {
             warn!("Found providers but no request?");
             return;
         };
@@ -111,31 +112,22 @@ impl FileShareConsumer {
                 debug!("Provider found");
                 self.current_request_provider = Some(*p);
 
-                let connect = base.swarm.is_connected(p);
-                println!("Is connected: {connect:?}, {provider:?}");
-
                 if !base.swarm.is_connected(p) {
                     let relayed_peer = base
                         .relay_addr
                         .clone()
                         .with(Protocol::P2pCircuit)
-                        .with(Protocol::P2p(base.host));
+                        .with(Protocol::P2p(*p));
                     if let Err(err) = base.swarm.dial(relayed_peer) {
                         error!(?err, "Failed to dial file provider");
                     }
                 }
 
-                base.swarm
-                    .behaviour_mut()
-                    .message_request_response
-                    .send_request(
-                        p,
-                        MessageRequest(NiketsuMessage::FileRequest(request.clone())),
-                    );
+                let req = FileShareRequest::File(request.clone());
+                base.swarm.send_file_request(p, req);
                 self.is_requesting = true;
             }
         }
-        println!("NO PROCVIDERS");
     }
 }
 
@@ -220,6 +212,8 @@ impl FileShareCoreMessageHandler for ChunkRequestMsg {
     fn handle_core_message(self, handler: &mut CommunicationHandler) -> Result<()> {
         // TODO handle issues with provider
         let Some(FileShare::Consumer(consumer)) = &mut handler.file_share else {
+            let msg = NiketsuMessage::VideoProviderStopped(Default::default());
+            handler.message_sender.send(msg).unwrap();
             bail!("No active file share consumer");
         };
         let Some(provider) = consumer.current_request_provider else {
@@ -320,13 +314,23 @@ pub trait FileShareSwarmResponseHandler {
 
 impl FileShareSwarmResponseHandler for FileShareResponseResult {
     fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()> {
-        debug!(?self, "Received status response");
-        if self == StatusResponse::NotProvidingErr {
-            let Some(FileShare::Consumer(consumer)) = &mut handler.file_share else {
-                bail!("No active file share consumer");
-            };
-            // FIXME: this might not work since all potential providers are lost
-            consumer.current_request_provider.take();
+        let Ok(resp) = self else {
+            handler.file_share.take();
+            let msg = NiketsuMessage::VideoProviderStopped(Default::default());
+            handler.message_sender.send(msg).unwrap();
+            bail!("{}", self.unwrap_err());
+        };
+
+        handler.message_sender.send(resp.into())?;
+        Ok(())
+    }
+}
+
+impl From<FileShareResponse> for NiketsuMessage {
+    fn from(value: FileShareResponse) -> Self {
+        match value {
+            FileShareResponse::File(file_response_msg) => file_response_msg.into(),
+            FileShareResponse::Chunk(chunk_response_msg) => chunk_response_msg.into(),
         }
     }
 }

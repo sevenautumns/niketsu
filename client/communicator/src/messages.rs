@@ -48,6 +48,7 @@ impl TryFrom<NiketsuMessage> for IncomingMessage {
             NiketsuMessage::FileRequest(m) => Ok(m.into()),
             NiketsuMessage::ChunkResponse(m) => Ok(m.into()),
             NiketsuMessage::ChunkRequest(m) => Ok(m.into()),
+            NiketsuMessage::VideoProviderStopped(m) => Ok(m.into()),
             value => Err(value),
         }
     }

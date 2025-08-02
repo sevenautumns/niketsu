@@ -85,8 +85,31 @@ impl EventHandler for VideoChange {
         let actor = model.config.username.clone();
         let video = Some(self.video.clone());
         let position = Duration::ZERO;
+        let mut sharing = false;
         model.playlist.select_playing(&self.video);
+        let store = model.database.all_files();
+        model.player.load_video(self.video.clone(), position, store);
+
+        if model.config.auto_share && model.video_provider.sharing() {
+            if let Some(file) = model.database.find_file(self.video.as_str()) {
+                model.video_provider.start_providing(file);
+                let msg = VideoShareMsg::new(self.video.clone());
+                model.communicator.send(msg.into());
+                model.ui.video_share(true);
+                sharing = true;
+            }
+        }
+
+        if !sharing {
+            let msg = VideoShareMsg { video: None };
+            model.communicator.send(msg.into());
+            model.video_provider.stop_providing();
+            model.ui.video_share(false);
+        }
+
         PlaylistBrowser::save(&model.config.room, &model.playlist);
+        model.ui.video_change(video.clone());
+
         model.communicator.send(
             SelectMsg {
                 actor,
@@ -95,10 +118,6 @@ impl EventHandler for VideoChange {
             }
             .into(),
         );
-
-        model
-            .player
-            .load_video(self.video, Duration::ZERO, model.database.all_files());
     }
 }
 
@@ -672,10 +691,10 @@ mod tests {
     async fn test_video_change() {
         let mut communicator = MockCommunicatorTrait::default();
         let mut player = MockMediaPlayerTrait::default();
-        let ui = MockUserInterfaceTrait::default();
+        let mut ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
         let video_server = MockVideoServerTrait::default();
-        let video_provider = MockVideoProviderTrait::default();
+        let mut video_provider = MockVideoProviderTrait::default();
 
         let user = arcstr::literal!("max");
         let video = Video::from("video1");
@@ -691,6 +710,7 @@ mod tests {
             video: Some(video.clone()),
             position: pos,
         });
+        let empty_video_share_msg = OutgoingMessage::from(VideoShareMsg { video: None });
 
         file_database.expect_all_files().return_const(file_store);
         player.expect_get_speed().return_const(1.1);
@@ -699,9 +719,31 @@ mod tests {
             .with(eq(video.clone()), eq(pos), always())
             .once()
             .return_const(());
+
+        video_provider
+            .expect_stop_providing()
+            .once()
+            .return_const(());
+
+        ui.expect_video_share()
+            .with(eq(false))
+            .once()
+            .return_const(());
+
+        ui.expect_video_change()
+            .with(eq(Some(video.clone())))
+            .once()
+            .return_const(());
+
         communicator
             .expect_send()
             .with(eq(message))
+            .once()
+            .return_const(());
+
+        communicator
+            .expect_send()
+            .with(eq(empty_video_share_msg))
             .once()
             .return_const(());
 
