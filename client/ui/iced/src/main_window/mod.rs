@@ -14,6 +14,7 @@ use super::widget::chat::ChatWidget;
 use super::widget::database::DatabaseWidget;
 use super::widget::playlist::PlaylistWidget;
 use super::widget::rooms::RoomsWidget;
+use crate::main_window::message::ShareButton;
 use crate::message::ToggleReady;
 use crate::styling::ContainerBorder;
 use crate::widget::file_search::FileSearchWidget;
@@ -29,10 +30,10 @@ pub struct MainView<'a> {
 
 impl<'a> MainView<'a> {
     pub fn new(view_model: &'a ViewModel) -> Self {
-        let mut btn: Button<Message>;
+        let mut ready_btn: Button<Message>;
         match view_model.user().ready {
             true => {
-                btn = Button::new(
+                ready_btn = Button::new(
                     Text::new("Ready")
                         .width(Length::Fill)
                         .align_x(iced::alignment::Horizontal::Center),
@@ -40,7 +41,7 @@ impl<'a> MainView<'a> {
                 .style(iced::widget::button::success)
             }
             false => {
-                btn = Button::new(
+                ready_btn = Button::new(
                     Text::new("Not Ready")
                         .width(Length::Fill)
                         .align_x(iced::alignment::Horizontal::Center),
@@ -48,7 +49,28 @@ impl<'a> MainView<'a> {
                 .style(iced::widget::button::danger)
             }
         }
-        btn = btn.on_press(MainMessage::from(ReadyButton).into());
+        ready_btn = ready_btn.on_press(MainMessage::from(ReadyButton).into());
+
+        let mut share_btn: Button<Message>;
+        match view_model.is_sharing() {
+            true => {
+                share_btn = Button::new(
+                    Text::new("sharing")
+                        .width(Length::Fill)
+                        .align_x(iced::alignment::Horizontal::Center),
+                )
+                .style(iced::widget::button::success)
+            }
+            false => {
+                share_btn = Button::new(
+                    Text::new("Not sharing")
+                        .width(Length::Fill)
+                        .align_x(iced::alignment::Horizontal::Center),
+                )
+                .style(iced::widget::button::danger)
+            }
+        }
+        share_btn = share_btn.on_press(MainMessage::from(ShareButton).into());
 
         let base = Row::new()
             .push(
@@ -92,7 +114,12 @@ impl<'a> MainView<'a> {
                         .padding(SPACING)
                         .height(Length::Fill),
                     )
-                    .push(btn.width(Length::Fill))
+                    .push(
+                        Row::new()
+                            .push(ready_btn.width(Length::FillPortion(2)))
+                            .push(share_btn.width(Length::FillPortion(1)))
+                            .spacing(SPACING),
+                    )
                     .width(Length::Fill)
                     .spacing(SPACING),
             )
