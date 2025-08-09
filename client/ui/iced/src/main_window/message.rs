@@ -16,6 +16,7 @@ pub enum MainMessage {
     ReadyButton,
     StopDbUpdate,
     StartDbUpdate,
+    ShareButton,
 }
 
 impl MessageHandler for MainMessage {
@@ -50,5 +51,14 @@ pub struct StartDbUpdate;
 impl MainMessageTrait for StartDbUpdate {
     fn handle(self, model: &UiModel) {
         model.start_db_update();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ShareButton;
+
+impl MainMessageTrait for ShareButton {
+    fn handle(self, model: &UiModel) {
+        model.video_share_toggle();
     }
 }

@@ -109,6 +109,10 @@ impl ViewModel {
             .messages
             .on_change_arc(|msgs| self.chat_widget_statet.replace_messages(msgs))
     }
+
+    pub fn is_sharing(&self) -> bool {
+        self.model.video_share.get_inner()
+    }
 }
 
 pub struct Flags {
