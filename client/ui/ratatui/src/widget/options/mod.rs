@@ -17,12 +17,12 @@ impl OverlayWidgetState for OptionsWidgetState {
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(10)].as_ref())
+            .constraints([Constraint::Min(1), Constraint::Length(12)].as_ref())
             .split(r);
 
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(1), Constraint::Length(30)].as_ref())
+            .constraints([Constraint::Min(1), Constraint::Length(31)].as_ref())
             .split(popup_layout[1])[1]
     }
 }

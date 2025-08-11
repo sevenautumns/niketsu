@@ -107,7 +107,7 @@ impl App {
             chat_input_widget_state: ChatInputWidgetState::new(),
             current_overlay_state: None,
             options_widget_state: OptionsWidgetState::default(),
-            help_widget_state: HelpWidgetState::new(),
+            help_widget_state: HelpWidgetState::default(),
             login_widget_state: LoginWidgetState::new(&config),
             search_widget_state: SearchWidgetState::new(),
             media_widget_state: MediaDirWidgetState::new(config.media_dirs),

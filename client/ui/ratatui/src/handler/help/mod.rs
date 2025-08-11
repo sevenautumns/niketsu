@@ -1,4 +1,4 @@
-use crossterm::event::{Event, KeyEventKind};
+use crossterm::event::{Event, KeyCode};
 use ratatui::widgets::Clear;
 
 use super::{EventHandler, RenderHandler};
@@ -12,8 +12,10 @@ pub struct Help;
 impl EventHandler for Help {
     fn handle(&self, view: &mut RatatuiView, event: &Event) {
         if let Event::Key(key) = event {
-            if key.kind == KeyEventKind::Press {
-                view.app.reset_overlay();
+            match key.code {
+                KeyCode::Left | KeyCode::BackTab => view.app.help_widget_state.previous(),
+                KeyCode::Right | KeyCode::Tab => view.app.help_widget_state.next(),
+                _ => view.app.reset_overlay(),
             }
         }
     }
