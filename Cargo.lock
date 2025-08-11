@@ -4283,6 +4283,7 @@ dependencies = [
  "gag",
  "multiaddr",
  "niketsu-core",
+ "once_cell",
  "ratatui",
  "strum 0.27.2",
  "textwrap",

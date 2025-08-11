@@ -40,8 +40,12 @@ impl EventHandler for Recently {
                             }
                         }
                     }
-                    KeyCode::Left => view.app.recently_widget_state.previous_frequency(),
-                    KeyCode::Right => view.app.recently_widget_state.next_frequency(),
+                    KeyCode::Right | KeyCode::Tab => {
+                        view.app.recently_widget_state.previous_frequency()
+                    }
+                    KeyCode::Left | KeyCode::BackTab => {
+                        view.app.recently_widget_state.next_frequency()
+                    }
                     KeyCode::Char('x') => {
                         view.app.recently_widget_state.increase_selection_offset();
                     }
