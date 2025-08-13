@@ -56,6 +56,11 @@ pub trait MainEventHandler: EventHandler {
                             .set_current_overlay_state(Some(OverlayState::from(Command {})));
                         view.app.command_input_widget_state.set_active(true);
                     }
+                    KeyCode::Char('?') => {
+                        view.app.set_mode(Mode::Overlay);
+                        view.app
+                            .set_current_overlay_state(Some(OverlayState::from(Help {})));
+                    }
                     _ => {}
                 },
             }

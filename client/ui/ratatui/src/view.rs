@@ -28,6 +28,7 @@ use tracing::warn;
 
 use super::widget::playlist::PlaylistWidget;
 use crate::handler::command::Command;
+use crate::handler::help::Help;
 use crate::handler::options::Options;
 use crate::handler::playlist::Playlist;
 use crate::handler::{EventHandler, MainEventHandler, OverlayState, RenderHandler, State};
@@ -35,6 +36,7 @@ use crate::widget::chat::{ChatWidget, ChatWidgetState};
 use crate::widget::chat_input::{ChatInputWidget, ChatInputWidgetState};
 use crate::widget::command::CommandInputWidgetState;
 use crate::widget::database::{DatabaseWidget, DatabaseWidgetState};
+use crate::widget::footer::{FooterWidget, FooterWidgetState};
 use crate::widget::help::HelpWidgetState;
 use crate::widget::login::LoginWidgetState;
 use crate::widget::media::MediaDirWidgetState;
@@ -82,6 +84,7 @@ pub struct App {
     pub playlist_browser_widget_state: PlaylistBrowserWidgetState,
     pub video_name_widget_state: VideoNameWidgetState,
     pub recently_widget_state: RecentlyWidgetState,
+    pub footer_widget_state: FooterWidgetState,
     pub current_search: Option<FuzzySearch>,
     pub clipboard: Option<Clipboard>,
     state: State,
@@ -93,6 +96,8 @@ pub struct App {
 impl App {
     fn new(config: Config) -> App {
         let clipboard = Clipboard::new().ok();
+        let mut footer_widget_state = FooterWidgetState::default();
+        footer_widget_state.set_content(&State::from(Playlist), &None, &Mode::Normal);
 
         App {
             chat_widget_state: ChatWidgetState::default(),
@@ -114,6 +119,7 @@ impl App {
             playlist_browser_widget_state: PlaylistBrowserWidgetState::new(),
             video_name_widget_state: VideoNameWidgetState::default(),
             recently_widget_state: RecentlyWidgetState::new(),
+            footer_widget_state,
             current_search: None,
             clipboard,
             state: State::from(Playlist {}),
@@ -125,15 +131,19 @@ impl App {
 
     pub fn set_current_state(&mut self, state: State) {
         self.state = state;
+        self.set_footer();
     }
 
     pub fn set_current_overlay_state(&mut self, state: Option<OverlayState>) {
         self.current_overlay_state = state;
+        self.set_footer();
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
         self.prev_mode = Some(self.mode);
         self.mode = mode;
+        self.set_footer();
+        self.reset_help_state();
     }
 
     pub fn reset_overlay(&mut self) {
@@ -142,6 +152,15 @@ impl App {
             self.mode = mode;
         } else {
             self.mode = Mode::Normal;
+        }
+        self.set_footer();
+    }
+
+    pub fn reset_help_state(&mut self) {
+        match self.mode {
+            Mode::Normal => self.help_widget_state.reset(),
+            Mode::Inspecting => self.help_widget_state.select(&self.state),
+            Mode::Overlay => {}
         }
     }
 
@@ -162,6 +181,11 @@ impl App {
             Some(cb) => cb.get_text().map_err(|e| anyhow::anyhow!("{e:?}")),
             None => bail!("Clipboard not initialized"),
         }
+    }
+
+    pub fn set_footer(&mut self) {
+        self.footer_widget_state
+            .set_content(&self.state, &self.current_overlay_state, &self.mode);
     }
 }
 
@@ -294,13 +318,18 @@ impl RatatuiView {
                         self.app.command_input_widget_state.set_active(true);
                     }
                     KeyCode::Enter => {
-                        self.app.mode = Mode::Inspecting;
+                        self.app.set_mode(Mode::Inspecting);
                         self.highlight();
                     }
                     KeyCode::Char(' ') => {
                         self.app.set_mode(Mode::Overlay);
                         self.app
                             .set_current_overlay_state(Some(OverlayState::from(Options {})));
+                    }
+                    KeyCode::Char('?') => {
+                        self.app.set_mode(Mode::Overlay);
+                        self.app
+                            .set_current_overlay_state(Some(OverlayState::from(Help {})));
                     }
                     KeyCode::Right | KeyCode::Left | KeyCode::Down | KeyCode::Up => {
                         self.app.state.clone().handle_next(self, key)
@@ -431,8 +460,25 @@ impl RatatuiView {
             &mut app.chat_input_widget_state,
         );
 
-        if let (Mode::Overlay, Some(overlay)) = (app.mode, &app.current_overlay_state) {
-            overlay.clone().render(f, app);
+        match (app.mode, &app.current_overlay_state) {
+            (Mode::Overlay, Some(OverlayState::Command(overlay))) => {
+                overlay.clone().render(f, app);
+            }
+            (Mode::Overlay, Some(overlay)) => {
+                f.render_stateful_widget(
+                    FooterWidget,
+                    main_vertical_chunks[1],
+                    &mut app.footer_widget_state,
+                );
+                overlay.clone().render(f, app);
+            }
+            _ => {
+                f.render_stateful_widget(
+                    FooterWidget,
+                    main_vertical_chunks[1],
+                    &mut app.footer_widget_state,
+                );
+            }
         }
     }
 
