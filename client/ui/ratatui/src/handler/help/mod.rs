@@ -15,7 +15,9 @@ impl EventHandler for Help {
             match key.code {
                 KeyCode::Left | KeyCode::BackTab => view.app.help_widget_state.previous(),
                 KeyCode::Right | KeyCode::Tab => view.app.help_widget_state.next(),
-                _ => view.app.reset_overlay(),
+                _ => {
+                    view.app.reset_overlay();
+                }
             }
         }
     }

@@ -5,6 +5,8 @@ use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, Cell, Padding, Row, StatefulWidget, Table, Widget};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
+use crate::handler::State;
+
 use super::OverlayWidgetState;
 
 struct HelpTab {
@@ -158,7 +160,7 @@ pub struct HelpWidgetState {
 }
 
 #[derive(Debug, Default, PartialEq, Copy, Clone, EnumString, EnumIter, Display)]
-enum HelpWidgetTab {
+pub enum HelpWidgetTab {
     #[default]
     General,
     Room,
@@ -181,7 +183,7 @@ impl HelpWidgetTab {
 
     fn previous(self) -> Self {
         let variants: Vec<_> = HelpWidgetTab::iter().collect();
-        let pos = variants.iter().position(|&v| v == self).unwrap().clone();
+        let pos = variants.iter().position(|&v| v == self).unwrap();
         variants[(pos + variants.len() - 1) % variants.len()]
     }
 }
@@ -193,6 +195,20 @@ impl HelpWidgetState {
 
     pub fn previous(&mut self) {
         self.current_tab = self.current_tab.previous()
+    }
+
+    pub fn select(&mut self, state: &State) {
+        match state {
+            State::Chat(_) => self.current_tab = HelpWidgetTab::Chat,
+            State::ChatInput(_) => self.current_tab = HelpWidgetTab::Chat,
+            State::Users(_) => self.current_tab = HelpWidgetTab::Room,
+            State::Playlist(_) => self.current_tab = HelpWidgetTab::Playlist,
+            State::Recently(_) => self.current_tab = HelpWidgetTab::Recently,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.current_tab = HelpWidgetTab::default();
     }
 }
 
@@ -231,7 +247,7 @@ impl StatefulWidget for HelpWidget {
         let help_block = Block::default()
             .title("Help")
             .borders(Borders::ALL)
-            .title_bottom("Press ←→ to move, any key to exit");
+            .title_bottom("← →: navigate tabs");
 
         let help_page = match state.current_tab {
             HelpWidgetTab::General => &GENERAL,
@@ -253,9 +269,13 @@ impl StatefulWidget for HelpWidget {
             .vertical_margin(1)
             .split(area);
 
+        let width_col1 = 35;
+        let width_col2 = 25;
+        let max_width = width_col1 + width_col2;
+
         let table_layout = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(50), Constraint::Min(0)])
+            .constraints([Constraint::Length(max_width), Constraint::Min(0)])
             .split(layout[1]);
 
         let rows = help_page.items.iter().map(|line| {
@@ -263,7 +283,10 @@ impl StatefulWidget for HelpWidget {
             Row::new(items)
         });
 
-        let widths = [Constraint::Length(35), Constraint::Length(15)];
+        let widths = [
+            Constraint::Length(width_col1),
+            Constraint::Length(width_col2),
+        ];
         let header = Row::new(vec!["Description", "Control"])
             .style(Style::default().fg(Color::Gray).bg(Color::DarkGray));
         let table = Table::new(rows, widths).header(header).block(
