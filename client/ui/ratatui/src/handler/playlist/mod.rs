@@ -1,6 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use niketsu_core::playlist::Video;
 use ratatui::style::Style;
+use search::PlaylistSearch;
 use video_overlay::VideoName;
 
 use super::chat::Chat;
@@ -9,6 +10,7 @@ use super::{MainEventHandler, OverlayState, State};
 use crate::handler::EventHandler;
 use crate::view::{Mode, RatatuiView};
 
+pub(crate) mod search;
 pub(crate) mod video_overlay;
 
 #[derive(Debug, Clone, Copy)]
@@ -82,6 +84,12 @@ impl EventHandler for Playlist {
                         if let Some(index) = view.app.playlist_widget_state.yank_clipboard() {
                             view.reverse_range(index);
                         }
+                    }
+                    KeyCode::Char('/') => {
+                        view.app.set_mode(Mode::Overlay);
+                        view.app
+                            .set_current_overlay_state(Some(OverlayState::from(PlaylistSearch {})));
+                        view.app.search_playlist("".to_string());
                     }
                     KeyCode::Backspace => {
                         view.app.playlist_widget_state.jump_to_playing_video();

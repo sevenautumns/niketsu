@@ -5,7 +5,7 @@ use super::help::Help;
 use super::login::Login;
 use super::media::MediaDir;
 use super::playlist_browser::PlaylistBrowserOverlay;
-use super::search::Search;
+use super::search::BrowserSearch;
 use super::{EventHandler, OverlayState, RenderHandler};
 use crate::view::{App, RatatuiView};
 use crate::widget::OverlayWidgetState;
@@ -27,8 +27,8 @@ impl EventHandler for Options {
                         .set_current_overlay_state(Some(OverlayState::from(Login {}))),
                     KeyCode::Char('/') => {
                         view.app
-                            .set_current_overlay_state(Some(OverlayState::from(Search {})));
-                        view.app.fuzzy_search("".to_string());
+                            .set_current_overlay_state(Some(OverlayState::from(BrowserSearch {})));
+                        view.app.search_browser("".to_string());
                     }
                     KeyCode::Char('m') => view
                         .app

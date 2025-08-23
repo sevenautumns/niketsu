@@ -11,28 +11,55 @@ use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use tokio::task::JoinHandle;
 
-use super::{FileEntry, FileStore};
 use crate::util::FuzzyResult;
 
+pub trait FuzzyEntry: Clone + Send + Sync + 'static {
+    fn key(&self) -> &str;
+}
+
+pub trait FuzzySearchable<E>
+where
+    E: FuzzyEntry,
+{
+    fn fuzzy_search(&self, query: String) -> FuzzySearch<E>;
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 #[derive(Debug)]
-pub struct FuzzySearch {
-    handle: JoinHandle<Vec<FuzzyResult<FileEntry>>>,
+pub struct FuzzySearch<E>
+where
+    E: FuzzyEntry,
+{
+    handle: JoinHandle<Vec<FuzzyResult<E>>>,
     stop: Arc<AtomicBool>,
 }
 
-impl FuzzySearch {
-    pub fn new(query: String, store: FileStore) -> Self {
+impl<E> FuzzySearch<E>
+where
+    E: FuzzyEntry,
+{
+    pub fn new<S>(query: String, store: S) -> Self
+    where
+        S: Send + Sync + 'static + for<'a> IntoParallelRefIterator<'a, Item = &'a E>,
+    {
         let stop = Arc::<AtomicBool>::default();
         let handle = Self::search(query, store, stop.clone());
 
         Self { handle, stop }
     }
 
-    pub fn search(
+    pub fn search<S>(
         query: String,
-        store: FileStore,
+        store: S,
         stop: Arc<AtomicBool>,
-    ) -> JoinHandle<Vec<FuzzyResult<FileEntry>>> {
+    ) -> JoinHandle<Vec<FuzzyResult<E>>>
+    where
+        S: Send + Sync + 'static + for<'a> IntoParallelRefIterator<'a, Item = &'a E>,
+    {
         tokio::task::spawn_blocking(move || {
             let matcher = SkimMatcherV2::default();
             let mut scores = store
@@ -41,7 +68,7 @@ impl FuzzySearch {
                     if stop.load(Ordering::Relaxed) {
                         return Some(Err(anyhow::anyhow!("search stopped")));
                     }
-                    let (score, hits) = matcher.fuzzy_indices(entry.file_name(), &query)?;
+                    let (score, hits) = matcher.fuzzy_indices(entry.key(), &query)?;
                     Some(Ok(FuzzyResult {
                         score,
                         hits,
@@ -59,7 +86,7 @@ impl FuzzySearch {
         self.handle.is_finished()
     }
 
-    pub fn poll(&mut self) -> Option<Vec<FuzzyResult<FileEntry>>> {
+    pub fn poll(&mut self) -> Option<Vec<FuzzyResult<E>>> {
         let mut ctx = Context::from_waker(Waker::noop());
         let poll = Pin::new(&mut self.handle).poll(&mut ctx);
         match poll {
@@ -73,8 +100,11 @@ impl FuzzySearch {
     }
 }
 
-impl Future for FuzzySearch {
-    type Output = Vec<FuzzyResult<FileEntry>>;
+impl<E> Future for FuzzySearch<E>
+where
+    E: FuzzyEntry,
+{
+    type Output = Vec<FuzzyResult<E>>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -90,7 +120,10 @@ impl Future for FuzzySearch {
     }
 }
 
-impl Drop for FuzzySearch {
+impl<E> Drop for FuzzySearch<E>
+where
+    E: FuzzyEntry,
+{
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed)
     }
@@ -98,6 +131,8 @@ impl Drop for FuzzySearch {
 
 #[cfg(test)]
 mod tests {
+    use crate::file_database::{FileEntry, FileStore};
+
     use super::*;
 
     #[tokio::test]

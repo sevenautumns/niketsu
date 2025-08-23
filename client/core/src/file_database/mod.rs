@@ -15,13 +15,13 @@ use rayon::prelude::IntoParallelRefIterator;
 use tokio::task::JoinHandle;
 use tracing::{trace, warn};
 
-use self::fuzzy::FuzzySearch;
+use crate::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
+
 use self::updater::FileDatabaseUpdater;
 use super::player::MediaPlayerTrait;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
 
-pub mod fuzzy;
 mod updater;
 
 const MAX_UPDATE_FREQUENCY: Duration = Duration::from_millis(100);
@@ -88,6 +88,12 @@ impl EventHandler for UpdateProgress {
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct FileEntry {
     inner: Arc<FileEntryInner>,
+}
+
+impl FuzzyEntry for FileEntry {
+    fn key(&self) -> &str {
+        self.file_name()
+    }
 }
 
 impl std::fmt::Debug for FileEntry {
@@ -331,10 +337,6 @@ pub trait FilePathSearch {
 }
 
 impl FileStore {
-    pub fn len(&self) -> usize {
-        self.store.len()
-    }
-
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -352,8 +354,22 @@ impl FileStore {
         self.into_iter()
     }
 
-    pub fn fuzzy_search(&self, query: String) -> FuzzySearch {
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+
+    pub fn fuzzy_search(&self, query: String) -> FuzzySearch<FileEntry> {
         FuzzySearch::new(query, self.clone())
+    }
+}
+
+impl FuzzySearchable<FileEntry> for FileStore {
+    fn fuzzy_search(&self, query: String) -> FuzzySearch<FileEntry> {
+        FuzzySearch::new(query, self.clone())
+    }
+
+    fn len(&self) -> usize {
+        self.store.len()
     }
 }
 

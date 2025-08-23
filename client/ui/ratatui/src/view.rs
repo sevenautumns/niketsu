@@ -17,7 +17,8 @@ use futures::future::OptionFuture;
 use futures::{Future, StreamExt};
 use gag::Gag;
 use niketsu_core::config::Config;
-use niketsu_core::file_database::fuzzy::FuzzySearch;
+use niketsu_core::file_database::{FileEntry, FileStore};
+use niketsu_core::fuzzy::FuzzySearch;
 use niketsu_core::playlist::Video;
 use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::room::RoomName;
@@ -80,12 +81,14 @@ pub struct App {
     pub help_widget_state: HelpWidgetState,
     pub login_widget_state: LoginWidgetState,
     pub media_widget_state: MediaDirWidgetState,
-    pub search_widget_state: SearchWidgetState,
+    pub browser_search_widget_state: SearchWidgetState<FileEntry, FileStore>,
+    pub playlist_search_widget_state: SearchWidgetState<Video, niketsu_core::playlist::Playlist>,
     pub playlist_browser_widget_state: PlaylistBrowserWidgetState,
     pub video_name_widget_state: VideoNameWidgetState,
     pub recently_widget_state: RecentlyWidgetState,
     pub footer_widget_state: FooterWidgetState,
-    pub current_search: Option<FuzzySearch>,
+    pub current_browser_search: Option<FuzzySearch<FileEntry>>,
+    pub current_playlist_search: Option<FuzzySearch<Video>>,
     pub clipboard: Option<Clipboard>,
     state: State,
     prev_state: Option<State>,
@@ -114,13 +117,15 @@ impl App {
             options_widget_state: OptionsWidgetState::default(),
             help_widget_state: HelpWidgetState::default(),
             login_widget_state: LoginWidgetState::new(&config),
-            search_widget_state: SearchWidgetState::new(),
+            browser_search_widget_state: SearchWidgetState::new("Database Search".to_string()),
             media_widget_state: MediaDirWidgetState::new(config.media_dirs),
+            playlist_search_widget_state: SearchWidgetState::new("Playlist Search".to_string()),
             playlist_browser_widget_state: PlaylistBrowserWidgetState::new(),
             video_name_widget_state: VideoNameWidgetState::default(),
             recently_widget_state: RecentlyWidgetState::new(),
             footer_widget_state,
-            current_search: None,
+            current_browser_search: None,
+            current_playlist_search: None,
             clipboard,
             state: State::from(Playlist {}),
             prev_state: None,
@@ -168,12 +173,20 @@ impl App {
         self.state
     }
 
-    pub fn fuzzy_search(&mut self, query: String) {
-        self.current_search = Some(self.search_widget_state.fuzzy_search(query));
+    pub fn search_browser(&mut self, query: String) {
+        self.current_browser_search = self.browser_search_widget_state.fuzzy_search(query);
     }
 
-    pub fn reset_fuzzy_search(&mut self) {
-        self.current_search = None;
+    pub fn search_playlist(&mut self, query: String) {
+        self.current_playlist_search = self.playlist_search_widget_state.fuzzy_search(query);
+    }
+
+    pub fn reset_browser_search(&mut self) {
+        self.current_browser_search = None;
+    }
+
+    pub fn reset_playlist_search(&mut self) {
+        self.current_playlist_search = None;
     }
 
     pub fn get_clipboard(&mut self) -> Result<String> {
@@ -242,9 +255,14 @@ impl RatatuiView {
                     }
                     needs_update = true;
                 },
-                Some(search_result) = OptionFuture::from(self.app.current_search.as_mut()) => {
-                    self.app.search_widget_state.set_result(search_result);
-                    self.app.current_search = None;
+                Some(search_result) = OptionFuture::from(self.app.current_browser_search.as_mut()) => {
+                    self.app.browser_search_widget_state.set_result(search_result);
+                    self.app.current_browser_search = None;
+                    needs_update = true;
+                }
+                Some(search_result) = OptionFuture::from(self.app.current_playlist_search.as_mut()) => {
+                    self.app.playlist_search_widget_state.set_result(search_result);
+                    self.app.current_playlist_search = None;
                     needs_update = true;
                 }
                Some(result) = OptionFuture::from(playlist_browser_handle.as_mut()) => {
@@ -355,14 +373,17 @@ impl RatatuiView {
 
         self.model.file_database.on_change(|db| {
             self.app.database_widget_state.set_file_database(db.clone());
-            self.app.search_widget_state.set_file_database(db.clone());
+            self.app.browser_search_widget_state.set_store(db.clone());
             self.app.recently_widget_state.set_file_database(db);
-            let query = self.app.search_widget_state.get_input();
-            self.app.fuzzy_search(query);
+            let query = self.app.browser_search_widget_state.get_input();
+            self.app.search_browser(query);
         });
 
         self.model.playlist.on_change(|playlist| {
-            self.app.playlist_widget_state.set_playlist(playlist);
+            self.app
+                .playlist_widget_state
+                .set_playlist(playlist.clone());
+            self.app.playlist_search_widget_state.set_store(playlist);
         });
 
         self.model.messages.on_change_arc(|messages| {
@@ -556,7 +577,7 @@ impl RatatuiView {
         self.model.change_playlist(updated_playlist);
     }
 
-    fn remove(&self, video: &Video) {
+    pub fn remove(&self, video: &Video) {
         let mut updated_playlist = self.model.playlist.get_inner();
         if updated_playlist.remove_by_video(video).is_some() {
             self.model.playlist.set(updated_playlist.clone());

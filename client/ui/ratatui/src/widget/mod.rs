@@ -1,8 +1,11 @@
+use niketsu_core::fuzzy::FuzzyEntry;
+use niketsu_core::util::FuzzyResult;
 use ratatui::buffer::Buffer;
 use ratatui::prelude::Rect;
 use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, ListState, Widget};
+use ratatui::widgets::{Borders, ListItem, ListState, Widget};
 use tui_textarea::{Input, TextArea};
 
 pub(crate) mod chat;
@@ -229,4 +232,30 @@ impl TextAreaWrapper {
     fn input(&mut self, input: impl Into<Input>) -> bool {
         self.inner.input(input)
     }
+}
+
+fn color_hits<E>(result: &FuzzyResult<E>, color: Option<Color>) -> ListItem
+where
+    E: FuzzyEntry,
+{
+    let mut text = Vec::new();
+    let name = result.entry.key();
+    let hits = &result.hits;
+    let mut hits_index = 0;
+    let hits_len = hits.len();
+    for (index, char) in name.char_indices() {
+        if hits_index < hits_len && index == hits[hits_index] {
+            text.push(Span::styled(
+                char.to_string(),
+                Style::default().fg(color.unwrap_or(Color::Yellow)),
+            ));
+            hits_index += 1;
+        } else {
+            text.push(Span::styled(
+                char.to_string(),
+                Style::default().fg(color.unwrap_or(Color::Gray)),
+            ));
+        }
+    }
+    ListItem::new(Line::from(text))
 }
