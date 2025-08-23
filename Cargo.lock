@@ -4285,6 +4285,7 @@ dependencies = [
  "niketsu-core",
  "once_cell",
  "ratatui",
+ "rayon",
  "strum 0.27.2",
  "textwrap",
  "tokio",

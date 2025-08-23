@@ -35,10 +35,19 @@ impl FooterWidgetState {
         overlay_state: &Option<OverlayState>,
         mode: &Mode,
     ) {
-        if let Mode::Inspecting = mode {
-            self.style = Style::default().fg(Color::Cyan);
-        } else {
-            self.style = Style::default().fg(Color::Magenta);
+        match (mode, overlay_state) {
+            (Mode::Inspecting, _) => {
+                self.style = Style::default().fg(Color::Cyan);
+            }
+            (Mode::Overlay, Some(OverlayState::Option(_))) => {
+                self.style = Style::default().fg(Color::Magenta);
+            }
+            (Mode::Overlay, _) => {
+                self.style = Style::default().fg(Color::Cyan);
+            }
+            (_, _) => {
+                self.style = Style::default().fg(Color::Magenta);
+            }
         }
 
         match (mode, state, overlay_state) {
@@ -63,6 +72,23 @@ impl FooterWidgetState {
                 self.content =
                     "↑ ↓: navigate, enter: select, x: extend, d: delete, p: paste, ?: help, esc: back"
                         .to_string();
+            }
+            (Mode::Overlay, _, Some(OverlayState::Login(_))) => {
+                self.content = "↑ ↓: navigate, enter: join room".to_string();
+            }
+            (Mode::Overlay, _, Some(OverlayState::BrowserSearch(_))) => {
+                self.content =
+                    "↑ ↓: navigate, enter: select, ctrl + x: extend, esc: back".to_string();
+            }
+            (Mode::Overlay, _, Some(OverlayState::PlaylistSearch(_))) => {
+                self.content =
+                    "↑ ↓: navigate, enter: move, ctrl + x: extend, ctrl + d: remove, ctrl + j: jump, esc: back".to_string();
+            }
+            (Mode::Overlay, _, Some(OverlayState::MediaDir(_))) => {
+                self.content = "↑ ↓: navigate, enter: add, ctrl + d: remove, esc: back".to_string();
+            }
+            (Mode::Overlay, _, Some(OverlayState::PlaylistBrowser(_))) => {
+                self.content = "↑ ↓: navigate, enter: select, esc: back".to_string();
             }
             (Mode::Overlay, _, _) => {}
         }

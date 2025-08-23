@@ -1,34 +1,85 @@
+use std::marker::PhantomData;
+
 use delegate::delegate;
-use niketsu_core::file_database::fuzzy::FuzzySearch;
-use niketsu_core::file_database::{FileEntry, FileStore};
+use niketsu_core::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
 use niketsu_core::util::FuzzyResult;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
 
 use super::nav::ListNavigationState;
-use super::{OverlayWidgetState, TextAreaWrapper};
+use super::{OverlayWidgetState, TextAreaWrapper, color_hits};
 
-pub struct SearchWidget;
+#[derive(Debug, Clone)]
+pub struct SearchWidget<E, S>
+where
+    E: FuzzyEntry,
+    S: FuzzySearchable<E>,
+{
+    _marker: PhantomData<(E, S)>,
+}
 
-#[derive(Debug, Default, Clone)]
-pub struct SearchWidgetState {
-    file_database: FileStore,
+impl<E, S> Default for SearchWidget<E, S>
+where
+    E: FuzzyEntry,
+    S: FuzzySearchable<E>,
+{
+    fn default() -> Self {
+        Self {
+            _marker: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchWidgetState<E, S>
+where
+    E: FuzzyEntry,
+    S: FuzzySearchable<E>,
+{
+    store: Option<S>,
+    title: String,
     num_files: Option<usize>,
-    current_result: Option<Vec<FuzzyResult<FileEntry>>>,
+    current_result: Option<Vec<FuzzyResult<E>>>,
     input_field: TextAreaWrapper,
     nav_state: ListNavigationState,
     style: Style,
 }
 
-impl SearchWidgetState {
-    pub fn new() -> Self {
+impl<E, S> Default for SearchWidgetState<E, S>
+where
+    E: FuzzyEntry,
+    S: FuzzySearchable<E>,
+{
+    fn default() -> Self {
+        Self {
+            store: Default::default(),
+            title: "".to_string(),
+            num_files: Default::default(),
+            current_result: Default::default(),
+            input_field: Default::default(),
+            nav_state: Default::default(),
+            style: Default::default(),
+        }
+    }
+}
+
+impl<E, S> SearchWidgetState<E, S>
+where
+    E: FuzzyEntry,
+    S: FuzzySearchable<E>,
+{
+    pub fn new(title: String) -> Self
+    where
+        Self: Default,
+    {
         let mut widget = Self::default();
         widget.setup_input_field();
         widget.select(Some(0));
+        widget.title = title;
         widget
     }
 
@@ -47,7 +98,7 @@ impl SearchWidgetState {
         self.input_field.get_input()
     }
 
-    pub fn get_selected(&self) -> Option<Vec<FileEntry>> {
+    pub fn get_selected(&self) -> Option<Vec<E>> {
         match self.nav_state.selection_range() {
             Some(range) => self.current_result.as_ref().map(|result| {
                 result
@@ -61,14 +112,14 @@ impl SearchWidgetState {
         }
     }
 
-    pub fn set_file_database(&mut self, file_database: FileStore) {
-        self.file_database = file_database;
-        self.num_files = Some(self.file_database.len());
+    pub fn set_store(&mut self, store: S) {
+        self.num_files = Some(store.len());
+        self.store = Some(store);
         self.nav_state
             .set_list_len(self.num_files.unwrap_or_default());
     }
 
-    pub fn set_result(&mut self, results: Vec<FuzzyResult<FileEntry>>) {
+    pub fn set_result(&mut self, results: Vec<FuzzyResult<E>>) {
         if results.is_empty() {
             self.select(None);
         } else if self.selected().is_none() {
@@ -83,6 +134,10 @@ impl SearchWidgetState {
         self.select(Some(0));
         self.input_field = TextAreaWrapper::default();
         self.setup_input_field();
+        self.reset_offset();
+    }
+
+    pub fn reset_offset(&mut self) {
         self.nav_state.reset_offset();
     }
 
@@ -93,8 +148,8 @@ impl SearchWidgetState {
         }
     }
 
-    pub fn fuzzy_search(&self, query: String) -> FuzzySearch {
-        self.file_database.fuzzy_search(query)
+    pub fn fuzzy_search(&self, query: String) -> Option<FuzzySearch<E>> {
+        self.store.as_ref().map(|store| store.fuzzy_search(query))
     }
 
     pub fn input(&mut self, event: impl Into<Input>) {
@@ -116,7 +171,11 @@ impl SearchWidgetState {
     }
 }
 
-impl OverlayWidgetState for SearchWidgetState {
+impl<E, S> OverlayWidgetState for SearchWidgetState<E, S>
+where
+    E: FuzzyEntry,
+    S: FuzzySearchable<E>,
+{
     fn area(&self, r: Rect) -> Rect {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -144,12 +203,16 @@ impl OverlayWidgetState for SearchWidgetState {
     }
 }
 
-impl StatefulWidget for SearchWidget {
-    type State = SearchWidgetState;
+impl<E, S> StatefulWidget for SearchWidget<E, S>
+where
+    E: FuzzyEntry,
+    S: FuzzySearchable<E>,
+{
+    type State = SearchWidgetState<E, S>;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let outer_block = Block::default()
-            .title("Search")
+            .title(state.title.clone())
             .borders(Borders::ALL)
             .gray();
 
@@ -203,27 +266,4 @@ impl StatefulWidget for SearchWidget {
         state.input_field.render(layout[0], buf);
         StatefulWidget::render(search_list, layout[1], buf, state.nav_state.inner());
     }
-}
-
-fn color_hits(result: &FuzzyResult<FileEntry>, color: Option<Color>) -> ListItem {
-    let mut text = Vec::new();
-    let name = result.entry.file_name();
-    let hits = &result.hits;
-    let mut hits_index = 0;
-    let hits_len = hits.len();
-    for (index, char) in name.char_indices() {
-        if hits_index < hits_len && index == hits[hits_index] {
-            text.push(Span::styled(
-                char.to_string(),
-                Style::default().fg(color.unwrap_or(Color::Yellow)),
-            ));
-            hits_index += 1;
-        } else {
-            text.push(Span::styled(
-                char.to_string(),
-                Style::default().fg(color.unwrap_or(Color::Gray)),
-            ));
-        }
-    }
-    ListItem::new(Line::from(text))
 }

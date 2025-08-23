@@ -21,6 +21,7 @@ pub mod builder;
 pub mod communicator;
 pub mod config;
 pub mod file_database;
+pub mod fuzzy;
 pub mod heartbeat;
 pub mod logging;
 pub mod player;

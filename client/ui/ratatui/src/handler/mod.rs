@@ -1,6 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use enum_dispatch::enum_dispatch;
-use playlist::video_overlay::VideoName;
+use playlist::{search::PlaylistSearch, video_overlay::VideoName};
 use playlist_browser::PlaylistBrowserOverlay;
 use ratatui::Frame;
 use ratatui::style::Style;
@@ -14,7 +14,7 @@ use self::login::Login;
 use self::media::MediaDir;
 use self::options::Options;
 use self::playlist::Playlist;
-use self::search::Search;
+use self::search::BrowserSearch;
 use self::users::Users;
 use crate::view::{App, Mode, RatatuiView};
 
@@ -98,7 +98,8 @@ impl Default for State {
 #[derive(Debug, Clone)]
 pub enum OverlayState {
     Login(Login),
-    Search(Search),
+    BrowserSearch(BrowserSearch),
+    PlaylistSearch(PlaylistSearch),
     Option(Options),
     MediaDir(MediaDir),
     PlaylistBrowser(PlaylistBrowserOverlay),

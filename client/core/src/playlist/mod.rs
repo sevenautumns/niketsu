@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::FilePathSearch;
+use crate::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
 
 pub mod file;
 pub mod handler;
@@ -16,6 +17,12 @@ pub mod handler;
 pub struct Video {
     #[serde(flatten)]
     inner: Arc<VideoInner>,
+}
+
+impl FuzzyEntry for Video {
+    fn key(&self) -> &str {
+        self.as_str()
+    }
 }
 
 impl std::fmt::Debug for Video {
@@ -239,6 +246,16 @@ impl<'a> FromIterator<&'a str> for Playlist {
     fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
         let list = iter.into_iter().map(Video::from).collect();
         Self { playlist: list }
+    }
+}
+
+impl FuzzySearchable<Video> for Playlist {
+    fn fuzzy_search(&self, query: String) -> FuzzySearch<Video> {
+        FuzzySearch::new(query, self.playlist.clone())
+    }
+
+    fn len(&self) -> usize {
+        self.playlist.len()
     }
 }
 
