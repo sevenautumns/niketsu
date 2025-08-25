@@ -54,7 +54,7 @@ Want more control? Run your own niketsu relay after compiling using the instruct
 ./target/release/niketsu-relay
 ```
 
-Check out the help page on the command line by using `--help` or visit the [usage web page](http://localhost:3000/usage.html).
+Check out the help page on the command line by using `--help` or visit the [usage web page](./usage.html).
 
 ## The Nix Nirvana 🌀
 
