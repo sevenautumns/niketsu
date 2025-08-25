@@ -16,7 +16,7 @@ Just landed? Here's the 411 on how to get your `niketsu-client` game on point.
 
 After installing, you're greeted by this UI:
 
-<img src="./images/niketsu_gui_settings.png" alt="Client" style="height: 40rem;"/>
+<img src="./images/niketsu_iced.png" alt="Client" style="height: 40rem;"/>
 
 Use `niketsu-client` to binge content in real-time with your crew. Whether you're into YouTube or good ol' offline videos, we got you covered. Just make sure the source names match across clients. Server logic is "slowest client wins," so no lag-advantage here.
 
@@ -30,6 +30,7 @@ media_dirs = ["/mnt/point"]
 room = "someverylongroomname"
 password = "1234"
 auto_connect = false
+auto_share = false
 relay = "autumnal.de"
 port = 7766
 ```
@@ -37,6 +38,8 @@ port = 7766
 #### Other options
 Set auto-login (`auto_connect = true`) to directly dive into your adventure without a boring login screen.
 The save buttons will apply your login data and save it for future calls.
+
+Set auto-share (`auto_share = true`) to continue sharing videos even if a new video is selected. This does not overwrite video sharing inside the application.
 
 If you host your own relay server, make sure to set `relay` to the IP/domain of your relay and `port` to the corresponding port of the service.
 
@@ -59,13 +62,17 @@ Debug through the chat box.
 
 
 #### Terminal Junkies 🤓
-Opt for our text-based UI using `--ui ratatui`. Keybindings? Press `space + h`.
+Opt for our text-based UI using `--ui ratatui`. Keybindings? Checkout the bottom row or press `?`/`space + h`.
 
 Simple and intuitive design.
 
-<img src="./images/niketsu_tui.png" alt="GUI" style="height: 40rem"/>
+<img src="./images/niketsu_ratatui.png" alt="GUI" style="height: 40rem"/>
 
 ### The Server-Side Saga 🖥️
+
+You can host your own relay server, so connections are not made via our external relay hosted at autumnal.de.
+
+Do not forget to update your `~/.config/niketsu/config.toml` in your clients to direct traffic to your domain.
 
 For the DIY gods, check out [building page](./building.md) or snag our [precompiled binaries](./downloads.md).
 
@@ -76,9 +83,12 @@ Configurations can be set via toml or cli found at .`~/.config/niketsu-relay/con
 ##### Parameters 📋
 ```toml
 ipv6 = true
-keypair = "ed25519keypairstuff"
+keypair = [] # byte array of ed25519 private key
 port = 7766
 ```
+
+If `keypair` is not set, it will be randomly generated. This is required for the relay to obtain a peer id. Its only purpose is to uniquely identify the relay.
+
 
 <br>
 <hr>

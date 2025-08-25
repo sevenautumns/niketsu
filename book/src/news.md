@@ -6,6 +6,7 @@ For nightly updates, check out [GitHub](https://github.com/sevenautumns/niketsu/
 ## Latest Updates 📪
 
 - Decentralized peer to peer connections via hole punching
+- Home video sharing between clients
 - Fuzzy search for easily adding videos
 - Fully functional terminal client (tui) using ratatui
 
@@ -13,7 +14,6 @@ For nightly updates, check out [GitHub](https://github.com/sevenautumns/niketsu/
 
 - Predictive and dynamic synchronization based on client caches
 - Add docker image (and publish to the GitHub registry https://ghcr.io)
-- Support for home video sharing
 
 ## Changelog 📤
 

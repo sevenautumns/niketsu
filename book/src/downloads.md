@@ -7,7 +7,7 @@ We offer precompiled binaries for seamless deployment and the source code for th
 Available for Linux and even on your Raspberry Pi! **We're inclusive, just like our tech stack.**
 
 ### Client Builds
-- Fensterreinigung (Windows)
+- Windows
 - Builds for iOS or static builds for Linux are not yet available
 
 ### Relay-Server Builds

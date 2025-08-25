@@ -1,6 +1,6 @@
 # Elevate Your Viewing Game with niketsu! 🚀
 
-Say goodbye to disjointed viewing sessions! Introducing niketsu — your go-to platform for synced-up, social video streaming. Elevate your hangouts on Zoom, Teams, or any other VoIP of your choice, and get everyone literally on the same frame.
+Say goodbye to disjointed viewing sessions! Introducing niketsu — your go-to platform for synced-up, social video streaming. Elevate your hangouts on Zoom, Teams, or any other VoIP of your choice, and get everyone literally (almost) on the same frame.
 
 ## Why niketsu? 🔥🎬
 
