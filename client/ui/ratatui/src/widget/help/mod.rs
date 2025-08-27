@@ -92,6 +92,7 @@ static PLAYLIST: Lazy<HelpTab> = Lazy::new(|| HelpTab {
         vec!["Move down 5 files".to_string(), "⇟ <Page Down>".to_string()],
         vec!["Select video".to_string(), "⏎ <Enter>".to_string()],
         vec!["Goto current file".to_string(), "⌫ <Backspace>".to_string()],
+        vec!["Playlist search".to_string(), "/".to_string()],
         vec!["Move selection down".to_string(), "<x>".to_string()],
         vec![
             "Delete selection (clipboard)".to_string(),
@@ -105,11 +106,29 @@ static PLAYLIST: Lazy<HelpTab> = Lazy::new(|| HelpTab {
             "Paste clipboard".to_string(),
             "ˆ + v <Control + v>".to_string(),
         ],
+        vec![
+            "Copy to clipboard".to_string(),
+            "ˆ + c <Control + c>".to_string(),
+        ],
     ],
 });
 
 static MEDIA: Lazy<HelpTab> = Lazy::new(|| HelpTab {
     description: "Media paths to directory for scanning (database)".to_string(),
+    items: vec![
+        vec!["Goto first path".to_string(), "⇱ <Home>".to_string()],
+        vec!["Goto last path".to_string(), "⇲ <End>".to_string()],
+        vec!["Move up".to_string(), "↑ <Arrow Up>".to_string()],
+        vec!["Move down".to_string(), "↓ <Arrow Down>".to_string()],
+        vec!["Move up 5 paths".to_string(), "⇞ <Page Up>".to_string()],
+        vec!["Move down 5 paths".to_string(), "⇟ <Page Down>".to_string()],
+        vec!["Add path".to_string(), "⏎ <Enter>".to_string()],
+        vec!["Remove path".to_string(), "ˆ + d <Control + d>".to_string()],
+    ],
+});
+
+static BROWSER_SEARCH: Lazy<HelpTab> = Lazy::new(|| HelpTab {
+    description: "Fuzzy search for all files in the database".to_string(),
     items: vec![
         vec!["Goto first file".to_string(), "⇱ <Home>".to_string()],
         vec!["Goto last file".to_string(), "⇲ <End>".to_string()],
@@ -117,18 +136,40 @@ static MEDIA: Lazy<HelpTab> = Lazy::new(|| HelpTab {
         vec!["Move down".to_string(), "↓ <Arrow Down>".to_string()],
         vec!["Move up 5 files".to_string(), "⇞ <Page Up>".to_string()],
         vec!["Move down 5 files".to_string(), "⇟ <Page Down>".to_string()],
-        vec!["Select video".to_string(), "⏎ <Enter>".to_string()],
+        vec![
+            "Move selection down".to_string(),
+            "ˆ + x <Control + x>".to_string(),
+        ],
+        vec![
+            "Push selection into playlist".to_string(),
+            "⏎ <Enter>".to_string(),
+        ],
     ],
 });
 
-static SEARCH: Lazy<HelpTab> = Lazy::new(|| HelpTab {
-    description: "Fuzzy search for all files in the database".to_string(),
+static PLAYLIST_SEARCH: Lazy<HelpTab> = Lazy::new(|| HelpTab {
+    description: "Fuzzy search for all files in the playlist".to_string(),
     items: vec![
+        vec!["Goto first file".to_string(), "⇱ <Home>".to_string()],
+        vec!["Goto last file".to_string(), "⇲ <End>".to_string()],
         vec!["Move up".to_string(), "↑ <Arrow Up>".to_string()],
         vec!["Move down".to_string(), "↓ <Arrow Down>".to_string()],
-        vec!["Move selection down".to_string(), "<x>".to_string()],
+        vec!["Move up 5 files".to_string(), "⇞ <Page Up>".to_string()],
+        vec!["Move down 5 files".to_string(), "⇟ <Page Down>".to_string()],
         vec![
-            "Push selection into playlist".to_string(),
+            "Move selection down".to_string(),
+            "ˆ + x <Control + x>".to_string(),
+        ],
+        vec![
+            "Remove selection".to_string(),
+            "ˆ + d <Control + d>".to_string(),
+        ],
+        vec![
+            "Jump to selection".to_string(),
+            "ˆ + j <Control + j>".to_string(),
+        ],
+        vec![
+            "Move selection to current position".to_string(),
             "⏎ <Enter>".to_string(),
         ],
     ],
@@ -169,7 +210,8 @@ pub enum HelpWidgetTab {
     Recently,
     Playlist,
     Media,
-    Search,
+    PlaylistSearch,
+    BrowserSearch,
     Login,
     PlaylistBrowser,
 }
@@ -257,7 +299,8 @@ impl StatefulWidget for HelpWidget {
             HelpWidgetTab::Recently => &RECENTLY,
             HelpWidgetTab::Playlist => &PLAYLIST,
             HelpWidgetTab::Media => &MEDIA,
-            HelpWidgetTab::Search => &SEARCH,
+            HelpWidgetTab::BrowserSearch => &BROWSER_SEARCH,
+            HelpWidgetTab::PlaylistSearch => &PLAYLIST_SEARCH,
             HelpWidgetTab::Login => &LOGIN,
             HelpWidgetTab::PlaylistBrowser => &PLAYLISTBROWSER,
         };

@@ -196,6 +196,13 @@ impl App {
         }
     }
 
+    pub fn set_clipboard(&mut self, text: &str) -> Result<()> {
+        match &mut self.clipboard {
+            Some(cb) => cb.set_text(text).map_err(|e| anyhow::anyhow!("{e:?}")),
+            None => bail!("Clipboard not initialized"),
+        }
+    }
+
     pub fn set_footer(&mut self) {
         self.footer_widget_state
             .set_content(&self.state, &self.current_overlay_state, &self.mode);

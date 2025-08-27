@@ -70,7 +70,7 @@ impl FooterWidgetState {
             }
             (Mode::Inspecting, State::Playlist(_), _) => {
                 self.content =
-                    "↑ ↓: navigate, enter: select, x: extend, d: delete, p: paste, ?: help, esc: back"
+                    "↑ ↓: navigate, enter: select, x: extend, d: delete, p: paste, /: search, ?: help, esc: back"
                         .to_string();
             }
             (Mode::Overlay, _, Some(OverlayState::Login(_))) => {

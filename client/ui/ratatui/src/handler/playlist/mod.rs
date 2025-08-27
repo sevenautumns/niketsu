@@ -2,6 +2,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use niketsu_core::playlist::Video;
 use ratatui::style::Style;
 use search::PlaylistSearch;
+use tracing::warn;
 use video_overlay::VideoName;
 
 use super::chat::Chat;
@@ -102,6 +103,22 @@ impl EventHandler for Playlist {
                                     view.insert(index + 1, &Video::from(c.as_str()));
                                 } else {
                                     view.insert(0, &Video::from(c.as_str()));
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        if key.modifiers == KeyModifiers::CONTROL {
+                            let video = {
+                                let playlist_widget_state = &view.app.playlist_widget_state;
+                                playlist_widget_state
+                                    .get_current_video()
+                                    .map(|video| video.as_str().to_string())
+                            };
+
+                            if let Some(v) = video {
+                                if let Err(err) = view.app.set_clipboard(v.as_str()) {
+                                    warn!(?err, "Failed to copy file to clipboard");
                                 }
                             }
                         }
