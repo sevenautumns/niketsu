@@ -1,6 +1,7 @@
 use crossterm::event::KeyEvent;
 use niketsu_core::config::Config;
-use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
+use ratatui::layout::Flex;
+use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::Text;
 use ratatui::widgets::block::Block;
@@ -18,7 +19,7 @@ enum State {
     Room,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct LoginWidgetState {
     current_state: State,
     password_field: TextAreaWrapper,
@@ -78,35 +79,22 @@ impl LoginWidgetState {
 
 impl OverlayWidgetState for LoginWidgetState {
     fn area(&self, r: Rect) -> Rect {
-        let vert_width = match r.height {
-            0..=50 => 5,
-            51..=100 => 20,
-            _ => 40,
+        let height = match r.height {
+            0..=50 => 15,
+            51..=100 => 30,
+            _ => 60,
         };
 
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Percentage(vert_width),
-                    Constraint::Min(30),
-                    Constraint::Percentage(vert_width),
-                ]
-                .as_ref(),
-            )
-            .split(r);
+        let width = r.width / 2;
 
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(
-                [
-                    Constraint::Percentage(30),
-                    Constraint::Min(30),
-                    Constraint::Percentage(30),
-                ]
-                .as_ref(),
-            )
-            .split(popup_layout[1])[1]
+        let [area] = Layout::vertical([Constraint::Length(height)])
+            .flex(Flex::Center)
+            .areas(r);
+
+        let [popup_layout] = Layout::horizontal([Constraint::Length(width)])
+            .flex(Flex::Center)
+            .areas(area);
+        popup_layout
     }
 }
 
@@ -116,7 +104,11 @@ impl StatefulWidget for LoginWidget {
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let outer_block = Block::default().title("Login").borders(Borders::ALL).gray();
 
-        let text_block = Paragraph::new(Text::raw("Press Enter to submit."))
+        let welcome_block = Paragraph::new(Text::raw("Welcome to niketsu."))
+            .block(Block::default().borders(Borders::NONE).gray())
+            .wrap(Wrap { trim: false });
+
+        let info_block = Paragraph::new(Text::raw("Choose a username and join a room."))
             .block(Block::default().borders(Borders::NONE).gray())
             .wrap(Wrap { trim: false });
 
@@ -144,6 +136,7 @@ impl StatefulWidget for LoginWidget {
             .constraints(
                 [
                     Constraint::Min(1),
+                    Constraint::Length(1),
                     Constraint::Length(3),
                     Constraint::Length(3),
                     Constraint::Length(3),
@@ -154,9 +147,10 @@ impl StatefulWidget for LoginWidget {
             .split(area);
 
         outer_block.render(area, buf);
-        text_block.render(layout[0], buf);
-        username_field.render(layout[1], buf);
-        room_field.render(layout[2], buf);
-        password_field.render(layout[3], buf);
+        welcome_block.render(layout[0], buf);
+        info_block.render(layout[1], buf);
+        username_field.render(layout[2], buf);
+        room_field.render(layout[3], buf);
+        password_field.render(layout[4], buf);
     }
 }

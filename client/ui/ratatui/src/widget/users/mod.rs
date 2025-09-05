@@ -46,7 +46,7 @@ impl UsersWidgetState {
     }
 
     pub fn toggle_ready(&mut self) {
-        self.user.ready = !self.user.ready
+        self.user.ready = !self.user.ready;
     }
 
     pub fn next(&mut self) {

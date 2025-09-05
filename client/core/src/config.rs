@@ -121,6 +121,11 @@ impl Config {
         Ok(std::fs::write(path, toml::to_string(self)?)?)
     }
 
+    pub fn with_defaults(&mut self) {
+        self.relay = bootstrap_relay();
+        self.port = bootstrap_port();
+    }
+
     pub(crate) fn status(&self, ready: bool) -> UserStatus {
         UserStatus {
             name: self.username.clone(),

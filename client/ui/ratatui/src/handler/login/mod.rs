@@ -31,7 +31,7 @@ impl EventHandler for Login {
                         });
                         let username: ArcStr = input.2.into();
                         view.model.change_username(username.clone());
-                        view.save_config(input.1, room, username.clone());
+                        view.save_login_info(input.1, room, username.clone());
                     }
                     _ => view.app.login_widget_state.input(*key),
                 }

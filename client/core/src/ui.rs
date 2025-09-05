@@ -52,6 +52,7 @@ pub enum UserInterfaceEvent {
     UserMessage,
     FileDatabaseChange,
     FileShareChange,
+    SettingsChange,
     FileRequest,
 }
 
@@ -381,6 +382,37 @@ impl EventHandler for FileRequest {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsChange {
+    pub relay: String,
+    pub port: u16,
+    pub auto_connect: bool,
+    pub auto_share: bool,
+}
+
+impl EventHandler for SettingsChange {
+    fn handle(self, model: &mut CoreModel) {
+        trace!("settings change message");
+        if model.config.relay != self.relay || model.config.port != self.port {
+            model.config.relay.clone_from(&self.relay);
+            model.config.port.clone_from(&self.port);
+
+            // we only need to trigger reconnects if a connection
+            // was previously established
+            if model.communicator.has_endpoint() {
+                model.communicator.connect(EndpointInfo {
+                    addr: model.config.addr(),
+                    room: model.config.room.clone(),
+                    password: model.config.password.clone(),
+                });
+            }
+        }
+
+        model.config.auto_connect = self.auto_connect;
+        model.config.auto_share = self.auto_share;
+    }
+}
+
 #[derive(Debug)]
 pub struct UserInterface {
     model: UiModel,
@@ -607,14 +639,20 @@ impl UiModel {
 
     pub fn video_share_toggle(&self) {
         trace!("toggle video sharing");
-        // let mut video_share = self.video_share.get_inner();
-        // video_share = !video_share;
-        // self.video_share.set(video_share);
         let res = self
             .events
             .send(UserInterfaceEvent::FileShareChange(FileShareChange {
                 // video_share,
             }))
+            .map_err(anyhow::Error::from);
+        crate::log_err!(res)
+    }
+
+    pub fn change_settings(&self, request: SettingsChange) {
+        trace!("reconnecting");
+        let res = self
+            .events
+            .send(UserInterfaceEvent::SettingsChange(request))
             .map_err(anyhow::Error::from);
         crate::log_err!(res)
     }

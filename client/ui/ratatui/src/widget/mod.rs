@@ -11,6 +11,7 @@ use tui_textarea::{Input, TextArea};
 pub(crate) mod chat;
 pub(crate) mod chat_input;
 pub(crate) mod command;
+pub(crate) mod config;
 pub(crate) mod database;
 pub(crate) mod footer;
 pub(crate) mod help;
