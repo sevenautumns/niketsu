@@ -26,6 +26,7 @@ pub trait CommunicatorTrait: std::fmt::Debug + Send {
     fn connect(&mut self, connect: EndpointInfo);
     fn send(&mut self, msg: OutgoingMessage);
     async fn receive(&mut self) -> IncomingMessage;
+    fn has_endpoint(&self) -> bool;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

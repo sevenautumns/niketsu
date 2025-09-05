@@ -1,3 +1,4 @@
+use config::Settings;
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use enum_dispatch::enum_dispatch;
 use playlist::{search::PlaylistSearch, video_overlay::VideoName};
@@ -21,6 +22,7 @@ use crate::view::{App, Mode, RatatuiView};
 pub(crate) mod chat;
 pub(crate) mod chat_input;
 pub(crate) mod command;
+pub(crate) mod config;
 pub(crate) mod help;
 pub(crate) mod login;
 pub(crate) mod media;
@@ -98,6 +100,7 @@ impl Default for State {
 #[derive(Debug, Clone)]
 pub enum OverlayState {
     Login(Login),
+    Settings(Settings),
     BrowserSearch(BrowserSearch),
     PlaylistSearch(PlaylistSearch),
     Option(Options),

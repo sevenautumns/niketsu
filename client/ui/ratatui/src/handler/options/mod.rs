@@ -1,6 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use ratatui::widgets::Clear;
 
+use super::config::Settings;
 use super::help::Help;
 use super::login::Login;
 use super::media::MediaDir;
@@ -30,6 +31,10 @@ impl EventHandler for Options {
                             .set_current_overlay_state(Some(OverlayState::from(BrowserSearch {})));
                         view.app.search_browser("".to_string());
                     }
+                    KeyCode::Char('c') => {
+                        view.app
+                            .set_current_overlay_state(Some(OverlayState::from(Settings {})));
+                    }
                     KeyCode::Char('m') => view
                         .app
                         .set_current_overlay_state(Some(OverlayState::from(MediaDir {}))),
@@ -37,8 +42,11 @@ impl EventHandler for Options {
                         OverlayState::from(PlaylistBrowserOverlay {}),
                     )),
                     KeyCode::Char('r') => {
+                        view.model.send_message(format!(
+                            "My ready status: {:?}",
+                            view.model.user.get_inner().ready
+                        ));
                         view.model.user_ready_toggle();
-                        view.app.users_widget_state.toggle_ready();
                         view.app.reset_overlay();
                     }
                     KeyCode::Char('f') => {

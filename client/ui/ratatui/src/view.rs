@@ -22,7 +22,7 @@ use niketsu_core::fuzzy::FuzzySearch;
 use niketsu_core::playlist::Video;
 use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::room::RoomName;
-use niketsu_core::ui::{RoomChange, UiModel, UserInterface};
+use niketsu_core::ui::{RoomChange, SettingsChange, UiModel, UserInterface};
 use ratatui::prelude::*;
 use tokio::task::JoinHandle;
 use tracing::warn;
@@ -36,6 +36,7 @@ use crate::handler::{EventHandler, MainEventHandler, OverlayState, RenderHandler
 use crate::widget::chat::{ChatWidget, ChatWidgetState};
 use crate::widget::chat_input::{ChatInputWidget, ChatInputWidgetState};
 use crate::widget::command::CommandInputWidgetState;
+use crate::widget::config::SettingsWidgetState;
 use crate::widget::database::{DatabaseWidget, DatabaseWidgetState};
 use crate::widget::footer::{FooterWidget, FooterWidgetState};
 use crate::widget::help::HelpWidgetState;
@@ -87,6 +88,7 @@ pub struct App {
     pub video_name_widget_state: VideoNameWidgetState,
     pub recently_widget_state: RecentlyWidgetState,
     pub footer_widget_state: FooterWidgetState,
+    pub settings_widget_state: SettingsWidgetState,
     pub current_browser_search: Option<FuzzySearch<FileEntry>>,
     pub current_playlist_search: Option<FuzzySearch<Video>>,
     pub clipboard: Option<Clipboard>,
@@ -115,6 +117,7 @@ impl App {
             chat_input_widget_state: ChatInputWidgetState::new(),
             current_overlay_state: None,
             options_widget_state: OptionsWidgetState::default(),
+            settings_widget_state: SettingsWidgetState::new(&config),
             help_widget_state: HelpWidgetState::default(),
             login_widget_state: LoginWidgetState::new(&config),
             browser_search_widget_state: SearchWidgetState::new("Database Search".to_string()),
@@ -628,11 +631,42 @@ impl RatatuiView {
         self.model.change_db_paths(paths)
     }
 
-    pub fn save_config(&mut self, password: String, room: RoomName, username: ArcStr) {
+    pub fn save_login_info(&mut self, password: String, room: RoomName, username: ArcStr) {
         self.config.password = password;
         self.config.room = room;
         self.config.username = username;
         _ = self.config.save();
+    }
+
+    pub fn save_settings(
+        &mut self,
+        relay: String,
+        port: u16,
+        auto_connect: bool,
+        auto_share: bool,
+    ) {
+        self.config.relay = relay;
+        self.config.port = port;
+        self.config.auto_connect = auto_connect;
+        self.config.auto_share = auto_share;
+        _ = self.config.save();
+    }
+
+    pub fn reset_settings(&mut self) {
+        self.config.with_defaults();
+        self.model.change_settings(SettingsChange {
+            relay: self.config.relay.clone(),
+            port: self.config.port,
+            auto_connect: self.config.auto_connect,
+            auto_share: self.config.auto_share,
+        });
+        self.save_settings(
+            self.config.relay.clone(),
+            self.config.port,
+            self.config.auto_connect,
+            self.config.auto_share,
+        );
+        self.app.settings_widget_state = SettingsWidgetState::new(&self.config)
     }
 
     pub fn save_media_dir(&mut self, paths: Vec<String>) {
@@ -642,6 +676,21 @@ impl RatatuiView {
 
     fn handle_room_change(&mut self, password: String, room: RoomName) {
         self.model.change_room(RoomChange { password, room });
+    }
+
+    pub fn handle_settings_change(
+        &mut self,
+        relay: String,
+        port: u16,
+        auto_connect: bool,
+        auto_share: bool,
+    ) {
+        self.model.change_settings(SettingsChange {
+            relay,
+            port,
+            auto_connect,
+            auto_share,
+        });
     }
 
     fn handle_move(&mut self, filename: &str, position: &str) {

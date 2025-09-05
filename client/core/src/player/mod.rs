@@ -56,6 +56,10 @@ impl EventHandler for PlayerPause {
     fn handle(self, model: &mut CoreModel) {
         trace!("player pause");
         model.ready = false;
+        model.ui.user_update(crate::ui::UserChange {
+            name: model.config.username.clone(),
+            ready: false,
+        });
         model
             .communicator
             .send(OutgoingMessage::from(model.config.status(model.ready)));
@@ -75,6 +79,10 @@ impl EventHandler for PlayerStart {
     fn handle(self, model: &mut CoreModel) {
         trace!("player start");
         model.ready = true;
+        model.ui.user_update(crate::ui::UserChange {
+            name: model.config.username.clone(),
+            ready: true,
+        });
         model
             .communicator
             .send(OutgoingMessage::from(model.config.status(model.ready)));

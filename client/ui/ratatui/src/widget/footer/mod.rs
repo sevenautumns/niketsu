@@ -90,6 +90,11 @@ impl FooterWidgetState {
             (Mode::Overlay, _, Some(OverlayState::PlaylistBrowser(_))) => {
                 self.content = "↑ ↓: navigate, enter: select, esc: back".to_string();
             }
+            (Mode::Overlay, _, Some(OverlayState::Settings(_))) => {
+                self.content =
+                    "↑ ↓: navigate, ← →: choose, space: toggle, enter: select, ctrl + d: reset, esc: back"
+                        .to_string();
+            }
             (Mode::Overlay, _, _) => {}
         }
     }

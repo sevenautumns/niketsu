@@ -183,6 +183,10 @@ impl CommunicatorTrait for P2PCommunicator {
         };
         self.connection.receive(endpoint).await
     }
+
+    fn has_endpoint(&self) -> bool {
+        self.endpoint.is_some()
+    }
 }
 
 #[cfg(test)]
