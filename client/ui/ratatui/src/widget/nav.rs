@@ -104,7 +104,6 @@ impl ListNavigationState {
             pub fn selected(&self) -> Option<usize>;
             pub fn select(&mut self, index: Option<usize>);
             pub fn inner(&mut self) -> &mut ListState;
-            pub fn limit(&mut self, len: usize);
         }
     }
 }

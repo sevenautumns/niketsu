@@ -1,35 +1,32 @@
 use ratatui::prelude::{Buffer, Rect};
-use ratatui::style::{Style, Stylize};
-use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, StatefulWidget};
+use ratatui::widgets::StatefulWidget;
 use tui_textarea::Input;
+
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 use super::TextAreaWrapper;
 
 #[derive(Debug, Default, Clone)]
 pub struct ChatInputWidget;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct ChatInputWidgetState {
     input_field: TextAreaWrapper,
-    style: Style,
+    theme: ThemeWrapper,
+}
+
+impl ThemedWidget for ChatInputWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
 }
 
 impl ChatInputWidgetState {
-    pub fn new() -> Self {
-        let mut widget = Self::default();
-        widget.setup_input_field();
-        widget
-    }
-
-    fn setup_input_field(&mut self) {
-        self.input_field
-            .with_placeholder("Enter your message")
-            .highlight(Style::default(), self.style.dark_gray().on_white());
-    }
-
-    pub fn set_style(&mut self, style: Style) {
-        self.style = style;
+    pub fn new(theme: Theme) -> Self {
+        Self {
+            theme: ThemeWrapper::new(theme),
+            input_field: TextAreaWrapper::new(Some("Message here".to_string()), None, theme, true),
+        }
     }
 
     pub fn input(&mut self, event: impl Into<Input>) {
@@ -41,8 +38,7 @@ impl ChatInputWidgetState {
     }
 
     pub fn reset(&mut self) {
-        self.input_field = TextAreaWrapper::default();
-        self.setup_input_field();
+        self.input_field = TextAreaWrapper::bordered(self.theme.inner());
     }
 }
 
@@ -50,13 +46,12 @@ impl StatefulWidget for ChatInputWidget {
     type State = ChatInputWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let mut input_block = state.input_field.clone();
-        input_block.with_block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Message here")
-                .style(state.style),
-        );
-        input_block.render(area, buf);
+        let input_field = state
+            .input_field
+            .with_style(state.theme.inner())
+            .with_placeholder("Write a message");
+        input_field.highlight(state.theme.style(), state.theme.style());
+
+        input_field.render(area, buf);
     }
 }

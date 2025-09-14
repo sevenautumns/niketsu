@@ -1,48 +1,43 @@
 use delegate::delegate;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
+
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 use super::nav::ListNavigationState;
 use super::{OverlayWidgetState, TextAreaWrapper};
 
 pub struct MediaDirWidget;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct MediaDirWidgetState {
     media_paths: Vec<String>,
     input_field: TextAreaWrapper,
     nav_state: ListNavigationState,
-    style: Style,
+    theme: ThemeWrapper,
+}
+
+impl ThemedWidget for MediaDirWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
 }
 
 impl MediaDirWidgetState {
-    pub fn new(paths: Vec<String>) -> Self {
+    pub fn new(paths: Vec<String>, theme: Theme) -> Self {
         let mut widget = Self {
             media_paths: paths,
-            input_field: Default::default(),
+            input_field: TextAreaWrapper::borderless(theme),
             nav_state: Default::default(),
-            style: Default::default(),
+            theme: ThemeWrapper::new(theme),
         };
-        widget.setup_input_field();
         widget.select(Some(0));
         widget.update_len();
         widget
-    }
-
-    fn setup_input_field(&mut self) {
-        self.input_field = TextAreaWrapper::default();
-        self.input_field
-            .with_block(
-                Block::default()
-                    .borders(Borders::NONE)
-                    .padding(Padding::new(1, 0, 0, 0)),
-            )
-            .with_placeholder("Enter a path separated by /")
-            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     fn update_len(&mut self) {
@@ -61,7 +56,7 @@ impl MediaDirWidgetState {
         let path = self.input_field.get_input();
         self.media_paths.push(path);
         self.update_len();
-        self.setup_input_field();
+        self.input_field = TextAreaWrapper::borderless(self.theme.inner());
     }
 
     pub fn remove_path(&mut self) {
@@ -74,8 +69,7 @@ impl MediaDirWidgetState {
 
     pub fn reset_all(&mut self) {
         self.select(Some(0));
-        self.input_field = TextAreaWrapper::default();
-        self.setup_input_field();
+        self.input_field = TextAreaWrapper::bordered(self.theme.inner());
     }
 
     pub fn input(&mut self, event: impl Into<Input>) {
@@ -128,34 +122,53 @@ impl StatefulWidget for MediaDirWidget {
     type State = MediaDirWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let outer_block = Block::default().title("Path").borders(Borders::ALL).gray();
+        let style = state.theme.style();
+        let hightlight_style = state.theme.highlight();
+
+        let outer_block = Block::default()
+            .title("Path")
+            .padding(Padding::new(1, 1, 1, 1))
+            .borders(Borders::ALL)
+            .style(style);
 
         let layout = Layout::default()
-            .constraints([Constraint::Length(1), Constraint::Min(3)].as_ref())
+            .constraints(
+                [
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                    Constraint::Min(3),
+                ]
+                .as_ref(),
+            )
             .horizontal_margin(1)
-            .vertical_margin(1)
             .split(area);
 
         let media_dirs: Vec<ListItem> = state
             .media_paths
             .iter()
-            .map(|m| ListItem::new(Line::from(m.to_string())))
+            .map(|m| ListItem::new(Line::from(m.to_string()).style(style)))
             .collect();
 
         let media_path_list = List::new(media_dirs)
             .gray()
             .block(
                 Block::default()
-                    .style(state.style)
+                    .style(style)
                     .title("Media Directories")
                     .borders(Borders::TOP)
-                    .padding(Padding::new(1, 0, 0, 1)),
+                    .padding(Padding::new(1, 1, 0, 0)),
             )
-            .highlight_style(Style::default().fg(Color::Cyan))
+            .highlight_style(hightlight_style)
             .highlight_symbol("> ");
 
+        let input_field = state
+            .input_field
+            .with_style(state.theme.inner())
+            .with_placeholder("Enter a path separated by /");
+        input_field.highlight(state.theme.base(), hightlight_style);
+
         outer_block.render(area, buf);
-        state.input_field.render(layout[0], buf);
-        StatefulWidget::render(media_path_list, layout[1], buf, state.nav_state.inner());
+        input_field.render(layout[1], buf);
+        StatefulWidget::render(media_path_list, layout[2], buf, state.nav_state.inner());
     }
 }

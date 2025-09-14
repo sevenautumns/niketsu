@@ -1,4 +1,6 @@
+mod config;
 mod handler;
+mod theme;
 mod view;
 mod widget;
 

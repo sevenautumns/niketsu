@@ -1,11 +1,10 @@
-use config::Settings;
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use enum_dispatch::enum_dispatch;
 use playlist::{search::PlaylistSearch, video_overlay::VideoName};
 use playlist_browser::PlaylistBrowserOverlay;
 use ratatui::Frame;
-use ratatui::style::Style;
 use recently::Recently;
+use settings::Settings;
 
 use self::chat::Chat;
 use self::chat_input::ChatInput;
@@ -17,12 +16,14 @@ use self::options::Options;
 use self::playlist::Playlist;
 use self::search::BrowserSearch;
 use self::users::Users;
-use crate::view::{App, Mode, RatatuiView};
+use crate::{
+    theme::ThemeState,
+    view::{App, Mode, RatatuiView},
+};
 
 pub(crate) mod chat;
 pub(crate) mod chat_input;
 pub(crate) mod command;
-pub(crate) mod config;
 pub(crate) mod help;
 pub(crate) mod login;
 pub(crate) mod media;
@@ -31,6 +32,7 @@ pub(crate) mod playlist;
 pub(crate) mod playlist_browser;
 pub(crate) mod recently;
 pub(crate) mod search;
+pub(crate) mod settings;
 pub(crate) mod users;
 
 #[enum_dispatch]
@@ -70,9 +72,7 @@ pub trait MainEventHandler: EventHandler {
         self.handle(view, event);
     }
 
-    //TODO should probably be split into a select and deselect function for better
-    // control of transitions
-    fn set_style(&self, view: &mut RatatuiView, style: Style);
+    fn set_state(&self, view: &mut RatatuiView, state: ThemeState);
 }
 
 #[enum_dispatch]

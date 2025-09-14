@@ -1,6 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use niketsu_core::playlist::Video;
-use ratatui::style::Style;
 use search::PlaylistSearch;
 use tracing::warn;
 use video_overlay::VideoName;
@@ -9,6 +8,7 @@ use super::chat::Chat;
 use super::recently::Recently;
 use super::{MainEventHandler, OverlayState, State};
 use crate::handler::EventHandler;
+use crate::theme::{ThemeState, ThemedWidget};
 use crate::view::{Mode, RatatuiView};
 
 pub(crate) mod search;
@@ -139,7 +139,7 @@ impl MainEventHandler for Playlist {
         }
     }
 
-    fn set_style(&self, view: &mut RatatuiView, style: Style) {
-        view.app.playlist_widget_state.set_style(style);
+    fn set_state(&self, view: &mut RatatuiView, state: ThemeState) {
+        view.app.playlist_widget_state.set_state(state);
     }
 }

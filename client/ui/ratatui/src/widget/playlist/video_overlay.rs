@@ -4,6 +4,7 @@ use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget, Wrap};
 
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 use crate::widget::OverlayWidgetState;
 
 pub struct VideoNameWidget;
@@ -11,11 +12,21 @@ pub struct VideoNameWidget;
 #[derive(Debug, Default, Clone)]
 pub struct VideoNameWidgetState {
     name: String,
+    theme: ThemeWrapper,
+}
+
+impl ThemedWidget for VideoNameWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
 }
 
 impl VideoNameWidgetState {
-    pub fn new(name: String) -> Self {
-        Self { name }
+    pub fn new(name: String, theme: Theme) -> Self {
+        Self {
+            name,
+            theme: ThemeWrapper::new(theme),
+        }
     }
 
     pub fn set_name(&mut self, name: String) {
@@ -70,7 +81,8 @@ impl StatefulWidget for VideoNameWidget {
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let video_block = Block::default()
             .title("Full video name")
-            .borders(Borders::ALL);
+            .borders(Borders::ALL)
+            .style(state.theme.style());
 
         let video = Paragraph::new(state.name.clone())
             .block(video_block)

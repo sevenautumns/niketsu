@@ -1,11 +1,11 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
-use ratatui::style::Style;
 
 use super::chat_input::ChatInput;
 use super::playlist::Playlist;
 use super::users::Users;
 use super::{MainEventHandler, State};
 use crate::handler::EventHandler;
+use crate::theme::{ThemeState, ThemedWidget};
 use crate::view::{Mode, RatatuiView};
 
 #[derive(Debug, Clone, Copy)]
@@ -43,7 +43,7 @@ impl MainEventHandler for Chat {
         }
     }
 
-    fn set_style(&self, view: &mut RatatuiView, style: Style) {
-        view.app.chat_widget_state.set_style(style);
+    fn set_state(&self, view: &mut RatatuiView, state: ThemeState) {
+        view.app.chat_widget_state.set_state(state);
     }
 }

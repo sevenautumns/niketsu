@@ -1,34 +1,41 @@
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    layout::Rect,
+    style::Style,
     text::Text,
     widgets::{Paragraph, StatefulWidget, Widget},
 };
 
 use crate::{
     handler::{OverlayState, State},
+    theme::{Theme, ThemeWrapper, ThemedWidget},
     view::Mode,
 };
 
 pub struct FooterWidget;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FooterWidgetState {
     content: String,
+    theme: ThemeWrapper,
     style: Style,
 }
 
-impl Default for FooterWidgetState {
-    fn default() -> Self {
-        Self {
-            content: "".to_string(),
-            style: Style::default().fg(Color::Magenta),
-        }
+impl ThemedWidget for FooterWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
     }
 }
 
 impl FooterWidgetState {
+    pub fn new(theme: Theme) -> Self {
+        Self {
+            content: "".to_string(),
+            theme: ThemeWrapper::new(theme),
+            style: theme.base(),
+        }
+    }
+
     pub fn set_content(
         &mut self,
         state: &State,
@@ -37,16 +44,16 @@ impl FooterWidgetState {
     ) {
         match (mode, overlay_state) {
             (Mode::Inspecting, _) => {
-                self.style = Style::default().fg(Color::Cyan);
+                self.style = self.theme.highlight_fg();
             }
             (Mode::Overlay, Some(OverlayState::Option(_))) => {
-                self.style = Style::default().fg(Color::Magenta);
+                self.style = self.theme.highlight_fg();
             }
             (Mode::Overlay, _) => {
-                self.style = Style::default().fg(Color::Cyan);
+                self.style = self.theme.accent();
             }
             (_, _) => {
-                self.style = Style::default().fg(Color::Magenta);
+                self.style = self.theme.accent();
             }
         }
 
@@ -104,13 +111,9 @@ impl StatefulWidget for FooterWidget {
     type State = FooterWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let horizontal_split = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(1), Constraint::Min(2)].as_ref())
-            .split(area);
-
         let content = &state.content;
-        let nav_description = Paragraph::new(Text::raw(content)).style(state.style);
-        nav_description.render(horizontal_split[1], buf);
+        let nav_description =
+            Paragraph::new(Text::raw(format!("{}{}", " ", content))).style(state.style);
+        nav_description.render(area, buf);
     }
 }

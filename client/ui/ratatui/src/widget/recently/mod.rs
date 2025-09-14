@@ -4,22 +4,21 @@ use std::time::{Duration, SystemTime};
 use delegate::delegate;
 use niketsu_core::file_database::{FileEntry, FileStore};
 use ratatui::prelude::{Buffer, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::block::{Block, Title};
 use ratatui::widgets::{Borders, List, ListItem, StatefulWidget};
 use strum::{Display, EnumCount, EnumIter, FromRepr};
+
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 use super::nav::ListNavigationState;
 
 #[derive(Debug, Default, Clone, Copy, Display, FromRepr, EnumIter, EnumCount)]
 enum Frequency {
     #[default]
-    #[strum(to_string = "Daily")]
     Daily,
-    #[strum(to_string = "Weekly")]
     Weekly,
-    #[strum(to_string = "Monthly")]
     Monthly,
 }
 
@@ -58,19 +57,22 @@ pub struct RecentlyWidgetState {
     file_database: FileStore,
     recent_videos: Vec<FileEntry>,
     nav_state: ListNavigationState,
-    style: Style,
+    theme: ThemeWrapper,
+}
+
+impl ThemedWidget for RecentlyWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
 }
 
 impl RecentlyWidgetState {
-    pub fn new() -> Self {
+    pub fn new(theme: Theme) -> Self {
         Self {
             frequency: Frequency::Monthly,
+            theme: ThemeWrapper::new(theme),
             ..Default::default()
         }
-    }
-
-    pub fn set_style(&mut self, style: Style) {
-        self.style = style;
     }
 
     pub fn next_frequency(&mut self) {
@@ -154,12 +156,14 @@ impl StatefulWidget for RecentlyWidget {
     type State = RecentlyWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let style = state.theme.style();
+
         let recently_added: Vec<ListItem> = match state.nav_state.selection_range() {
             Some(range) => state
                 .recent_videos
                 .iter()
                 .take(range.lower)
-                .map(|v| ListItem::from(v.file_name()))
+                .map(|v| ListItem::from(v.file_name()).style(style))
                 .chain(
                     state
                         .recent_videos
@@ -169,7 +173,7 @@ impl StatefulWidget for RecentlyWidget {
                         .map(|v| {
                             ListItem::from(vec![Line::style(
                                 v.file_name().into(),
-                                Style::default().fg(Color::Cyan),
+                                state.theme.highlight(),
                             )])
                         }),
                 )
@@ -178,20 +182,20 @@ impl StatefulWidget for RecentlyWidget {
                         .recent_videos
                         .iter()
                         .skip(range.upper.saturating_add(1))
-                        .map(|v| ListItem::from(v.file_name())),
+                        .map(|v| ListItem::from(v.file_name()).style(style)),
                 )
                 .collect(),
             None => state
                 .recent_videos
                 .iter()
-                .map(|v| ListItem::from(v.file_name()))
+                .map(|v| ListItem::from(v.file_name()).style(style))
                 .collect(),
         };
 
         let list_block = Block::default()
             .title_bottom(Line::from(format!("({})", state.len())).right_aligned())
             .borders(Borders::ALL)
-            .style(state.style)
+            .style(state.theme.style())
             .title(Title::from(format!(
                 "Recently added videos ({})",
                 state.frequency
@@ -201,7 +205,7 @@ impl StatefulWidget for RecentlyWidget {
             .gray()
             .block(list_block)
             .highlight_symbol("> ")
-            .highlight_style(Style::default().fg(Color::Cyan));
+            .highlight_style(state.theme.highlight());
 
         StatefulWidget::render(video_list, area, buf, state.nav_state.inner());
     }

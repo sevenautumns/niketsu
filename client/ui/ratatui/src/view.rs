@@ -28,15 +28,16 @@ use tokio::task::JoinHandle;
 use tracing::warn;
 
 use super::widget::playlist::PlaylistWidget;
+use crate::config::RatatuiConfig;
 use crate::handler::command::Command;
 use crate::handler::help::Help;
 use crate::handler::options::Options;
 use crate::handler::playlist::Playlist;
 use crate::handler::{EventHandler, MainEventHandler, OverlayState, RenderHandler, State};
+use crate::theme::{ThemeSelection, ThemeState, ThemedWidget};
 use crate::widget::chat::{ChatWidget, ChatWidgetState};
 use crate::widget::chat_input::{ChatInputWidget, ChatInputWidgetState};
 use crate::widget::command::CommandInputWidgetState;
-use crate::widget::config::SettingsWidgetState;
 use crate::widget::database::{DatabaseWidget, DatabaseWidgetState};
 use crate::widget::footer::{FooterWidget, FooterWidgetState};
 use crate::widget::help::HelpWidgetState;
@@ -48,6 +49,7 @@ use crate::widget::playlist::video_overlay::VideoNameWidgetState;
 use crate::widget::playlist_browser::PlaylistBrowserWidgetState;
 use crate::widget::recently::{RecentlyWidget, RecentlyWidgetState};
 use crate::widget::search::SearchWidgetState;
+use crate::widget::settings::SettingsWidgetState;
 use crate::widget::users::{UsersWidget, UsersWidgetState};
 
 pub struct RatatuiView {
@@ -71,6 +73,7 @@ pub enum Mode {
 }
 
 pub struct App {
+    pub theme_config: RatatuiConfig,
     pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
     pub users_widget_state: UsersWidgetState,
@@ -100,36 +103,46 @@ pub struct App {
 
 impl App {
     fn new(config: Config) -> App {
-        let clipboard = Clipboard::new().ok();
-        let mut footer_widget_state = FooterWidgetState::default();
-        footer_widget_state.set_content(&State::from(Playlist), &None, &Mode::Normal);
+        let theme_config = RatatuiConfig::load_or_default();
+        let theme = theme_config.theme_selection.theme();
 
         App {
-            chat_widget_state: ChatWidgetState::default(),
-            database_widget_state: DatabaseWidgetState::default(),
-            users_widget_state: UsersWidgetState::default(),
+            theme_config: RatatuiConfig::load_or_default(),
+            chat_widget_state: ChatWidgetState::new(theme),
+            database_widget_state: DatabaseWidgetState::new(theme),
+            users_widget_state: UsersWidgetState::new(theme),
             playlist_widget_state: {
-                let mut playlist_state = PlaylistWidgetState::default();
-                playlist_state.set_style(Style::default().fg(Color::Magenta));
+                let mut playlist_state = PlaylistWidgetState::new(theme);
+                playlist_state.set_state(ThemeState::Hovered);
                 playlist_state
             },
-            command_input_widget_state: CommandInputWidgetState::default(),
-            chat_input_widget_state: ChatInputWidgetState::new(),
+            command_input_widget_state: CommandInputWidgetState::new(theme),
+            chat_input_widget_state: ChatInputWidgetState::new(theme),
             current_overlay_state: None,
-            options_widget_state: OptionsWidgetState::default(),
-            settings_widget_state: SettingsWidgetState::new(&config),
-            help_widget_state: HelpWidgetState::default(),
-            login_widget_state: LoginWidgetState::new(&config),
-            browser_search_widget_state: SearchWidgetState::new("Database Search".to_string()),
-            media_widget_state: MediaDirWidgetState::new(config.media_dirs),
-            playlist_search_widget_state: SearchWidgetState::new("Playlist Search".to_string()),
-            playlist_browser_widget_state: PlaylistBrowserWidgetState::new(),
-            video_name_widget_state: VideoNameWidgetState::default(),
-            recently_widget_state: RecentlyWidgetState::new(),
-            footer_widget_state,
+            options_widget_state: OptionsWidgetState::new(theme),
+            settings_widget_state: SettingsWidgetState::new(&config, &theme_config.theme_selection),
+            help_widget_state: HelpWidgetState::new(theme),
+            login_widget_state: LoginWidgetState::new(&config, theme),
+            browser_search_widget_state: SearchWidgetState::new(
+                "Database Search".to_string(),
+                theme,
+            ),
+            media_widget_state: MediaDirWidgetState::new(config.media_dirs, theme),
+            playlist_search_widget_state: SearchWidgetState::new(
+                "Playlist Search".to_string(),
+                theme,
+            ),
+            playlist_browser_widget_state: PlaylistBrowserWidgetState::new(theme),
+            video_name_widget_state: VideoNameWidgetState::new("".to_string(), theme),
+            recently_widget_state: RecentlyWidgetState::new(theme),
+            footer_widget_state: {
+                let mut footer_widget_state = FooterWidgetState::new(theme);
+                footer_widget_state.set_content(&State::from(Playlist), &None, &Mode::Normal);
+                footer_widget_state
+            },
             current_browser_search: None,
             current_playlist_search: None,
-            clipboard,
+            clipboard: Clipboard::new().ok(),
             state: State::from(Playlist {}),
             prev_state: None,
             mode: Mode::Normal,
@@ -518,26 +531,17 @@ impl RatatuiView {
         self.app
             .state
             .clone()
-            .set_style(self, Style::default().fg(Color::default()));
+            .set_state(self, ThemeState::Unselected);
         self.app.state = to;
-        self.app
-            .state
-            .clone()
-            .set_style(self, Style::default().fg(Color::Magenta));
+        self.app.state.clone().set_state(self, ThemeState::Hovered);
     }
 
     pub fn highlight(&mut self) {
-        self.app
-            .state
-            .clone()
-            .set_style(self, Style::default().fg(Color::Cyan));
+        self.app.state.clone().set_state(self, ThemeState::Selected);
     }
 
     pub fn hover_highlight(&mut self) {
-        self.app
-            .state
-            .clone()
-            .set_style(self, Style::default().fg(Color::Magenta));
+        self.app.state.clone().set_state(self, ThemeState::Hovered);
     }
 
     //TODO returning errors
@@ -644,12 +648,16 @@ impl RatatuiView {
         port: u16,
         auto_connect: bool,
         auto_share: bool,
+        theme_selection: ThemeSelection,
     ) {
         self.config.relay = relay;
         self.config.port = port;
         self.config.auto_connect = auto_connect;
         self.config.auto_share = auto_share;
+        self.app.theme_config = theme_selection.into();
         _ = self.config.save();
+        _ = self.app.theme_config.save();
+        self.update_theme();
     }
 
     pub fn reset_settings(&mut self) {
@@ -660,13 +668,43 @@ impl RatatuiView {
             auto_connect: self.config.auto_connect,
             auto_share: self.config.auto_share,
         });
+        let theme_selection: ThemeSelection = self.app.theme_config.clone().into();
         self.save_settings(
             self.config.relay.clone(),
             self.config.port,
             self.config.auto_connect,
             self.config.auto_share,
+            theme_selection.clone(),
         );
-        self.app.settings_widget_state = SettingsWidgetState::new(&self.config)
+        self.app.settings_widget_state = SettingsWidgetState::new(&self.config, &theme_selection)
+    }
+
+    //TODO: consider putting this into some globally mutable state?
+    pub fn update_theme(&mut self) {
+        let theme_selection: ThemeSelection = self.app.theme_config.clone().into();
+        let theme = theme_selection.theme();
+        self.app.chat_widget_state.set_theme(theme);
+        self.app.database_widget_state.set_theme(theme);
+        self.app.users_widget_state.set_theme(theme);
+        self.app.playlist_widget_state.set_theme(theme);
+        self.app.command_input_widget_state.set_theme(theme);
+        self.app.chat_input_widget_state.set_theme(theme);
+        self.app.options_widget_state.set_theme(theme);
+        self.app.help_widget_state.set_theme(theme);
+        self.app.login_widget_state.set_theme(theme);
+        self.app.media_widget_state.set_theme(theme);
+        self.app.browser_search_widget_state.set_theme(theme);
+        self.app.playlist_search_widget_state.set_theme(theme);
+        self.app.playlist_browser_widget_state.set_theme(theme);
+        self.app.recently_widget_state.set_theme(theme);
+        self.app.footer_widget_state.set_theme(theme);
+        self.app.footer_widget_state.set_content(
+            &self.app.current_state(),
+            &self.app.current_overlay_state,
+            &self.app.mode,
+        );
+        self.app.video_name_widget_state.set_theme(theme);
+        self.app.settings_widget_state.set_theme(theme);
     }
 
     pub fn save_media_dir(&mut self, paths: Vec<String>) {

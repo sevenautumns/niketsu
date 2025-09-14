@@ -1,7 +1,7 @@
 use niketsu_core::room::UserList;
 use niketsu_core::user::UserStatus;
 use ratatui::prelude::{Buffer, Margin, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::Stylize;
 use ratatui::symbols::scrollbar;
 use ratatui::text::Line;
 use ratatui::widgets::block::{Block, Title};
@@ -9,12 +9,13 @@ use ratatui::widgets::{
     Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
 };
 
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
+
 use super::ListStateWrapper;
 
 #[derive(Debug, Default, Clone)]
 pub struct UsersWidget;
 
-//TODO implement meaningful scrolling
 #[derive(Debug, Default, Clone)]
 pub struct UsersWidgetState {
     user_list: UserList,
@@ -22,14 +23,22 @@ pub struct UsersWidgetState {
     list_state: ListStateWrapper,
     vertical_scroll_state: ScrollbarState,
     scroll_length: usize,
-    hightlight_style: Style,
-    style: Style,
+    theme: ThemeWrapper,
+    active: bool,
+}
+
+impl ThemedWidget for UsersWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
 }
 
 impl UsersWidgetState {
-    pub fn set_style(&mut self, style: Style) {
-        self.style = style;
-        self.hightlight_style = Style::default().fg(Color::Cyan);
+    pub fn new(theme: Theme) -> Self {
+        Self {
+            theme: ThemeWrapper::new(theme),
+            ..Default::default()
+        }
     }
 
     pub fn set_user_list(&mut self, user_list: UserList) {
@@ -54,6 +63,7 @@ impl UsersWidgetState {
         if let Some(i) = self.list_state.selected() {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
+        self.set_active(true);
     }
 
     pub fn previous(&mut self) {
@@ -61,6 +71,7 @@ impl UsersWidgetState {
         if let Some(i) = self.list_state.selected() {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
+        self.set_active(true);
     }
 
     pub fn get_current_user(&self) -> Option<UserStatus> {
@@ -70,8 +81,8 @@ impl UsersWidgetState {
         }
     }
 
-    pub fn reset(&mut self) {
-        self.hightlight_style = Style::default();
+    pub fn set_active(&mut self, active: bool) {
+        self.active = active;
     }
 }
 
@@ -79,6 +90,8 @@ impl StatefulWidget for UsersWidget {
     type State = UsersWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let style = state.theme.style();
+
         let rooms: Vec<ListItem> = state
             .user_list
             .iter()
@@ -89,20 +102,14 @@ impl StatefulWidget for UsersWidget {
                 };
 
                 match u.ready {
-                    true => ListItem::new(vec![Line::styled(
-                        name.to_string(),
-                        Style::default().fg(Color::Green),
-                    )]),
-                    false => ListItem::new(vec![Line::styled(
-                        name.to_string(),
-                        Style::default().fg(Color::Red),
-                    )]),
+                    true => ListItem::new(vec![Line::styled(name.to_string(), style.green())]),
+                    false => ListItem::new(vec![Line::styled(name.to_string(), style.red())]),
                 }
             })
             .collect();
 
         let messages_block = Block::default()
-            .style(state.style)
+            .style(style)
             .title(Title::from(format!(
                 "Users in room {}",
                 state.user_list.get_room_name()
@@ -110,10 +117,11 @@ impl StatefulWidget for UsersWidget {
             .title_bottom(Line::from(format!("({})", state.user_list.len())).right_aligned())
             .borders(Borders::ALL);
 
-        let rooms_list = List::new(rooms)
-            .gray()
-            .block(messages_block)
-            .highlight_style(state.hightlight_style);
+        let mut rooms_list = List::new(rooms).block(messages_block);
+
+        if state.active {
+            rooms_list = rooms_list.highlight_style(state.theme.highlight());
+        }
 
         let scrollbar = Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)
