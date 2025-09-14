@@ -3,44 +3,47 @@ use niketsu_core::playlist::Playlist;
 use niketsu_core::playlist::file::{NamedPlaylist, PlaylistBrowser};
 use niketsu_core::util::FuzzyResult;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
+
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 use super::nav::ListNavigationState;
 use super::{OverlayWidgetState, TextAreaWrapper};
 
 pub struct PlaylistBrowserWidget;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PlaylistBrowserWidgetState {
     playlist_browser: PlaylistBrowser,
     num_files: Option<usize>,
     fuzzy_result: Vec<FuzzyResult<NamedPlaylist>>,
     input_field: TextAreaWrapper,
     nav_state: ListNavigationState,
-    style: Style,
+    theme: ThemeWrapper,
+}
+
+impl ThemedWidget for PlaylistBrowserWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
 }
 
 impl PlaylistBrowserWidgetState {
-    pub fn new() -> Self {
-        let mut widget = Self::default();
-        widget.setup_input_field();
+    pub fn new(theme: Theme) -> Self {
+        let mut widget = Self {
+            theme: ThemeWrapper::new(theme),
+            input_field: TextAreaWrapper::borderless(theme),
+            num_files: None,
+            fuzzy_result: Default::default(),
+            nav_state: Default::default(),
+            playlist_browser: Default::default(),
+        };
         widget.select(Some(0));
         widget
-    }
-
-    fn setup_input_field(&mut self) {
-        self.input_field
-            .with_block(
-                Block::default()
-                    .borders(Borders::NONE)
-                    .padding(Padding::new(1, 0, 0, 0)),
-            )
-            .with_placeholder("Enter a playlist name (room/timestamp)")
-            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     pub fn set_playlist_browser(&mut self, playlist_browser: PlaylistBrowser) {
@@ -73,8 +76,7 @@ impl PlaylistBrowserWidgetState {
 
     pub fn reset_all(&mut self) {
         self.select(Some(0));
-        self.input_field = TextAreaWrapper::default();
-        self.setup_input_field();
+        self.input_field = TextAreaWrapper::borderless(self.theme.inner());
         self.fuzzy_result = self.playlist_browser.fuzzy_search("");
     }
 
@@ -133,10 +135,13 @@ impl StatefulWidget for PlaylistBrowserWidget {
     type State = PlaylistBrowserWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let style = state.theme.style();
+        let highlight_style = state.theme.highlight();
+
         let outer_block = Block::default()
             .title("Playlists")
             .borders(Borders::ALL)
-            .gray();
+            .style(style);
 
         let horizontal_blocks = Layout::default()
             .direction(Direction::Horizontal)
@@ -144,9 +149,15 @@ impl StatefulWidget for PlaylistBrowserWidget {
             .split(area);
 
         let left_layout = Layout::default()
-            .constraints([Constraint::Length(1), Constraint::Min(3)].as_ref())
+            .constraints(
+                [
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                    Constraint::Min(3),
+                ]
+                .as_ref(),
+            )
             .horizontal_margin(1)
-            .vertical_margin(1)
             .split(horizontal_blocks[0]);
 
         let right_layout = Layout::default()
@@ -160,26 +171,25 @@ impl StatefulWidget for PlaylistBrowserWidget {
             .fuzzy_result
             .iter()
             .map(|playlist| {
-                ListItem::new(Line::from(format!(
-                    "{}/{}",
-                    playlist.entry.room, playlist.entry.name
-                )))
+                ListItem::new(
+                    Line::from(format!("{}/{}", playlist.entry.room, playlist.entry.name))
+                        .style(style),
+                )
             })
             .collect();
 
         let filtered_files = state.fuzzy_result.len();
         let num_files = state.num_files.unwrap_or_default();
         let playlists_block = List::new(playlists)
-            .gray()
             .block(
                 Block::default()
-                    .style(state.style)
+                    .style(style)
                     .title("Results")
                     .title_top(Line::from(format!("{filtered_files}/{num_files}")).right_aligned())
                     .borders(Borders::TOP)
                     .padding(Padding::new(1, 0, 0, 1)),
             )
-            .highlight_style(Style::default().fg(Color::Cyan))
+            .highlight_style(highlight_style)
             .highlight_symbol("> ");
 
         let mut playlist_content = Vec::<ListItem>::new();
@@ -200,18 +210,24 @@ impl StatefulWidget for PlaylistBrowserWidget {
             .gray()
             .block(
                 Block::default()
-                    .style(state.style)
+                    .style(style)
                     .borders(Borders::LEFT)
                     .padding(Padding::new(1, 0, 0, 1)),
             )
-            .highlight_style(Style::default().fg(Color::Cyan))
+            .highlight_style(highlight_style)
             .highlight_symbol("> ");
 
+        let input_field = state
+            .input_field
+            .with_style(state.theme.inner())
+            .with_placeholder("Enter a path separated by /");
+        input_field.highlight(state.theme.base(), highlight_style);
+
         outer_block.render(area, buf);
-        state.input_field.render(left_layout[0], buf);
+        input_field.render(left_layout[1], buf);
         StatefulWidget::render(
             playlists_block,
-            left_layout[1],
+            left_layout[2],
             buf,
             state.nav_state.inner(),
         );

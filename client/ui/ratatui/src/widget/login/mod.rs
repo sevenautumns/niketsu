@@ -2,10 +2,12 @@ use crossterm::event::KeyEvent;
 use niketsu_core::config::Config;
 use ratatui::layout::Flex;
 use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
-use ratatui::style::{Style, Stylize};
+use ratatui::style::Stylize;
 use ratatui::text::Text;
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget, Wrap};
+
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 use super::{OverlayWidgetState, TextAreaWrapper};
 
@@ -25,17 +27,38 @@ pub struct LoginWidgetState {
     password_field: TextAreaWrapper,
     username_field: TextAreaWrapper,
     room_field: TextAreaWrapper,
-    style: Style,
+    theme: ThemeWrapper,
+}
+
+impl ThemedWidget for LoginWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
 }
 
 impl LoginWidgetState {
-    pub fn new(config: &Config) -> Self {
+    pub fn new(config: &Config, theme: Theme) -> Self {
         Self {
             current_state: State::default(),
-            password_field: TextAreaWrapper::new("Password".into(), config.password.clone()),
-            username_field: TextAreaWrapper::new("Username".into(), config.username.to_string()),
-            room_field: TextAreaWrapper::new("Room".into(), config.room.to_string()),
-            style: Style::default().cyan(),
+            password_field: TextAreaWrapper::new(
+                Some("Password".to_string()),
+                Some(config.password.clone()),
+                theme,
+                true,
+            ),
+            username_field: TextAreaWrapper::new(
+                Some("Username".to_string()),
+                Some(config.username.to_string()),
+                theme,
+                true,
+            ),
+            room_field: TextAreaWrapper::new(
+                Some("Room".to_string()),
+                Some(config.room.to_string()),
+                theme,
+                true,
+            ),
+            theme: ThemeWrapper::new(theme),
         }
     }
 
@@ -102,34 +125,40 @@ impl StatefulWidget for LoginWidget {
     type State = LoginWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let outer_block = Block::default().title("Login").borders(Borders::ALL).gray();
+        let outer_block = Block::default()
+            .title("Login")
+            .borders(Borders::ALL)
+            .style(state.theme.style());
 
         let welcome_block = Paragraph::new(Text::raw("Welcome to niketsu."))
             .block(Block::default().borders(Borders::NONE).gray())
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .style(state.theme.style());
 
         let info_block = Paragraph::new(Text::raw("Choose a username and join a room."))
-            .block(Block::default().borders(Borders::NONE).gray())
-            .wrap(Wrap { trim: false });
+            .block(Block::default().borders(Borders::NONE))
+            .wrap(Wrap { trim: false })
+            .style(state.theme.style());
 
         let room_field = state
             .room_field
-            .with_default_style()
+            .with_style(state.theme.inner())
             .with_placeholder("Enter the room");
         let password_field = state
             .password_field
-            .with_default_style()
+            .with_style(state.theme.inner())
             .with_mask("Enter your password");
         let username_field = state
             .username_field
-            .with_default_style()
+            .with_style(state.theme.inner())
             .with_placeholder("Enter your username");
 
-        let style = state.style;
+        let block_style = state.theme.highlight_fg();
+        let cursor_style = state.theme.highlight();
         match state.current_state {
-            State::Username => username_field.highlight(style, style.black().on_cyan()),
-            State::Room => room_field.highlight(style, style.black().on_cyan()),
-            State::Password => password_field.highlight(style, style.black().on_cyan()),
+            State::Username => username_field.highlight(block_style, cursor_style),
+            State::Room => room_field.highlight(block_style, cursor_style),
+            State::Password => password_field.highlight(block_style, cursor_style),
         };
 
         let layout = Layout::default()

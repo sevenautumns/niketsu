@@ -4,11 +4,13 @@ use delegate::delegate;
 use niketsu_core::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
 use niketsu_core::util::FuzzyResult;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
+
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 use super::nav::ListNavigationState;
 use super::{OverlayWidgetState, TextAreaWrapper, color_hits};
@@ -46,24 +48,16 @@ where
     current_result: Option<Vec<FuzzyResult<E>>>,
     input_field: TextAreaWrapper,
     nav_state: ListNavigationState,
-    style: Style,
+    theme: ThemeWrapper,
 }
 
-impl<E, S> Default for SearchWidgetState<E, S>
+impl<E, S> ThemedWidget for SearchWidgetState<E, S>
 where
     E: FuzzyEntry,
     S: FuzzySearchable<E>,
 {
-    fn default() -> Self {
-        Self {
-            store: Default::default(),
-            title: "".to_string(),
-            num_files: Default::default(),
-            current_result: Default::default(),
-            input_field: Default::default(),
-            nav_state: Default::default(),
-            style: Default::default(),
-        }
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
     }
 }
 
@@ -72,26 +66,19 @@ where
     E: FuzzyEntry,
     S: FuzzySearchable<E>,
 {
-    pub fn new(title: String) -> Self
-    where
-        Self: Default,
-    {
-        let mut widget = Self::default();
-        widget.setup_input_field();
+    pub fn new(title: String, theme: Theme) -> Self {
+        let mut widget = Self {
+            input_field: TextAreaWrapper::borderless(theme),
+            theme: ThemeWrapper::new(theme),
+            store: None,
+            title: "".to_string(),
+            num_files: None,
+            current_result: None,
+            nav_state: Default::default(),
+        };
         widget.select(Some(0));
         widget.title = title;
         widget
-    }
-
-    fn setup_input_field(&mut self) {
-        self.input_field
-            .with_block(
-                Block::default()
-                    .borders(Borders::NONE)
-                    .padding(Padding::new(1, 0, 0, 0)),
-            )
-            .with_placeholder("Enter your search")
-            .highlight(Style::default(), self.style.dark_gray().on_white());
     }
 
     pub fn get_input(&self) -> String {
@@ -125,15 +112,14 @@ where
         } else if self.selected().is_none() {
             self.select(Some(0));
         }
-        self.nav_state.limit(self.len());
         self.current_result = Some(results);
+        self.nav_state.set_list_len(self.len());
     }
 
     pub fn reset_all(&mut self) {
         self.current_result = None;
         self.select(Some(0));
-        self.input_field = TextAreaWrapper::default();
-        self.setup_input_field();
+        self.input_field = TextAreaWrapper::borderless(self.theme.inner());
         self.reset_offset();
     }
 
@@ -214,12 +200,18 @@ where
         let outer_block = Block::default()
             .title(state.title.clone())
             .borders(Borders::ALL)
-            .gray();
+            .style(state.theme.style());
 
         let layout = Layout::default()
-            .constraints([Constraint::Length(1), Constraint::Min(3)].as_ref())
+            .constraints(
+                [
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                    Constraint::Min(3),
+                ]
+                .as_ref(),
+            )
             .horizontal_margin(1)
-            .vertical_margin(1)
             .split(area);
 
         let search_result: Vec<ListItem> = match &state.current_result {
@@ -227,19 +219,19 @@ where
                 Some(range) => result
                     .iter()
                     .take(range.lower)
-                    .map(|r| color_hits(r, None))
+                    .map(|r| color_hits(r, state.theme.style()))
                     .chain(
                         result
                             .iter()
                             .skip(range.lower)
                             .take(range.len().saturating_add(1))
-                            .map(|r| color_hits(r, Some(Color::Cyan))),
+                            .map(|r| color_hits(r, state.theme.highlight())),
                     )
                     .chain(
                         result
                             .iter()
                             .skip(range.upper.saturating_add(1))
-                            .map(|r| color_hits(r, None)),
+                            .map(|r| color_hits(r, state.theme.style())),
                     )
                     .collect(),
                 None => Vec::default(),
@@ -253,17 +245,23 @@ where
             .gray()
             .block(
                 Block::default()
-                    .style(state.style)
+                    .style(state.theme.style())
                     .title("Results")
                     .title_top(Line::from(format!("{filtered_files}/{num_files}")).right_aligned())
                     .borders(Borders::TOP)
                     .padding(Padding::new(1, 0, 0, 1)),
             )
-            .highlight_style(Style::default().fg(Color::Cyan))
+            .highlight_style(state.theme.highlight())
             .highlight_symbol("> ");
 
+        let input_field = state
+            .input_field
+            .with_style(state.theme.inner())
+            .with_placeholder("Enter your search");
+        input_field.highlight(state.theme.base(), state.theme.highlight());
+
         outer_block.render(area, buf);
-        state.input_field.render(layout[0], buf);
-        StatefulWidget::render(search_list, layout[1], buf, state.nav_state.inner());
+        input_field.render(layout[1], buf);
+        StatefulWidget::render(search_list, layout[2], buf, state.nav_state.inner());
     }
 }

@@ -1,11 +1,13 @@
 use delegate::delegate;
 use niketsu_core::playlist::{Playlist, Video};
 use ratatui::prelude::{Buffer, Margin, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::Stylize;
 use ratatui::symbols::scrollbar;
 use ratatui::text::Line;
 use ratatui::widgets::block::{Block, Title};
 use ratatui::widgets::{Borders, List, ListItem, Scrollbar, ScrollbarOrientation, StatefulWidget};
+
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 use super::nav::ListNavigationState;
 
@@ -20,10 +22,23 @@ pub struct PlaylistWidgetState {
     nav_state: ListNavigationState,
     clipboard: Option<Vec<Video>>,
     video_share: bool,
-    style: Style,
+    theme: ThemeWrapper,
+}
+
+impl ThemedWidget for PlaylistWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
 }
 
 impl PlaylistWidgetState {
+    pub fn new(theme: Theme) -> Self {
+        Self {
+            theme: ThemeWrapper::new(theme),
+            ..Default::default()
+        }
+    }
+
     pub fn set_playlist(&mut self, playlist: Playlist) {
         self.playlist = playlist;
         self.nav_state.set_list_len(self.playlist.len());
@@ -50,10 +65,6 @@ impl PlaylistWidgetState {
         if let Some(index) = self.playlist.find(video) {
             self.select(Some(index));
         }
-    }
-
-    pub fn set_style(&mut self, style: Style) {
-        self.style = style;
     }
 
     // workaround, since playlist updates are delayed from core
@@ -116,9 +127,11 @@ impl StatefulWidget for PlaylistWidget {
     type State = PlaylistWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let style = state.theme.style();
+
         let video_share = match state.video_share {
-            true => Line::styled("sharing", Style::default().fg(Color::Green)),
-            false => Line::styled("not sharing", Style::default().fg(Color::Red)),
+            true => Line::styled("sharing", style.green()),
+            false => Line::styled("not sharing", style.red()),
         };
 
         let scroll_block = Block::default()
@@ -126,34 +139,34 @@ impl StatefulWidget for PlaylistWidget {
             .title(Title::from("Playlist"))
             .title_bottom(Line::from(format!("({})", state.playlist.len())).right_aligned())
             .borders(Borders::ALL)
-            .style(state.style);
+            .style(style);
 
         let playlist: Vec<ListItem> = match state.nav_state.selection_range() {
             Some(range) => state
                 .playlist
                 .iter()
                 .take(range.lower)
-                .map(|t| color_selection(t, state, Color::Gray, Color::Yellow))
+                .map(|t| color_default(t, state))
                 .chain(
                     state
                         .playlist
                         .iter()
                         .skip(range.lower)
                         .take(range.len().saturating_add(1))
-                        .map(|t| color_selection(t, state, Color::Cyan, Color::Cyan)),
+                        .map(|t| color_highlight(t, state)),
                 )
                 .chain(
                     state
                         .playlist
                         .iter()
                         .skip(range.upper.saturating_add(1))
-                        .map(|t| color_selection(t, state, Color::Gray, Color::Yellow)),
+                        .map(|t| color_default(t, state)),
                 )
                 .collect(),
             None => state
                 .playlist
                 .iter()
-                .map(|t| color_selection(t, state, Color::Gray, Color::Yellow))
+                .map(|t| color_default(t, state))
                 .collect(),
         };
 
@@ -161,7 +174,7 @@ impl StatefulWidget for PlaylistWidget {
         let list = List::new(playlist)
             .gray()
             .block(scroll_block)
-            .highlight_style(Style::default().fg(Color::Cyan))
+            .highlight_style(state.theme.highlight())
             .highlight_symbol("> ");
 
         let scrollbar = Scrollbar::default()
@@ -188,17 +201,32 @@ impl StatefulWidget for PlaylistWidget {
 fn color_selection<'a>(
     video: &'a Video,
     state: &PlaylistWidgetState,
-    default_color: Color,
-    hightlight_color: Color,
+    highlight: bool,
 ) -> ListItem<'a> {
     if let Some(playing_video) = &state.playing_video {
         if video.eq(playing_video) {
+            let mut highlight_color = state.theme.style().yellow();
+            if highlight {
+                highlight_color = state.theme.highlight().yellow();
+            }
+
             let video_text = format!("> {}", video.as_str());
-            return ListItem::new(vec![Line::styled(
-                video_text,
-                Style::default().fg(hightlight_color),
-            )]);
+            return ListItem::new(vec![Line::styled(video_text, highlight_color)]);
         }
     }
-    ListItem::new(vec![Line::from(video.as_str().fg(default_color))])
+
+    match highlight {
+        true => ListItem::new(vec![
+            Line::from(video.as_str()).style(state.theme.highlight()),
+        ]),
+        false => ListItem::new(vec![Line::from(video.as_str()).style(state.theme.style())]),
+    }
+}
+
+fn color_highlight<'a>(video: &'a Video, state: &PlaylistWidgetState) -> ListItem<'a> {
+    color_selection(video, state, true)
+}
+
+fn color_default<'a>(video: &'a Video, state: &PlaylistWidgetState) -> ListItem<'a> {
+    color_selection(video, state, false)
 }

@@ -1,8 +1,9 @@
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget};
+
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 use super::OverlayWidgetState;
 
@@ -10,7 +11,21 @@ pub struct OptionsWidget;
 
 #[derive(Debug, Default, Clone)]
 pub struct OptionsWidgetState {
-    style: Style,
+    theme: ThemeWrapper,
+}
+
+impl ThemedWidget for OptionsWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
+}
+
+impl OptionsWidgetState {
+    pub fn new(theme: Theme) -> Self {
+        Self {
+            theme: ThemeWrapper::new(theme),
+        }
+    }
 }
 
 impl OverlayWidgetState for OptionsWidgetState {
@@ -46,7 +61,7 @@ impl StatefulWidget for OptionsWidget {
             Line::from(vec![Span::raw(" s     Start file db update")]),
             Line::from(vec![Span::raw(" p     Stop file db update")]),
         ])
-        .style(state.style)
+        .style(state.theme.style())
         .block(options_block);
 
         options_overlay.render(area, buf);

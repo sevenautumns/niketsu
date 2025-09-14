@@ -2,16 +2,17 @@ use niketsu_core::fuzzy::FuzzyEntry;
 use niketsu_core::util::FuzzyResult;
 use ratatui::buffer::Buffer;
 use ratatui::prelude::Rect;
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, ListItem, ListState, Widget};
 use tui_textarea::{Input, TextArea};
 
+use crate::theme::Theme;
+
 pub(crate) mod chat;
 pub(crate) mod chat_input;
 pub(crate) mod command;
-pub(crate) mod config;
 pub(crate) mod database;
 pub(crate) mod footer;
 pub(crate) mod help;
@@ -23,6 +24,7 @@ pub(crate) mod playlist;
 pub(crate) mod playlist_browser;
 pub(crate) mod recently;
 pub(crate) mod search;
+pub(crate) mod settings;
 pub(crate) mod users;
 
 pub trait OverlayWidgetState {
@@ -98,13 +100,6 @@ impl ListStateWrapper {
         }
     }
 
-    fn limit(&mut self, len: usize) {
-        if let Some(i) = self.selected() {
-            let mindex = usize::min(i, len);
-            self.inner.select(Some(mindex));
-        }
-    }
-
     fn select(&mut self, index: Option<usize>) {
         self.inner.select(index);
     }
@@ -118,9 +113,11 @@ impl ListStateWrapper {
     }
 }
 
+#[derive(Default)]
 pub struct TextAreaWrapper {
     inner: TextArea<'static>,
     title: Option<String>,
+    borders: bool,
 }
 
 impl std::fmt::Debug for TextAreaWrapper {
@@ -129,82 +126,89 @@ impl std::fmt::Debug for TextAreaWrapper {
     }
 }
 
-impl Default for TextAreaWrapper {
-    fn default() -> Self {
-        let mut wrapper = Self {
-            inner: TextArea::default(),
-            title: Default::default(),
-        };
-        wrapper.with_default_style();
-        wrapper
-    }
-}
-
 impl Clone for TextAreaWrapper {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
             title: self.title.clone(),
+            borders: self.borders,
         }
     }
 }
 
-impl From<(String, String)> for TextAreaWrapper {
-    fn from(value: (String, String)) -> Self {
-        let mut text_area = TextAreaWrapper {
-            inner: TextArea::new(vec![value.1]),
-            title: Some(value.0),
-        };
-        text_area.with_block_style(Style::default());
-        text_area
+impl From<(Option<String>, Option<String>, bool)> for TextAreaWrapper {
+    fn from(value: (Option<String>, Option<String>, bool)) -> Self {
+        
+        TextAreaWrapper {
+            inner: TextArea::from(value.1),
+            title: value.0,
+            borders: value.2,
+        }
     }
 }
 
 impl TextAreaWrapper {
-    fn new(title: String, content: String) -> Self {
-        Self::from((title.clone(), content))
+    pub fn new(
+        title: Option<String>,
+        content: Option<String>,
+        theme: Theme,
+        borders: bool,
+    ) -> Self {
+        let mut text_area = Self::from((title.clone(), content, borders));
+        text_area.with_style(theme);
+        text_area
+    }
+
+    pub fn borderless(theme: Theme) -> Self {
+        let mut text_area = Self::default();
+        text_area.with_style(theme);
+        text_area
+    }
+
+    pub fn bordered(theme: Theme) -> Self {
+        let mut text_area = Self::from((Some("".to_string()), None, true));
+        text_area.with_style(theme);
+        text_area
     }
 
     fn highlight(&mut self, block_style: Style, cursor_style: Style) {
         self.inner.set_tab_length(2);
-        self.inner.set_style(Style::default().gray());
+        self.inner
+            .set_style(self.inner.style().remove_modifier(Modifier::DIM));
         self.inner.set_cursor_style(cursor_style);
-        self.inner.set_cursor_line_style(Style::default());
         self.with_block_style(block_style);
     }
 
-    fn with_default_style(&mut self) -> &mut Self {
+    fn with_style(&mut self, theme: Theme) -> &mut Self {
         self.inner.set_tab_length(2);
         self.inner
-            .set_style(Style::default().fg(Color::Gray).add_modifier(Modifier::DIM));
-        self.inner.set_cursor_line_style(Style::default());
-        self.inner.set_cursor_style(Style::default());
-        self.with_block_style(Style::default().gray());
+            .set_style(theme.base().add_modifier(Modifier::DIM));
+        self.inner.set_cursor_line_style(theme.base());
+        self.inner.set_cursor_style(theme.base());
+        self.with_block_style(theme.base());
         self
     }
 
     fn with_block_style(&mut self, style: Style) {
         let block = self.inner.block();
-        let title = self.title.clone();
+        let borders = match self.borders {
+            true => Borders::ALL,
+            false => Borders::NONE,
+        };
 
         match block {
             Some(b) => self.inner.set_block(b.clone().style(style)),
             _ => {
-                let b = match title {
-                    Some(t) => Block::default().title(t).borders(Borders::ALL).style(style),
-                    _ => Block::default().borders(Borders::ALL).style(style),
+                let b = match &self.title {
+                    Some(t) => Block::default()
+                        .title(t.clone())
+                        .borders(borders)
+                        .style(style),
+                    _ => Block::default().borders(borders).style(style),
                 };
                 self.inner.set_block(b);
             }
         }
-    }
-
-    fn with_block(&mut self, block: Block<'static>) -> &mut Self {
-        match self.title.clone() {
-            Some(t) => self.inner.set_block(block.title(t)),
-            _ => self.inner.set_block(block),
-        }
-        self
     }
 
     fn with_placeholder(&mut self, placeholder_text: &str) -> &mut Self {
@@ -235,7 +239,7 @@ impl TextAreaWrapper {
     }
 }
 
-fn color_hits<E>(result: &FuzzyResult<E>, color: Option<Color>) -> ListItem
+fn color_hits<E>(result: &FuzzyResult<E>, style: Style) -> ListItem
 where
     E: FuzzyEntry,
 {
@@ -246,16 +250,10 @@ where
     let hits_len = hits.len();
     for (index, char) in name.char_indices() {
         if hits_index < hits_len && index == hits[hits_index] {
-            text.push(Span::styled(
-                char.to_string(),
-                Style::default().fg(color.unwrap_or(Color::Yellow)),
-            ));
+            text.push(Span::styled(char.to_string(), style.fg(Color::Yellow)));
             hits_index += 1;
         } else {
-            text.push(Span::styled(
-                char.to_string(),
-                Style::default().fg(color.unwrap_or(Color::Gray)),
-            ));
+            text.push(Span::styled(char.to_string(), style));
         }
     }
     ListItem::new(Line::from(text))

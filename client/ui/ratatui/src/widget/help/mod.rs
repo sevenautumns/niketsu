@@ -1,11 +1,11 @@
 use once_cell::sync::Lazy;
 use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, Cell, Padding, Row, StatefulWidget, Table, Widget};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
 use crate::handler::State;
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 use super::OverlayWidgetState;
 
@@ -195,9 +195,16 @@ static PLAYLISTBROWSER: Lazy<HelpTab> = Lazy::new(|| HelpTab {
 
 pub struct HelpWidget;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct HelpWidgetState {
     current_tab: HelpWidgetTab,
+    theme: ThemeWrapper,
+}
+
+impl ThemedWidget for HelpWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Copy, Clone, EnumString, EnumIter, Display)]
@@ -231,6 +238,13 @@ impl HelpWidgetTab {
 }
 
 impl HelpWidgetState {
+    pub fn new(theme: Theme) -> Self {
+        Self {
+            current_tab: Default::default(),
+            theme: ThemeWrapper::new(theme),
+        }
+    }
+
     pub fn next(&mut self) {
         self.current_tab = self.current_tab.next()
     }
@@ -289,7 +303,8 @@ impl StatefulWidget for HelpWidget {
         let help_block = Block::default()
             .title("Help")
             .borders(Borders::ALL)
-            .title_bottom("← →: navigate tabs");
+            .title_bottom("← →: navigate tabs")
+            .style(state.theme.style());
 
         let help_page = match state.current_tab {
             HelpWidgetTab::General => &GENERAL,
@@ -330,16 +345,20 @@ impl StatefulWidget for HelpWidget {
             Constraint::Length(width_col1),
             Constraint::Length(width_col2),
         ];
-        let header = Row::new(vec!["Description", "Control"])
-            .style(Style::default().fg(Color::Gray).bg(Color::DarkGray));
-        let table = Table::new(rows, widths).header(header).block(
-            Block::default()
-                .title(state.current_tab.to_string())
-                .borders(Borders::TOP)
-                .padding(Padding::new(1, 0, 0, 1)),
-        );
+        let header = Row::new(vec!["Description", "Control"]).style(state.theme.style());
+        let table = Table::new(rows, widths)
+            .header(header)
+            .block(
+                Block::default()
+                    .title(state.current_tab.to_string())
+                    .borders(Borders::TOP)
+                    .padding(Padding::new(1, 0, 0, 1)),
+            )
+            .style(state.theme.style());
 
-        let empty_space = Block::default().borders(Borders::TOP);
+        let empty_space = Block::default()
+            .borders(Borders::TOP)
+            .style(state.theme.style());
 
         help_block.render(area, buf);
         description.render(layout[0], buf);

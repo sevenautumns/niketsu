@@ -2,10 +2,12 @@ use crossterm::event::{KeyCode, KeyEvent};
 use niketsu_core::config::Config;
 use ratatui::layout::Flex;
 use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::Stylize;
 use ratatui::text::Text;
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget};
+
+use crate::theme::{Theme, ThemeSelection, ThemeWrapper, ThemedWidget};
 
 use super::{OverlayWidgetState, TextAreaWrapper};
 
@@ -18,6 +20,7 @@ enum State {
     Port,
     AutoConnect,
     AutoShare,
+    ColorScheme,
 }
 
 #[derive(Debug, Clone)]
@@ -27,27 +30,47 @@ pub struct SettingsWidgetState {
     port: TextAreaWrapper,
     auto_connect: bool,
     auto_share: bool,
-    style: Style,
+    theme: ThemeWrapper,
+    theme_selection: ThemeSelection,
+}
+
+impl ThemedWidget for SettingsWidgetState {
+    fn theme(&mut self) -> &mut ThemeWrapper {
+        &mut self.theme
+    }
 }
 
 impl SettingsWidgetState {
-    pub fn new(config: &Config) -> Self {
+    pub fn new(config: &Config, theme_selection: &ThemeSelection) -> Self {
+        let theme = theme_selection.theme();
         Self {
             current_state: State::default(),
-            relay: TextAreaWrapper::new("Relay".into(), config.relay.clone()),
-            port: TextAreaWrapper::new("Port".into(), config.port.clone().to_string()),
+            relay: TextAreaWrapper::new(
+                Some("Relay".into()),
+                Some(config.relay.clone()),
+                theme,
+                true,
+            ),
+            port: TextAreaWrapper::new(
+                Some("Port".into()),
+                Some(config.port.clone().to_string()),
+                theme,
+                true,
+            ),
             auto_connect: config.auto_connect,
             auto_share: config.auto_share,
-            style: Style::default().cyan(),
+            theme: ThemeWrapper::new(theme),
+            theme_selection: theme_selection.clone(),
         }
     }
 
     pub fn previous_state(&mut self) {
         match self.current_state {
-            State::Relay => self.current_state = State::AutoShare,
+            State::Relay => self.current_state = State::ColorScheme,
             State::Port => self.current_state = State::Relay,
             State::AutoConnect => self.current_state = State::Port,
             State::AutoShare => self.current_state = State::AutoConnect,
+            State::ColorScheme => self.current_state = State::AutoShare,
         }
     }
 
@@ -56,8 +79,29 @@ impl SettingsWidgetState {
             State::Relay => self.current_state = State::Port,
             State::Port => self.current_state = State::AutoConnect,
             State::AutoConnect => self.current_state = State::AutoShare,
-            State::AutoShare => self.current_state = State::Relay,
+            State::AutoShare => self.current_state = State::ColorScheme,
+            State::ColorScheme => self.current_state = State::Relay,
         }
+    }
+
+    pub fn set_theme_selection(&mut self, theme_selection: ThemeSelection) {
+        self.theme_selection = theme_selection
+    }
+
+    pub fn next_theme(&mut self) {
+        if matches!(self.current_state, State::ColorScheme) {
+            self.theme_selection = self.theme_selection.next()
+        }
+    }
+
+    pub fn previous_theme(&mut self) {
+        if matches!(self.current_state, State::ColorScheme) {
+            self.theme_selection = self.theme_selection.previous()
+        }
+    }
+
+    pub fn theme_selection(&self) -> ThemeSelection {
+        self.theme_selection.clone()
     }
 
     pub fn handle_input(&mut self, key: KeyEvent) {
@@ -68,11 +112,15 @@ impl SettingsWidgetState {
             State::Port => {
                 self.port.input(key);
             }
-            s => if let KeyCode::Char(' ') = key.code { match s {
-                State::AutoConnect => self.auto_connect = !self.auto_connect,
-                State::AutoShare => self.auto_share = !self.auto_share,
-                _ => {}
-            } },
+            s => {
+                if let KeyCode::Char(' ') = key.code {
+                    match s {
+                        State::AutoConnect => self.auto_connect = !self.auto_connect,
+                        State::AutoShare => self.auto_share = !self.auto_share,
+                        _ => {}
+                    }
+                }
+            }
         }
     }
 
@@ -108,7 +156,10 @@ impl StatefulWidget for SettingsWidget {
     type State = SettingsWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let options_block = Block::default().title("Settings").borders(Borders::ALL);
+        let options_block = Block::default()
+            .title("Settings")
+            .borders(Borders::ALL)
+            .style(state.theme.style());
         let info_text = Paragraph::new(Text::raw("Save settings by pressing Enter."));
 
         let layout = Layout::default()
@@ -119,29 +170,45 @@ impl StatefulWidget for SettingsWidget {
                     Constraint::Length(3),
                     Constraint::Length(3),
                     Constraint::Length(3),
+                    Constraint::Length(3),
                 ]
                 .as_ref(),
             )
             .margin(1)
             .split(area);
 
-        let auto_connect = create_button(
+        let auto_connect = create_bool_button(
             state.auto_connect,
             matches!(state.current_state, State::AutoConnect),
             "Auto connect",
+            state.theme.inner(),
         );
-        let auto_share = create_button(
+        let auto_share = create_bool_button(
             state.auto_share,
             matches!(state.current_state, State::AutoShare),
             "Auto share",
+            state.theme.inner(),
         );
-        let relay_field = state.relay.with_default_style().with_placeholder("Relay");
-        let port_field = state.port.with_default_style().with_placeholder("Port");
+        let theme = create_selection_button(
+            state.theme_selection.to_string(),
+            "Color scheme",
+            matches!(state.current_state, State::ColorScheme),
+            state.theme.inner(),
+        );
+        let relay_field = state
+            .relay
+            .with_style(state.theme.inner())
+            .with_placeholder("Relay");
+        let port_field = state
+            .port
+            .with_style(state.theme.inner())
+            .with_placeholder("Port");
 
-        let style = state.style;
+        let block_style = state.theme.highlight_fg();
+        let cursor_style = state.theme.highlight();
         match state.current_state {
-            State::Relay => relay_field.highlight(style, style.black().on_cyan()),
-            State::Port => port_field.highlight(style, style.black().on_cyan()),
+            State::Relay => relay_field.highlight(block_style, cursor_style),
+            State::Port => port_field.highlight(block_style, cursor_style),
             _ => {}
         }
 
@@ -151,25 +218,34 @@ impl StatefulWidget for SettingsWidget {
         port_field.render(layout[2], buf);
         auto_connect.render(layout[3], buf);
         auto_share.render(layout[4], buf);
+        theme.render(layout[5], buf);
     }
 }
 
-fn create_button(condition: bool, highlight: bool, title: &str) -> Paragraph {
+fn create_bool_button(condition: bool, highlight: bool, title: &str, theme: Theme) -> Paragraph {
     let mut block = Block::default().title(title).borders(Borders::ALL);
     if highlight {
-        block = block.border_style(Style::default().fg(Color::Cyan));
+        block = block.border_style(theme.highlight_fg());
     }
-
-    
 
     match condition {
         true => {
-            block = block.style(Style::default().green());
+            block = block.style(theme.base().green());
             Paragraph::new(Text::raw("On")).block(block)
         }
         false => {
-            block = block.style(Style::default().red());
+            block = block.style(theme.base().red());
             Paragraph::new(Text::raw("Off")).block(block)
         }
     }
+}
+
+fn create_selection_button(name: String, title: &str, highlight: bool, theme: Theme) -> Paragraph {
+    let mut block = Block::default().title(title).borders(Borders::ALL);
+    if highlight {
+        block = block.style(theme.highlight_fg());
+    } else {
+        block = block.style(theme.base());
+    }
+    Paragraph::new(Text::raw(name)).block(block)
 }

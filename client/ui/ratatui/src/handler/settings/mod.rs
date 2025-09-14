@@ -4,7 +4,7 @@ use ratatui::widgets::Clear;
 use super::{EventHandler, RenderHandler};
 use crate::view::{App, RatatuiView};
 use crate::widget::OverlayWidgetState;
-use crate::widget::config::SettingsWidget;
+use crate::widget::settings::SettingsWidget;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Settings;
@@ -22,7 +22,13 @@ impl EventHandler for Settings {
                         view.app.reset_overlay();
                         let (relay, port, auto_connect, auto_share) =
                             view.app.settings_widget_state.collect_input();
-                        view.save_settings(relay.clone(), port, auto_connect, auto_share);
+                        view.save_settings(
+                            relay.clone(),
+                            port,
+                            auto_connect,
+                            auto_share,
+                            view.app.settings_widget_state.theme_selection(),
+                        );
                         view.handle_settings_change(relay, port, auto_connect, auto_share);
                     }
                     _ => {
@@ -32,7 +38,16 @@ impl EventHandler for Settings {
                             view.reset_settings();
                             return;
                         }
-                        view.app.settings_widget_state.handle_input(*key)
+                        match key.code {
+                            KeyCode::Left => {
+                                view.app.settings_widget_state.next_theme();
+                            }
+                            KeyCode::Right => {
+                                view.app.settings_widget_state.previous_theme();
+                            }
+                            _ => {}
+                        }
+                        view.app.settings_widget_state.handle_input(*key);
                     }
                 }
             }

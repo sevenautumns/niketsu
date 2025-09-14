@@ -1,10 +1,10 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use niketsu_core::playlist::Video;
-use ratatui::style::Style;
 
 use super::playlist::Playlist;
 use super::users::Users;
 use super::{EventHandler, MainEventHandler, State};
+use crate::theme::{ThemeState, ThemedWidget};
 use crate::view::{Mode, RatatuiView};
 
 #[derive(Debug, Clone, Copy)]
@@ -65,7 +65,7 @@ impl MainEventHandler for Recently {
         }
     }
 
-    fn set_style(&self, view: &mut RatatuiView, style: Style) {
-        view.app.recently_widget_state.set_style(style);
+    fn set_state(&self, view: &mut RatatuiView, state: ThemeState) {
+        view.app.recently_widget_state.set_state(state);
     }
 }
