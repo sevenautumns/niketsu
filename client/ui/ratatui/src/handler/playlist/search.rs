@@ -23,18 +23,7 @@ impl EventHandler for PlaylistSearch {
                     }
                     KeyCode::Enter => {
                         if let Some(videos) = view.app.playlist_search_widget_state.get_selected() {
-                            let videos_range: Vec<Video> =
-                                videos.iter().map(|v| v.as_str().into()).collect();
-
-                            for video in videos_range.iter() {
-                                view.remove(video);
-                            }
-
-                            if let Some(index) = view.app.playlist_widget_state.selected() {
-                                view.insert_range(index + 1, videos_range);
-                            } else {
-                                view.insert_range(0, videos_range);
-                            }
+                            view.move_range(videos);
                         }
                         view.app.reset_overlay();
                         view.app.playlist_search_widget_state.reset_all();

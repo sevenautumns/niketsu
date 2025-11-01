@@ -606,6 +606,22 @@ impl RatatuiView {
         self.model.change_playlist(updated_playlist);
     }
 
+    pub fn move_range(&self, videos: Vec<Video>) {
+        let mut updated_playlist = self.model.playlist.get_inner();
+
+        for video in videos.iter() {
+            if updated_playlist.remove_by_video(video).is_some() {
+                self.model.playlist.set(updated_playlist.clone());
+            }
+        }
+
+        if let Some(index) = self.app.playlist_widget_state.selected() {
+            self.insert_range(index + 1, videos);
+        } else {
+            self.insert_range(0, videos);
+        }
+    }
+
     pub fn reverse_range(&self, positions: (usize, usize)) {
         let mut updated_playlist = self.model.playlist.get_inner();
         updated_playlist.reverse_range(positions.0..=positions.1);
