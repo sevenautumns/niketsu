@@ -40,10 +40,10 @@ impl PlaylistWidget<'_> {
                 available = state.file_store.find_file(f.as_str()).is_some();
             }
             let mut name = f.as_str().to_string();
-            if let Some(playing) = &playing {
-                if name.eq(playing.as_str()) {
-                    name = format!("> {name}");
-                }
+            if let Some(playing) = &playing
+                && name.eq(playing.as_str())
+            {
+                name = format!("> {name}");
             };
             file_btns.push(
                 button(text(name.clone()).wrapping(Wrapping::None))
@@ -83,17 +83,17 @@ impl PlaylistWidget<'_> {
         }
         // In-case we are at the end of the file list,
         // check if we are above or below
-        if closest.1.index_absolute == self.state.playlist.len() - 1 {
-            if let Some(l) = layout.children().last() {
-                let top = l.position();
-                let mut bottom = top;
-                bottom.y += l.bounds().height;
-                let dist = bottom.distance(cursor_position);
-                if dist < closest.0 {
-                    closest.0 = dist;
-                    closest.1.index_absolute = self.state.playlist.len();
-                    closest.1.position = bottom;
-                }
+        if closest.1.index_absolute == self.state.playlist.len() - 1
+            && let Some(l) = layout.children().last()
+        {
+            let top = l.position();
+            let mut bottom = top;
+            bottom.y += l.bounds().height;
+            let dist = bottom.distance(cursor_position);
+            if dist < closest.0 {
+                closest.0 = dist;
+                closest.1.index_absolute = self.state.playlist.len();
+                closest.1.position = bottom;
             }
         }
         // If the closest index is larger than the index of the selected video, adjust the relative index
@@ -110,22 +110,21 @@ impl PlaylistWidget<'_> {
             return None;
         }
         // If we are below or above the selected file, dont send an index
-        if let FileInteraction::Pressing(_) = self.state.interaction {
-            if let Some(sele) = &self.state.selected {
-                if let Some(clos) = self
-                    .state
-                    .playlist
-                    .get(closest.1.index_absolute.saturating_sub(1))
-                {
-                    if clos.eq(&sele.video) {
-                        return None;
-                    }
-                }
-                if let Some(clos) = self.state.playlist.get(closest.1.index_absolute) {
-                    if clos.eq(&sele.video) {
-                        return None;
-                    }
-                }
+        if let FileInteraction::Pressing(_) = self.state.interaction
+            && let Some(sele) = &self.state.selected
+        {
+            if let Some(clos) = self
+                .state
+                .playlist
+                .get(closest.1.index_absolute.saturating_sub(1))
+                && clos.eq(&sele.video)
+            {
+                return None;
+            }
+            if let Some(clos) = self.state.playlist.get(closest.1.index_absolute)
+                && clos.eq(&sele.video)
+            {
+                return None;
             }
         }
         Some(closest.1)
@@ -166,13 +165,12 @@ impl PlaylistWidget<'_> {
                 .into(),
             );
 
-            if let Some(prev_file) = &self.state.selected {
-                if let FileInteraction::Released(when) = self.state.interaction {
-                    if file.eq(prev_file) && when.elapsed() < MAX_DOUBLE_CLICK_INTERVAL {
-                        shell.publish(DoubleClick { video: file.video }.into());
-                    }
-                }
-                // }
+            if let Some(prev_file) = &self.state.selected
+                && let FileInteraction::Released(when) = self.state.interaction
+                && file.eq(prev_file)
+                && when.elapsed() < MAX_DOUBLE_CLICK_INTERVAL
+            {
+                shell.publish(DoubleClick { video: file.video }.into());
             }
         }
     }
@@ -206,16 +204,15 @@ impl PlaylistWidget<'_> {
                     index_relative: pos,
                     ..
                 }) = self.closest_index(layout, pos)
+                    && let Some(file) = &self.state.selected
                 {
-                    if let Some(file) = &self.state.selected {
-                        shell.publish(
-                            Move {
-                                video: file.clone().video,
-                                pos,
-                            }
-                            .into(),
-                        )
-                    }
+                    shell.publish(
+                        Move {
+                            video: file.clone().video,
+                            pos,
+                        }
+                        .into(),
+                    )
                 }
                 shell.publish(
                     Interaction {
@@ -377,18 +374,18 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
                     self.deleted(shell)
                 }
                 // TODO use File input instead
-                if modifiers.contains(Modifiers::CTRL) && key.as_ref() == Key::Character("v") {
-                    if let Some(clipboard) =
+                if modifiers.contains(Modifiers::CTRL)
+                    && key.as_ref() == Key::Character("v")
+                    && let Some(clipboard) =
                         clipboard.read(iced::advanced::clipboard::Kind::Standard)
-                    {
-                        shell.publish(
-                            Move {
-                                video: Video::from(clipboard.as_str()),
-                                pos: 0,
-                            }
-                            .into(),
-                        )
-                    }
+                {
+                    shell.publish(
+                        Move {
+                            video: Video::from(clipboard.as_str()),
+                            pos: 0,
+                        }
+                        .into(),
+                    )
                 }
             }
             iced::Event::Mouse(event) => match event {
@@ -526,11 +523,11 @@ impl PlaylistWidgetState {
     pub fn replace_playlist(&mut self, playlist: Playlist) {
         self.playlist = playlist;
 
-        if let Some(video) = &self.selected {
-            if self.playlist.find(&video.video).is_none() {
-                self.selected = None;
-                self.interaction = FileInteraction::None;
-            }
+        if let Some(video) = &self.selected
+            && self.playlist.find(&video.video).is_none()
+        {
+            self.selected = None;
+            self.interaction = FileInteraction::None;
         }
     }
 

@@ -13,21 +13,21 @@ pub struct Chat;
 
 impl EventHandler for Chat {
     fn handle(&self, view: &mut RatatuiView, event: &Event) {
-        if let Event::Key(key) = event {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Esc => {
-                        view.app.set_mode(Mode::Normal);
-                        view.hover_highlight();
-                    }
-                    KeyCode::Down => view.app.chat_widget_state.previous(),
-                    KeyCode::Up => view.app.chat_widget_state.next(),
-                    KeyCode::PageUp => view.app.chat_widget_state.jump_next(5),
-                    KeyCode::PageDown => view.app.chat_widget_state.jump_previous(5),
-                    KeyCode::Home => view.app.chat_widget_state.jump_start(),
-                    KeyCode::End => view.app.chat_widget_state.jump_end(),
-                    _ => {}
+        if let Event::Key(key) = event
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Esc => {
+                    view.app.set_mode(Mode::Normal);
+                    view.hover_highlight();
                 }
+                KeyCode::Down => view.app.chat_widget_state.previous(),
+                KeyCode::Up => view.app.chat_widget_state.next(),
+                KeyCode::PageUp => view.app.chat_widget_state.jump_next(5),
+                KeyCode::PageDown => view.app.chat_widget_state.jump_previous(5),
+                KeyCode::Home => view.app.chat_widget_state.jump_start(),
+                KeyCode::End => view.app.chat_widget_state.jump_end(),
+                _ => {}
             }
         }
     }

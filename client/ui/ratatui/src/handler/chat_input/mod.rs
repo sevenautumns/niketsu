@@ -11,20 +11,20 @@ pub struct ChatInput;
 
 impl EventHandler for ChatInput {
     fn handle(&self, view: &mut RatatuiView, event: &Event) {
-        if let Event::Key(key) = event {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Esc => {
-                        view.app.set_mode(Mode::Normal);
-                        view.hover_highlight();
-                    }
-                    KeyCode::Enter => {
-                        let msg = view.app.chat_input_widget_state.get_input();
-                        view.model.send_message(msg);
-                        view.app.chat_input_widget_state.reset();
-                    }
-                    _ => view.app.chat_input_widget_state.input(*key),
+        if let Event::Key(key) = event
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Esc => {
+                    view.app.set_mode(Mode::Normal);
+                    view.hover_highlight();
                 }
+                KeyCode::Enter => {
+                    let msg = view.app.chat_input_widget_state.get_input();
+                    view.model.send_message(msg);
+                    view.app.chat_input_widget_state.reset();
+                }
+                _ => view.app.chat_input_widget_state.input(*key),
             }
         }
     }

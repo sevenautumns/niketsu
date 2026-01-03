@@ -178,9 +178,31 @@ static PLAYLIST_SEARCH: Lazy<HelpTab> = Lazy::new(|| HelpTab {
 static LOGIN: Lazy<HelpTab> = Lazy::new(|| HelpTab {
     description: "Login to a room".to_string(),
     items: vec![
-        vec!["Move up field".to_string(), "↑ <Arrow Up>".to_string()],
-        vec!["Move down field".to_string(), "↓ <Arrow Down>".to_string()],
+        vec![
+            "Move up field".to_string(),
+            "↑ <Arrow Up> | BackTab".to_string(),
+        ],
+        vec![
+            "Move down field".to_string(),
+            "↓ <Arrow Down> | Tab".to_string(),
+        ],
         vec!["Try connecting".to_string(), "⏎ <Enter>".to_string()],
+    ],
+});
+
+static SETTINGS: Lazy<HelpTab> = Lazy::new(|| HelpTab {
+    description: "Settings to configure".to_string(),
+    items: vec![
+        vec![
+            "Move up field".to_string(),
+            "↑ <Arrow Up> | BackTab".to_string(),
+        ],
+        vec![
+            "Move down field".to_string(),
+            "↓ <Arrow Down> | Tab".to_string(),
+        ],
+        vec!["Toggle on/off".to_string(), "␣ <Space>".to_string()],
+        vec!["Save settings".to_string(), "⏎ <Enter>".to_string()],
     ],
 });
 
@@ -220,6 +242,7 @@ pub enum HelpWidgetTab {
     PlaylistSearch,
     BrowserSearch,
     Login,
+    Settings,
     PlaylistBrowser,
 }
 
@@ -270,29 +293,7 @@ impl HelpWidgetState {
 
 impl OverlayWidgetState for HelpWidgetState {
     fn area(&self, r: Rect) -> Rect {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Percentage(20),
-                    Constraint::Min(30),
-                    Constraint::Percentage(20),
-                ]
-                .as_ref(),
-            )
-            .split(r);
-
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(
-                [
-                    Constraint::Percentage(20),
-                    Constraint::Min(70),
-                    Constraint::Percentage(20),
-                ]
-                .as_ref(),
-            )
-            .split(popup_layout[1])[1]
+        self.default_area(r)
     }
 }
 
@@ -317,6 +318,7 @@ impl StatefulWidget for HelpWidget {
             HelpWidgetTab::BrowserSearch => &BROWSER_SEARCH,
             HelpWidgetTab::PlaylistSearch => &PLAYLIST_SEARCH,
             HelpWidgetTab::Login => &LOGIN,
+            HelpWidgetTab::Settings => &SETTINGS,
             HelpWidgetTab::PlaylistBrowser => &PLAYLISTBROWSER,
         };
 

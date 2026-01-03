@@ -242,11 +242,11 @@ impl TcpServer {
             if line.len() <= 2 {
                 break;
             }
-            if let Ok((_, bounds)) = parse_range_header(&line) {
-                if let [first, ..] = bounds[..] {
-                    debug!(?first, "incoming request");
-                    return Ok(first);
-                }
+            if let Ok((_, bounds)) = parse_range_header(&line)
+                && let [first, ..] = bounds[..]
+            {
+                debug!(?first, "incoming request");
+                return Ok(first);
             }
         }
         Ok(Range::default())

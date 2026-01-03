@@ -1,6 +1,7 @@
 use niketsu_core::fuzzy::FuzzyEntry;
 use niketsu_core::util::FuzzyResult;
 use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Flex, Layout};
 use ratatui::prelude::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -29,6 +30,39 @@ pub(crate) mod users;
 
 pub trait OverlayWidgetState {
     fn area(&self, r: Rect) -> Rect;
+    fn default_area(&self, r: Rect) -> Rect {
+        let height = self.default_height(r);
+        let width = self.default_width(r);
+
+        let [area] = Layout::vertical([Constraint::Length(height)])
+            .flex(Flex::SpaceAround)
+            .areas(r);
+
+        let [popup_layout] = Layout::horizontal([Constraint::Length(width)])
+            .flex(Flex::SpaceAround)
+            .areas(area);
+        popup_layout
+    }
+    fn extended_area(&self, r: Rect) -> Rect {
+        let [area] = Layout::vertical([Constraint::Percentage(80)])
+            .flex(Flex::Center)
+            .areas(r);
+
+        let [popup_layout] = Layout::horizontal([Constraint::Percentage(80)])
+            .flex(Flex::Center)
+            .areas(area);
+        popup_layout
+    }
+    fn default_width(&self, r: Rect) -> u16 {
+        r.width / 2
+    }
+    fn default_height(&self, r: Rect) -> u16 {
+        match r.height {
+            0..=50 => 15,
+            51..=100 => 30,
+            _ => 60,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -138,7 +172,6 @@ impl Clone for TextAreaWrapper {
 
 impl From<(Option<String>, Option<String>, bool)> for TextAreaWrapper {
     fn from(value: (Option<String>, Option<String>, bool)) -> Self {
-        
         TextAreaWrapper {
             inner: TextArea::from(value.1),
             title: value.0,
@@ -239,7 +272,7 @@ impl TextAreaWrapper {
     }
 }
 
-fn color_hits<E>(result: &FuzzyResult<E>, style: Style) -> ListItem
+fn color_hits<E>(result: &'_ FuzzyResult<E>, style: Style) -> ListItem<'_>
 where
     E: FuzzyEntry,
 {

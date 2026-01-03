@@ -1,6 +1,5 @@
 use crossterm::event::KeyEvent;
 use niketsu_core::config::Config;
-use ratatui::layout::Flex;
 use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
 use ratatui::style::Stylize;
 use ratatui::text::Text;
@@ -102,22 +101,7 @@ impl LoginWidgetState {
 
 impl OverlayWidgetState for LoginWidgetState {
     fn area(&self, r: Rect) -> Rect {
-        let height = match r.height {
-            0..=50 => 15,
-            51..=100 => 30,
-            _ => 60,
-        };
-
-        let width = r.width / 2;
-
-        let [area] = Layout::vertical([Constraint::Length(height)])
-            .flex(Flex::Center)
-            .areas(r);
-
-        let [popup_layout] = Layout::horizontal([Constraint::Length(width)])
-            .flex(Flex::Center)
-            .areas(area);
-        popup_layout
+        self.default_area(r)
     }
 }
 

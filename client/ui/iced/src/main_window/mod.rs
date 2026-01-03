@@ -226,15 +226,14 @@ impl iced::advanced::Widget<Message, Theme, Renderer> for MainView<'_> {
             viewport,
         );
 
-        if let Status::Ignored = status {
-            if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        if let Status::Ignored = status
+            && let Event::Keyboard(iced::keyboard::Event::KeyPressed {
                 key: Key::Named(Named::Space),
                 ..
             }) = event
-            {
-                shell.publish(ToggleReady.into());
-                status = Status::Captured;
-            }
+        {
+            shell.publish(ToggleReady.into());
+            status = Status::Captured;
         }
 
         status

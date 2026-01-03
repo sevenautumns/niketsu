@@ -19,112 +19,111 @@ pub struct Playlist;
 
 impl EventHandler for Playlist {
     fn handle(&self, view: &mut RatatuiView, event: &Event) {
-        if let Event::Key(key) = event {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Esc => {
-                        view.app.set_mode(Mode::Normal);
-                        view.hover_highlight();
+        if let Event::Key(key) = event
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Esc => {
+                    view.app.set_mode(Mode::Normal);
+                    view.hover_highlight();
+                }
+                KeyCode::Enter => {
+                    if let Some(video) = view.app.playlist_widget_state.get_current_video() {
+                        view.select(video.clone())
                     }
-                    KeyCode::Enter => {
-                        if let Some(video) = view.app.playlist_widget_state.get_current_video() {
-                            view.select(video.clone())
-                        }
+                }
+                KeyCode::PageUp => view.app.playlist_widget_state.jump_next(5),
+                KeyCode::PageDown => view.app.playlist_widget_state.jump_previous(5),
+                KeyCode::Home => view.app.playlist_widget_state.jump_start(),
+                KeyCode::End => view.app.playlist_widget_state.jump_end(),
+                KeyCode::Up => {
+                    view.app.playlist_widget_state.next();
+                }
+                KeyCode::Down => {
+                    view.app.playlist_widget_state.previous();
+                }
+                KeyCode::Char('d') => {
+                    if let Some(index) = view.app.playlist_widget_state.yank_clipboard() {
+                        view.remove_range(index);
+                        view.app.playlist_widget_state.reset_offset();
                     }
-                    KeyCode::PageUp => view.app.playlist_widget_state.jump_next(5),
-                    KeyCode::PageDown => view.app.playlist_widget_state.jump_previous(5),
-                    KeyCode::Home => view.app.playlist_widget_state.jump_start(),
-                    KeyCode::End => view.app.playlist_widget_state.jump_end(),
-                    KeyCode::Up => {
-                        view.app.playlist_widget_state.next();
-                    }
-                    KeyCode::Down => {
-                        view.app.playlist_widget_state.previous();
-                    }
-                    KeyCode::Char('d') => {
-                        if let Some(index) = view.app.playlist_widget_state.yank_clipboard() {
-                            view.remove_range(index);
-                            view.app.playlist_widget_state.reset_offset();
-                        }
-                    }
-                    KeyCode::Char('x') => {
-                        view.app.playlist_widget_state.increase_selection_offset();
-                    }
-                    KeyCode::Char('y') => {
-                        view.app.playlist_widget_state.yank_clipboard();
-                    }
-                    KeyCode::Char('p') => {
-                        if let Some(clipboard) = view.app.playlist_widget_state.get_clipboard() {
-                            let index = match view.app.playlist_widget_state.selected() {
-                                Some(i) => i.saturating_add(1),
-                                None => 0,
-                            };
-                            view.append_at(index, clipboard);
+                }
+                KeyCode::Char('x') => {
+                    view.app.playlist_widget_state.increase_selection_offset();
+                }
+                KeyCode::Char('y') => {
+                    view.app.playlist_widget_state.yank_clipboard();
+                }
+                KeyCode::Char('p') => {
+                    if let Some(clipboard) = view.app.playlist_widget_state.get_clipboard() {
+                        let index = match view.app.playlist_widget_state.selected() {
+                            Some(i) => i.saturating_add(1),
+                            None => 0,
+                        };
+                        view.append_at(index, clipboard);
 
-                            if let Some(len) = view.app.playlist_widget_state.get_clipboard_length()
-                            {
-                                view.app.playlist_widget_state.increase_list_len(len);
-                                view.app.playlist_widget_state.previous();
-                                view.app
-                                    .playlist_widget_state
-                                    .increase_selection_offset_by(len.saturating_sub(1));
-                            }
-                        }
-                    }
-                    KeyCode::Char('f') => {
-                        if let Some(video) = view.app.playlist_widget_state.get_current_video() {
+                        if let Some(len) = view.app.playlist_widget_state.get_clipboard_length() {
+                            view.app.playlist_widget_state.increase_list_len(len);
+                            view.app.playlist_widget_state.previous();
                             view.app
-                                .video_name_widget_state
-                                .set_name(video.as_str().into());
-                            view.app.set_mode(Mode::Overlay);
-                            view.app
-                                .set_current_overlay_state(Some(OverlayState::from(VideoName {})));
+                                .playlist_widget_state
+                                .increase_selection_offset_by(len.saturating_sub(1));
                         }
                     }
-                    KeyCode::Char('r') => {
-                        if let Some(index) = view.app.playlist_widget_state.yank_clipboard() {
-                            view.reverse_range(index);
-                        }
-                    }
-                    KeyCode::Char('/') => {
+                }
+                KeyCode::Char('f') => {
+                    if let Some(video) = view.app.playlist_widget_state.get_current_video() {
+                        view.app
+                            .video_name_widget_state
+                            .set_name(video.as_str().into());
                         view.app.set_mode(Mode::Overlay);
                         view.app
-                            .set_current_overlay_state(Some(OverlayState::from(PlaylistSearch {})));
-                        view.app.search_playlist("".to_string());
+                            .set_current_overlay_state(Some(OverlayState::from(VideoName {})));
                     }
-                    KeyCode::Backspace => {
-                        view.app.playlist_widget_state.jump_to_playing_video();
-                    }
-                    KeyCode::Char('v') => {
-                        if key.modifiers == KeyModifiers::CONTROL {
-                            let content = view.app.get_clipboard();
-                            if let Ok(c) = content {
-                                if let Some(index) = view.app.playlist_widget_state.selected() {
-                                    view.insert(index + 1, &Video::from(c.as_str()));
-                                } else {
-                                    view.insert(0, &Video::from(c.as_str()));
-                                }
-                            }
-                        }
-                    }
-                    KeyCode::Char('c') => {
-                        if key.modifiers == KeyModifiers::CONTROL {
-                            let video = {
-                                let playlist_widget_state = &view.app.playlist_widget_state;
-                                playlist_widget_state
-                                    .get_current_video()
-                                    .map(|video| video.as_str().to_string())
-                            };
-
-                            if let Some(v) = video {
-                                if let Err(err) = view.app.set_clipboard(v.as_str()) {
-                                    warn!(?err, "Failed to copy file to clipboard");
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                KeyCode::Char('r') => {
+                    if let Some(index) = view.app.playlist_widget_state.yank_clipboard() {
+                        view.reverse_range(index);
+                    }
+                }
+                KeyCode::Char('/') => {
+                    view.app.set_mode(Mode::Overlay);
+                    view.app
+                        .set_current_overlay_state(Some(OverlayState::from(PlaylistSearch {})));
+                    view.app.search_playlist("".to_string());
+                }
+                KeyCode::Backspace => {
+                    view.app.playlist_widget_state.jump_to_playing_video();
+                }
+                KeyCode::Char('v') => {
+                    if key.modifiers == KeyModifiers::CONTROL {
+                        let content = view.app.get_clipboard();
+                        if let Ok(c) = content {
+                            if let Some(index) = view.app.playlist_widget_state.selected() {
+                                view.insert(index + 1, &Video::from(c.as_str()));
+                            } else {
+                                view.insert(0, &Video::from(c.as_str()));
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char('c') => {
+                    if key.modifiers == KeyModifiers::CONTROL {
+                        let video = {
+                            let playlist_widget_state = &view.app.playlist_widget_state;
+                            playlist_widget_state
+                                .get_current_video()
+                                .map(|video| video.as_str().to_string())
+                        };
+
+                        if let Some(v) = video
+                            && let Err(err) = view.app.set_clipboard(v.as_str())
+                        {
+                            warn!(?err, "Failed to copy file to clipboard");
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }

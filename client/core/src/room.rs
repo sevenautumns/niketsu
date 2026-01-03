@@ -22,7 +22,7 @@ impl UserList {
         self.list.iter().any(|status| status.name == *user)
     }
 
-    pub fn iter(&self) -> std::collections::btree_set::Iter<UserStatus> {
+    pub fn iter(&'_ self) -> std::collections::btree_set::Iter<'_, UserStatus> {
         self.list.iter()
     }
 

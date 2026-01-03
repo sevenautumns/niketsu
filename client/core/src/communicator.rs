@@ -392,14 +392,15 @@ impl EventHandler for SelectMsg {
             let store = model.database.all_files();
             model.player.load_video(video.clone(), self.position, store);
 
-            if model.config.auto_share && model.video_provider.sharing() {
-                if let Some(file) = model.database.find_file(video.as_str()) {
-                    model.video_provider.start_providing(file);
-                    let msg = VideoShareMsg::new(video.clone());
-                    model.communicator.send(msg.into());
-                    model.ui.video_share(true);
-                    sharing = true;
-                }
+            if model.config.auto_share
+                && model.video_provider.sharing()
+                && let Some(file) = model.database.find_file(video.as_str())
+            {
+                model.video_provider.start_providing(file);
+                let msg = VideoShareMsg::new(video.clone());
+                model.communicator.send(msg.into());
+                model.ui.video_share(true);
+                sharing = true;
             }
         } else {
             model.playlist.unload_playing();

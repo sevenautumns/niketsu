@@ -11,22 +11,22 @@ pub struct Users;
 
 impl EventHandler for Users {
     fn handle(&self, view: &mut RatatuiView, event: &Event) {
-        if let Event::Key(key) = event {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Esc => {
-                        view.app.set_mode(Mode::Normal);
-                        view.hover_highlight();
-                        view.app.users_widget_state.set_active(false)
-                    }
-                    KeyCode::Up => {
-                        view.app.users_widget_state.next();
-                    }
-                    KeyCode::Down => {
-                        view.app.users_widget_state.previous();
-                    }
-                    _ => {}
+        if let Event::Key(key) = event
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Esc => {
+                    view.app.set_mode(Mode::Normal);
+                    view.hover_highlight();
+                    view.app.users_widget_state.set_active(false)
                 }
+                KeyCode::Up => {
+                    view.app.users_widget_state.next();
+                }
+                KeyCode::Down => {
+                    view.app.users_widget_state.previous();
+                }
+                _ => {}
             }
         }
     }

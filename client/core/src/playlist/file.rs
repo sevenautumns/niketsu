@@ -186,6 +186,8 @@ impl PlaylistBrowser {
 
         tokio::task::spawn(async move {
             let permit = SAVE_PERMIT.acquire().await;
+
+            #[allow(clippy::collapsible_if)]
             if let Some(parent) = filepath.parent() {
                 if let Err(error) = tokio::fs::create_dir_all(parent).await {
                     tracing::error!(%error, "error creating directories");

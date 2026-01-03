@@ -17,53 +17,53 @@ pub struct Options;
 
 impl EventHandler for Options {
     fn handle(&self, view: &mut RatatuiView, event: &Event) {
-        if let Event::Key(key) = event {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Char('h') => view
-                        .app
-                        .set_current_overlay_state(Some(OverlayState::from(Help {}))),
-                    KeyCode::Char('l') => view
-                        .app
-                        .set_current_overlay_state(Some(OverlayState::from(Login {}))),
-                    KeyCode::Char('/') => {
-                        view.app
-                            .set_current_overlay_state(Some(OverlayState::from(BrowserSearch {})));
-                        view.app.search_browser("".to_string());
-                    }
-                    KeyCode::Char('c') => {
-                        view.app
-                            .set_current_overlay_state(Some(OverlayState::from(Settings {})));
-                    }
-                    KeyCode::Char('m') => view
-                        .app
-                        .set_current_overlay_state(Some(OverlayState::from(MediaDir {}))),
-                    KeyCode::Char('b') => view.app.set_current_overlay_state(Some(
-                        OverlayState::from(PlaylistBrowserOverlay {}),
-                    )),
-                    KeyCode::Char('r') => {
-                        view.model.user_ready_toggle();
-                        view.app.reset_overlay();
-                    }
-                    KeyCode::Char('f') => {
-                        view.model.video_share_toggle();
-                        view.app.reset_overlay();
-                    }
-                    KeyCode::Char('x') => {
-                        view.model.video_file_request();
-                        view.app.reset_overlay();
-                    }
-                    KeyCode::Char('s') => {
-                        view.model.start_db_update();
-                        view.app.reset_overlay();
-                    }
-                    KeyCode::Char('p') => {
-                        view.model.stop_db_update();
-                        view.app.reset_overlay();
-                    }
-                    _ => {
-                        view.app.reset_overlay();
-                    }
+        if let Event::Key(key) = event
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Char('h') => view
+                    .app
+                    .set_current_overlay_state(Some(OverlayState::from(Help {}))),
+                KeyCode::Char('l') => view
+                    .app
+                    .set_current_overlay_state(Some(OverlayState::from(Login {}))),
+                KeyCode::Char('/') => {
+                    view.app
+                        .set_current_overlay_state(Some(OverlayState::from(BrowserSearch {})));
+                    view.app.search_browser("".to_string());
+                }
+                KeyCode::Char('c') => {
+                    view.app
+                        .set_current_overlay_state(Some(OverlayState::from(Settings {})));
+                }
+                KeyCode::Char('m') => view
+                    .app
+                    .set_current_overlay_state(Some(OverlayState::from(MediaDir {}))),
+                KeyCode::Char('b') => view
+                    .app
+                    .set_current_overlay_state(Some(OverlayState::from(PlaylistBrowserOverlay {}))),
+                KeyCode::Char('r') => {
+                    view.model.user_ready_toggle();
+                    view.app.reset_overlay();
+                }
+                KeyCode::Char('f') => {
+                    view.model.video_share_toggle();
+                    view.app.reset_overlay();
+                }
+                KeyCode::Char('x') => {
+                    view.model.video_file_request();
+                    view.app.reset_overlay();
+                }
+                KeyCode::Char('s') => {
+                    view.model.start_db_update();
+                    view.app.reset_overlay();
+                }
+                KeyCode::Char('p') => {
+                    view.model.stop_db_update();
+                    view.app.reset_overlay();
+                }
+                _ => {
+                    view.app.reset_overlay();
                 }
             }
         }

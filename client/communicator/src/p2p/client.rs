@@ -101,12 +101,12 @@ impl ClientSwarmEventHandler for ping::Event {
             return;
         }
 
-        if let Some(conn) = handler.host_conn {
-            if self.connection == conn {
-                match self.result {
-                    Ok(d) => handler.delay = d,
-                    Err(error) => warn!(%error, "Failed to get ping rtt"),
-                }
+        if let Some(conn) = handler.host_conn
+            && self.connection == conn
+        {
+            match self.result {
+                Ok(d) => handler.delay = d,
+                Err(error) => warn!(%error, "Failed to get ping rtt"),
             }
         };
     }
@@ -276,11 +276,11 @@ impl ClientSwarmEventHandler for OutgoingConnectionError {
             return;
         };
 
-        if let Some(conn) = handler.host_conn {
-            if self.connection_id != conn {
-                warn!(%self.error, %self.connection_id, "Outgoing connection error with non-host. Ignoring");
-                return;
-            }
+        if let Some(conn) = handler.host_conn
+            && self.connection_id != conn
+        {
+            warn!(%self.error, %self.connection_id, "Outgoing connection error with non-host. Ignoring");
+            return;
         }
 
         if pid == handler.handler.host && !handler.handler.swarm.is_connected(&pid) {
