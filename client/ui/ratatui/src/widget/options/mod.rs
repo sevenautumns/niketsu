@@ -1,5 +1,6 @@
-use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
-use ratatui::text::{Line, Span};
+use ratatui::layout::Flex;
+use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::block::Block;
 use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget};
 
@@ -9,9 +10,13 @@ use super::OverlayWidgetState;
 
 pub struct OptionsWidget;
 
+// width and height depend on the widest entry and the number of items
 #[derive(Debug, Default, Clone)]
 pub struct OptionsWidgetState {
     theme: ThemeWrapper,
+    options: Text<'static>,
+    width: usize,
+    height: usize,
 }
 
 impl ThemedWidget for OptionsWidgetState {
@@ -22,33 +27,7 @@ impl ThemedWidget for OptionsWidgetState {
 
 impl OptionsWidgetState {
     pub fn new(theme: Theme) -> Self {
-        Self {
-            theme: ThemeWrapper::new(theme),
-        }
-    }
-}
-
-impl OverlayWidgetState for OptionsWidgetState {
-    fn area(&self, r: Rect) -> Rect {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(12)].as_ref())
-            .split(r);
-
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(1), Constraint::Length(31)].as_ref())
-            .split(popup_layout[1])[1]
-    }
-}
-
-impl StatefulWidget for OptionsWidget {
-    type State = OptionsWidgetState;
-
-    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let options_block = Block::default().title("Options").borders(Borders::ALL);
-
-        let options_overlay = Paragraph::new(vec![
+        let options = Text::from(vec![
             Line::from(vec![Span::raw(" h     Show help")]),
             Line::from(vec![Span::raw(" l     Open login")]),
             Line::from(vec![Span::raw(" c     Show settings")]),
@@ -60,9 +39,41 @@ impl StatefulWidget for OptionsWidget {
             Line::from(vec![Span::raw(" x     Start file request")]),
             Line::from(vec![Span::raw(" s     Start file db update")]),
             Line::from(vec![Span::raw(" p     Stop file db update")]),
-        ])
-        .style(state.theme.style())
-        .block(options_block);
+        ]);
+        // borders need to be considered
+        let width = options.width().saturating_add(2);
+        let height = options.height().saturating_add(1);
+        Self {
+            theme: ThemeWrapper::new(theme),
+            options,
+            width,
+            height,
+        }
+    }
+}
+
+impl OverlayWidgetState for OptionsWidgetState {
+    fn area(&self, r: Rect) -> Rect {
+        let [area] = Layout::vertical([Constraint::Length(self.height as u16)])
+            .flex(Flex::End)
+            .areas(r);
+
+        let [popup_layout] = Layout::horizontal([Constraint::Length(self.width as u16)])
+            .flex(Flex::End)
+            .areas(area);
+        popup_layout
+    }
+}
+
+impl StatefulWidget for OptionsWidget {
+    type State = OptionsWidgetState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let options_block = Block::default().title("Options").borders(Borders::ALL);
+
+        let options_overlay = Paragraph::new(state.options.clone())
+            .style(state.theme.style())
+            .block(options_block);
 
         options_overlay.render(area, buf);
     }

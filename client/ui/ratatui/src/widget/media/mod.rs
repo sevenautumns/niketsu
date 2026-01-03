@@ -1,5 +1,5 @@
 use delegate::delegate;
-use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
+use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::block::Block;
@@ -60,10 +60,11 @@ impl MediaDirWidgetState {
     }
 
     pub fn remove_path(&mut self) {
-        if let Some(i) = self.selected() {
-            if !self.media_paths.is_empty() && i < self.media_paths.len() {
-                _ = self.media_paths.remove(i);
-            }
+        if let Some(i) = self.selected()
+            && !self.media_paths.is_empty()
+            && i < self.media_paths.len()
+        {
+            _ = self.media_paths.remove(i);
         }
     }
 
@@ -92,29 +93,7 @@ impl MediaDirWidgetState {
 
 impl OverlayWidgetState for MediaDirWidgetState {
     fn area(&self, r: Rect) -> Rect {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Percentage(10),
-                    Constraint::Percentage(80),
-                    Constraint::Percentage(10),
-                ]
-                .as_ref(),
-            )
-            .split(r);
-
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(
-                [
-                    Constraint::Percentage(10),
-                    Constraint::Percentage(80),
-                    Constraint::Percentage(10),
-                ]
-                .as_ref(),
-            )
-            .split(popup_layout[1])[1]
+        self.extended_area(r)
     }
 }
 

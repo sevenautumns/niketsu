@@ -203,16 +203,16 @@ fn color_selection<'a>(
     state: &PlaylistWidgetState,
     highlight: bool,
 ) -> ListItem<'a> {
-    if let Some(playing_video) = &state.playing_video {
-        if video.eq(playing_video) {
-            let mut highlight_color = state.theme.style().yellow();
-            if highlight {
-                highlight_color = state.theme.highlight().yellow();
-            }
-
-            let video_text = format!("> {}", video.as_str());
-            return ListItem::new(vec![Line::styled(video_text, highlight_color)]);
+    if let Some(playing_video) = &state.playing_video
+        && video.eq(playing_video)
+    {
+        let mut highlight_color = state.theme.style().yellow();
+        if highlight {
+            highlight_color = state.theme.highlight().yellow();
         }
+
+        let video_text = format!("> {}", video.as_str());
+        return ListItem::new(vec![Line::styled(video_text, highlight_color)]);
     }
 
     match highlight {

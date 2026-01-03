@@ -1,6 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use niketsu_core::config::Config;
-use ratatui::layout::Flex;
 use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
 use ratatui::style::Stylize;
 use ratatui::text::Text;
@@ -133,22 +132,7 @@ impl SettingsWidgetState {
 
 impl OverlayWidgetState for SettingsWidgetState {
     fn area(&self, r: Rect) -> Rect {
-        let height = match r.height {
-            0..=50 => 20,
-            51..=100 => 30,
-            _ => 40,
-        };
-
-        let width = r.width / 2;
-
-        let [area] = Layout::vertical([Constraint::Length(height)])
-            .flex(Flex::Center)
-            .areas(r);
-
-        let [popup_layout] = Layout::horizontal([Constraint::Length(width)])
-            .flex(Flex::Center)
-            .areas(area);
-        popup_layout
+        self.default_area(r)
     }
 }
 
@@ -222,7 +206,12 @@ impl StatefulWidget for SettingsWidget {
     }
 }
 
-fn create_bool_button(condition: bool, highlight: bool, title: &str, theme: Theme) -> Paragraph {
+fn create_bool_button<'a>(
+    condition: bool,
+    highlight: bool,
+    title: &'a str,
+    theme: Theme,
+) -> Paragraph<'a> {
     let mut block = Block::default().title(title).borders(Borders::ALL);
     if highlight {
         block = block.border_style(theme.highlight_fg());
@@ -240,7 +229,12 @@ fn create_bool_button(condition: bool, highlight: bool, title: &str, theme: Them
     }
 }
 
-fn create_selection_button(name: String, title: &str, highlight: bool, theme: Theme) -> Paragraph {
+fn create_selection_button<'a>(
+    name: String,
+    title: &'a str,
+    highlight: bool,
+    theme: Theme,
+) -> Paragraph<'a> {
     let mut block = Block::default().title(title).borders(Borders::ALL);
     if highlight {
         block = block.style(theme.highlight_fg());

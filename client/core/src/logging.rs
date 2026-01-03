@@ -82,6 +82,7 @@ pub struct ChatLogger {
 
 impl ChatLogger {
     pub async fn recv(&mut self) -> PlayerMessage {
+        #[allow(clippy::collapsible_if)]
         if let Some(rx) = &mut self.rx {
             if let Some(message) = rx.recv().await {
                 return message;

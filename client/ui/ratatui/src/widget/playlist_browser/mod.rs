@@ -66,10 +66,10 @@ impl PlaylistBrowserWidgetState {
     }
 
     pub fn get_playlist(&self) -> Option<Playlist> {
-        if let Some(pos) = self.selected() {
-            if let Some(playlist) = self.fuzzy_result.get(pos) {
-                return Some(playlist.entry.playlist.get_playlist());
-            }
+        if let Some(pos) = self.selected()
+            && let Some(playlist) = self.fuzzy_result.get(pos)
+        {
+            return Some(playlist.entry.playlist.get_playlist());
         }
         None
     }
@@ -105,29 +105,7 @@ impl PlaylistBrowserWidgetState {
 
 impl OverlayWidgetState for PlaylistBrowserWidgetState {
     fn area(&self, r: Rect) -> Rect {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Percentage(10),
-                    Constraint::Percentage(80),
-                    Constraint::Percentage(10),
-                ]
-                .as_ref(),
-            )
-            .split(r);
-
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(
-                [
-                    Constraint::Percentage(10),
-                    Constraint::Percentage(80),
-                    Constraint::Percentage(10),
-                ]
-                .as_ref(),
-            )
-            .split(popup_layout[1])[1]
+        self.extended_area(r)
     }
 }
 

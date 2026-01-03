@@ -107,26 +107,26 @@ impl FileShareConsumer {
             return;
         };
 
-        if let Some(provider) = &self.request_providers {
-            if let Some(p) = provider.iter().next() {
-                debug!("Provider found");
-                self.current_request_provider = Some(*p);
+        if let Some(provider) = &self.request_providers
+            && let Some(p) = provider.iter().next()
+        {
+            debug!("Provider found");
+            self.current_request_provider = Some(*p);
 
-                if !base.swarm.is_connected(p) {
-                    let relayed_peer = base
-                        .relay_addr
-                        .clone()
-                        .with(Protocol::P2pCircuit)
-                        .with(Protocol::P2p(*p));
-                    if let Err(err) = base.swarm.dial(relayed_peer) {
-                        error!(?err, "Failed to dial file provider");
-                    }
+            if !base.swarm.is_connected(p) {
+                let relayed_peer = base
+                    .relay_addr
+                    .clone()
+                    .with(Protocol::P2pCircuit)
+                    .with(Protocol::P2p(*p));
+                if let Err(err) = base.swarm.dial(relayed_peer) {
+                    error!(?err, "Failed to dial file provider");
                 }
-
-                let req = FileShareRequest::File(request.clone());
-                base.swarm.send_file_request(p, req);
-                self.is_requesting = true;
             }
+
+            let req = FileShareRequest::File(request.clone());
+            base.swarm.send_file_request(p, req);
+            self.is_requesting = true;
         }
     }
 }
@@ -165,12 +165,12 @@ impl FileShareEventHandler for request_response::Event<FileShareRequest, FileSha
                 }
             },
             request_response::Event::OutboundFailure { request_id, .. } => {
-                if let Some(FileShare::Consumer(consumer)) = &mut handler.file_share {
-                    if consumer.chunk_requests.contains(&request_id) {
-                        handler.file_share.take();
-                        let msg = NiketsuMessage::VideoProviderStopped(Default::default());
-                        handler.message_sender.send(msg).unwrap();
-                    }
+                if let Some(FileShare::Consumer(consumer)) = &mut handler.file_share
+                    && consumer.chunk_requests.contains(&request_id)
+                {
+                    handler.file_share.take();
+                    let msg = NiketsuMessage::VideoProviderStopped(Default::default());
+                    handler.message_sender.send(msg).unwrap();
                 };
             }
             _ => {}

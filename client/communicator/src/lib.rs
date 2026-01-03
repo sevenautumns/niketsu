@@ -170,10 +170,10 @@ impl CommunicatorTrait for P2PCommunicator {
     }
 
     fn send(&mut self, msg: OutgoingMessage) {
-        if let Connection::Connected(con) = &mut self.connection {
-            if let Err(con) = con.send(msg.into()) {
-                self.connection = con
-            }
+        if let Connection::Connected(con) = &mut self.connection
+            && let Err(con) = con.send(msg.into())
+        {
+            self.connection = con
         }
     }
 

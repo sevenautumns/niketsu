@@ -73,18 +73,18 @@ impl ListNavigationState {
     }
 
     pub fn increase_selection_offset(&mut self) {
-        if let Some(i) = self.list_state.selected() {
-            if self.upper_offset.saturating_add(i) < self.list_len.saturating_sub(1) {
-                self.upper_offset += 1;
-            }
+        if let Some(i) = self.list_state.selected()
+            && self.upper_offset.saturating_add(i) < self.list_len.saturating_sub(1)
+        {
+            self.upper_offset += 1;
         };
     }
 
     pub fn increase_selection_offset_by(&mut self, size: usize) {
-        if let Some(i) = self.list_state.selected() {
-            if self.upper_offset.saturating_add(i).saturating_add(size) < self.list_len {
-                self.upper_offset += size;
-            }
+        if let Some(i) = self.list_state.selected()
+            && self.upper_offset.saturating_add(i).saturating_add(size) < self.list_len
+        {
+            self.upper_offset += size;
         };
     }
 

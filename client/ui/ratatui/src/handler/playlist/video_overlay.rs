@@ -12,10 +12,10 @@ pub struct VideoName;
 
 impl EventHandler for VideoName {
     fn handle(&self, view: &mut RatatuiView, event: &Event) {
-        if let Event::Key(key) = event {
-            if key.kind == KeyEventKind::Press {
-                view.app.reset_overlay();
-            }
+        if let Event::Key(key) = event
+            && key.kind == KeyEventKind::Press
+        {
+            view.app.reset_overlay();
         }
     }
 }

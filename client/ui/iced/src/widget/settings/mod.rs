@@ -267,22 +267,19 @@ impl iced::advanced::Widget<SettingsWidgetMessage, Theme, Renderer> for Settings
         shell: &mut iced::advanced::Shell<'_, SettingsWidgetMessage>,
         viewport: &iced::Rectangle,
     ) -> iced::event::Status {
-        if self.state.active {
-            if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
-                iced::mouse::Button::Left,
-            )) = event
-            {
-                if matches!(cursor, iced::mouse::Cursor::Available(_)) {
-                    shell.publish(Abort.into());
-                }
-            }
-            if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key: Key::Named(Named::Escape),
-                ..
-            }) = event
-            {
-                shell.publish(Abort.into());
-            }
+        if self.state.active
+            && let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) =
+                event
+            && matches!(cursor, iced::mouse::Cursor::Available(_))
+        {
+            shell.publish(Abort.into());
+        }
+        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Escape),
+            ..
+        }) = event
+        {
+            shell.publish(Abort.into());
         }
 
         self.button.as_widget_mut().on_event(

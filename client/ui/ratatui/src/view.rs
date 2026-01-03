@@ -348,35 +348,35 @@ impl RatatuiView {
     }
 
     fn handle_normal_event(&mut self, event: &Event) -> LoopControl {
-        if let Event::Key(key) = event {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Char('q') => return LoopControl::Break,
-                    KeyCode::Char(':') => {
-                        self.app.set_mode(Mode::Overlay);
-                        self.app
-                            .set_current_overlay_state(Some(OverlayState::from(Command {})));
-                        self.app.command_input_widget_state.set_active(true);
-                    }
-                    KeyCode::Enter => {
-                        self.app.set_mode(Mode::Inspecting);
-                        self.highlight();
-                    }
-                    KeyCode::Char(' ') => {
-                        self.app.set_mode(Mode::Overlay);
-                        self.app
-                            .set_current_overlay_state(Some(OverlayState::from(Options {})));
-                    }
-                    KeyCode::Char('?') => {
-                        self.app.set_mode(Mode::Overlay);
-                        self.app
-                            .set_current_overlay_state(Some(OverlayState::from(Help {})));
-                    }
-                    KeyCode::Right | KeyCode::Left | KeyCode::Down | KeyCode::Up => {
-                        self.app.state.clone().handle_next(self, key)
-                    }
-                    _ => {}
+        if let Event::Key(key) = event
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Char('q') => return LoopControl::Break,
+                KeyCode::Char(':') => {
+                    self.app.set_mode(Mode::Overlay);
+                    self.app
+                        .set_current_overlay_state(Some(OverlayState::from(Command {})));
+                    self.app.command_input_widget_state.set_active(true);
                 }
+                KeyCode::Enter => {
+                    self.app.set_mode(Mode::Inspecting);
+                    self.highlight();
+                }
+                KeyCode::Char(' ') => {
+                    self.app.set_mode(Mode::Overlay);
+                    self.app
+                        .set_current_overlay_state(Some(OverlayState::from(Options {})));
+                }
+                KeyCode::Char('?') => {
+                    self.app.set_mode(Mode::Overlay);
+                    self.app
+                        .set_current_overlay_state(Some(OverlayState::from(Help {})));
+                }
+                KeyCode::Right | KeyCode::Left | KeyCode::Down | KeyCode::Up => {
+                    self.app.state.clone().handle_next(self, key)
+                }
+                _ => {}
             }
         }
 

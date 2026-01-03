@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use delegate::delegate;
 use niketsu_core::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
 use niketsu_core::util::FuzzyResult;
-use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
+use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::block::Block;
@@ -163,29 +163,7 @@ where
     S: FuzzySearchable<E>,
 {
     fn area(&self, r: Rect) -> Rect {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Percentage(10),
-                    Constraint::Percentage(80),
-                    Constraint::Percentage(10),
-                ]
-                .as_ref(),
-            )
-            .split(r);
-
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(
-                [
-                    Constraint::Percentage(10),
-                    Constraint::Percentage(80),
-                    Constraint::Percentage(10),
-                ]
-                .as_ref(),
-            )
-            .split(popup_layout[1])[1]
+        self.extended_area(r)
     }
 }
 

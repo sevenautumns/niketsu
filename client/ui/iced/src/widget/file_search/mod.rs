@@ -186,14 +186,12 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
         shell: &mut iced::advanced::Shell<'_, FileSearchWidgetMessage>,
         viewport: &iced::Rectangle,
     ) -> iced::event::Status {
-        if self.state.active {
-            if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
-                iced::mouse::Button::Left,
-            )) = event
-            {
-                if matches!(cursor, iced::mouse::Cursor::Available(_)) {
-                    shell.publish(Close.into());
-                }
+        if self.state.active
+            && let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) =
+                event
+        {
+            if matches!(cursor, iced::mouse::Cursor::Available(_)) {
+                shell.publish(Close.into());
             }
             if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                 key: Key::Named(named),
@@ -228,10 +226,10 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
                 }
             }
 
-            if let Some(search) = &self.state.search {
-                if search.is_finished() {
-                    shell.publish(SearchFinished.into());
-                }
+            if let Some(search) = &self.state.search
+                && search.is_finished()
+            {
+                shell.publish(SearchFinished.into());
             }
         }
 
@@ -261,10 +259,9 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
                 key: Key::Named(named),
                 ..
             }) = event
+                && (matches!(named, Named::Enter) || matches!(named, Named::Escape))
             {
-                if matches!(named, Named::Enter) || matches!(named, Named::Escape) {
-                    return iced::event::Status::Ignored;
-                }
+                return iced::event::Status::Ignored;
             }
             status
         });

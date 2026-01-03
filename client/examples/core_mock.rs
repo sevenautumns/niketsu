@@ -104,7 +104,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
         self.change_file_data_base_status();
         self.change_file_database(i);
         self.change_playlist(i);
-        if i % 10 == 0 || i % 15 == 0 {
+        if i.is_multiple_of(10) || i.is_multiple_of(15) {
             self.change_user_list(i)
         }
     }
@@ -132,7 +132,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
     }
 
     fn change_user_list(&mut self, i: usize) {
-        let ready = i % 2 == 0;
+        let ready = i.is_multiple_of(2);
         let user = UserStatus {
             name: arcstr::format!("User{i}"),
             ready,
