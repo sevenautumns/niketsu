@@ -24,6 +24,8 @@ impl EventHandler for ChatInput {
                     view.model.send_message(msg);
                     view.app.chat_input_widget_state.reset();
                 }
+                KeyCode::Tab => view.transition_enter(State::from(Chat {})),
+                KeyCode::BackTab => view.transition_enter(State::from(Playlist {})),
                 _ => view.app.chat_input_widget_state.input(*key),
             }
         }
@@ -33,8 +35,8 @@ impl EventHandler for ChatInput {
 impl MainEventHandler for ChatInput {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
-            KeyCode::Up => view.transition(State::from(Chat {})),
-            KeyCode::Right => view.transition(State::from(Playlist {})),
+            KeyCode::Up | KeyCode::Tab => view.transition(State::from(Chat {})),
+            KeyCode::Right | KeyCode::BackTab => view.transition(State::from(Playlist {})),
             _ => {}
         }
     }

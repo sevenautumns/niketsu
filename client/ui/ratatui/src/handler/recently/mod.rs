@@ -41,13 +41,13 @@ impl EventHandler for Recently {
                         }
                     }
                 }
-                KeyCode::Right | KeyCode::Tab => {
-                    view.app.recently_widget_state.previous_frequency()
-                }
-                KeyCode::Left | KeyCode::BackTab => view.app.recently_widget_state.next_frequency(),
+                KeyCode::Right => view.app.recently_widget_state.previous_frequency(),
+                KeyCode::Left => view.app.recently_widget_state.next_frequency(),
                 KeyCode::Char('x') => {
                     view.app.recently_widget_state.increase_selection_offset();
                 }
+                KeyCode::Tab => view.transition_enter(State::from(Playlist {})),
+                KeyCode::BackTab => view.transition_enter(State::from(Users {})),
                 _ => {}
             }
         }
@@ -57,8 +57,8 @@ impl EventHandler for Recently {
 impl MainEventHandler for Recently {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
-            KeyCode::Down => view.transition(State::from(Playlist {})),
-            KeyCode::Left => view.transition(State::from(Users {})),
+            KeyCode::Down | KeyCode::Tab => view.transition(State::from(Playlist {})),
+            KeyCode::Left | KeyCode::BackTab => view.transition(State::from(Users {})),
             _ => {}
         }
     }

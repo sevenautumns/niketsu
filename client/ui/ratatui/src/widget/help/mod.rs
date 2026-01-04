@@ -23,6 +23,8 @@ static GENERAL: Lazy<HelpTab> = Lazy::new(|| HelpTab {
         vec!["Move right".to_string(), "→ <Arrow Right>".to_string()],
         vec!["Move up".to_string(), "↑ <Arrow Up>".to_string()],
         vec!["Move down".to_string(), "↓ <Arrow Down>".to_string()],
+        vec!["Move next".to_string(), "<Tab>".to_string()],
+        vec!["Move previous".to_string(), "<BackTab>".to_string()],
         vec!["Enter options".to_string(), "␣ <Space>".to_string()],
         vec![
             "Enter widget selection".to_string(),
@@ -68,13 +70,18 @@ static CHAT: Lazy<HelpTab> = Lazy::new(|| HelpTab {
 static RECENTLY: Lazy<HelpTab> = Lazy::new(|| HelpTab {
     description: "Shows recently added videos (monthly, weekly or daily)".to_string(),
     items: vec![
+        vec!["Next timespan".to_string(), "→ <Arrow Right>".to_string()],
+        vec![
+            "Previous timespan".to_string(),
+            "← <Arrow Left>".to_string(),
+        ],
         vec!["Goto first file".to_string(), "⇱ <Home>".to_string()],
         vec!["Goto last file".to_string(), "⇲ <End>".to_string()],
         vec!["Move up".to_string(), "↑ <Arrow Up>".to_string()],
         vec!["Move down".to_string(), "↓ <Arrow Down>".to_string()],
         vec!["Move up 5 files".to_string(), "⇞ <Page Up>".to_string()],
         vec!["Move down 5 files".to_string(), "⇟ <Page Down>".to_string()],
-        vec!["Move to next timespan".to_string(), "↹ <Tab>".to_string()],
+        vec!["Move to next timespan".to_string(), "<Tab>".to_string()],
         vec!["Move selection down".to_string(), "<x>".to_string()],
         vec![
             "Push selection into playlist".to_string(),
@@ -182,11 +189,11 @@ static LOGIN: Lazy<HelpTab> = Lazy::new(|| HelpTab {
     items: vec![
         vec![
             "Move up field".to_string(),
-            "↑ <Arrow Up> | BackTab".to_string(),
+            "↑ <Arrow Up> | <BackTab>".to_string(),
         ],
         vec![
             "Move down field".to_string(),
-            "↓ <Arrow Down> | Tab".to_string(),
+            "↓ <Arrow Down> | <Tab>".to_string(),
         ],
         vec!["Try connecting".to_string(), "⏎ <Enter>".to_string()],
     ],
@@ -197,11 +204,11 @@ static SETTINGS: Lazy<HelpTab> = Lazy::new(|| HelpTab {
     items: vec![
         vec![
             "Move up field".to_string(),
-            "↑ <Arrow Up> | BackTab".to_string(),
+            "↑ <Arrow Up> | <BackTab>".to_string(),
         ],
         vec![
             "Move down field".to_string(),
-            "↓ <Arrow Down> | Tab".to_string(),
+            "↓ <Arrow Down> | <Tab>".to_string(),
         ],
         vec!["Toggle on/off".to_string(), "␣ <Space>".to_string()],
         vec!["Save settings".to_string(), "⏎ <Enter>".to_string()],

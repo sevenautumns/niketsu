@@ -355,34 +355,44 @@ impl RatatuiView {
         {
             match key.code {
                 KeyCode::Char('q') => return LoopControl::Break,
-                KeyCode::Char(':') => {
-                    self.app.set_mode(Mode::Overlay);
-                    self.app
-                        .set_current_overlay_state(Some(OverlayState::from(Command {})));
-                    self.app.command_input_widget_state.set_active(true);
-                }
-                KeyCode::Enter => {
-                    self.app.set_mode(Mode::Inspecting);
-                    self.highlight();
-                }
-                KeyCode::Char(' ') => {
-                    self.app.set_mode(Mode::Overlay);
-                    self.app
-                        .set_current_overlay_state(Some(OverlayState::from(Options {})));
-                }
-                KeyCode::Char('?') => {
-                    self.app.set_mode(Mode::Overlay);
-                    self.app
-                        .set_current_overlay_state(Some(OverlayState::from(Help {})));
-                }
-                KeyCode::Right | KeyCode::Left | KeyCode::Down | KeyCode::Up => {
-                    self.app.state.clone().handle_next(self, key)
-                }
-                _ => {}
+                KeyCode::Char(':') => self.enter_command_overlay(),
+                KeyCode::Enter => self.enter_widget(),
+                KeyCode::Char(' ') => self.enter_options(),
+                KeyCode::Char('?') => self.enter_help(),
+                _ => self.app.state.clone().handle_next(self, key),
             }
         }
 
         LoopControl::Continue
+    }
+
+    fn enter_command_overlay(&mut self) {
+        self.app.set_mode(Mode::Overlay);
+        self.app
+            .set_current_overlay_state(Some(OverlayState::from(Command {})));
+        self.app.command_input_widget_state.set_active(true);
+    }
+
+    pub fn transition_enter(&mut self, state: State) {
+        self.transition(state);
+        self.enter_widget();
+    }
+
+    fn enter_widget(&mut self) {
+        self.app.set_mode(Mode::Inspecting);
+        self.highlight();
+    }
+
+    fn enter_options(&mut self) {
+        self.app.set_mode(Mode::Overlay);
+        self.app
+            .set_current_overlay_state(Some(OverlayState::from(Options {})));
+    }
+
+    fn enter_help(&mut self) {
+        self.app.set_mode(Mode::Overlay);
+        self.app
+            .set_current_overlay_state(Some(OverlayState::from(Help {})));
     }
 
     fn handle_notify(&mut self) {
