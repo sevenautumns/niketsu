@@ -56,9 +56,8 @@ pub trait OverlayWidgetState {
     }
     fn default_height(&self, r: Rect) -> u16 {
         match r.height {
-            0..=50 => 15,
-            51..=100 => 30,
-            _ => 60,
+            0..=40 => r.height,
+            _ => r.height / 2,
         }
     }
 }
