@@ -1,9 +1,8 @@
 use niketsu_core::file_database::FileStore;
-use ratatui::prelude::{Buffer, Rect};
-use ratatui::style::Stylize;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui::text::Span;
-use ratatui::widgets::block::{Block, Title};
-use ratatui::widgets::{Borders, Gauge, Padding, StatefulWidget, Widget};
+use ratatui::widgets::{Block, Borders, Gauge, Padding, StatefulWidget, Widget};
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
@@ -45,7 +44,7 @@ impl StatefulWidget for DatabaseWidget {
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let gauge_block = Block::default()
             .style(state.theme.style())
-            .title(Title::from("Database"))
+            .title("Database")
             .padding(Padding::horizontal(2))
             .borders(Borders::ALL);
 

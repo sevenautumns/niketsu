@@ -1,5 +1,4 @@
-use ratatui::prelude::{Buffer, Rect};
-use ratatui::widgets::StatefulWidget;
+use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
 use tui_textarea::Input;
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};

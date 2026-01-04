@@ -51,7 +51,9 @@ impl Default for Config {
 }
 
 fn get_username() -> ArcStr {
-    whoami::username().into()
+    whoami::username()
+        .unwrap_or_else(|_| "unknown".into())
+        .into()
 }
 
 fn bootstrap_relay() -> String {

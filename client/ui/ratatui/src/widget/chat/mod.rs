@@ -3,13 +3,13 @@ use std::sync::Arc;
 use niketsu_core::ui::PlayerMessage;
 use niketsu_core::user::UserStatus;
 use niketsu_core::util::RingBuffer;
-use ratatui::prelude::{Buffer, Margin, Rect};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Margin, Rect};
 use ratatui::style::Stylize;
 use ratatui::symbols::scrollbar;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::block::{Block, Title};
 use ratatui::widgets::{
-    Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+    Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
 };
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
@@ -147,7 +147,7 @@ impl StatefulWidget for ChatWidget {
 
         let messages_block = Block::default()
             .style(style)
-            .title(Title::from("Chat"))
+            .title("Chat")
             .borders(Borders::ALL);
 
         let messages_len = messages.len();

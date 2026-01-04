@@ -1,8 +1,8 @@
 use std::cmp::max;
 
-use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
-use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget, Wrap};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::widgets::{Block, Borders, Paragraph, StatefulWidget, Widget, Wrap};
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 use crate::widget::OverlayWidgetState;
@@ -49,29 +49,25 @@ impl OverlayWidgetState for VideoNameWidgetState {
         let length = max(name_len / width + 3, 3);
         let length_sides = (r.height - length) / 2;
 
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Max(length_sides),
-                    Constraint::Length(length),
-                    Constraint::Min(length_sides),
-                ]
-                .as_ref(),
-            )
-            .split(r);
+        let popup_layout = Layout::vertical(
+            [
+                Constraint::Max(length_sides),
+                Constraint::Length(length),
+                Constraint::Min(length_sides),
+            ]
+            .as_ref(),
+        )
+        .split(r);
 
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(
-                [
-                    Constraint::Percentage(width_sides),
-                    Constraint::Min(width),
-                    Constraint::Percentage(width_sides),
-                ]
-                .as_ref(),
-            )
-            .split(popup_layout[1])[1]
+        Layout::horizontal(
+            [
+                Constraint::Percentage(width_sides),
+                Constraint::Min(width),
+                Constraint::Percentage(width_sides),
+            ]
+            .as_ref(),
+        )
+        .split(popup_layout[1])[1]
     }
 }
 

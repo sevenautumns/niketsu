@@ -1,10 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use niketsu_core::config::Config;
-use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
-use ratatui::style::Stylize;
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Text;
-use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget};
+use ratatui::widgets::{Block, Borders, Paragraph, StatefulWidget, Widget};
 
 use crate::theme::{Theme, ThemeSelection, ThemeWrapper, ThemedWidget};
 

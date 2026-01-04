@@ -23,7 +23,9 @@ use niketsu_core::playlist::Video;
 use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::room::RoomName;
 use niketsu_core::ui::{RoomChange, SettingsChange, UiModel, UserInterface};
-use ratatui::prelude::*;
+use ratatui::layout::{Constraint, Layout};
+use ratatui::prelude::CrosstermBackend;
+use ratatui::{Frame, Terminal};
 use tokio::task::JoinHandle;
 use tracing::warn;
 
@@ -434,39 +436,32 @@ impl RatatuiView {
 
     fn render(f: &mut Frame, app: &mut App) {
         let area = f.area();
-        let main_vertical_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
-            .split(area);
+        let main_vertical_chunks =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(1)].as_ref()).split(area);
 
-        let horizontal_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-            .split(main_vertical_chunks[0]);
+        let horizontal_chunks =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                .split(main_vertical_chunks[0]);
 
-        let vertical_left_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Percentage(25),
-                    Constraint::Min(5),
-                    Constraint::Length(4),
-                ]
-                .as_ref(),
-            )
-            .split(horizontal_chunks[0]);
+        let vertical_left_chunks = Layout::vertical(
+            [
+                Constraint::Percentage(25),
+                Constraint::Min(5),
+                Constraint::Length(4),
+            ]
+            .as_ref(),
+        )
+        .split(horizontal_chunks[0]);
 
-        let vertical_right_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Length(3),
-                    Constraint::Percentage(25),
-                    Constraint::Min(3),
-                ]
-                .as_ref(),
-            )
-            .split(horizontal_chunks[1]);
+        let vertical_right_chunks = Layout::vertical(
+            [
+                Constraint::Length(3),
+                Constraint::Percentage(25),
+                Constraint::Min(3),
+            ]
+            .as_ref(),
+        )
+        .split(horizontal_chunks[1]);
 
         f.render_stateful_widget(
             DatabaseWidget,

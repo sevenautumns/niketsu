@@ -1,11 +1,13 @@
 use delegate::delegate;
 use niketsu_core::playlist::{Playlist, Video};
-use ratatui::prelude::{Buffer, Margin, Rect};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Margin, Rect};
 use ratatui::style::Stylize;
 use ratatui::symbols::scrollbar;
 use ratatui::text::Line;
-use ratatui::widgets::block::{Block, Title};
-use ratatui::widgets::{Borders, List, ListItem, Scrollbar, ScrollbarOrientation, StatefulWidget};
+use ratatui::widgets::{
+    Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, StatefulWidget,
+};
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
@@ -136,7 +138,7 @@ impl StatefulWidget for PlaylistWidget {
 
         let scroll_block = Block::default()
             .title_top(video_share.right_aligned())
-            .title(Title::from("Playlist"))
+            .title("Playlist")
             .title_bottom(Line::from(format!("({})", state.playlist.len())).right_aligned())
             .borders(Borders::ALL)
             .style(style);

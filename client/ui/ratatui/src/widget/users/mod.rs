@@ -1,12 +1,11 @@
 use niketsu_core::room::UserList;
 use niketsu_core::user::UserStatus;
-use ratatui::prelude::{Buffer, Margin, Rect};
-use ratatui::style::Stylize;
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Margin, Rect};
 use ratatui::symbols::scrollbar;
 use ratatui::text::Line;
-use ratatui::widgets::block::{Block, Title};
 use ratatui::widgets::{
-    Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+    Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
 };
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
@@ -110,10 +109,7 @@ impl StatefulWidget for UsersWidget {
 
         let messages_block = Block::default()
             .style(style)
-            .title(Title::from(format!(
-                "Users in room {}",
-                state.user_list.get_room_name()
-            )))
+            .title(format!("Users in room {}", state.user_list.get_room_name()))
             .title_bottom(Line::from(format!("({})", state.user_list.len())).right_aligned())
             .borders(Borders::ALL);
 
