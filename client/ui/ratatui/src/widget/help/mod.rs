@@ -1,7 +1,9 @@
 use once_cell::sync::Lazy;
-use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
-use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, Cell, Padding, Row, StatefulWidget, Table, Widget};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::widgets::{
+    Block, Borders, Cell, Padding, Paragraph, Row, StatefulWidget, Table, Widget,
+};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
 use crate::handler::State;
@@ -322,7 +324,7 @@ impl StatefulWidget for HelpWidget {
             HelpWidgetTab::PlaylistBrowser => &PLAYLISTBROWSER,
         };
 
-        let description = &help_page.description;
+        let description = Paragraph::new(help_page.description.as_str()).style(state.theme.style());
         let layout = Layout::default()
             .constraints([Constraint::Length(1), Constraint::Min(3)].as_ref())
             .horizontal_margin(1)
@@ -333,9 +335,7 @@ impl StatefulWidget for HelpWidget {
         let width_col2 = 25;
         let max_width = width_col1 + width_col2;
 
-        let table_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(max_width), Constraint::Min(0)])
+        let table_layout = Layout::horizontal([Constraint::Length(max_width), Constraint::Min(0)])
             .split(layout[1]);
 
         let rows = help_page.items.iter().map(|line| {

@@ -2,11 +2,11 @@ use delegate::delegate;
 use niketsu_core::playlist::Playlist;
 use niketsu_core::playlist::file::{NamedPlaylist, PlaylistBrowser};
 use niketsu_core::util::FuzzyResult;
-use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, List, ListItem, Padding, StatefulWidget, Widget};
+use ratatui::widgets::{Block, Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
@@ -121,10 +121,9 @@ impl StatefulWidget for PlaylistBrowserWidget {
             .borders(Borders::ALL)
             .style(style);
 
-        let horizontal_blocks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-            .split(area);
+        let horizontal_blocks =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                .split(area);
 
         let left_layout = Layout::default()
             .constraints(

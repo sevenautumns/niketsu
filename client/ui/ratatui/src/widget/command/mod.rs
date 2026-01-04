@@ -1,5 +1,8 @@
-use ratatui::prelude::{Buffer, Constraint, Direction, Layout, Rect};
-use ratatui::widgets::{Paragraph, StatefulWidget, Widget};
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Layout, Rect},
+    widgets::{Paragraph, StatefulWidget, Widget},
+};
 use tui_textarea::Input;
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
@@ -57,10 +60,8 @@ impl StatefulWidget for CommandInputWidget {
             false => "".to_string(),
         };
 
-        let horizontal_split = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(1), Constraint::Min(2)].as_ref())
-            .split(area);
+        let horizontal_split =
+            Layout::horizontal([Constraint::Length(1), Constraint::Min(2)].as_ref()).split(area);
 
         let input_field = state
             .input_field

@@ -3,11 +3,11 @@ use std::time::{Duration, SystemTime};
 
 use delegate::delegate;
 use niketsu_core::file_database::{FileEntry, FileStore};
-use ratatui::prelude::{Buffer, Rect};
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::widgets::block::{Block, Title};
-use ratatui::widgets::{Borders, List, ListItem, StatefulWidget};
+use ratatui::widgets::{Block, Borders, List, ListItem, StatefulWidget};
 use strum::{Display, EnumCount, EnumIter, FromRepr};
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
@@ -196,10 +196,7 @@ impl StatefulWidget for RecentlyWidget {
             .title_bottom(Line::from(format!("({})", state.len())).right_aligned())
             .borders(Borders::ALL)
             .style(state.theme.style())
-            .title(Title::from(format!(
-                "Recently added videos ({})",
-                state.frequency
-            )));
+            .title(format!("Recently added videos ({})", state.frequency));
 
         let video_list = List::new(recently_added)
             .gray()

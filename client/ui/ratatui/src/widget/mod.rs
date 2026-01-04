@@ -1,15 +1,13 @@
+use crate::theme::Theme;
 use niketsu_core::fuzzy::FuzzyEntry;
 use niketsu_core::util::FuzzyResult;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Flex, Layout};
-use ratatui::prelude::Rect;
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, ListItem, ListState, Widget};
+use ratatui::widgets::Widget;
+use ratatui::widgets::{Block, Borders, ListItem, ListState};
 use tui_textarea::{Input, TextArea};
-
-use crate::theme::Theme;
 
 pub(crate) mod chat;
 pub(crate) mod chat_input;
@@ -206,8 +204,11 @@ impl TextAreaWrapper {
 
     fn highlight(&mut self, block_style: Style, cursor_style: Style) {
         self.inner.set_tab_length(2);
-        self.inner
-            .set_style(self.inner.style().remove_modifier(Modifier::DIM));
+        self.inner.set_style(
+            self.inner
+                .style()
+                .remove_modifier(ratatui::style::Modifier::DIM),
+        );
         self.inner.set_cursor_style(cursor_style);
         self.with_block_style(block_style);
     }

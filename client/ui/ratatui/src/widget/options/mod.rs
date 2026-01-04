@@ -1,8 +1,7 @@
-use ratatui::layout::Flex;
-use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, Paragraph, StatefulWidget, Widget};
+use ratatui::widgets::{Block, Borders, Paragraph, StatefulWidget, Widget};
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 

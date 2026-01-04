@@ -24,16 +24,16 @@ itertools.workspace = true
 async-trait.workspace = true
 ordered-float.workspace = true
 rayon.workspace = true
-serde_with = "3.0"
+serde_with = "3.16"
 fuzzy-matcher = "0.3"
 futures = "0.3"
 num-traits = "0.2"
-whoami = "1.4"
+whoami = "2.0"
 toml = "0.9"
 serde_yaml = "0.9"
-typed-builder = "0.21"
-uuid = { version = "1.14.0", features = [ "v4", "serde", "fast-rng" ] } 
+typed-builder = "0.23"
+uuid = { version = "1.19.0", features = [ "v4", "serde", "fast-rng" ] } 
 
 [dev-dependencies]
-tempfile = "3.6"
-mockall = "0.13"
+tempfile = "3.24"
+mockall = "0.14"

@@ -10,15 +10,15 @@ release = false
 
 [dependencies]
 serde.workspace = true
-serde_with = "3.0"
+serde_with = "3.16"
 toml = "0.9"
 clap.workspace = true
 strum.workspace = true
 once_cell.workspace = true
-async-std = { version = "1.12", features = ["attributes"] }
+async-std = { version = "1.13", features = ["attributes"] }
 anyhow.workspace = true
 async-trait.workspace = true
-futures = "0.3.30"
+futures = "0.3.31"
 bcrypt = "0.17"
 libp2p = { workspace = true, features = [ "tokio", "noise", "macros", "ping", "tcp", "identify", "yamux", "relay", "quic", "serde", "cbor", "request-response", "macros" ] }
 tracing.workspace = true

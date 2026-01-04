@@ -1,9 +1,9 @@
 use delegate::delegate;
-use ratatui::prelude::{Buffer, Constraint, Layout, Rect};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::widgets::block::Block;
-use ratatui::widgets::{Borders, List, ListItem, Padding, StatefulWidget, Widget};
+use ratatui::widgets::{Block, Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
 
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
