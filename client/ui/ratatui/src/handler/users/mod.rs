@@ -26,6 +26,8 @@ impl EventHandler for Users {
                 KeyCode::Down => {
                     view.app.users_widget_state.previous();
                 }
+                KeyCode::Tab => view.transition_enter(State::from(Recently {})),
+                KeyCode::BackTab => view.transition_enter(State::from(Chat {})),
                 _ => {}
             }
         }
@@ -35,8 +37,8 @@ impl EventHandler for Users {
 impl MainEventHandler for Users {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
-            KeyCode::Down => view.transition(State::from(Chat {})),
-            KeyCode::Right => view.transition(State::from(Recently {})),
+            KeyCode::Down | KeyCode::BackTab => view.transition(State::from(Chat {})),
+            KeyCode::Right | KeyCode::Tab => view.transition(State::from(Recently {})),
             _ => {}
         }
     }

@@ -27,6 +27,8 @@ impl EventHandler for Chat {
                 KeyCode::PageDown => view.app.chat_widget_state.jump_previous(5),
                 KeyCode::Home => view.app.chat_widget_state.jump_start(),
                 KeyCode::End => view.app.chat_widget_state.jump_end(),
+                KeyCode::Tab => view.transition_enter(State::from(Users {})),
+                KeyCode::BackTab => view.transition_enter(State::from(Playlist {})),
                 _ => {}
             }
         }
@@ -36,9 +38,9 @@ impl EventHandler for Chat {
 impl MainEventHandler for Chat {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
-            KeyCode::Up => view.transition(State::from(Users {})),
+            KeyCode::Up | KeyCode::Tab => view.transition(State::from(Users {})),
             KeyCode::Down => view.transition(State::from(ChatInput {})),
-            KeyCode::Right => view.transition(State::from(Playlist {})),
+            KeyCode::Right | KeyCode::BackTab => view.transition(State::from(Playlist {})),
             _ => {}
         }
     }

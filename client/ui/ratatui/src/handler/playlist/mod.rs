@@ -123,6 +123,8 @@ impl EventHandler for Playlist {
                         }
                     }
                 }
+                KeyCode::Tab => view.transition_enter(State::from(Chat {})),
+                KeyCode::BackTab => view.transition_enter(State::from(Recently {})),
                 _ => {}
             }
         }
@@ -132,8 +134,8 @@ impl EventHandler for Playlist {
 impl MainEventHandler for Playlist {
     fn handle_next(&self, view: &mut RatatuiView, event: &KeyEvent) {
         match event.code {
-            KeyCode::Up => view.transition(State::from(Recently {})),
-            KeyCode::Left => view.transition(State::from(Chat {})),
+            KeyCode::Up | KeyCode::BackTab => view.transition(State::from(Recently {})),
+            KeyCode::Left | KeyCode::Tab => view.transition(State::from(Chat {})),
             _ => {}
         }
     }
