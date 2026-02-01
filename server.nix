@@ -39,7 +39,7 @@
     settings.PasswordAuthentication = false;
   };
 
-  servics.owncast = {
+  services.owncast = {
     enable = true;
     listen = "0.0.0.0";
     openFirewall = true;
