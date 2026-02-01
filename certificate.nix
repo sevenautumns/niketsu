@@ -1,5 +1,9 @@
-{ pkgs, ... }: {
-  networking.firewall.allowedTCPPorts = [ 80 443 ];
+{ pkgs, ... }:
+{
+  networking.firewall.allowedTCPPorts = [
+    80
+    443
+  ];
 
   services.nginx = {
     enable = true;
@@ -28,4 +32,3 @@
     defaults.email = "sven@autumnal.de";
   };
 }
-

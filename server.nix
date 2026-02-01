@@ -9,6 +9,7 @@
     (modulesPath + "/profiles/qemu-guest.nix")
     ./niketsu.nix
     ./certificate.nix
+    ./galene.nix
   ];
 
   boot.loader.grub.enable = true;
@@ -37,12 +38,6 @@
   services.openssh = {
     enable = true;
     settings.PasswordAuthentication = false;
-  };
-
-  services.owncast = {
-    enable = true;
-    listen = "0.0.0.0";
-    openFirewall = true;
   };
 
   nix.gc.automatic = true;
