@@ -9,7 +9,7 @@
     (modulesPath + "/profiles/qemu-guest.nix")
     ./niketsu.nix
     ./certificate.nix
-    ./galene.nix
+    ./mediamtx.nix
   ];
 
   boot.loader.grub.enable = true;
