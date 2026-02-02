@@ -10,6 +10,7 @@
     ./niketsu.nix
     ./certificate.nix
     ./mediamtx.nix
+    ./teamspeak.nix
   ];
 
   boot.loader.grub.enable = true;
