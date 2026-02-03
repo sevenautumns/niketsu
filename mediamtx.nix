@@ -39,6 +39,20 @@
       authMethod = "internal";
       authInternalUsers = [
         {
+          user = "any";
+          pass = "";
+          permissions = [
+            {
+              action = "read";
+              path = "";
+            }
+            {
+              action = "playback";
+              path = "";
+            }
+          ];
+        }
+        {
           user = "default";
           pass = "sha256:rEIQz+qRia/cJR+A5WFIYI/i4ZOotrm+XOaQkiGTDOU=";
           permissions = [

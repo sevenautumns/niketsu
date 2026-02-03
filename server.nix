@@ -11,6 +11,7 @@
     ./certificate.nix
     ./mediamtx.nix
     ./teamspeak.nix
+    ./murmur.nix
   ];
 
   boot.loader.grub.enable = true;
