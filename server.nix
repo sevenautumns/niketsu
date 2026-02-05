@@ -12,6 +12,7 @@
     ./mediamtx.nix
     ./teamspeak.nix
     ./murmur.nix
+    ./autumnal-portal.nix
   ];
 
   boot.loader.grub.enable = true;

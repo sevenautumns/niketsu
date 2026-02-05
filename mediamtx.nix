@@ -50,6 +50,10 @@
               action = "playback";
               path = "";
             }
+            {
+              action = "api";
+              path = "";
+            }
           ];
         }
         {
@@ -73,6 +77,7 @@
       ];
 
       api = true;
+      apiAddress = "127.0.0.1:9997";
       webrtc = true;
       webrtcAddress = ":8889";
       webrtcLocalUDPAddress = ":8189";
@@ -91,6 +96,13 @@
     };
   };
 
-  networking.firewall.allowedUDPPorts = [ 8189 ];
-  networking.firewall.allowedTCPPorts = [ 8554 ];
+  networking.firewall.allowedUDPPorts = [
+    8189
+    9997
+  ];
+  networking.firewall.allowedTCPPorts = [
+    9997
+    1935
+    8554
+  ];
 }

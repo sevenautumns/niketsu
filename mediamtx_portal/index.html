@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Watching: {{.Path}}</title>
+    <style>
+        :root {
+            --bg-color: #0f0f0f;
+            --card-bg: #1a1a1a;
+            --accent: #00d4ff;
+            --text: #efefef;
+        }
+
+        body { 
+            background: var(--bg-color); 
+            color: var(--text); 
+            font-family: 'Segoe UI', system-ui, sans-serif; 
+            margin: 0; 
+            padding: 20px;
+            overflow-x: hidden;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+
+        h2 { margin: 0; color: var(--accent); font-weight: 400; }
+        
+        #status { font-size: 0.9rem; color: #888; }
+
+        #grid { 
+            display: grid; 
+            gap: 15px;
+            grid-template-columns: repeat(var(--cols, 1), 1fr);
+        }
+
+        .stream-container { 
+            background: #000; 
+            border: 1px solid #333; 
+            border-radius: 6px; 
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .controls {
+            padding: 8px 12px;
+            background: var(--card-bg);
+            border-bottom: 1px solid #222;
+        }
+
+        .label { 
+            font-size: 0.8rem; 
+            font-weight: 600; 
+            color: var(--accent);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        iframe { 
+            width: 100%; 
+            aspect-ratio: 16 / 9; 
+            border: none; 
+            display: block; 
+        }
+
+        #empty-msg { 
+            display: none; 
+            padding: 80px 20px; 
+            text-align: center; 
+            color: #555; 
+            font-size: 1.2rem; 
+            border: 2px dashed #222;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h2>/{{.Path}}</h2>
+        <div id="status">Connecting...</div>
+    </header>
+    
+    <div id="empty-msg">No active streams found under this path.</div>
+    <div id="grid"></div>
+
+    <script>
+        const grid = document.getElementById('grid');
+        const status = document.getElementById('status');
+        const emptyMsg = document.getElementById('empty-msg');
+        const basePath = "{{.Path}}";
+        let activeStreams = new Set();
+
+        function updateGridLayout(count) {
+            const width = window.innerWidth;
+            
+            let idealCols = Math.ceil(Math.sqrt(count));
+            
+            let maxCols = 1;
+            if (width >= 1600) maxCols = 4;
+            else if (width >= 1200) maxCols = 3;
+            else if (width >= 800) maxCols = 2;
+
+            // 3. Apply the final column count (minimum of the two)
+            const finalCols = Math.min(idealCols, maxCols) || 1;
+            grid.style.setProperty('--cols', finalCols);
+        }
+
+        async function updateStreams() {
+            try {
+                const response = await fetch(`/watch/api/list?path=${encodeURIComponent(basePath)}`);
+                const streams = await response.json();
+
+                if (!streams || streams.length === 0) {
+                    status.innerText = "Monitoring... (No active streams)";
+                    grid.innerHTML = "";
+                    emptyMsg.style.display = "block";
+                    activeStreams.clear();
+                    return;
+                }
+
+                emptyMsg.style.display = "none";
+                status.innerText = `${streams.length} stream(s) live`;
+
+                // 1. Remove gone streams
+                activeStreams.forEach(s => {
+                    if (!streams.includes(s)) {
+                        const el = document.getElementById('wrapper-' + s);
+                        if (el) el.remove();
+                        activeStreams.delete(s);
+                    }
+                });
+
+                // 2. Add new streams
+                streams.forEach(s => {
+                    if (!activeStreams.has(s)) {
+                        const wrapper = document.createElement('div');
+                        wrapper.id = 'wrapper-' + s;
+                        wrapper.className = 'stream-container';
+                        
+                        wrapper.innerHTML = `
+                            <div class="controls">
+                                <div class="label" title="${s}">${s}</div>
+                            </div>
+                            <iframe src="https://stream.autumnal.de/${s}"></iframe>
+                        `;
+                        grid.appendChild(wrapper);
+                        activeStreams.add(s);
+                    }
+                });
+
+                updateGridLayout(streams.length);
+            } catch (e) {
+                status.innerText = "API Error";
+                console.error(e);
+            }
+        }
+
+        window.addEventListener('resize', () => updateGridLayout(activeStreams.size));
+
+        setInterval(updateStreams, 5000);
+        updateStreams();
+    </script>
+</body>
+</html>
