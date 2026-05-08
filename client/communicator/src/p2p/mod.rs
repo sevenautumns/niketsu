@@ -227,7 +227,6 @@ trait SwarmRelayConnection {
         room: RoomName,
         password: String,
     ) -> Result<Host>;
-    async fn identify_loop(&mut self, room: RoomName, password: String) -> Result<PeerInfo>;
     async fn identify_relay(
         &mut self,
         relay_addr: Multiaddr,
@@ -285,75 +284,6 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
         Ok(*self.local_peer_id())
     }
 
-    async fn identify_loop(&mut self, room: RoomName, password: String) -> Result<PeerInfo> {
-        let mut host_peer_id: Option<PeerId> = None;
-        let mut relay_peer_id: Option<PeerId> = None;
-        let mut learned_observed_addr = false;
-        let mut told_relay_observed_addr = false;
-        let mut learned_host_peer_id = false;
-        let mut learned_relay_peer_id = false;
-
-        loop {
-            match self.next().await.unwrap() {
-                SwarmEvent::Behaviour(BehaviourEvent::Transport(
-                    TransportBehaviourEvent::Identify(identify::Event::Sent { .. }),
-                )) => {
-                    debug!("Told relay its public address");
-                    told_relay_observed_addr = true;
-                }
-                SwarmEvent::Behaviour(BehaviourEvent::Transport(
-                    TransportBehaviourEvent::Identify(identify::Event::Received {
-                        peer_id,
-                        info: identify::Info { observed_addr, .. },
-                        ..
-                    }),
-                )) => {
-                    debug!(%observed_addr, "Relay told us our observed address");
-                    debug!("Sending new room request to relay");
-                    let req_resp = &mut self.behaviour_mut().transport.init_request_response;
-                    let req = InitRequest::new(room.clone(), password.clone());
-                    req_resp.send_request(&peer_id, req);
-                    learned_observed_addr = true;
-                }
-                SwarmEvent::Behaviour(BehaviourEvent::Transport(
-                    TransportBehaviourEvent::InitRequestResponse(
-                        request_response::Event::Message { message, .. },
-                    ),
-                )) => {
-                    if let request_response::Message::Response { response, .. } = message {
-                        match response.status {
-                            StatusResponse::Ok => {
-                                host_peer_id = response.peer_id;
-                                learned_host_peer_id = true;
-                            }
-                            StatusResponse::Err => bail!("Authentication failed"),
-                            _ => bail!("Received unexpected response from relay"),
-                        }
-                    }
-                }
-                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    debug!(%peer_id, "Learned relay peer id");
-                    relay_peer_id = Some(peer_id);
-                    learned_relay_peer_id = true;
-                }
-                event => debug!(?event, "Received other relay events"),
-            }
-
-            if learned_observed_addr
-                && told_relay_observed_addr
-                && learned_host_peer_id
-                && learned_relay_peer_id
-            {
-                break;
-            }
-        }
-
-        Ok(PeerInfo {
-            relay: relay_peer_id.unwrap(),
-            host: host_peer_id,
-        })
-    }
-
     async fn identify_relay(
         &mut self,
         relay_addr: Multiaddr,
@@ -363,11 +293,54 @@ impl SwarmRelayConnection for Swarm<Behaviour> {
         info!("Dialing relay for identify exchange");
         self.dial(relay_addr).context("Failed to dial relay")?;
 
-        // time out is already set in the communicator, so this could be dropped
-        let host_peer_id =
-            tokio::time::timeout(CONNECT_TIMEOUT, self.identify_loop(room, password)).await;
+        let exchange = async {
+            // Phase 1: wait for identify, then send auth request
+            let relay = loop {
+                match self.next().await.unwrap() {
+                    SwarmEvent::Behaviour(BehaviourEvent::Transport(
+                        TransportBehaviourEvent::Identify(identify::Event::Received {
+                            peer_id,
+                            info: identify::Info { observed_addr, .. },
+                            ..
+                        }),
+                    )) => {
+                        debug!(%observed_addr, %peer_id, "Relay identified");
+                        let req = InitRequest::new(room, password);
+                        self.behaviour_mut()
+                            .transport
+                            .init_request_response
+                            .send_request(&peer_id, req);
+                        break peer_id;
+                    }
+                    event => debug!(?event, "Waiting for identify"),
+                }
+            };
 
-        host_peer_id.context("Identify exchange with relay timed out")?
+            // Phase 2: wait for auth response
+            let host = loop {
+                match self.next().await.unwrap() {
+                    SwarmEvent::Behaviour(BehaviourEvent::Transport(
+                        TransportBehaviourEvent::InitRequestResponse(
+                            request_response::Event::Message {
+                                message: request_response::Message::Response { response, .. },
+                                ..
+                            },
+                        ),
+                    )) => match response.status {
+                        StatusResponse::Ok => break response.peer_id,
+                        StatusResponse::Err => bail!("Authentication failed"),
+                        _ => bail!("Received unexpected response from relay"),
+                    },
+                    event => debug!(?event, "Waiting for auth response"),
+                }
+            };
+
+            Ok::<_, anyhow::Error>(PeerInfo { relay, host })
+        };
+
+        tokio::time::timeout(CONNECT_TIMEOUT, exchange)
+            .await
+            .context("Identify exchange with relay timed out")?
     }
 }
 
