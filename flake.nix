@@ -18,7 +18,7 @@
       naersk,
       ...
     }:
-    utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" ] (
+    utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" "aarch64-darwin"] (
       system:
       let
         lib = nixpkgs.lib;
@@ -46,21 +46,25 @@
             rustc = rust-toolchain;
           }
         );
-        libraries = with pkgs; [
-          mpv-unwrapped
+        isLinux = pkgs.stdenv.isLinux;
+        linuxLibraries = with pkgs; lib.optionals isLinux [
           xorg.libX11
           xorg.libXcursor
           xorg.libXi
           xorg.libXrandr
-          expat
-          openssl
-          freetype
-          fontconfig
           vulkan-loader
           wayland
           wayland-protocols
           libxkbcommon
         ];
+        commonLibraries = with pkgs; [
+          mpv-unwrapped
+          expat
+          openssl
+          freetype
+          fontconfig
+        ];
+        libraries = commonLibraries ++ linuxLibraries;
         VERSION = (with builtins; (fromTOML (readFile ./client/Cargo.toml))).package.version;
         WINDOWS_MPV_SOURCE = pkgs.stdenv.mkDerivation {
           name = "mpv-windows";

@@ -21,10 +21,12 @@ fn main() -> Result<()> {
         .write_to_file(PathBuf::from(&outdir).join("libmpv.rs"))
         .context("Error writing bindgen")?;
 
-    if std::env::var("CARGO_CFG_TARGET_FAMILY").unwrap().eq("unix") {
-        link_arg_linux();
-    } else {
-        link_arg_windows();
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    match target_os.as_str() {
+        "linux" => link_arg_linux(),
+        "macos" => link_arg_darwin(),
+        "windows" => link_arg_windows(),
+        other => panic!("unsupported target_os: {other}"),
     }
 
     Ok(())
@@ -33,6 +35,10 @@ fn main() -> Result<()> {
 fn link_arg_windows() {
     let source = std::env::var("MPV_SOURCE").expect("env var `MPV_SOURCE` not set");
     println!("cargo:rustc-link-search={source}");
+    println!("cargo:rustc-link-lib=mpv");
+}
+
+fn link_arg_darwin() {
     println!("cargo:rustc-link-lib=mpv");
 }
 
