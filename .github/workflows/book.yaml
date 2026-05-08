@@ -20,9 +20,9 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Nix
-        uses: cachix/install-nix-action@v23
+        uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Build site
@@ -30,13 +30,13 @@ jobs:
         run: nix develop --command mdbook build
       - name: Setup Pages
         if: ${{ github.ref == 'refs/heads/main' }}
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         if: ${{ github.ref == 'refs/heads/main' }}
         with:
           path: book/book
       - name: Deploy to GitHub Pages
         id: deployment
         if: ${{ github.ref == 'refs/heads/main' }}
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
