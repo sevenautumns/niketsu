@@ -16,11 +16,8 @@ use niketsu_video_server::VideoServer;
 #[cfg(all(not(feature = "ratatui"), not(feature = "iced")))]
 compile_error!(r#"any ui feature is required ["ratatui", "iced"]"#);
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = Args::parse();
+async fn run_app(args: Args) -> Result<()> {
     let chat_logger = setup_logger(args.log_level_terminal.into(), args.log_level_chat.into())?;
-
     let mut config: Config = Config::load_or_default();
 
     if let Some(auto_connect) = args.auto_connect {
@@ -43,6 +40,7 @@ async fn main() -> Result<()> {
             ui_fn = ratatui.1;
         }
     }
+
     let player = Mpv::new().unwrap();
     let communicator = P2PCommunicator::default();
     let video_server = VideoServer::default();
@@ -65,4 +63,52 @@ async fn main() -> Result<()> {
 
     tokio::task::spawn(async move { core.run().await });
     ui_fn.await
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+
+    // Iced uses winit which owns the main thread and drives the Cocoa loop itself.
+    #[cfg(feature = "iced")]
+    if matches!(args.ui, niketsu::cli::UI::Iced) {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        return rt.block_on(run_app(args));
+    }
+
+    // Ratatui is a terminal UI and never touches Cocoa. On macOS, mpv needs NSApplication
+    // running on the main thread to display its video window. We run the app logic on a
+    // background thread and occupy the main thread with the Cocoa event loop.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
+    std::thread::spawn(move || {
+        if let Err(e) = rt.block_on(run_app(args)) {
+            eprintln!("Error: {e:?}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    });
+
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+        use objc2_foundation::MainThreadMarker;
+
+        if let Some(mtm) = MainThreadMarker::new() {
+            let app = NSApplication::sharedApplication(mtm);
+            app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+            // Blocks the main thread; mpv uses this loop to drive its video window.
+            unsafe { app.run() };
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    loop {
+        std::thread::park();
+    }
+
+    Ok(())
 }
