@@ -101,7 +101,7 @@ fn main() -> Result<()> {
             let app = NSApplication::sharedApplication(mtm);
             app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
             // Blocks the main thread; mpv uses this loop to drive its video window.
-            unsafe { app.run() };
+            app.run()
         }
     }
 
