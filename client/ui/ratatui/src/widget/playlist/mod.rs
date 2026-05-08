@@ -9,9 +9,8 @@ use ratatui::widgets::{
     Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, StatefulWidget,
 };
 
-use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
-
 use super::nav::ListNavigationState;
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 pub(crate) mod video_overlay;
 

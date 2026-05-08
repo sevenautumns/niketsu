@@ -6,10 +6,9 @@ use ratatui::widgets::{
 };
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
+use super::OverlayWidgetState;
 use crate::handler::State;
 use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
-
-use super::OverlayWidgetState;
 
 struct HelpTab {
     description: String,

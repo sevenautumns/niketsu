@@ -5,9 +5,8 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, Paragraph, StatefulWidget, Widget};
 
-use crate::theme::{Theme, ThemeSelection, ThemeWrapper, ThemedWidget};
-
 use super::{OverlayWidgetState, TextAreaWrapper};
+use crate::theme::{Theme, ThemeSelection, ThemeWrapper, ThemedWidget};
 
 pub struct SettingsWidget;
 

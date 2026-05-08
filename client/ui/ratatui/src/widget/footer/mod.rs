@@ -1,16 +1,12 @@
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::Style,
-    text::Text,
-    widgets::{Paragraph, StatefulWidget, Widget},
-};
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::Text;
+use ratatui::widgets::{Paragraph, StatefulWidget, Widget};
 
-use crate::{
-    handler::{OverlayState, State},
-    theme::{Theme, ThemeWrapper, ThemedWidget},
-    view::Mode,
-};
+use crate::handler::{OverlayState, State};
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
+use crate::view::Mode;
 
 pub struct FooterWidget;
 

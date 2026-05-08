@@ -18,7 +18,7 @@
       naersk,
       ...
     }:
-    utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" "aarch64-darwin"] (
+    utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" "aarch64-darwin" ] (
       system:
       let
         lib = nixpkgs.lib;
@@ -47,16 +47,18 @@
           }
         );
         isLinux = pkgs.stdenv.isLinux;
-        linuxLibraries = with pkgs; lib.optionals isLinux [
-          libX11
-          libXcursor
-          libXi
-          libXrandr
-          vulkan-loader
-          wayland
-          wayland-protocols
-          libxkbcommon
-        ];
+        linuxLibraries =
+          with pkgs;
+          lib.optionals isLinux [
+            libX11
+            libXcursor
+            libXi
+            libXrandr
+            vulkan-loader
+            wayland
+            wayland-protocols
+            libxkbcommon
+          ];
         commonLibraries = with pkgs; [
           mpv-unwrapped
           expat

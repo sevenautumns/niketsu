@@ -131,9 +131,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::file_database::{FileEntry, FileStore};
-
     use super::*;
+    use crate::file_database::{FileEntry, FileStore};
 
     #[tokio::test]
     async fn test_fuzzy_search() {

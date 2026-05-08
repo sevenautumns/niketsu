@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
-use crate::theme::ThemeSelection;
 use anyhow::{Result, bail};
 use directories::ProjectDirs;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_with::{FromInto, serde_as};
 use tracing::{debug, warn};
+
+use crate::theme::ThemeSelection;
 
 pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =
     Lazy::new(|| ProjectDirs::from("de", "autumnal", "niketsu"));

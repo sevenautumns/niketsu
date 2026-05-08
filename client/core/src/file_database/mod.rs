@@ -15,12 +15,11 @@ use rayon::prelude::IntoParallelRefIterator;
 use tokio::task::JoinHandle;
 use tracing::{trace, warn};
 
-use crate::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
-
 use self::updater::FileDatabaseUpdater;
 use super::player::MediaPlayerTrait;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
+use crate::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
 
 mod updater;
 

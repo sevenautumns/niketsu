@@ -6,9 +6,8 @@ use ratatui::style::Stylize;
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, Paragraph, StatefulWidget, Widget, Wrap};
 
-use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
-
 use super::{OverlayWidgetState, TextAreaWrapper};
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 pub struct LoginWidget;
 
