@@ -570,6 +570,23 @@ impl CommunicationHandler {
         }
         self.file_share.take();
     }
+
+    pub fn handle_file_share_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
+        use NiketsuMessage::*;
+        use file_share::FileShareCoreMessageHandler as FH;
+        match msg {
+            FileRequest(msg) => FH::handle_core_message(msg, self),
+            FileResponse(msg) => FH::handle_core_message(msg, self),
+            ChunkRequest(msg) => FH::handle_core_message(msg, self),
+            ChunkResponse(msg) => FH::handle_core_message(msg, self),
+            VideoShare(msg) => FH::handle_core_message(msg, self),
+            _ => unreachable!("handle_file_share_core_message called with non-file-share message"),
+        }
+    }
+
+    pub fn handle_file_share_swarm_event<E: file_share::FileShareEventHandler>(&mut self, event: E) {
+        event.handle_event(self);
+    }
 }
 
 impl Deref for CommunicationHandler {
@@ -619,6 +636,10 @@ impl CommonCommunication {
         self.message_sender.send(NiketsuMessage::UserMessage(msg))?;
         Ok(())
     }
+}
+
+pub(crate) struct PassthroughMsg {
+    pub(crate) niketsu_msg: NiketsuMessage,
 }
 
 impl NiketsuMessage {

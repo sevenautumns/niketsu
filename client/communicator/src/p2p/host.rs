@@ -24,15 +24,14 @@ use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
 use tracing::{debug, error, trace, warn};
 
-use super::file_share::{FileShareEventHandler, FileShareRequest, FileShareResponseResult};
+use super::file_share::{FileShareRequest, FileShareResponseResult};
 use super::{
     Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait,
-    FileShareBehaviourEvent, MessagingBehaviourEvent, MessageResponse, Response, StatusResponse,
-    SwarmHandler,
+    FileShareBehaviourEvent, MessagingBehaviourEvent, MessageResponse, PassthroughMsg, Response,
+    StatusResponse, SwarmHandler,
 };
 use crate::messages::NiketsuMessage;
 use crate::p2p::MessageRequest;
-use crate::p2p::file_share::FileShareCoreMessageHandler;
 
 #[enum_dispatch]
 pub(crate) trait HostSwarmEventHandler {
@@ -137,13 +136,13 @@ impl HostSwarmEventHandler for request_response::Event<MessageRequest, MessageRe
 
 impl HostSwarmEventHandler for request_response::Event<FileShareRequest, FileShareResponseResult> {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        FileShareEventHandler::handle_event(self, &mut handler.handler);
+        handler.handler.handle_file_share_swarm_event(self);
     }
 }
 
 impl HostSwarmEventHandler for kad::Event {
     fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        FileShareEventHandler::handle_event(self, &mut handler.handler);
+        handler.handler.handle_file_share_swarm_event(self);
     }
 }
 
@@ -413,11 +412,6 @@ impl HostSwarmBroadcast {
             msg => HostSwarmBroadcast::Other(msg),
         }
     }
-}
-
-#[derive(Debug)]
-struct PassthroughMsg {
-    niketsu_msg: NiketsuMessage,
 }
 
 impl HostSwarmBroadcastHandler for SelectMsg {
@@ -733,18 +727,17 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
 
     fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
         debug!(host = %self.handler.host, ?msg, "Handling core message");
-        use FileShareCoreMessageHandler as FH;
         use NiketsuMessage::*;
         match msg {
             VideoStatus(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
             Select(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
             Playlist(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
             Status(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
-            FileRequest(msg) => FH::handle_core_message(msg, &mut self.handler),
-            FileResponse(msg) => FH::handle_core_message(msg, &mut self.handler),
-            ChunkRequest(msg) => FH::handle_core_message(msg, &mut self.handler),
-            ChunkResponse(msg) => FH::handle_core_message(msg, &mut self.handler),
-            VideoShare(msg) => FH::handle_core_message(msg, &mut self.handler),
+            msg @ (FileRequest(_)
+            | FileResponse(_)
+            | ChunkRequest(_)
+            | ChunkResponse(_)
+            | VideoShare(_)) => self.handler.handle_file_share_core_message(msg),
             msg => msg.broadcast(&mut self.handler),
         }
     }

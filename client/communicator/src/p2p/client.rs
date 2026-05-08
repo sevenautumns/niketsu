@@ -15,15 +15,14 @@ use niketsu_core::communicator::{
 use niketsu_core::log_err_msg;
 use tracing::{debug, error, info, trace, warn};
 
-use super::file_share::{FileShareEventHandler, FileShareRequest, FileShareResponseResult};
+use super::file_share::{FileShareRequest, FileShareResponseResult};
 use super::{
     Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait,
-    FileShareBehaviourEvent, MessagingBehaviourEvent, MessageResponse, TransportBehaviourEvent,
-    SwarmHandler,
+    FileShareBehaviourEvent, MessagingBehaviourEvent, MessageResponse, PassthroughMsg,
+    TransportBehaviourEvent, SwarmHandler,
 };
 use crate::messages::NiketsuMessage;
 use crate::p2p::MessageRequest;
-use crate::p2p::file_share::FileShareCoreMessageHandler;
 
 #[enum_dispatch]
 pub(crate) trait ClientSwarmEventHandler {
@@ -209,13 +208,13 @@ impl ClientSwarmEventHandler
     for request_response::Event<FileShareRequest, FileShareResponseResult>
 {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        FileShareEventHandler::handle_event(self, &mut handler.handler);
+        handler.handler.handle_file_share_swarm_event(self);
     }
 }
 
 impl ClientSwarmEventHandler for kad::Event {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        FileShareEventHandler::handle_event(self, &mut handler.handler);
+        handler.handler.handle_file_share_swarm_event(self);
     }
 }
 
@@ -363,7 +362,6 @@ enum ClientSwarmBroadcast {
     Select(SelectMsg),
     Seek(SeekMsg),
     Passthrough(PassthroughMsg),
-    Other(NiketsuMessage),
 }
 
 impl ClientSwarmBroadcast {
@@ -372,18 +370,7 @@ impl ClientSwarmBroadcast {
             NiketsuMessage::VideoStatus(msg) => ClientSwarmBroadcast::VideoStatus(msg),
             NiketsuMessage::Seek(msg) => ClientSwarmBroadcast::Seek(msg),
             NiketsuMessage::Select(msg) => ClientSwarmBroadcast::Select(msg),
-            NiketsuMessage::Join(_)
-            | NiketsuMessage::StatusList(_)
-            | NiketsuMessage::Pause(_)
-            | NiketsuMessage::Start(_)
-            | NiketsuMessage::PlaybackSpeed(_)
-            | NiketsuMessage::UserMessage(_)
-            | NiketsuMessage::ServerMessage(_) => {
-                ClientSwarmBroadcast::Passthrough(PassthroughMsg {
-                    niketsu_msg: message,
-                })
-            }
-            msg => ClientSwarmBroadcast::Other(msg),
+            msg => ClientSwarmBroadcast::Passthrough(PassthroughMsg { niketsu_msg: msg }),
         }
     }
 }
@@ -440,10 +427,6 @@ impl ClientSwarmBroadcastHandler for SeekMsg {
     }
 }
 
-struct PassthroughMsg {
-    niketsu_msg: NiketsuMessage,
-}
-
 impl ClientSwarmBroadcastHandler for PassthroughMsg {
     fn handle_swarm_broadcast(
         self,
@@ -451,17 +434,6 @@ impl ClientSwarmBroadcastHandler for PassthroughMsg {
         handler: &mut ClientCommunicationHandler,
     ) -> Result<()> {
         handler.handler.message_sender.send(self.niketsu_msg)?;
-        Ok(())
-    }
-}
-
-impl ClientSwarmBroadcastHandler for NiketsuMessage {
-    fn handle_swarm_broadcast(
-        self,
-        _peer_id: PeerId,
-        handler: &mut ClientCommunicationHandler,
-    ) -> Result<()> {
-        handler.handler.message_sender.send(self)?;
         Ok(())
     }
 }
@@ -533,19 +505,18 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
 
     fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
         debug!(?msg, host = %self.handler.host, peer = %self.handler.swarm.local_peer_id(), "Handling core message");
-        use FileShareCoreMessageHandler as FH;
         use NiketsuMessage::*;
         match msg {
             VideoStatus(msg) => ClientCoreMessageHandler::handle_core_message(msg, self),
             Select(msg) => ClientCoreMessageHandler::handle_core_message(msg, self),
             Playlist(msg) => ClientCoreMessageHandler::handle_core_message(msg, self),
             Status(msg) => ClientCoreMessageHandler::handle_core_message(msg, self),
-            FileRequest(msg) => FH::handle_core_message(msg, &mut self.handler),
-            FileResponse(msg) => FH::handle_core_message(msg, &mut self.handler),
-            ChunkRequest(msg) => FH::handle_core_message(msg, &mut self.handler),
-            ChunkResponse(msg) => FH::handle_core_message(msg, &mut self.handler),
-            VideoShare(msg) => FH::handle_core_message(msg, &mut self.handler),
-            msg => msg.broadcast(&mut self.handler),
+            msg @ (FileRequest(_)
+            | FileResponse(_)
+            | ChunkRequest(_)
+            | ChunkResponse(_)
+            | VideoShare(_)) => self.handler.handle_file_share_core_message(msg),
+            msg => ClientCoreMessageHandler::handle_core_message(msg, self),
         }
     }
 
