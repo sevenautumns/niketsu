@@ -412,16 +412,16 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
                 }
             }
             iced::Event::Window(event) => match event {
-                iced::window::Event::FileHovered(_) => {
-                    if !self.state.interaction.is_press_extern() {
-                        shell.publish(
-                            Interaction {
-                                video: self.state.selected.clone(),
-                                interaction: FileInteraction::PressingExternal,
-                            }
-                            .into(),
-                        )
-                    }
+                iced::window::Event::FileHovered(_)
+                    if !self.state.interaction.is_press_extern() =>
+                {
+                    shell.publish(
+                        Interaction {
+                            video: self.state.selected.clone(),
+                            interaction: FileInteraction::PressingExternal,
+                        }
+                        .into(),
+                    )
                 }
                 iced::window::Event::FileDropped(file) => {
                     trace!(?file, "file dropped");

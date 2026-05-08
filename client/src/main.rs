@@ -110,5 +110,6 @@ fn main() -> Result<()> {
         std::thread::park();
     }
 
+    #[cfg(target_os = "macos")]
     Ok(())
 }
