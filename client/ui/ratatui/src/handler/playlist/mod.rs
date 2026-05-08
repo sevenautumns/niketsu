@@ -95,32 +95,28 @@ impl EventHandler for Playlist {
                 KeyCode::Backspace => {
                     view.app.playlist_widget_state.jump_to_playing_video();
                 }
-                KeyCode::Char('v') => {
-                    if key.modifiers == KeyModifiers::CONTROL {
-                        let content = view.app.get_clipboard();
-                        if let Ok(c) = content {
-                            if let Some(index) = view.app.playlist_widget_state.selected() {
-                                view.insert(index + 1, &Video::from(c.as_str()));
-                            } else {
-                                view.insert(0, &Video::from(c.as_str()));
-                            }
+                KeyCode::Char('v') if key.modifiers == KeyModifiers::CONTROL => {
+                    let content = view.app.get_clipboard();
+                    if let Ok(c) = content {
+                        if let Some(index) = view.app.playlist_widget_state.selected() {
+                            view.insert(index + 1, &Video::from(c.as_str()));
+                        } else {
+                            view.insert(0, &Video::from(c.as_str()));
                         }
                     }
                 }
-                KeyCode::Char('c') => {
-                    if key.modifiers == KeyModifiers::CONTROL {
-                        let video = {
-                            let playlist_widget_state = &view.app.playlist_widget_state;
-                            playlist_widget_state
-                                .get_current_video()
-                                .map(|video| video.as_str().to_string())
-                        };
+                KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                    let video = {
+                        let playlist_widget_state = &view.app.playlist_widget_state;
+                        playlist_widget_state
+                            .get_current_video()
+                            .map(|video| video.as_str().to_string())
+                    };
 
-                        if let Some(v) = video
-                            && let Err(err) = view.app.set_clipboard(v.as_str())
-                        {
-                            warn!(?err, "Failed to copy file to clipboard");
-                        }
+                    if let Some(v) = video
+                        && let Err(err) = view.app.set_clipboard(v.as_str())
+                    {
+                        warn!(?err, "Failed to copy file to clipboard");
                     }
                 }
                 KeyCode::Tab => view.transition_enter(State::from(Chat {})),

@@ -26,8 +26,8 @@
           inherit system;
           overlays = [ devshell.overlays.default ];
         };
-        static-rust-target = pkgs.pkgsStatic.targetPlatform.rust.rustcTarget;
-        windows-rust = pkgs.pkgsCross.mingwW64.targetPlatform.rust;
+        static-rust-target = pkgs.pkgsStatic.stdenv.targetPlatform.rust.rustcTarget;
+        windows-rust = pkgs.pkgsCross.mingwW64.stdenv.targetPlatform.rust;
         rust-toolchain =
           with fenix.packages.${system};
           combine [
@@ -48,10 +48,10 @@
         );
         isLinux = pkgs.stdenv.isLinux;
         linuxLibraries = with pkgs; lib.optionals isLinux [
-          xorg.libX11
-          xorg.libXcursor
-          xorg.libXi
-          xorg.libXrandr
+          libX11
+          libXcursor
+          libXi
+          libXrandr
           vulkan-loader
           wayland
           wayland-protocols
@@ -145,7 +145,7 @@
             cargo-tarpaulin
             cargo-watch
             treefmt
-            nixfmt-rfc-style
+            nixfmt
             mdbook
             yt-dlp
           ];
