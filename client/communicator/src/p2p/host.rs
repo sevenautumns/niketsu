@@ -26,8 +26,9 @@ use tracing::{debug, error, trace, warn};
 
 use super::file_share::{FileShareEventHandler, FileShareRequest, FileShareResponseResult};
 use super::{
-    Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait, MessageResponse,
-    Response, StatusResponse, SwarmHandler,
+    Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait,
+    FileShareBehaviourEvent, MessagingBehaviourEvent, MessageResponse, Response, StatusResponse,
+    SwarmHandler,
 };
 use crate::messages::NiketsuMessage;
 use crate::p2p::MessageRequest;
@@ -53,18 +54,21 @@ enum HostSwarmEvent {
 impl HostSwarmEvent {
     fn from(event: SwarmEvent<BehaviourEvent>) -> Self {
         match event {
-            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(event)) => {
-                HostSwarmEvent::GossipSub(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(event)) => {
-                HostSwarmEvent::MessageRequestResponse(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::FileshareRequestResponse(event)) => {
-                HostSwarmEvent::FileShareRequestResponse(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
-                HostSwarmEvent::Kademlia(event)
-            }
+            SwarmEvent::Behaviour(BehaviourEvent::Messaging(
+                MessagingBehaviourEvent::Gossipsub(event),
+            )) => HostSwarmEvent::GossipSub(event),
+            SwarmEvent::Behaviour(BehaviourEvent::Messaging(
+                MessagingBehaviourEvent::RequestResponse(event),
+            )) => HostSwarmEvent::MessageRequestResponse(event),
+            SwarmEvent::Behaviour(BehaviourEvent::FileShare(
+                FileShareBehaviourEvent::RequestResponse(event),
+            )) => HostSwarmEvent::FileShareRequestResponse(event),
+            SwarmEvent::Behaviour(BehaviourEvent::FileShare(FileShareBehaviourEvent::Kademlia(
+                event,
+            ))) => HostSwarmEvent::Kademlia(event),
+            SwarmEvent::Behaviour(BehaviourEvent::FileShare(FileShareBehaviourEvent::Mdns(
+                event,
+            ))) => HostSwarmEvent::Mdns(event),
             SwarmEvent::ConnectionClosed {
                 peer_id,
                 endpoint,
@@ -78,7 +82,6 @@ impl HostSwarmEvent {
             SwarmEvent::ConnectionEstablished {
                 peer_id, endpoint, ..
             } => HostSwarmEvent::ConnectionEstablished(ConnectionEstablished { peer_id, endpoint }),
-            SwarmEvent::Behaviour(BehaviourEvent::Mdns(event)) => HostSwarmEvent::Mdns(event),
             _ => HostSwarmEvent::Other(Box::new(event)),
         }
     }
@@ -216,6 +219,7 @@ impl HostSwarmEventHandler for ConnectionEstablished {
             .handler
             .swarm
             .behaviour_mut()
+            .file_share
             .kademlia
             .add_address(&self.peer_id, self.endpoint.get_remote_address().clone());
 
@@ -669,10 +673,10 @@ impl HostCommunicationHandler {
         } else {
             debug!(?peer_id, "Dialing mDNS node");
 
-            let kad = &mut self.handler.swarm.behaviour_mut().kademlia;
+            let kad = &mut self.handler.swarm.behaviour_mut().file_share.kademlia;
             kad.add_address(&peer_id, addr.clone());
 
-            let gossip = &mut self.handler.swarm.behaviour_mut().gossipsub;
+            let gossip = &mut self.handler.swarm.behaviour_mut().messaging.gossipsub;
             gossip.add_explicit_peer(&peer_id);
         }
         Ok(())

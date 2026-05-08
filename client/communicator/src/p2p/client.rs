@@ -17,7 +17,8 @@ use tracing::{debug, error, info, trace, warn};
 
 use super::file_share::{FileShareEventHandler, FileShareRequest, FileShareResponseResult};
 use super::{
-    Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait, MessageResponse,
+    Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait,
+    FileShareBehaviourEvent, MessagingBehaviourEvent, MessageResponse, TransportBehaviourEvent,
     SwarmHandler,
 };
 use crate::messages::NiketsuMessage;
@@ -46,20 +47,24 @@ enum ClientSwarmEvent {
 impl ClientSwarmEvent {
     fn from(event: SwarmEvent<BehaviourEvent>) -> Self {
         match event {
-            SwarmEvent::Behaviour(BehaviourEvent::Ping(event)) => ClientSwarmEvent::Ping(event),
-            SwarmEvent::Behaviour(BehaviourEvent::Dcutr(event)) => ClientSwarmEvent::Dcutr(event),
-            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(event)) => {
-                ClientSwarmEvent::GossipSub(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(event)) => {
-                ClientSwarmEvent::MessageRequestResponse(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::FileshareRequestResponse(event)) => {
-                ClientSwarmEvent::FileShareRequestResponse(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
-                ClientSwarmEvent::Kademlia(event)
-            }
+            SwarmEvent::Behaviour(BehaviourEvent::Transport(
+                TransportBehaviourEvent::Ping(event),
+            )) => ClientSwarmEvent::Ping(event),
+            SwarmEvent::Behaviour(BehaviourEvent::Transport(
+                TransportBehaviourEvent::Dcutr(event),
+            )) => ClientSwarmEvent::Dcutr(event),
+            SwarmEvent::Behaviour(BehaviourEvent::Messaging(
+                MessagingBehaviourEvent::Gossipsub(event),
+            )) => ClientSwarmEvent::GossipSub(event),
+            SwarmEvent::Behaviour(BehaviourEvent::Messaging(
+                MessagingBehaviourEvent::RequestResponse(event),
+            )) => ClientSwarmEvent::MessageRequestResponse(event),
+            SwarmEvent::Behaviour(BehaviourEvent::FileShare(
+                FileShareBehaviourEvent::RequestResponse(event),
+            )) => ClientSwarmEvent::FileShareRequestResponse(event),
+            SwarmEvent::Behaviour(BehaviourEvent::FileShare(FileShareBehaviourEvent::Kademlia(
+                event,
+            ))) => ClientSwarmEvent::Kademlia(event),
             SwarmEvent::ConnectionEstablished {
                 peer_id,
                 connection_id,
@@ -123,7 +128,7 @@ impl ClientSwarmEventHandler for dcutr::Event {
                     handler.handler.swarm.close_connection(conn);
                 }
 
-                let gossip = &mut handler.handler.swarm.behaviour_mut().gossipsub;
+                let gossip = &mut handler.handler.swarm.behaviour_mut().messaging.gossipsub;
                 gossip.add_explicit_peer(&self.remote_peer_id);
             }
             Err(error) => error!(
@@ -226,7 +231,7 @@ impl ClientSwarmEventHandler for ConnectionEstablished {
             return;
         }
 
-        let gossip = &mut handler.handler.swarm.behaviour_mut().gossipsub;
+        let gossip = &mut handler.handler.swarm.behaviour_mut().messaging.gossipsub;
         gossip.add_explicit_peer(&self.peer_id);
 
         if self.endpoint.is_relayed() {
@@ -237,6 +242,7 @@ impl ClientSwarmEventHandler for ConnectionEstablished {
                 .handler
                 .swarm
                 .behaviour_mut()
+                .file_share
                 .kademlia
                 .add_address(&self.peer_id, self.endpoint.get_remote_address().clone());
         }

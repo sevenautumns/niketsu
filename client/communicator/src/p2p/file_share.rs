@@ -238,7 +238,7 @@ impl FileShareCoreMessageHandler for FileRequestMsg {
         }
         handler.reset_requests_responses();
 
-        let kademlia = &mut handler.base.swarm.behaviour_mut().kademlia;
+        let kademlia = &mut handler.base.swarm.behaviour_mut().file_share.kademlia;
         let id = kademlia.get_providers(self.video.as_str().as_bytes().to_vec().into());
 
         consumer.file_requests.insert(id, self.clone());
