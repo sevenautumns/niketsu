@@ -10,10 +10,9 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
 
-use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
-
 use super::nav::ListNavigationState;
 use super::{OverlayWidgetState, TextAreaWrapper, color_hits};
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 #[derive(Debug, Clone)]
 pub struct SearchWidget<E, S>

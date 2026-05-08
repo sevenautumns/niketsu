@@ -12,9 +12,8 @@ use ratatui::widgets::{
     Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
 };
 
-use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
-
 use super::ListStateWrapper;
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 pub struct ChatWidget;
 

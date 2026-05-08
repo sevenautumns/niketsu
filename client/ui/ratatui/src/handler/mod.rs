@@ -1,6 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use enum_dispatch::enum_dispatch;
-use playlist::{search::PlaylistSearch, video_overlay::VideoName};
+use playlist::search::PlaylistSearch;
+use playlist::video_overlay::VideoName;
 use playlist_browser::PlaylistBrowserOverlay;
 use ratatui::Frame;
 use recently::Recently;
@@ -16,10 +17,8 @@ use self::options::Options;
 use self::playlist::Playlist;
 use self::search::BrowserSearch;
 use self::users::Users;
-use crate::{
-    theme::ThemeState,
-    view::{App, Mode, RatatuiView},
-};
+use crate::theme::ThemeState;
+use crate::view::{App, Mode, RatatuiView};
 
 pub(crate) mod chat;
 pub(crate) mod chat_input;

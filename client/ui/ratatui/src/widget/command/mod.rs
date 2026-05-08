@@ -1,13 +1,10 @@
-use ratatui::{
-    buffer::Buffer,
-    layout::{Constraint, Layout, Rect},
-    widgets::{Paragraph, StatefulWidget, Widget},
-};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::widgets::{Paragraph, StatefulWidget, Widget};
 use tui_textarea::Input;
 
-use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
-
 use super::TextAreaWrapper;
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 pub struct CommandInputWidget;
 

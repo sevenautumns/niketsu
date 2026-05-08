@@ -10,9 +10,8 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, StatefulWidget};
 use strum::{Display, EnumCount, EnumIter, FromRepr};
 
-use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
-
 use super::nav::ListNavigationState;
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 #[derive(Debug, Default, Clone, Copy, Display, FromRepr, EnumIter, EnumCount)]
 enum Frequency {

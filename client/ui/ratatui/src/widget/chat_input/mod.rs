@@ -1,9 +1,10 @@
-use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::widgets::StatefulWidget;
 use tui_textarea::Input;
 
-use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
-
 use super::TextAreaWrapper;
+use crate::theme::{Theme, ThemeWrapper, ThemedWidget};
 
 #[derive(Debug, Default, Clone)]
 pub struct ChatInputWidget;

@@ -1,13 +1,13 @@
-use crate::theme::Theme;
 use niketsu_core::fuzzy::FuzzyEntry;
 use niketsu_core::util::FuzzyResult;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Widget;
-use ratatui::widgets::{Block, Borders, ListItem, ListState};
+use ratatui::widgets::{Block, Borders, ListItem, ListState, Widget};
 use tui_textarea::{Input, TextArea};
+
+use crate::theme::Theme;
 
 pub(crate) mod chat;
 pub(crate) mod chat_input;
