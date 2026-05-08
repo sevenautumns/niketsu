@@ -22,6 +22,6 @@ futures = "0.3"
 enum_dispatch.workspace = true
 libp2p = { workspace = true, features = [ "dcutr", "dns", "gossipsub", "identify", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat", "kad", "mdns" ] }
 futures-timer = "3.0"
-fake = "4.4"
+fake = "5.1"
 sha256 = "1.6"
 uuid = { version = "1.19.0", features = [ "v4", "serde", "fast-rng" ] } 
