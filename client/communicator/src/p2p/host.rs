@@ -122,7 +122,7 @@ impl HostSwarmEventHandler for request_response::Event<MessageRequest, MessageRe
                 }
                 request_response::Message::Response { response, .. } => {
                     debug!(?response, "Received response");
-                    let res = handler.handle_swarm_response(response, peer);
+                    let res = handler.handler.handle_swarm_response(response, peer);
                     log_err_msg!(res, "Failed to handle incoming message")
                 }
             },
@@ -691,6 +691,29 @@ impl HostCommunicationHandler {
 
         self.dial_peer(peer_id, addr)
     }
+
+    fn handle_swarm_request(
+        &mut self,
+        msg: NiketsuMessage,
+        channel: ResponseChannel<MessageResponse>,
+        peer_id: PeerId,
+    ) -> Result<()> {
+        debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
+        use HostSwarmRequestHandler as SH;
+        use NiketsuMessage::*;
+        match msg {
+            Playlist(msg) => SH::handle_swarm_request(msg, peer_id, channel, self),
+            Status(msg) => SH::handle_swarm_request(msg, peer_id, channel, self),
+            msg => self.handler.respond_with_err(msg, channel),
+        }
+    }
+
+    fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()> {
+        let niketsu_msg: NiketsuMessage = msg.try_into()?;
+        debug!(message = ?niketsu_msg, "Handling broadcast message from swarm");
+        let swarm_broadcast = HostSwarmBroadcast::from(niketsu_msg);
+        swarm_broadcast.handle_swarm_broadcast(peer_id, self)
+    }
 }
 
 #[async_trait]
@@ -738,30 +761,8 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
             | ChunkRequest(_)
             | ChunkResponse(_)
             | VideoShare(_)) => self.handler.handle_file_share_core_message(msg),
-            msg => msg.broadcast(&mut self.handler),
+            msg => self.handler.broadcast(msg),
         }
     }
 
-    fn handle_swarm_request(
-        &mut self,
-        msg: NiketsuMessage,
-        channel: ResponseChannel<MessageResponse>,
-        peer_id: PeerId,
-    ) -> Result<()> {
-        debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
-        use HostSwarmRequestHandler as SH;
-        use NiketsuMessage::*;
-        match msg {
-            Playlist(msg) => SH::handle_swarm_request(msg, peer_id, channel, self),
-            Status(msg) => SH::handle_swarm_request(msg, peer_id, channel, self),
-            msg => msg.respond_with_err(channel, &mut self.handler),
-        }
-    }
-
-    fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()> {
-        let niketsu_msg: NiketsuMessage = msg.try_into()?;
-        debug!(message = ?niketsu_msg, "Handling broadcast message from swarm");
-        let swarm_broadcast = HostSwarmBroadcast::from(niketsu_msg);
-        swarm_broadcast.handle_swarm_broadcast(peer_id, self)
-    }
 }

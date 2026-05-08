@@ -114,23 +114,6 @@ pub(crate) trait CommunicationHandlerTrait {
     async fn run(&mut self);
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>);
     fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()>;
-    fn handle_swarm_request(
-        &mut self,
-        msg: NiketsuMessage,
-        channel: ResponseChannel<MessageResponse>,
-        peer_id: PeerId,
-    ) -> Result<()>;
-    fn handle_swarm_response(&mut self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
-        debug!(message = ?msg, peer = ?peer_id, "Received response");
-        match msg.0 {
-            Response::Message(niketsu_message) => match niketsu_message {
-                NiketsuMessage::FileResponse(_) | NiketsuMessage::ChunkResponse(_) => Ok(()),
-                msg => bail!("Did not expect response {msg:?}"),
-            },
-            _ => Ok(()),
-        }
-    }
-    fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()>;
 }
 
 #[enum_dispatch(CommunicationHandlerTrait)]
@@ -587,6 +570,44 @@ impl CommunicationHandler {
     pub fn handle_file_share_swarm_event<E: file_share::FileShareEventHandler>(&mut self, event: E) {
         event.handle_event(self);
     }
+
+    pub fn broadcast(&mut self, msg: NiketsuMessage) -> Result<()> {
+        let topic = self.topic.clone();
+        self.swarm.try_broadcast(topic, msg)
+    }
+
+    pub fn respond_with_err(
+        &mut self,
+        msg: NiketsuMessage,
+        channel: ResponseChannel<MessageResponse>,
+    ) -> Result<()> {
+        let resp = MessageResponse(Response::Status(StatusResponse::Err));
+        self.swarm.send_message_response(channel, resp)?;
+        bail!("Received unexpected direct message: {msg:?}");
+    }
+
+    pub fn send_to_core(
+        &mut self,
+        msg: NiketsuMessage,
+        channel: ResponseChannel<MessageResponse>,
+    ) -> Result<()> {
+        let resp = match self.message_sender.send(msg.clone()) {
+            Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
+            Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
+        };
+        self.swarm.send_message_response(channel, resp)
+    }
+
+    pub fn handle_swarm_response(&self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
+        debug!(message = ?msg, peer = ?peer_id, "Received response");
+        match msg.0 {
+            Response::Message(niketsu_message) => match niketsu_message {
+                NiketsuMessage::FileResponse(_) | NiketsuMessage::ChunkResponse(_) => Ok(()),
+                msg => bail!("Did not expect response {msg:?}"),
+            },
+            _ => Ok(()),
+        }
+    }
 }
 
 impl Deref for CommunicationHandler {
@@ -642,31 +663,3 @@ pub(crate) struct PassthroughMsg {
     pub(crate) niketsu_msg: NiketsuMessage,
 }
 
-impl NiketsuMessage {
-    fn broadcast(self, handler: &mut CommunicationHandler) -> Result<()> {
-        let topic = handler.topic.clone();
-        handler.swarm.try_broadcast(topic, self)
-    }
-
-    fn respond_with_err(
-        self,
-        channel: ResponseChannel<MessageResponse>,
-        handler: &mut CommunicationHandler,
-    ) -> Result<()> {
-        let resp = MessageResponse(Response::Status(StatusResponse::Err));
-        handler.swarm.send_message_response(channel, resp)?;
-        bail!("Host received unexpected direct message: {self:?}");
-    }
-
-    fn send_to_core(
-        self,
-        channel: ResponseChannel<MessageResponse>,
-        handler: &mut CommunicationHandler,
-    ) -> Result<()> {
-        let resp = match handler.message_sender.send(self.clone()) {
-            Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
-            Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
-        };
-        handler.swarm.send_message_response(channel, resp)
-    }
-}

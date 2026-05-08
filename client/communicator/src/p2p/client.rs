@@ -174,7 +174,7 @@ impl ClientSwarmEventHandler for request_response::Event<MessageRequest, Message
                 }
                 request_response::Message::Response { response, .. } => {
                     debug!(?response, "Received response");
-                    let res = handler.handle_swarm_response(response, peer);
+                    let res = handler.handler.handle_swarm_response(response, peer);
                     log_err_msg!(res, "Failed to handle incoming message");
                 }
             },
@@ -473,6 +473,26 @@ impl ClientCommunicationHandler {
             delay: Duration::default(),
         }
     }
+
+    fn handle_swarm_request(
+        &mut self,
+        msg: NiketsuMessage,
+        channel: ResponseChannel<MessageResponse>,
+        peer_id: PeerId,
+    ) -> Result<()> {
+        debug!("Received swarm request {msg:?}");
+        match msg {
+            msg if peer_id == self.handler.host => self.handler.send_to_core(msg, channel),
+            msg => self.handler.respond_with_err(msg, channel),
+        }
+    }
+
+    fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()> {
+        let niketsu_msg: NiketsuMessage = msg.try_into()?;
+        debug!(message = ?niketsu_msg, "Received broadcast");
+        let swarm_broadcast = ClientSwarmBroadcast::from(niketsu_msg);
+        swarm_broadcast.handle_swarm_broadcast(peer_id, self)
+    }
 }
 
 #[async_trait]
@@ -520,23 +540,4 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
         }
     }
 
-    fn handle_swarm_request(
-        &mut self,
-        msg: NiketsuMessage,
-        channel: ResponseChannel<MessageResponse>,
-        peer_id: PeerId,
-    ) -> Result<()> {
-        debug!("Received swarm request {msg:?}");
-        match msg {
-            msg if peer_id == self.handler.host => msg.send_to_core(channel, &mut self.handler),
-            msg => msg.respond_with_err(channel, &mut self.handler),
-        }
-    }
-
-    fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()> {
-        let niketsu_msg: NiketsuMessage = msg.try_into()?;
-        debug!(message = ?niketsu_msg, "Received broadcast");
-        let swarm_broadcast = ClientSwarmBroadcast::from(niketsu_msg);
-        swarm_broadcast.handle_swarm_broadcast(peer_id, self)
-    }
 }
