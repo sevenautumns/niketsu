@@ -15,15 +15,16 @@ pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =
     Lazy::new(|| ProjectDirs::from("de", "autumnal", "niketsu"));
 
 #[serde_as]
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct IcedConfig {
     #[serde_as(as = "FromInto<ThemeWrapper>")]
-    #[serde(default = "default_theme")]
     pub theme: Theme,
 }
 
-fn default_theme() -> Theme {
-    Theme::Dark
+impl Default for IcedConfig {
+    fn default() -> Self {
+        Self { theme: Theme::Dark }
+    }
 }
 
 impl IcedConfig {
@@ -62,8 +63,14 @@ impl IcedConfig {
     }
 }
 
-#[derive(SerializeDisplay, DeserializeFromStr, Debug, Clone, Default)]
+#[derive(SerializeDisplay, DeserializeFromStr, Debug, Clone)]
 pub struct ThemeWrapper(pub Theme);
+
+impl Default for ThemeWrapper {
+    fn default() -> Self {
+        Self(Theme::Dark)
+    }
+}
 
 impl Display for ThemeWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -92,6 +99,6 @@ impl FromStr for ThemeWrapper {
             .find(|t| t.to_string().eq(s))
             .cloned()
             .map(ThemeWrapper::from)
-            .unwrap_or_else(|| default_theme().into()))
+            .unwrap_or_else(|| Theme::Dark.into()))
     }
 }

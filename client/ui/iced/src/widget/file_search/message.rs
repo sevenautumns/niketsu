@@ -61,7 +61,7 @@ impl FileSearchWidgetMessageTrait for Activate {
                 .fuzzy_search(state.query.clone()),
         );
         state.active = true;
-        iced::widget::text_input::focus(iced::widget::text_input::Id::new("file_search_query"))
+        iced::widget::operation::focus(iced::widget::Id::new("file_search_query"))
     }
 }
 

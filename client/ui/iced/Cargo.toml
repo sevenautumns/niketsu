@@ -18,6 +18,6 @@ itertools.workspace = true
 async-trait.workspace = true
 toml.workspace = true
 serde_with = "3.0"
-iced = { version = "0.13", features = ["tokio", "advanced"] }
+iced = { version = "0.14", features = ["tokio", "advanced"] }
 futures = "0.3"
 palette = "0.7"

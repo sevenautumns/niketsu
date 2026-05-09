@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use iced::advanced::widget::Operation;
-use iced::event::Status;
 use iced::mouse::Cursor;
-use iced::widget::scrollable::{Id, RelativeOffset};
+use iced::widget::Id;
+use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
 use iced::{Element, Length, Rectangle, Renderer, Task, Theme};
 use niketsu_core::ui::{MessageSource, PlayerMessage};
@@ -15,7 +15,7 @@ use crate::styling::{ContainerBorder, MessageColor};
 
 pub mod message;
 
-const SPACING: u16 = 5;
+const SPACING: f32 = 5.0;
 
 pub struct ChatWidget<'a> {
     base: Element<'a, ChatWidgetMessage>,
@@ -63,13 +63,13 @@ impl iced::advanced::Widget<ChatWidgetMessage, Theme, Renderer> for ChatWidget<'
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
@@ -103,14 +103,14 @@ impl iced::advanced::Widget<ChatWidgetMessage, Theme, Renderer> for ChatWidget<'
     }
 
     fn operate(
-        &self,
+        &mut self,
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .operate(&mut state.children[0], layout, renderer, operation);
     }
 
@@ -131,18 +131,18 @@ impl iced::advanced::Widget<ChatWidgetMessage, Theme, Renderer> for ChatWidget<'
         )
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         state: &mut iced::advanced::widget::Tree,
-        event: iced::Event,
+        event: &iced::Event,
         layout: iced::advanced::Layout<'_>,
         cursor: Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, ChatWidgetMessage>,
         viewport: &Rectangle,
-    ) -> Status {
-        self.base.as_widget_mut().on_event(
+    ) {
+        self.base.as_widget_mut().update(
             &mut state.children[0],
             event,
             layout,
@@ -151,7 +151,8 @@ impl iced::advanced::Widget<ChatWidgetMessage, Theme, Renderer> for ChatWidget<'
             clipboard,
             shell,
             viewport,
-        )
+        );
+        shell.request_redraw();
     }
 }
 
@@ -189,7 +190,7 @@ impl ChatWidgetState {
 
     pub fn snap(&self) -> Task<Message> {
         if self.offset.y == 1.0 {
-            return iced::widget::scrollable::snap_to(Id::new("messages"), self.offset);
+            return iced::widget::operation::snap_to(Id::new("messages"), self.offset);
         }
         Task::none()
     }

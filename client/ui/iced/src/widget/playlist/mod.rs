@@ -2,12 +2,11 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use iced::advanced::widget::Operation;
-use iced::event::Status;
 use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
 use iced::mouse::Cursor;
 use iced::widget::text::Wrapping;
-use iced::widget::{Column, Rule, button, text};
+use iced::widget::{self, Column, Rule, button, text};
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use niketsu_core::file_database::FileStore;
 use niketsu_core::playlist::{Playlist, *};
@@ -261,13 +260,13 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
@@ -315,14 +314,14 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
     }
 
     fn operate(
-        &self,
+        &mut self,
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .operate(&mut state.children[0], layout, renderer, operation);
     }
 
@@ -347,17 +346,17 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
         )
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         state: &mut iced::advanced::widget::Tree,
-        event: Event,
+        event: &Event,
         layout: iced::advanced::Layout<'_>,
         cursor: Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, PlaylistWidgetMessage>,
         viewport: &iced::Rectangle,
-    ) -> Status {
+    ) {
         let mut _status = iced::event::Status::Ignored;
         let inner_state = state.state.downcast_mut::<InnerState>();
 
@@ -444,7 +443,7 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
         //     iced::event::Status::Captured => status,
         // }
         // TODO properly figure out if we captured something or not
-        self.base.as_widget_mut().on_event(
+        self.base.as_widget_mut().update(
             &mut state.children[0],
             event,
             layout,
@@ -453,19 +452,25 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
             clipboard,
             shell,
             viewport,
-        )
+        );
+        shell.request_redraw();
     }
 
     fn overlay<'b>(
         &'b mut self,
         state: &'b mut iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'_>,
+        layout: iced::advanced::Layout<'b>,
         renderer: &Renderer,
+        rectangle: &Rectangle,
         translation: Vector,
     ) -> Option<iced::advanced::overlay::Element<'b, PlaylistWidgetMessage, Theme, Renderer>> {
-        self.base
-            .as_widget_mut()
-            .overlay(&mut state.children[0], layout, renderer, translation)
+        self.base.as_widget_mut().overlay(
+            &mut state.children[0],
+            layout,
+            renderer,
+            rectangle,
+            translation,
+        )
     }
 }
 
@@ -574,7 +579,7 @@ pub struct InsertHint<'a> {
 impl Default for InsertHint<'_> {
     fn default() -> Self {
         Self {
-            rule: Rule::horizontal(1).style(FileRuleTheme::theme),
+            rule: widget::rule::horizontal(1).style(FileRuleTheme::theme),
             pos: iced::Point::default(),
         }
     }
@@ -589,7 +594,7 @@ impl InsertHint<'_> {
     }
 
     pub fn draw(
-        &self,
+        &mut self,
         renderer: &mut Renderer,
         theme: &Theme,
         style: &iced::advanced::renderer::Style,
@@ -599,9 +604,10 @@ impl InsertHint<'_> {
         let limits = iced::advanced::layout::Limits::new(Size::ZERO, layout.bounds().size())
             .width(Length::Fill)
             .height(1);
+
         let mut node =
             <iced::widget::Rule as iced::advanced::Widget<Message, Theme, Renderer>>::layout(
-                &self.rule,
+                &mut self.rule,
                 &mut iced::advanced::widget::Tree::empty(),
                 renderer,
                 &limits,

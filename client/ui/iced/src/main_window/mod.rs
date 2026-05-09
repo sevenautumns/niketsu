@@ -3,7 +3,7 @@ use iced::event::Status;
 use iced::keyboard::Key;
 use iced::keyboard::key::Named;
 use iced::mouse::Cursor;
-use iced::widget::scrollable::Id;
+use iced::widget::Id;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
 use iced::{Element, Event, Length, Rectangle, Renderer, Theme};
 
@@ -22,7 +22,7 @@ use crate::widget::settings::SettingsWidget;
 
 pub(super) mod message;
 
-const SPACING: u16 = 5;
+const SPACING: f32 = 5.0;
 
 pub struct MainView<'a> {
     base: Element<'a, Message>,
@@ -140,13 +140,13 @@ impl iced::advanced::Widget<Message, Theme, Renderer> for MainView<'_> {
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
@@ -176,14 +176,14 @@ impl iced::advanced::Widget<Message, Theme, Renderer> for MainView<'_> {
     }
 
     fn operate(
-        &self,
+        &mut self,
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .operate(&mut state.children[0], layout, renderer, operation);
     }
 
@@ -204,20 +204,20 @@ impl iced::advanced::Widget<Message, Theme, Renderer> for MainView<'_> {
         )
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         state: &mut iced::advanced::widget::Tree,
-        event: iced::Event,
+        event: &iced::Event,
         layout: iced::advanced::Layout<'_>,
         cursor: Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, Message>,
         viewport: &Rectangle,
-    ) -> Status {
-        let mut status = self.base.as_widget_mut().on_event(
+    ) {
+        self.base.as_widget_mut().update(
             &mut state.children[0],
-            event.clone(),
+            event,
             layout,
             cursor,
             renderer,
@@ -225,7 +225,9 @@ impl iced::advanced::Widget<Message, Theme, Renderer> for MainView<'_> {
             shell,
             viewport,
         );
+        shell.request_redraw();
 
+        let status = shell.event_status();
         if let Status::Ignored = status
             && let Event::Keyboard(iced::keyboard::Event::KeyPressed {
                 key: Key::Named(Named::Space),
@@ -233,22 +235,25 @@ impl iced::advanced::Widget<Message, Theme, Renderer> for MainView<'_> {
             }) = event
         {
             shell.publish(ToggleReady.into());
-            status = Status::Captured;
+            shell.capture_event();
         }
-
-        status
     }
 
     fn overlay<'b>(
         &'b mut self,
         state: &'b mut iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'_>,
+        layout: iced::advanced::Layout<'b>,
         renderer: &Renderer,
+        rectangle: &iced::Rectangle,
         translation: iced::Vector,
     ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
-        self.base
-            .as_widget_mut()
-            .overlay(&mut state.children[0], layout, renderer, translation)
+        self.base.as_widget_mut().overlay(
+            &mut state.children[0],
+            layout,
+            renderer,
+            rectangle,
+            translation,
+        )
     }
 }
 

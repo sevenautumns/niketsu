@@ -1,5 +1,5 @@
 use iced::advanced::widget::Operation;
-use iced::{Border, Color, Element, Point, Renderer, Size, Theme, Vector};
+use iced::{Border, Color, Element, Renderer, Size, Theme};
 
 pub struct ElementOverlay<'a, 'b, M> {
     pub tree: &'b mut iced::advanced::widget::Tree,
@@ -11,7 +11,7 @@ pub struct ElementOverlayConfig {
     pub max_height: Option<f32>,
     pub max_width: Option<f32>,
     pub min_padding: f32,
-    pub event_status: Box<dyn Fn(iced::Event, iced::event::Status) -> iced::event::Status>,
+    // pub event_status: Box<dyn Fn(iced::Event, iced::event::Status) -> iced::event::Status>,
 }
 
 impl Default for ElementOverlayConfig {
@@ -20,7 +20,7 @@ impl Default for ElementOverlayConfig {
             max_height: None,
             max_width: None,
             min_padding: 20.0,
-            event_status: Box::new(|_, status| status),
+            // event_status: Box::new(|_, status| status),
         }
     }
 }
@@ -44,7 +44,7 @@ impl<M> iced::advanced::Overlay<M, Theme, Renderer> for ElementOverlay<'_, '_, M
             .shrink(Size::new(padding, padding));
         let mut child = self
             .content
-            .as_widget()
+            .as_widget_mut()
             .layout(self.tree, renderer, &limits);
         child = child.align(
             iced::Alignment::Center,
@@ -56,14 +56,14 @@ impl<M> iced::advanced::Overlay<M, Theme, Renderer> for ElementOverlay<'_, '_, M
         child.translate(iced::Vector::new(offset_x, offset_y))
     }
 
-    fn is_over(
-        &self,
-        layout: iced::advanced::Layout<'_>,
-        _renderer: &Renderer,
-        cursor_position: Point,
-    ) -> bool {
-        layout.bounds().expand(5.0).contains(cursor_position)
-    }
+    // fn is_over(
+    //     &self,
+    //     layout: iced::advanced::Layout<'_>,
+    //     _renderer: &Renderer,
+    //     cursor_position: Point,
+    // ) -> bool {
+    //     layout.bounds().expand(5.0).contains(cursor_position)
+    // }
 
     fn draw(
         &self,
@@ -83,6 +83,7 @@ impl<M> iced::advanced::Overlay<M, Theme, Renderer> for ElementOverlay<'_, '_, M
                     radius: 5.0.into(),
                 },
                 shadow: Default::default(),
+                snap: false,
             },
             Color {
                 a: 0.99,
@@ -108,22 +109,22 @@ impl<M> iced::advanced::Overlay<M, Theme, Renderer> for ElementOverlay<'_, '_, M
         operation: &mut dyn Operation,
     ) {
         self.content
-            .as_widget()
+            .as_widget_mut()
             .operate(self.tree, layout, renderer, operation)
     }
 
-    fn on_event(
+    fn update(
         &mut self,
-        event: iced::Event,
+        event: &iced::Event,
         layout: iced::advanced::Layout<'_>,
         cursor: iced::advanced::mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, M>,
-    ) -> iced::event::Status {
-        let status = self.content.as_widget_mut().on_event(
+    ) {
+        self.content.as_widget_mut().update(
             self.tree,
-            event.clone(),
+            event,
             layout,
             cursor,
             renderer,
@@ -131,28 +132,6 @@ impl<M> iced::advanced::Overlay<M, Theme, Renderer> for ElementOverlay<'_, '_, M
             shell,
             &layout.bounds(),
         );
-        (self.config.event_status)(event, status)
-    }
-
-    fn mouse_interaction(
-        &self,
-        layout: iced::advanced::Layout<'_>,
-        cursor: iced::advanced::mouse::Cursor,
-        viewport: &iced::Rectangle,
-        renderer: &Renderer,
-    ) -> iced::advanced::mouse::Interaction {
-        self.content
-            .as_widget()
-            .mouse_interaction(self.tree, layout, cursor, viewport, renderer)
-    }
-
-    fn overlay<'c>(
-        &'c mut self,
-        layout: iced::advanced::Layout<'_>,
-        renderer: &Renderer,
-    ) -> Option<iced::advanced::overlay::Element<'c, M, Theme, Renderer>> {
-        self.content
-            .as_widget_mut()
-            .overlay(self.tree, layout, renderer, Vector::default())
+        shell.request_redraw();
     }
 }

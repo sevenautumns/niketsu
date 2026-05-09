@@ -115,6 +115,7 @@ impl ViewModel {
     }
 }
 
+#[derive(Clone)]
 pub struct Flags {
     pub iced_config: IcedConfig,
     pub config: Config,
@@ -139,19 +140,19 @@ impl View {
             ui_model: ui.model().clone(),
         };
         let view = Box::pin(async {
-            iced::application("Niketsu", Self::update, Self::view)
-                .theme(Self::theme)
-                .subscription(Self::subscription)
-                .executor::<PreExistingTokioRuntime>()
-                .run_with(|| {
-                    (
-                        View {
-                            view_model: ViewModel::new(flags),
-                        },
-                        Task::none(),
-                    )
-                })
-                .map_err(anyhow::Error::from)
+            iced::application(
+                move || View {
+                    view_model: ViewModel::new(flags.clone()),
+                },
+                Self::update,
+                Self::view,
+            )
+            .title("Niketsu")
+            .theme(Self::theme)
+            .subscription(Self::subscription)
+            .executor::<PreExistingTokioRuntime>()
+            .run()
+            .map_err(anyhow::Error::from)
         });
         (ui, view)
     }
