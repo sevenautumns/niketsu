@@ -127,6 +127,13 @@ impl FileShareConsumer {
             let req = FileShareRequest::File(request.clone());
             base.swarm.send_file_request(p, req);
             self.is_requesting = true;
+        } else {
+            debug!("No providers found for the requested file");
+            let msg = "No providers found for the requested file".into();
+            base.send_chat_message(arcstr::literal!("server"), msg)
+                .ok();
+            let msg = NiketsuMessage::VideoProviderStopped(Default::default());
+            base.message_sender.send(msg).ok();
         }
     }
 }
@@ -164,13 +171,18 @@ impl FileShareEventHandler for request_response::Event<FileShareRequest, FileSha
                     FileShareSwarmResponseHandler::handle_swarm_response(response, handler).ok();
                 }
             },
-            request_response::Event::OutboundFailure { request_id, .. } => {
-                if let Some(FileShare::Consumer(consumer)) = &mut handler.file_share
-                    && consumer.chunk_requests.contains(&request_id)
-                {
-                    handler.file_share.take();
-                    let msg = NiketsuMessage::VideoProviderStopped(Default::default());
-                    handler.message_sender.send(msg).unwrap();
+            request_response::Event::OutboundFailure {
+                request_id, error, ..
+            } => {
+                if let Some(FileShare::Consumer(consumer)) = &mut handler.file_share {
+                    if consumer.chunk_requests.remove(&request_id) {
+                        warn!(?error, "Chunk request failed. Cache will retry.");
+                        let msg = "Chunk download timeout. Connection might be slow...".to_string();
+                        handler
+                            .base
+                            .send_chat_message(arcstr::literal!("server"), msg)
+                            .ok();
+                    }
                 };
             }
             _ => {}

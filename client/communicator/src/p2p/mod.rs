@@ -418,7 +418,7 @@ impl P2PClient {
                         request_response: request_response::cbor::Behaviour::new(
                             [(StreamProtocol::new("/fileshare/1"), ProtocolSupport::Full)],
                             request_response::Config::default()
-                                .with_request_timeout(Duration::from_secs(5)),
+                                .with_request_timeout(Duration::from_secs(30)),
                         ),
                         kademlia: kad::Behaviour::new(
                             keypair.public().to_peer_id(),

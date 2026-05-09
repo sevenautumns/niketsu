@@ -37,6 +37,7 @@ enum ClientSwarmEvent {
     MessageRequestResponse(request_response::Event<MessageRequest, MessageResponse>),
     FileShareRequestResponse(request_response::Event<FileShareRequest, FileShareResponseResult>),
     Kademlia(kad::Event),
+    Mdns(libp2p::mdns::Event),
     ConnectionEstablished(ConnectionEstablished),
     ConnectionClosed(ConnectionClosed),
     OutgoingConnectionError(OutgoingConnectionError),
@@ -64,6 +65,9 @@ impl ClientSwarmEvent {
             SwarmEvent::Behaviour(BehaviourEvent::FileShare(FileShareBehaviourEvent::Kademlia(
                 event,
             ))) => ClientSwarmEvent::Kademlia(event),
+            SwarmEvent::Behaviour(BehaviourEvent::FileShare(FileShareBehaviourEvent::Mdns(
+                event,
+            ))) => ClientSwarmEvent::Mdns(event),
             SwarmEvent::ConnectionEstablished {
                 peer_id,
                 connection_id,
@@ -215,6 +219,22 @@ impl ClientSwarmEventHandler
 impl ClientSwarmEventHandler for kad::Event {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
         handler.handler.handle_file_share_swarm_event(self);
+    }
+}
+
+impl ClientSwarmEventHandler for libp2p::mdns::Event {
+    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
+        if let libp2p::mdns::Event::Discovered(list) = self {
+            for (peer_id, addr) in list {
+                handler
+                    .handler
+                    .swarm
+                    .behaviour_mut()
+                    .file_share
+                    .kademlia
+                    .add_address(&peer_id, addr);
+            }
+        }
     }
 }
 
