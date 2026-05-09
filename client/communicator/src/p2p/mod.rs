@@ -1,15 +1,13 @@
 use std::ops::{Deref, DerefMut};
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use arcstr::ArcStr;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use file_share::{FileShare, FileShareRequest, FileShareResponseResult};
-use futures::stream::StreamExt;
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
-use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
@@ -18,16 +16,17 @@ use libp2p::{
 };
 use niketsu_core::communicator::UserMessageMsg;
 use niketsu_core::playlist::Video;
-use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::room::RoomName;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha256::digest;
 use tokio::spawn;
-use tracing::{debug, info};
+use tracing::debug;
 
-use crate::CONNECT_TIMEOUT;
 use crate::messages::NiketsuMessage;
+
+mod auth;
+mod connecting;
 
 mod client;
 mod file_share;
@@ -42,7 +41,7 @@ pub(crate) struct TransportBehaviour {
     identify: identify::Behaviour,
     dcutr: dcutr::Behaviour,
     ping: ping::Behaviour,
-    init_request_response: request_response::cbor::Behaviour<InitRequest, InitResponse>,
+    auth: auth::AuthBehaviour,
 }
 
 /// Room sync protocol: gossip broadcasts and direct host↔client messages.
@@ -81,31 +80,10 @@ enum Response {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum StatusResponse {
+pub(crate) enum StatusResponse {
     Ok,
     Err,
     NotProvidingErr,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InitRequest {
-    room: RoomName,
-    password: String,
-}
-
-impl InitRequest {
-    fn new(room: RoomName, password: String) -> Self {
-        Self {
-            room,
-            password: digest(password),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InitResponse {
-    status: StatusResponse,
-    peer_id: Option<PeerId>, // peer id of room if found
 }
 
 #[async_trait]
@@ -219,130 +197,6 @@ impl SwarmHandler for Swarm<Behaviour> {
     }
 }
 
-#[async_trait]
-trait SwarmRelayConnection {
-    async fn establish_conection(
-        &mut self,
-        relay_addr: Multiaddr,
-        room: RoomName,
-        password: String,
-    ) -> Result<Host>;
-    async fn identify_relay(
-        &mut self,
-        relay_addr: Multiaddr,
-        room: RoomName,
-        password: String,
-    ) -> Result<PeerInfo>;
-}
-
-type Host = PeerId;
-
-#[derive(Debug)]
-struct PeerInfo {
-    relay: PeerId,
-    host: Option<Host>,
-}
-
-#[async_trait]
-impl SwarmRelayConnection for Swarm<Behaviour> {
-    async fn establish_conection(
-        &mut self,
-        relay_addr: Multiaddr,
-        room: RoomName,
-        password: String,
-    ) -> Result<Host> {
-        self.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
-        self.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
-        self.listen_on("/ip6/::/udp/0/quic-v1".parse()?)?;
-        self.listen_on("/ip6/::/tcp/0".parse()?)?;
-
-        let peer_info = self
-            .identify_relay(relay_addr.clone(), room, password)
-            .await?;
-
-        let relay_addr = relay_addr
-            .with_p2p(peer_info.relay)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-
-        debug!(?peer_info, "Peer IDs from relay");
-        if let Some(peer_id) = peer_info.host {
-            info!(%peer_id, "Dialing peer");
-            let peer_addr = relay_addr
-                .with(Protocol::P2pCircuit)
-                .with(Protocol::P2p(peer_id));
-
-            self.dial(peer_addr.clone()).unwrap();
-            let kad = &mut self.behaviour_mut().file_share.kademlia;
-            kad.add_address(&peer_id, peer_addr);
-            return Ok(peer_id);
-        }
-
-        info!(?relay_addr, "Initialization successful. Listening on relay");
-        self.listen_on(relay_addr.clone().with(Protocol::P2pCircuit))
-            .expect("Failed to listen on remote relay");
-
-        Ok(*self.local_peer_id())
-    }
-
-    async fn identify_relay(
-        &mut self,
-        relay_addr: Multiaddr,
-        room: RoomName,
-        password: String,
-    ) -> Result<PeerInfo> {
-        info!("Dialing relay for identify exchange");
-        self.dial(relay_addr).context("Failed to dial relay")?;
-
-        let exchange = async {
-            // Phase 1: wait for identify, then send auth request
-            let relay = loop {
-                match self.next().await.unwrap() {
-                    SwarmEvent::Behaviour(BehaviourEvent::Transport(
-                        TransportBehaviourEvent::Identify(identify::Event::Received {
-                            peer_id,
-                            info: identify::Info { observed_addr, .. },
-                            ..
-                        }),
-                    )) => {
-                        debug!(%observed_addr, %peer_id, "Relay identified");
-                        let req = InitRequest::new(room, password);
-                        self.behaviour_mut()
-                            .transport
-                            .init_request_response
-                            .send_request(&peer_id, req);
-                        break peer_id;
-                    }
-                    event => debug!(?event, "Waiting for identify"),
-                }
-            };
-
-            // Phase 2: wait for auth response
-            let host = loop {
-                match self.next().await.unwrap() {
-                    SwarmEvent::Behaviour(BehaviourEvent::Transport(
-                        TransportBehaviourEvent::InitRequestResponse(
-                            request_response::Event::Message {
-                                message: request_response::Message::Response { response, .. },
-                                ..
-                            },
-                        ),
-                    )) => match response.status {
-                        StatusResponse::Ok => break response.peer_id,
-                        StatusResponse::Err => bail!("Authentication failed"),
-                        _ => bail!("Received unexpected response from relay"),
-                    },
-                    event => debug!(?event, "Waiting for auth response"),
-                }
-            };
-
-            Ok::<_, anyhow::Error>(PeerInfo { relay, host })
-        };
-
-        tokio::time::timeout(CONNECT_TIMEOUT, exchange)
-            .await
-            .context("Identify exchange with relay timed out")?
-    }
-}
 
 #[derive(Debug)]
 pub(crate) struct P2PClient {
@@ -362,7 +216,7 @@ impl P2PClient {
         quic_config.handshake_timeout = Duration::from_secs(10);
         quic_config.max_idle_timeout = 10 * 1000;
 
-        let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair.clone())
+        let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair.clone())
             .with_tokio()
             .with_tcp(
                 tcp::Config::default(),
@@ -391,14 +245,7 @@ impl P2PClient {
                         ping: ping::Behaviour::new(
                             ping::Config::new().with_interval(Duration::from_secs(1)),
                         ),
-                        init_request_response: request_response::cbor::Behaviour::new(
-                            [(
-                                StreamProtocol::new("/authorisation/1"),
-                                ProtocolSupport::Full,
-                            )],
-                            request_response::Config::default()
-                                .with_request_timeout(Duration::from_secs(10)),
-                        ),
+                        auth: auth::AuthBehaviour::new(),
                     },
                     messaging: MessagingBehaviour {
                         gossipsub: gossipsub::Behaviour::new(
@@ -436,42 +283,17 @@ impl P2PClient {
 
         debug!(%relay_addr, "Attempting to connect to relay");
 
-        let room2 = room.clone();
-        let playlist_handler =
-            tokio::task::spawn(async move { PlaylistBrowser::get_first(&room2).await });
-
-        let host = swarm
-            .establish_conection(relay_addr.clone(), room.clone(), password.clone())
-            .await?;
-        info!(peer_id = %swarm.local_peer_id(), "Starting client with peer id");
-
         let topic_hash = digest(format!("{room}|{password}"));
-        let topic = gossipsub::IdentTopic::new(topic_hash); // can topics be discovered of new nodes?
-        swarm.behaviour_mut().messaging.gossipsub.subscribe(&topic)?;
+        let topic = gossipsub::IdentTopic::new(topic_hash);
 
         let (core_sender, core_receiver) = tokio::sync::mpsc::unbounded_channel();
         let (message_sender, message_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut handler: Handler = if host == (*swarm.local_peer_id()) {
-            Handler::Host(host::HostCommunicationHandler::new(
-                swarm,
-                topic,
-                host,
-                relay_addr.clone(),
-                core_receiver,
-                message_sender,
-                room,
-                playlist_handler.await.ok().flatten().unwrap_or_default(),
-            ))
-        } else {
-            Handler::Client(client::ClientCommunicationHandler::new(
-                swarm,
-                topic,
-                host,
-                relay_addr.clone(),
-                core_receiver,
-                message_sender,
-            ))
-        };
+
+        let mut handler = connecting::ConnectingHandler::new(
+            swarm, relay_addr, room, password, topic, core_receiver, message_sender,
+        )
+        .run()
+        .await?;
 
         let client = P2PClient {
             sender: core_sender,
