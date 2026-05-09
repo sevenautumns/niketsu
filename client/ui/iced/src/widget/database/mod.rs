@@ -1,5 +1,4 @@
 use iced::advanced::widget::Operation;
-use iced::event::Status;
 use iced::mouse::Cursor;
 use iced::widget::{Button, Container, ProgressBar, Row, Text, Tooltip};
 use iced::{Element, Event, Length, Rectangle, Renderer, Theme};
@@ -35,7 +34,7 @@ impl DatabaseWidget<'_> {
             false => ProgressBar::new(0.0..=1.0, state.ratio)
                 .style(FileProgressBar::theme(finished))
                 // Text size + 2 times default button padding
-                .height(Length::Fixed(*TEXT_SIZE.load_full() + 16.0))
+                .girth(Length::Fixed(*TEXT_SIZE.load_full() + 16.0))
                 .into(),
         };
 
@@ -81,13 +80,13 @@ impl iced::advanced::Widget<DatabaseWidgetMessage, Theme, Renderer> for Database
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
@@ -120,14 +119,14 @@ impl iced::advanced::Widget<DatabaseWidgetMessage, Theme, Renderer> for Database
     }
 
     fn operate(
-        &self,
+        &mut self,
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .operate(&mut state.children[0], layout, renderer, operation);
     }
 
@@ -148,18 +147,18 @@ impl iced::advanced::Widget<DatabaseWidgetMessage, Theme, Renderer> for Database
         )
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         state: &mut iced::advanced::widget::Tree,
-        event: Event,
+        event: &Event,
         layout: iced::advanced::Layout<'_>,
         cursor: Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, DatabaseWidgetMessage>,
         viewport: &Rectangle,
-    ) -> Status {
-        self.base.as_widget_mut().on_event(
+    ) {
+        self.base.as_widget_mut().update(
             &mut state.children[0],
             event,
             layout,
@@ -168,7 +167,8 @@ impl iced::advanced::Widget<DatabaseWidgetMessage, Theme, Renderer> for Database
             clipboard,
             shell,
             viewport,
-        )
+        );
+        shell.request_redraw();
     }
 }
 

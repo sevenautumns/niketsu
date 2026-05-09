@@ -31,4 +31,8 @@ impl Executor for PreExistingTokioRuntime {
     fn spawn(&self, future: impl futures::Future<Output = ()> + Send + 'static) {
         let _ = tokio::task::spawn(future);
     }
+
+    fn block_on<T>(&self, future: impl futures::Future<Output = T>) -> T {
+        futures::executor::block_on(future)
+    }
 }

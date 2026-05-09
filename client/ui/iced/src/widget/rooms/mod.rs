@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use iced::advanced::widget::Operation;
 use iced::mouse::Cursor;
-use iced::widget::scrollable::Id;
+use iced::widget::Id;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Space, Text, row};
 use iced::{Element, Length, Rectangle, Renderer, Theme};
 use niketsu_core::room::UserList;
@@ -25,7 +25,7 @@ impl RoomsWidget<'_> {
             .iter()
             .map(|u| {
                 row!(
-                    Space::with_width(Length::Fixed(5.0)),
+                    Space::new().width(Length::Fixed(5.0)),
                     Button::new(Container::new(u.to_text(this_user)).padding(2))
                         .padding(0)
                         .width(Length::Fill)
@@ -51,13 +51,13 @@ impl iced::advanced::Widget<Message, Theme, Renderer> for RoomsWidget<'_> {
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
@@ -70,14 +70,14 @@ impl iced::advanced::Widget<Message, Theme, Renderer> for RoomsWidget<'_> {
     }
 
     fn operate(
-        &self,
+        &mut self,
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .operate(&mut state.children[0], layout, renderer, operation);
     }
 
@@ -119,18 +119,18 @@ impl iced::advanced::Widget<Message, Theme, Renderer> for RoomsWidget<'_> {
         )
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         state: &mut iced::advanced::widget::Tree,
-        event: iced::Event,
+        event: &iced::Event,
         layout: iced::advanced::Layout<'_>,
         cursor: Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, Message>,
         viewport: &iced::Rectangle,
-    ) -> iced::event::Status {
-        self.base.as_widget_mut().on_event(
+    ) {
+        self.base.as_widget_mut().update(
             &mut state.children[0],
             event,
             layout,
@@ -139,7 +139,8 @@ impl iced::advanced::Widget<Message, Theme, Renderer> for RoomsWidget<'_> {
             clipboard,
             shell,
             viewport,
-        )
+        );
+        shell.request_redraw();
     }
 }
 

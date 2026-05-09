@@ -38,6 +38,7 @@ impl FileButton {
                 border: Border::default(),
                 background,
                 text_color: text,
+                snap: false,
             }
         }
     }
@@ -49,9 +50,9 @@ impl FileRuleTheme {
     pub fn theme(theme: &Theme) -> iced::widget::rule::Style {
         iced::widget::rule::Style {
             color: theme.palette().text,
-            width: 1,
             radius: 0.0.into(),
             fill_mode: FillMode::Full,
+            snap: false,
         }
     }
 }

@@ -112,3 +112,148 @@ Config is stored at the platform config dir (e.g. `~/.config/niketsu/config.toml
 - `rustfmt.toml`: `group_imports = "StdExternalCrate"`, `imports_granularity = "Module"`
 - Edition 2024 throughout
 - `enum_dispatch` is used heavily to avoid dynamic dispatch on hot event paths
+
+## Module reference
+
+### niketsu-core (client/core/src/)
+
+**lib.rs**
+- `CoreModel` (line 44): central state — holds all subsystem boxes + `playlist: PlaylistHandler`, `ready`, `running`
+- `Core` (line 60): event loop — `run()`, `auto_connect()`, `run_loop()` (tokio::select! over all subsystems)
+- `EventHandler` trait (line 40): `handle(&mut CoreModel)` — every event type implements this
+
+**communicator.rs**
+- `CommunicatorTrait` (line 25): `connect(EndpointInfo)`, `send(OutgoingMessage)`, `receive()`, `has_endpoint()`
+- `OutgoingMessage` enum (line 40): VideoStatus, Start, Pause, PlaybackSpeed, Seek, Select, UserMessage, Playlist, UserStatus, FileRequest/Response, ChunkRequest/Response, VideoShareChange
+- `IncomingMessage` enum (line 59): all of OutgoingMessage + Connected, ConnectionError, UserStatusList, ServerMessage, VideoProviderStopped — dispatched via enum_dispatch
+- All `*Msg` structs implement `EventHandler` in the same file
+
+**player/mod.rs**
+- `MediaPlayerTrait` (line 20): start/pause, set_speed, set/get_position, load_video/unload_video, cache_available, playing_video, async event()
+- `PlayerPause/Start/CachePause/PositionChange/SpeedChange/FileEnd/Exit` — all implement EventHandler
+
+**player/wrapper.rs**
+- `MediaPlayerWrapper` (line 24): wraps any `MediaPlayerTrait`; `reconcile(pos)` (line 40) does flexible clock sync
+
+**playlist/mod.rs**
+- `Video` (line 16): Arc-wrapped; `From<&str>` parses file vs URL; implements `FuzzyEntry`
+- `VideoInner` enum (line 49): `File(ArcStr)` | `Url(Arc<Url>)` — `is_url()`, `to_path_str()`, `as_str()`
+- `Playlist` (line 114): Vec-backed; navigation (`iter`, `find`, `get_range`) + mutation (`push`, `insert`, `remove`, `move_video`, `move_range`); implements `FuzzySearchable<Video>`
+
+**playlist/handler.rs**
+- `PlaylistHandler` (line 6): Playlist + `playing: Option<usize>` — `get_current_video()`, `advance_to_next()`, `select_playing()`, `unload_playing()`, `replace()`
+
+**file_database/mod.rs**
+- `FileDatabaseTrait` (line 30): `add/del/clear_paths()`, `start/stop_update()`, `find_file()`, `all_files()`, `async event()`
+- `FileEntry` (line 88) / `FileEntryInner` (line 126): Arc-wrapped file record — `path: PathBuf`, `name: ArcStr`, `modified`
+- `FileDatabase` (line 182): holds `update: Option<JoinHandle<...>>`, `store: FileStore`, `paths: BTreeSet<PathBuf>`
+- `FileStore` (line 324): immutable im::Vector — `find_file()` binary search; implements `FuzzySearchable<FileEntry>`
+- `FilePathSearch` trait (line 334): `get_file_path(filename) -> Option<String>` — impls: `FileStore`, `VideoServerFile`
+
+**ui.rs**
+- `UserInterfaceTrait` (line 30): notifications (`file_database_status`, `player_message`, `user_list`, `video_change`), config methods, `async event()`, `abort()`
+- UI events implement EventHandler: `PlaylistChange:60`, `VideoChange:78`, `RoomChange:128`, `UserChange:155`, `UserMessage:172`, `FileDatabaseChange`, `FileShareChange`, `SettingsChange`, `FileRequest`
+- `PlayerMessage` (line 188): Arc-wrapped timestamped chat/status message; `MessageSource` and `MessageLevel` enums
+
+**config.rs**
+- `Config` (line 16): `username`, `media_dirs`, `relay`, `port`, `room`, `password`, `auto_connect`, `auto_share`; `addr() -> Multiaddr`, `load_or_default()`
+
+**user.rs** — `UserStatus` (line 8): `name: ArcStr`, `ready: bool`; implements Ord for BTreeSet
+
+**room.rs** — `RoomName = ArcStr`; `UserList` (line 11): BTreeSet-wrapped with `room: RoomName`
+
+**video_provider.rs**
+- `VideoProviderTrait` (line 16): `start/stop_providing()`, `request_chunk(uuid, filename, start, len)`, `size()`, `sharing()`, `async event()`
+
+**video_server.rs**
+- `VideoServerTrait` (line 15): `start_server(filename, size)`, `stop_server()`, `insert_chunk(filename, start, bytes)`, `addr()`, `async event()`
+- `VideoServerFile` (line 66): implements `FilePathSearch` — returns HTTP URL for mpv
+
+**fuzzy.rs**
+- `FuzzyEntry` trait (line 16): `key() -> &str`
+- `FuzzySearchable<E>` (line 20): `fuzzy_search(query) -> FuzzySearch<E>`, `len()`, `is_empty()`
+- `FuzzySearch<E>` (line 33): rayon-backed `Future<Output=Vec<FuzzyResult<E>>>` — abortable
+
+**heartbeat.rs** — `Pacemaker` (line 12): emits `Heartbeat` every 500ms; `Heartbeat` EventHandler sends `VideoStatusMsg`
+
+**util/observed.rs** — `Observed<T>`: ArcSwap<T> + Notify — `set(v)`, `get_inner()`, `changed()`
+
+### niketsu-communicator (client/communicator/src/)
+
+**lib.rs**
+- `Connection` enum (line 22): `Connected(Connected)` | `Connecting(Connecting)` | `Disconnected(Disconnected)` — state machine driven by `receive()`
+- `P2PCommunicator` (line 160): implements `CommunicatorTrait`
+- `Disconnected` (line 136): exponential backoff reconnect
+
+**messages.rs** — `NiketsuMessage` (line 8): JSON transport envelope; `JoinMessage` (line 76): initial auth
+
+**p2p/mod.rs**
+- `Behaviour` (line 38): libp2p composition — relay_client, gossipsub, fileshare_request_response, message_request_response, init_request_response, kademlia, mdns
+- `InitRequest/InitResponse` (lines 73-91): room auth with SHA256 password hash
+- `CommunicationHandlerTrait` (line 94): `async run()`, handle_swarm_event/core_message/swarm_request/response/broadcast
+- `Handler` enum (line 118): dispatches between `Client` and `Host` roles
+
+**p2p/client.rs** — client (peer) role; **p2p/host.rs** — host (room owner) role; **p2p/file_share.rs** — `FileShareRequest/ResponseResult`
+
+### niketsu-mpv (client/player/mpv/src/)
+
+**lib.rs**
+- `MpvProperty` enum (line 33): PlaybackTime, Pause, Speed, Filename, Duration, CachePause, EofReached, etc. — `format() -> mpv_format`
+- `MpvCommand` enum (line 89): Loadfile, Stop, ShowText
+- `MpvStatus` (line 109): player state cache — paused, seeking, speed, file, file_load_status, load_position
+- `Mpv` (line 141): main wrapper; implements `MediaPlayerTrait` + `Drop` (unsafe terminate_destroy)
+
+**bindings.rs** — raw FFI to libmpv C API; **event.rs** — `MpvEventPipe`, `PropertyValue` enum
+
+### niketsu-video-server (client/player/video_server/src/)
+
+**lib.rs**
+- `CHUNK_SIZE = 512_000` (512KB), `TIMEOUT = 2s`, `MAX_RETRY = 3`
+- `VideoServer` (line 27): implements `VideoServerTrait`
+- `VideoCache` (line 68): moka LRU cache + notify — `obtain_chunk()` with retry
+- `TcpServer` (line 177): HTTP range-request handler for mpv streaming
+
+### niketsu-iced (client/ui/iced/src/)
+
+- Currently on **iced 0.14** (note: overlay layout uses `as_widget_mut()`, not `as_widget()`)
+- `TEXT_SIZE: ArcSwap<f32>` in lib.rs: dynamic text size
+- `view.rs` — `IcedUI` implementing `UserInterfaceTrait`
+- `styling.rs` — `FileButton`, `FileRuleTheme` widget styles
+- `widget/`: chat, database, file_search (+ message.rs), overlay (`ElementOverlay`/`ElementOverlayConfig`), playlist, rooms, settings
+
+### niketsu-ratatui (client/ui/ratatui/src/)
+
+- `view` — `RatatuiUI` implementing `UserInterfaceTrait`
+- `handler/`: chat_input, chat, command, help, login, media, options, playlist_browser, playlist, recently, search, settings, users
+
+### niketsu-relay (relay/src/)
+
+**relay.rs**
+- `Relay` (line 63): `swarm`, `rooms: Arc<RwLock<HashMap<RoomName,(PeerId,PasswordHash)>>>`, `hosts: Arc<RwLock<HashMap<PeerId,RoomName>>>`
+- `InitRequest/InitResponse`: bcrypt password verification
+- `new(config)` (line 69): QUIC + TCP + Noise + Yamux; listens on all interfaces
+
+### Client entry point (client/src/main.rs)
+
+- `run_app(args)` (line 19): wires Mpv + P2PCommunicator + VideoServer + VideoProvider + FileDatabase → CoreBuilder → Core
+- **Iced**: UI runs on main thread; **Ratatui on macOS**: core on background thread, NSApplication on main
+
+## Cross-crate trait implementations
+
+| Trait | Implementation crate |
+|---|---|
+| `CommunicatorTrait` | `P2PCommunicator` (niketsu-communicator) |
+| `MediaPlayerTrait` | `Mpv` (niketsu-mpv) via `MediaPlayerWrapper` |
+| `UserInterfaceTrait` | `IcedUI` (niketsu-iced), `RatatuiUI` (niketsu-ratatui) |
+| `FileDatabaseTrait` | `FileDatabase` (niketsu-core) |
+| `VideoServerTrait` | `VideoServer` (niketsu-video-server) |
+| `VideoProviderTrait` | `VideoProvider` (niketsu-core) |
+| `FilePathSearch` | `FileStore` (direct), `VideoServerFile` (HTTP URL) |
+
+## Video chunk streaming flow
+
+1. UI selects video → `VideoChange` → core calls `video_provider.start_providing(file)`
+2. Peer sends `FileRequest` → EventHandler responds with file size
+3. `VideoServer.start_server(filename, size)` starts HTTP server; mpv reads via `VideoServerFile` URL
+4. mpv range requests → `ChunkRequest` events → sent to peer via communicator
+5. Peer `ChunkResponse` → `VideoServer.insert_chunk()` → unblocks mpv read

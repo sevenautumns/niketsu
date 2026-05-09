@@ -4,9 +4,9 @@ use iced::advanced::Widget;
 use iced::advanced::widget::Operation;
 use iced::keyboard::Key;
 use iced::keyboard::key::Named;
-use iced::widget::scrollable::Id;
+use iced::widget::Id;
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput, rich_text, span};
-use iced::{Element, Event, Length, Renderer, Theme, Vector};
+use iced::{Element, Event, Length, Rectangle, Renderer, Theme, Vector};
 use itertools::Itertools;
 use niketsu_core::file_database::FileEntry;
 use niketsu_core::fuzzy::FuzzySearch;
@@ -50,7 +50,8 @@ impl<'a> FileSearchWidget<'a> {
                 .chunk_by(|(i, _)| file.hits.contains(i))
                 .into_iter()
                 .map(|(bold, chars)| {
-                    let mut span = span(String::from_iter(chars.map(|(_, c)| c)));
+                    let mut span: iced::widget::text::Span<'_, String> =
+                        span(String::from_iter(chars.map(|(_, c)| c)));
                     if bold {
                         span = span.underline(true);
                     }
@@ -76,7 +77,7 @@ impl<'a> FileSearchWidget<'a> {
                 }
                 .into(),
             )
-            .id(iced::widget::text_input::Id::new("file_search_query"))
+            .id(iced::widget::Id::new("file_search_query"))
             .width(Length::Fill);
         let close_button = Button::new("Close")
             .on_press(Close.into())
@@ -104,13 +105,13 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
         self.button
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
@@ -136,14 +137,14 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
     }
 
     fn operate(
-        &self,
+        &mut self,
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
         self.button
-            .as_widget()
+            .as_widget_mut()
             .operate(&mut state.children[0], layout, renderer, operation);
     }
 
@@ -175,17 +176,17 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
         )
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         state: &mut iced::advanced::widget::Tree,
-        event: iced::Event,
+        event: &iced::Event,
         layout: iced::advanced::Layout<'_>,
         cursor: iced::advanced::mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, FileSearchWidgetMessage>,
         viewport: &iced::Rectangle,
-    ) -> iced::event::Status {
+    ) {
         if self.state.active
             && let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) =
                 event
@@ -233,7 +234,7 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
             }
         }
 
-        self.button.as_widget_mut().on_event(
+        self.button.as_widget_mut().update(
             &mut state.children[0],
             event,
             layout,
@@ -242,7 +243,8 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
             clipboard,
             shell,
             viewport,
-        )
+        );
+        shell.request_redraw();
     }
 
     fn overlay<'b>(
@@ -250,11 +252,12 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
         state: &'b mut iced::advanced::widget::Tree,
         _layout: iced::advanced::Layout<'_>,
         _renderer: &Renderer,
+        _rectangle: &Rectangle,
         _translation: Vector,
     ) -> Option<iced::advanced::overlay::Element<'b, FileSearchWidgetMessage, Theme, Renderer>>
     {
         // Ignore Captures if the `Enter` key was pressed
-        let event_status = Box::new(|event, status| {
+        let _event_status = Box::new(|event, status| {
             if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
                 key: Key::Named(named),
                 ..
@@ -271,7 +274,7 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
                     tree: &mut state.children[1],
                     content: &mut self.base,
                     config: ElementOverlayConfig {
-                        event_status,
+                        // event_status,
                         ..Default::default()
                     },
                 },

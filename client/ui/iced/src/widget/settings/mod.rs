@@ -5,7 +5,7 @@ use iced::widget::{
     Button, Column, Container, Scrollable, Space, Text, button, checkbox, column, pick_list, row,
     text, text_input,
 };
-use iced::{Element, Length, Renderer, Theme, Vector};
+use iced::{Element, Length, Rectangle, Renderer, Theme, Vector};
 use message::ThemeChange;
 use niketsu_core::config::Config;
 
@@ -23,7 +23,7 @@ use crate::widget::overlay::ElementOverlay;
 
 pub mod message;
 
-const SPACING: u16 = 10;
+const SPACING: f32 = 10.0;
 const MAX_WIDTH: f32 = 600.0;
 
 pub struct SettingsWidget<'a> {
@@ -80,7 +80,7 @@ impl<'a> SettingsWidget<'a> {
                     .style(iced::widget::button::danger),
             ]
             .spacing(SPACING),
-            Space::with_height(text_size),
+            Space::new().height(text_size),
             text("General").size(text_size + 15.0).width(Length::Fill),
             row![
                 column![
@@ -99,7 +99,7 @@ impl<'a> SettingsWidget<'a> {
                     text_input("Username", &state.config.username)
                         .on_input(|u| UsernameInput(u.into()).into(),),
                     Container::new(
-                        checkbox("", state.config.auto_connect)
+                        checkbox(state.config.auto_connect)
                             .on_toggle(|b| AutoConnectCheckbox(b).into())
                             .spacing(SPACING),
                     )
@@ -109,14 +109,14 @@ impl<'a> SettingsWidget<'a> {
                 .width(Length::Fill),
             ]
             .spacing(SPACING),
-            Space::with_height(text_size),
+            Space::new().height(text_size),
             row![
                 text("Theme").size(text_size + 15.0).width(Length::Fill),
                 pick_list(Theme::ALL, Some(state.iced_config.theme.clone()), |theme| {
                     ThemeChange(theme).into()
                 },)
             ],
-            Space::with_height(text_size),
+            Space::new().height(text_size),
             text("Directories")
                 .size(text_size + 15.0)
                 .width(Length::Fill),
@@ -127,7 +127,7 @@ impl<'a> SettingsWidget<'a> {
                     .width(Length::Fill),
             ]
             .spacing(SPACING),
-            Space::with_height(text_size),
+            Space::new().height(text_size),
             row![
                 button(
                     text("Apply")
@@ -185,13 +185,13 @@ impl iced::advanced::Widget<SettingsWidgetMessage, Theme, Renderer> for Settings
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
         self.button
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
@@ -217,14 +217,14 @@ impl iced::advanced::Widget<SettingsWidgetMessage, Theme, Renderer> for Settings
     }
 
     fn operate(
-        &self,
+        &mut self,
         state: &mut iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
         self.button
-            .as_widget()
+            .as_widget_mut()
             .operate(&mut state.children[0], layout, renderer, operation);
     }
 
@@ -256,17 +256,17 @@ impl iced::advanced::Widget<SettingsWidgetMessage, Theme, Renderer> for Settings
         )
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         state: &mut iced::advanced::widget::Tree,
-        event: iced::Event,
+        event: &iced::Event,
         layout: iced::advanced::Layout<'_>,
         cursor: iced::advanced::mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, SettingsWidgetMessage>,
         viewport: &iced::Rectangle,
-    ) -> iced::event::Status {
+    ) {
         if self.state.active
             && let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) =
                 event
@@ -282,7 +282,7 @@ impl iced::advanced::Widget<SettingsWidgetMessage, Theme, Renderer> for Settings
             shell.publish(Abort.into());
         }
 
-        self.button.as_widget_mut().on_event(
+        self.button.as_widget_mut().update(
             &mut state.children[0],
             event,
             layout,
@@ -291,7 +291,8 @@ impl iced::advanced::Widget<SettingsWidgetMessage, Theme, Renderer> for Settings
             clipboard,
             shell,
             viewport,
-        )
+        );
+        shell.request_redraw();
     }
 
     fn overlay<'b>(
@@ -299,6 +300,7 @@ impl iced::advanced::Widget<SettingsWidgetMessage, Theme, Renderer> for Settings
         state: &'b mut iced::advanced::widget::Tree,
         _layout: iced::advanced::Layout<'_>,
         _renderer: &Renderer,
+        _rectangle: &Rectangle,
         _translation: Vector,
     ) -> Option<iced::advanced::overlay::Element<'b, SettingsWidgetMessage, Theme, Renderer>> {
         if self.state.active {
