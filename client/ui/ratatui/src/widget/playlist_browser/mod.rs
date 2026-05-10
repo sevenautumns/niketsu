@@ -4,8 +4,8 @@ use niketsu_core::playlist::file::{NamedPlaylist, PlaylistBrowser};
 use niketsu_core::util::FuzzyResult;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Stylize;
-use ratatui::text::Line;
+use ratatui::style::{Color, Style, Stylize};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Padding, StatefulWidget, Widget};
 use tui_textarea::Input;
 
@@ -142,16 +142,10 @@ impl StatefulWidget for PlaylistBrowserWidget {
             .vertical_margin(1)
             .split(horizontal_blocks[1]);
 
-        //TODO mark hits
         let playlists: Vec<ListItem> = state
             .fuzzy_result
             .iter()
-            .map(|playlist| {
-                ListItem::new(
-                    Line::from(format!("{}/{}", playlist.entry.room, playlist.entry.name))
-                        .style(style),
-                )
-            })
+            .map(|playlist| color_playlist_hits(playlist, style))
             .collect();
 
         let filtered_files = state.fuzzy_result.len();
@@ -209,4 +203,23 @@ impl StatefulWidget for PlaylistBrowserWidget {
         );
         Widget::render(playlist_content_block, right_layout[0], buf);
     }
+}
+
+fn color_playlist_hits(result: &FuzzyResult<NamedPlaylist>, style: Style) -> ListItem<'_> {
+    let full = format!("{}/{}", result.entry.room, result.entry.name);
+    let hits = &result.hits;
+    let mut hits_index = 0;
+    let spans: Vec<Span> = full
+        .chars()
+        .enumerate()
+        .map(|(i, ch)| {
+            if hits_index < hits.len() && i == hits[hits_index] {
+                hits_index += 1;
+                Span::styled(ch.to_string(), style.fg(Color::Yellow))
+            } else {
+                Span::styled(ch.to_string(), style)
+            }
+        })
+        .collect();
+    ListItem::new(Line::from(spans))
 }
