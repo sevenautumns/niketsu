@@ -4,8 +4,9 @@ use iced::advanced::Widget;
 use iced::advanced::widget::Operation;
 use iced::keyboard::Key;
 use iced::keyboard::key::Named;
-use iced::widget::Id;
-use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput, rich_text, span};
+use iced::widget::{
+    Button, Column, Container, Id, Row, Scrollable, Text, TextInput, rich_text, span,
+};
 use iced::{Element, Event, Length, Rectangle, Renderer, Theme, Vector};
 use itertools::Itertools;
 use niketsu_core::file_database::FileEntry;
@@ -188,13 +189,11 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
         viewport: &iced::Rectangle,
     ) {
         if self.state.active {
-            if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
-                iced::mouse::Button::Left,
-            )) = event
+            if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) =
+                event
+                && matches!(cursor, iced::mouse::Cursor::Available(_))
             {
-                if matches!(cursor, iced::mouse::Cursor::Available(_)) {
-                    shell.publish(Close.into());
-                }
+                shell.publish(Close.into());
             }
 
             if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
