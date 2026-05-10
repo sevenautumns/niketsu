@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use iced::advanced::widget::Operation;
 use iced::mouse::Cursor;
-use iced::widget::Id;
 use iced::widget::scrollable::RelativeOffset;
-use iced::widget::{Button, Column, Container, Row, Scrollable, Text, TextInput};
+use iced::widget::{Button, Column, Container, Id, Row, Scrollable, Text, TextInput};
 use iced::{Element, Length, Rectangle, Renderer, Task, Theme};
 use niketsu_core::ui::{MessageSource, PlayerMessage};
 

@@ -3,8 +3,7 @@ use iced::event::Status;
 use iced::keyboard::Key;
 use iced::keyboard::key::Named;
 use iced::mouse::Cursor;
-use iced::widget::Id;
-use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
+use iced::widget::{Button, Column, Container, Id, Row, Scrollable, Text};
 use iced::{Element, Event, Length, Rectangle, Renderer, Theme};
 
 use self::message::{MainMessage, ReadyButton};

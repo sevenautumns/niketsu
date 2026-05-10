@@ -113,6 +113,42 @@ impl<M> iced::advanced::Overlay<M, Theme, Renderer> for ElementOverlay<'_, '_, M
             .operate(self.tree, layout, renderer, operation)
     }
 
+    fn mouse_interaction(
+        &self,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        renderer: &Renderer,
+    ) -> iced::advanced::mouse::Interaction {
+        let interaction = self.content.as_widget().mouse_interaction(
+            self.tree,
+            layout,
+            cursor,
+            &layout.bounds(),
+            renderer,
+        );
+        if interaction == iced::advanced::mouse::Interaction::None
+            && cursor.is_over(layout.bounds())
+        {
+            iced::advanced::mouse::Interaction::Idle
+        } else {
+            interaction
+        }
+    }
+
+    fn overlay<'a>(
+        &'a mut self,
+        layout: iced::advanced::Layout<'a>,
+        renderer: &Renderer,
+    ) -> Option<iced::advanced::overlay::Element<'a, M, Theme, Renderer>> {
+        self.content.as_widget_mut().overlay(
+            self.tree,
+            layout,
+            renderer,
+            &layout.bounds(),
+            iced::Vector::ZERO,
+        )
+    }
+
     fn update(
         &mut self,
         event: &iced::Event,
