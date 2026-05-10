@@ -69,12 +69,20 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     // Iced uses winit which owns the main thread and drives the Cocoa loop itself.
+    // On macOS, mpv also needs a running Cocoa event loop to destroy its window cleanly.
+    // When iced exits, the Cocoa loop is gone, so mpv_terminate_destroy deadlocks. We
+    // avoid this by exiting the process immediately after iced closes, mirroring the
+    // ratatui path below.
     #[cfg(feature = "iced")]
     if matches!(args.ui, niketsu::cli::UI::Iced) {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        return rt.block_on(run_app(args));
+        if let Err(e) = rt.block_on(run_app(args)) {
+            eprintln!("Error: {e:?}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
     }
 
     // Ratatui is a terminal UI and never touches Cocoa. On macOS, mpv needs NSApplication
