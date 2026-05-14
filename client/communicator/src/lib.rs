@@ -1,9 +1,7 @@
-use std::future::Future;
 use std::sync::Arc;
-use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use anyhow::{Error, Result};
+use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use niketsu_core::communicator::*;
 use p2p::P2PClient;
@@ -41,7 +39,7 @@ impl Connection {
                     Err(c) => *self = c,
                 },
                 Connection::Connecting(c) => {
-                    *self = c.await;
+                    *self = c.wait().await;
                 }
                 Connection::Disconnected(d) => {
                     let reason = d.reason.clone();
@@ -89,44 +87,23 @@ pub struct Connecting {
 
 impl Connecting {
     fn new(endpoint: EndpointInfo) -> Self {
-        let connection = tokio::time::timeout(
-            CONNECT_TIMEOUT,
-            P2PClient::new(
-                endpoint.addr.clone(),
-                endpoint.room.clone(),
-                endpoint.password.clone(),
-            ),
-        );
         let connect_task = tokio::task::spawn(async move {
-            match connection.await {
-                Ok(res) => match res {
-                    Ok(client) => Ok(client),
-                    Err(err) => Err(err),
-                },
-                Err(err) => Err(anyhow::anyhow!("Connection timeout: {}", err)),
-            }
+            tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                P2PClient::new(endpoint.addr, endpoint.room, endpoint.password),
+            )
+            .await
+            .context("Connection timeout")?
         });
         Self { connect_task }
     }
-}
 
-impl Future for Connecting {
-    type Output = Connection;
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let pin = unsafe { self.as_mut().map_unchecked_mut(|s| &mut s.connect_task) };
-        let Poll::Ready(p2p) = pin.poll(cx) else {
-            return Poll::Pending;
-        };
-        let p2p = p2p.map_err(anyhow::Error::from);
-        match p2p {
-            Ok(Ok(p2p)) => Poll::Ready(Connection::Connected(Connected { p2p })),
+    async fn wait(&mut self) -> Connection {
+        match (&mut self.connect_task).await.map_err(Error::from) {
+            Ok(Ok(p2p)) => Connection::Connected(Connected { p2p }),
             Err(error) | Ok(Err(error)) => {
                 error!(%error, "Connection error");
-                Poll::Ready(Connection::Disconnected(Disconnected::now(Some(error))))
+                Connection::Disconnected(Disconnected::now(Some(error)))
             }
         }
     }

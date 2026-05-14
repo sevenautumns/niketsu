@@ -16,7 +16,7 @@ use tokio::sync::mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender};
 use tracing::{debug, trace, warn};
 
 const CHUNK_SIZE: u64 = 512_000;
-const TIMEOUT: Duration = Duration::from_secs(2);
+const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RETRY: usize = 3;
 const CACHE_ENTRIES: u64 = 100;
 

@@ -4,12 +4,10 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use arcstr::ArcStr;
 use async_trait::async_trait;
-use enum_dispatch::enum_dispatch;
 use fake::Fake;
 use fake::faker::company::en::Buzzword;
 use futures::StreamExt;
 use libp2p::core::ConnectedPoint;
-use libp2p::kad::{self};
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, SwarmEvent};
@@ -24,433 +22,13 @@ use niketsu_core::room::RoomName;
 use niketsu_core::user::UserStatus;
 use tracing::{debug, error, trace, warn};
 
-use super::file_share::{FileShareEventHandler, FileShareRequest, FileShareResponseResult};
 use super::{
-    Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait, MessageResponse,
-    Response, StatusResponse, SwarmHandler,
+    Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait,
+    FileShareBehaviourEvent, MessageResponse, MessagingBehaviourEvent, Response, StatusResponse,
+    SwarmHandler,
 };
 use crate::messages::NiketsuMessage;
 use crate::p2p::MessageRequest;
-use crate::p2p::file_share::FileShareCoreMessageHandler;
-
-#[enum_dispatch]
-pub(crate) trait HostSwarmEventHandler {
-    fn handle_swarm_event(self, handler: &mut HostCommunicationHandler);
-}
-
-#[enum_dispatch(HostSwarmEventHandler)]
-enum HostSwarmEvent {
-    GossipSub(gossipsub::Event),
-    MessageRequestResponse(request_response::Event<MessageRequest, MessageResponse>),
-    FileShareRequestResponse(request_response::Event<FileShareRequest, FileShareResponseResult>),
-    Kademlia(kad::Event),
-    Mdns(mdns::Event),
-    ConnectionEstablished(ConnectionEstablished),
-    ConnectionClosed(ConnectionClosed),
-    Other(Box<SwarmEvent<BehaviourEvent>>),
-}
-
-impl HostSwarmEvent {
-    fn from(event: SwarmEvent<BehaviourEvent>) -> Self {
-        match event {
-            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(event)) => {
-                HostSwarmEvent::GossipSub(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(event)) => {
-                HostSwarmEvent::MessageRequestResponse(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::FileshareRequestResponse(event)) => {
-                HostSwarmEvent::FileShareRequestResponse(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
-                HostSwarmEvent::Kademlia(event)
-            }
-            SwarmEvent::ConnectionClosed {
-                peer_id,
-                endpoint,
-                cause,
-                ..
-            } => HostSwarmEvent::ConnectionClosed(ConnectionClosed {
-                peer_id,
-                cause,
-                endpoint,
-            }),
-            SwarmEvent::ConnectionEstablished {
-                peer_id, endpoint, ..
-            } => HostSwarmEvent::ConnectionEstablished(ConnectionEstablished { peer_id, endpoint }),
-            SwarmEvent::Behaviour(BehaviourEvent::Mdns(event)) => HostSwarmEvent::Mdns(event),
-            _ => HostSwarmEvent::Other(Box::new(event)),
-        }
-    }
-}
-
-impl HostSwarmEventHandler for gossipsub::Event {
-    fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        match self {
-            gossipsub::Event::Message {
-                propagation_source,
-                message_id,
-                message,
-            } => {
-                debug!(%message_id, %message_id, msg = %String::from_utf8_lossy(&message.data),
-                    "Received gossipsub message",
-                );
-                let res = handler.handle_swarm_broadcast(message.data, propagation_source);
-                log_err_msg!(res, "Failed to handle broadcast message")
-            }
-            gossipsub_event => debug!(
-                ?gossipsub_event,
-                "Received gossipsub event that is not handled"
-            ),
-        }
-    }
-}
-
-impl HostSwarmEventHandler for request_response::Event<MessageRequest, MessageResponse> {
-    fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        match self {
-            request_response::Event::Message { peer, message, .. } => match message {
-                request_response::Message::Request {
-                    request, channel, ..
-                } => {
-                    let req = request.0;
-                    trace!(?req, "Received request");
-                    let res = handler.handle_swarm_request(req, channel, peer);
-                    log_err_msg!(res, "Failed to handle incoming message")
-                }
-                request_response::Message::Response { response, .. } => {
-                    debug!(?response, "Received response");
-                    let res = handler.handle_swarm_response(response, peer);
-                    log_err_msg!(res, "Failed to handle incoming message")
-                }
-            },
-            request_response_event => debug!(
-                ?request_response_event,
-                "Received request response event that is not handled"
-            ),
-        }
-    }
-}
-
-impl HostSwarmEventHandler for request_response::Event<FileShareRequest, FileShareResponseResult> {
-    fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        FileShareEventHandler::handle_event(self, &mut handler.handler);
-    }
-}
-
-impl HostSwarmEventHandler for kad::Event {
-    fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        FileShareEventHandler::handle_event(self, &mut handler.handler);
-    }
-}
-
-impl HostSwarmEventHandler for mdns::Event {
-    fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        match self {
-            mdns::Event::Discovered(nodes) => {
-                // Fortunately, this discovers all local multiaddr, so we need to prioritize
-                // and try not to dial all of them ...
-                debug!(?nodes, "mDNS discovered some nodes");
-                let mut peer_map: BTreeMap<PeerId, Vec<Multiaddr>> = BTreeMap::new();
-
-                for (peer, addr) in nodes {
-                    peer_map.entry(peer).or_default().push(addr);
-                }
-
-                for addrs in peer_map.values_mut() {
-                    addrs.sort_by_key(|addr| {
-                        if addr.iter().any(|p| matches!(p, Protocol::Tcp(_))) {
-                            0
-                        } else if addr.iter().any(|p| matches!(p, Protocol::QuicV1)) {
-                            1
-                        } else {
-                            2
-                        }
-                    });
-                }
-
-                for (peer, addrs) in peer_map {
-                    for addr in addrs {
-                        debug!(?peer, ?addr, "Handling node and peer");
-                        // put into map until relay connection established
-                        // make sure not to overload dialing all multiaddr
-                        handler.mdns_users.insert(peer, addr);
-                        if handler.dial_on_new_connection(peer).is_ok() {
-                            let res = handler.send_init_status(peer);
-                            log_err_msg!(res, "Failed to send initial messages to client");
-                            break;
-                        }
-                    }
-                }
-            }
-            mdns::Event::Expired(nodes) => {
-                for node in nodes {
-                    debug!(?node, "Nodes in mDNS expired");
-                    handler.mdns_users.remove(&node.0);
-                }
-            }
-        }
-    }
-}
-
-struct ConnectionEstablished {
-    peer_id: PeerId,
-    endpoint: ConnectedPoint,
-}
-
-impl HostSwarmEventHandler for ConnectionEstablished {
-    fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        debug!(%self.peer_id, "New client established connection");
-
-        // Skip if already connected to avoid spam (mDNS dial triggers new connections)
-        if handler.users.contains_key(&self.peer_id) {
-            return;
-        }
-
-        handler.users.insert(self.peer_id, None);
-        if let Err(err) = handler.dial_on_new_connection(self.peer_id) {
-            debug!(?err);
-        }
-
-        handler
-            .handler
-            .swarm
-            .behaviour_mut()
-            .kademlia
-            .add_address(&self.peer_id, self.endpoint.get_remote_address().clone());
-
-        let res = handler.send_init_status(self.peer_id);
-        log_err_msg!(res, "Failed to send initial messages to client");
-    }
-}
-
-struct ConnectionClosed {
-    peer_id: PeerId,
-    cause: Option<ConnectionError>,
-    endpoint: ConnectedPoint,
-}
-
-impl HostSwarmEventHandler for ConnectionClosed {
-    fn handle_swarm_event(self, handler: &mut HostCommunicationHandler) {
-        if handler.relay_addr == (*self.endpoint.get_remote_address()) {
-            error!(?self.endpoint, ?self.cause, "Connection of host to relay server closed");
-            handler.handler.core_receiver.close();
-        } else if !handler.handler.swarm.is_connected(&self.peer_id) {
-            debug!("User connection stopped and user removed from map");
-            let users = handler.users.clone();
-            let topic = handler.handler.topic.clone();
-            if let Some(status) = users.get(&self.peer_id) {
-                handler.remove_peer(status, &self.peer_id);
-                let status_list = NiketsuMessage::StatusList(handler.status_list.clone());
-                let res = handler.handler.message_sender.send(status_list.clone());
-                log_err_msg!(res, "Failed to send status list to core");
-                let res = handler.handler.swarm.try_broadcast(topic, status_list);
-                log_err_msg!(res, "Failed to broadcast status list");
-            } else {
-                warn!(?self.peer_id, "Expected peer to be included in list");
-            }
-        }
-    }
-}
-
-impl HostSwarmEventHandler for Box<SwarmEvent<BehaviourEvent>> {
-    fn handle_swarm_event(self, _handler: &mut HostCommunicationHandler) {
-        debug!(event = ?self, "Received not captured event")
-    }
-}
-
-#[enum_dispatch]
-pub(crate) trait HostCoreMessageHandler {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()>;
-}
-
-impl HostCoreMessageHandler for UserStatusMsg {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        let peer_id = handler.handler.host;
-        handler.update_status(self, peer_id);
-        handler.handle_all_users_ready(peer_id)?;
-        let niketsu_msg = NiketsuMessage::StatusList(handler.status_list.clone());
-        handler.handler.message_sender.send(niketsu_msg.clone())?; // is this necessary?
-        let topic = handler.handler.topic.clone();
-        handler.handler.swarm.try_broadcast(topic, niketsu_msg)
-    }
-}
-
-impl HostCoreMessageHandler for PlaylistMsg {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        handler.handle_new_playlist(&self, handler.handler.host)?;
-        handler.playlist = self.clone();
-        let topic = handler.handler.topic.clone();
-        handler.handler.swarm.try_broadcast(topic, self.into())
-    }
-}
-
-impl HostCoreMessageHandler for VideoStatusMsg {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        handler.select.position = self.position.unwrap_or_default();
-        let topic = handler.handler.topic.clone();
-        handler.handler.swarm.try_broadcast(topic, self.into())
-    }
-}
-
-impl HostCoreMessageHandler for SelectMsg {
-    fn handle_core_message(self, handler: &mut HostCommunicationHandler) -> Result<()> {
-        handler.select = self.clone();
-        let topic = handler.handler.topic.clone();
-        handler.handler.swarm.try_broadcast(topic, self.into())?;
-        handler.handle_all_users_ready(handler.handler.host)?;
-        handler.handler.reset_requests_responses();
-        Ok(())
-    }
-}
-
-#[enum_dispatch]
-pub(crate) trait HostSwarmRequestHandler {
-    fn handle_swarm_request(
-        self,
-        peer_id: PeerId,
-        channel: ResponseChannel<MessageResponse>,
-        handler: &mut HostCommunicationHandler,
-    ) -> Result<()>;
-}
-
-impl HostSwarmRequestHandler for UserStatusMsg {
-    fn handle_swarm_request(
-        self,
-        peer_id: PeerId,
-        channel: ResponseChannel<MessageResponse>,
-        handler: &mut HostCommunicationHandler,
-    ) -> Result<()> {
-        handler.handle_status(self.clone(), peer_id);
-        if let Err(err) = handler.handle_all_users_ready(peer_id) {
-            let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            handler.handler.swarm.send_message_response(channel, resp)?;
-            return Err(err);
-        }
-
-        let msg = NiketsuMessage::StatusList(handler.status_list.clone());
-        if let Err(err) = handler.handler.message_sender.send(msg.clone()) {
-            let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            handler.handler.swarm.send_message_response(channel, resp)?;
-            return Err(anyhow::Error::from(err));
-        }
-
-        let topic = handler.handler.topic.clone();
-        let resp = match handler.handler.swarm.try_broadcast(topic, msg) {
-            Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
-            Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
-        };
-        handler.handler.swarm.send_message_response(channel, resp)
-    }
-}
-
-impl HostSwarmRequestHandler for PlaylistMsg {
-    fn handle_swarm_request(
-        self,
-        peer_id: PeerId,
-        channel: ResponseChannel<MessageResponse>,
-        handler: &mut HostCommunicationHandler,
-    ) -> Result<()> {
-        let msg = NiketsuMessage::Playlist(self.clone());
-        if let Err(err) = handler.handler.message_sender.send(msg.clone()) {
-            let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            handler.handler.swarm.send_message_response(channel, resp)?;
-            return Err(anyhow::Error::from(err));
-        }
-
-        let topic = handler.handler.topic.clone();
-        if let Err(err) = handler.handler.swarm.try_broadcast(topic, msg) {
-            let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            handler.handler.swarm.send_message_response(channel, resp)?;
-            return Err(err);
-        }
-
-        match handler.handle_new_playlist(&self, peer_id) {
-            Ok(_) => {
-                handler.playlist = self;
-                let resp = MessageResponse(Response::Status(StatusResponse::Ok));
-                handler.handler.swarm.send_message_response(channel, resp)
-            }
-            Err(_) => handler.handler.swarm.send_message_response(
-                channel,
-                MessageResponse(Response::Status(StatusResponse::Err)),
-            ),
-        }
-    }
-}
-
-#[enum_dispatch()]
-trait HostSwarmBroadcastHandler {
-    fn handle_swarm_broadcast(
-        self,
-        peer_id: PeerId,
-        handler: &mut HostCommunicationHandler,
-    ) -> Result<()>;
-}
-
-#[enum_dispatch(HostSwarmBroadcastHandler)]
-enum HostSwarmBroadcast {
-    Select(SelectMsg),
-    Passthrough(PassthroughMsg),
-    Other(NiketsuMessage),
-}
-
-impl HostSwarmBroadcast {
-    fn from(message: NiketsuMessage) -> Self {
-        match message {
-            NiketsuMessage::Select(msg) => HostSwarmBroadcast::Select(msg),
-            NiketsuMessage::Pause(_)
-            | NiketsuMessage::Start(_)
-            | NiketsuMessage::PlaybackSpeed(_)
-            | NiketsuMessage::Seek(_)
-            | NiketsuMessage::UserMessage(_) => HostSwarmBroadcast::Passthrough(PassthroughMsg {
-                niketsu_msg: message,
-            }),
-            msg => HostSwarmBroadcast::Other(msg),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct PassthroughMsg {
-    niketsu_msg: NiketsuMessage,
-}
-
-impl HostSwarmBroadcastHandler for SelectMsg {
-    fn handle_swarm_broadcast(
-        self,
-        peer_id: PeerId,
-        handler: &mut HostCommunicationHandler,
-    ) -> Result<()> {
-        let msg = NiketsuMessage::Select(self.clone());
-        handler.select = self;
-        handler.handler.message_sender.send(msg)?;
-        handler.handle_all_users_ready(peer_id)?;
-        handler.handler.reset_requests_responses();
-        Ok(())
-    }
-}
-
-impl HostSwarmBroadcastHandler for PassthroughMsg {
-    fn handle_swarm_broadcast(
-        self,
-        _peer_id: PeerId,
-        handler: &mut HostCommunicationHandler,
-    ) -> Result<()> {
-        handler.handler.message_sender.send(self.niketsu_msg)?;
-        Ok(())
-    }
-}
-
-impl HostSwarmBroadcastHandler for NiketsuMessage {
-    fn handle_swarm_broadcast(
-        self,
-        _peer_id: PeerId,
-        _handler: &mut HostCommunicationHandler,
-    ) -> Result<()> {
-        bail!("Host received unexpected broadcast message: {self:?}")
-    }
-}
 
 pub(crate) struct HostCommunicationHandler {
     handler: CommunicationHandler,
@@ -485,14 +63,7 @@ impl HostCommunicationHandler {
         };
         message_sender.send(playlist.clone().into()).ok();
         message_sender.send(select.clone().into()).ok();
-        let handler = CommunicationHandler::new(
-            swarm,
-            topic,
-            host,
-            relay_addr.clone(),
-            core_receiver,
-            message_sender,
-        );
+        let handler = CommunicationHandler::new(swarm, topic, host, core_receiver, message_sender);
         Self {
             handler,
             relay_addr,
@@ -669,10 +240,10 @@ impl HostCommunicationHandler {
         } else {
             debug!(?peer_id, "Dialing mDNS node");
 
-            let kad = &mut self.handler.swarm.behaviour_mut().kademlia;
+            let kad = &mut self.handler.swarm.behaviour_mut().file_share.kademlia;
             kad.add_address(&peer_id, addr.clone());
 
-            let gossip = &mut self.handler.swarm.behaviour_mut().gossipsub;
+            let gossip = &mut self.handler.swarm.behaviour_mut().messaging.gossipsub;
             gossip.add_explicit_peer(&peer_id);
         }
         Ok(())
@@ -692,6 +263,295 @@ impl HostCommunicationHandler {
         }
 
         self.dial_peer(peer_id, addr)
+    }
+
+    fn on_gossipsub(&mut self, event: gossipsub::Event) {
+        match event {
+            gossipsub::Event::Message {
+                propagation_source,
+                message_id,
+                message,
+            } => {
+                debug!(%message_id, %message_id, msg = %String::from_utf8_lossy(&message.data),
+                    "Received gossipsub message",
+                );
+                let res = self.handle_swarm_broadcast(message.data, propagation_source);
+                log_err_msg!(res, "Failed to handle broadcast message")
+            }
+            gossipsub_event => debug!(
+                ?gossipsub_event,
+                "Received gossipsub event that is not handled"
+            ),
+        }
+    }
+
+    fn on_msg_req_resp(&mut self, event: request_response::Event<MessageRequest, MessageResponse>) {
+        match event {
+            request_response::Event::Message { peer, message, .. } => match message {
+                request_response::Message::Request {
+                    request, channel, ..
+                } => {
+                    let req = request.0;
+                    trace!(?req, "Received request");
+                    let res = self.handle_swarm_request(req, channel, peer);
+                    log_err_msg!(res, "Failed to handle incoming message")
+                }
+                request_response::Message::Response { response, .. } => {
+                    debug!(?response, "Received response");
+                    let res = self.handler.handle_swarm_response(response, peer);
+                    log_err_msg!(res, "Failed to handle incoming message")
+                }
+            },
+            request_response_event => debug!(
+                ?request_response_event,
+                "Received request response event that is not handled"
+            ),
+        }
+    }
+
+    fn on_mdns(&mut self, event: mdns::Event) {
+        match event {
+            mdns::Event::Discovered(nodes) => {
+                // Fortunately, this discovers all local multiaddr, so we need to prioritize
+                // and try not to dial all of them ...
+                debug!(?nodes, "mDNS discovered some nodes");
+                let mut peer_map: BTreeMap<PeerId, Vec<Multiaddr>> = BTreeMap::new();
+
+                for (peer, addr) in nodes {
+                    peer_map.entry(peer).or_default().push(addr);
+                }
+
+                for addrs in peer_map.values_mut() {
+                    addrs.sort_by_key(|addr| {
+                        if addr.iter().any(|p| matches!(p, Protocol::Tcp(_))) {
+                            0
+                        } else if addr.iter().any(|p| matches!(p, Protocol::QuicV1)) {
+                            1
+                        } else {
+                            2
+                        }
+                    });
+                }
+
+                for (peer, addrs) in peer_map {
+                    for addr in addrs {
+                        debug!(?peer, ?addr, "Handling node and peer");
+                        // put into map until relay connection established
+                        // make sure not to overload dialing all multiaddr
+                        self.mdns_users.insert(peer, addr);
+                        if self.dial_on_new_connection(peer).is_ok() {
+                            let res = self.send_init_status(peer);
+                            log_err_msg!(res, "Failed to send initial messages to client");
+                            break;
+                        }
+                    }
+                }
+            }
+            mdns::Event::Expired(nodes) => {
+                for node in nodes {
+                    debug!(?node, "Nodes in mDNS expired");
+                    self.mdns_users.remove(&node.0);
+                }
+            }
+        }
+    }
+
+    fn on_connection_established(&mut self, peer_id: PeerId, endpoint: ConnectedPoint) {
+        debug!(%peer_id, "New client established connection");
+
+        // Skip if already connected to avoid spam (mDNS dial triggers new connections)
+        if self.users.contains_key(&peer_id) {
+            return;
+        }
+
+        self.users.insert(peer_id, None);
+        if let Err(err) = self.dial_on_new_connection(peer_id) {
+            debug!(?err);
+        }
+
+        self.handler
+            .swarm
+            .behaviour_mut()
+            .transport
+            .relay_server
+            .allow(peer_id);
+
+        self.handler
+            .swarm
+            .behaviour_mut()
+            .file_share
+            .kademlia
+            .add_address(&peer_id, endpoint.get_remote_address().clone());
+
+        let res = self.send_init_status(peer_id);
+        log_err_msg!(res, "Failed to send initial messages to client");
+    }
+
+    fn on_connection_closed(
+        &mut self,
+        peer_id: PeerId,
+        cause: Option<ConnectionError>,
+        endpoint: ConnectedPoint,
+    ) {
+        if self.relay_addr == (*endpoint.get_remote_address()) {
+            error!(
+                ?endpoint,
+                ?cause,
+                "Connection of host to relay server closed"
+            );
+            self.handler.core_receiver.close();
+        } else if !self.handler.swarm.is_connected(&peer_id) {
+            debug!("User connection stopped and user removed from map");
+            self.handler
+                .swarm
+                .behaviour_mut()
+                .transport
+                .relay_server
+                .deny(&peer_id);
+            let users = self.users.clone();
+            let topic = self.handler.topic.clone();
+            if let Some(status) = users.get(&peer_id) {
+                self.remove_peer(status, &peer_id);
+                let status_list = NiketsuMessage::StatusList(self.status_list.clone());
+                let res = self.handler.message_sender.send(status_list.clone());
+                log_err_msg!(res, "Failed to send status list to core");
+                let res = self.handler.swarm.try_broadcast(topic, status_list);
+                log_err_msg!(res, "Failed to broadcast status list");
+            } else {
+                warn!(?peer_id, "Expected peer to be included in list");
+            }
+        }
+    }
+
+    fn handle_swarm_request(
+        &mut self,
+        msg: NiketsuMessage,
+        channel: ResponseChannel<MessageResponse>,
+        peer_id: PeerId,
+    ) -> Result<()> {
+        debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
+        use NiketsuMessage::*;
+        match msg {
+            Playlist(m) => self.on_swarm_request_playlist(m, peer_id, channel),
+            Status(m) => self.on_swarm_request_user_status(m, peer_id, channel),
+            other => self.handler.respond_with_err(other, channel),
+        }
+    }
+
+    fn on_swarm_request_user_status(
+        &mut self,
+        msg: UserStatusMsg,
+        peer_id: PeerId,
+        channel: ResponseChannel<MessageResponse>,
+    ) -> Result<()> {
+        self.handle_status(msg, peer_id);
+        if let Err(err) = self.handle_all_users_ready(peer_id) {
+            let resp = MessageResponse(Response::Status(StatusResponse::Err));
+            self.handler.swarm.send_message_response(channel, resp)?;
+            return Err(err);
+        }
+
+        let msg = NiketsuMessage::StatusList(self.status_list.clone());
+        if let Err(err) = self.handler.message_sender.send(msg.clone()) {
+            let resp = MessageResponse(Response::Status(StatusResponse::Err));
+            self.handler.swarm.send_message_response(channel, resp)?;
+            return Err(anyhow::Error::from(err));
+        }
+
+        let topic = self.handler.topic.clone();
+        let resp = match self.handler.swarm.try_broadcast(topic, msg) {
+            Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
+            Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
+        };
+        self.handler.swarm.send_message_response(channel, resp)
+    }
+
+    fn on_swarm_request_playlist(
+        &mut self,
+        msg: PlaylistMsg,
+        peer_id: PeerId,
+        channel: ResponseChannel<MessageResponse>,
+    ) -> Result<()> {
+        let wrapped = NiketsuMessage::Playlist(msg.clone());
+        if let Err(err) = self.handler.message_sender.send(wrapped.clone()) {
+            let resp = MessageResponse(Response::Status(StatusResponse::Err));
+            self.handler.swarm.send_message_response(channel, resp)?;
+            return Err(anyhow::Error::from(err));
+        }
+
+        let topic = self.handler.topic.clone();
+        if let Err(err) = self.handler.swarm.try_broadcast(topic, wrapped) {
+            let resp = MessageResponse(Response::Status(StatusResponse::Err));
+            self.handler.swarm.send_message_response(channel, resp)?;
+            return Err(err);
+        }
+
+        match self.handle_new_playlist(&msg, peer_id) {
+            Ok(_) => {
+                self.playlist = msg;
+                let resp = MessageResponse(Response::Status(StatusResponse::Ok));
+                self.handler.swarm.send_message_response(channel, resp)
+            }
+            Err(_) => self.handler.swarm.send_message_response(
+                channel,
+                MessageResponse(Response::Status(StatusResponse::Err)),
+            ),
+        }
+    }
+
+    fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()> {
+        let niketsu_msg: NiketsuMessage = msg.try_into()?;
+        debug!(message = ?niketsu_msg, "Handling broadcast message from swarm");
+        use NiketsuMessage::*;
+        match niketsu_msg {
+            Select(m) => self.on_broadcast_select(m, peer_id),
+            m @ (Pause(_) | Start(_) | PlaybackSpeed(_) | Seek(_) | UserMessage(_)) => {
+                self.handler.message_sender.send(m)?;
+                Ok(())
+            }
+            other => bail!("Host received unexpected broadcast message: {other:?}"),
+        }
+    }
+
+    fn on_broadcast_select(&mut self, msg: SelectMsg, peer_id: PeerId) -> Result<()> {
+        let wrapped = NiketsuMessage::Select(msg.clone());
+        self.select = msg;
+        self.handler.message_sender.send(wrapped)?;
+        self.handle_all_users_ready(peer_id)?;
+        self.handler.reset_requests_responses();
+        Ok(())
+    }
+
+    fn on_core_user_status(&mut self, msg: UserStatusMsg) -> Result<()> {
+        let peer_id = self.handler.host;
+        self.update_status(msg, peer_id);
+        self.handle_all_users_ready(peer_id)?;
+        let niketsu_msg = NiketsuMessage::StatusList(self.status_list.clone());
+        self.handler.message_sender.send(niketsu_msg.clone())?; // is this necessary?
+        let topic = self.handler.topic.clone();
+        self.handler.swarm.try_broadcast(topic, niketsu_msg)
+    }
+
+    fn on_core_playlist(&mut self, msg: PlaylistMsg) -> Result<()> {
+        self.handle_new_playlist(&msg, self.handler.host)?;
+        self.playlist = msg.clone();
+        let topic = self.handler.topic.clone();
+        self.handler.swarm.try_broadcast(topic, msg.into())
+    }
+
+    fn on_core_video_status(&mut self, msg: VideoStatusMsg) -> Result<()> {
+        self.select.position = msg.position.unwrap_or_default();
+        let topic = self.handler.topic.clone();
+        self.handler.swarm.try_broadcast(topic, msg.into())
+    }
+
+    fn on_core_select(&mut self, msg: SelectMsg) -> Result<()> {
+        self.select = msg.clone();
+        let topic = self.handler.topic.clone();
+        self.handler.swarm.try_broadcast(topic, msg.into())?;
+        self.handle_all_users_ready(self.handler.host)?;
+        self.handler.reset_requests_responses();
+        Ok(())
     }
 }
 
@@ -723,48 +583,43 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
 
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         debug!(?event, "Handling event from swarm");
-        let host_event = HostSwarmEvent::from(event);
-        host_event.handle_swarm_event(self);
+        use BehaviourEvent::*;
+        use FileShareBehaviourEvent as F;
+        use MessagingBehaviourEvent as M;
+        match event {
+            SwarmEvent::Behaviour(Messaging(M::Gossipsub(e))) => self.on_gossipsub(e),
+            SwarmEvent::Behaviour(Messaging(M::RequestResponse(e))) => self.on_msg_req_resp(e),
+            SwarmEvent::Behaviour(FileShare(F::RequestResponse(e))) => {
+                self.handler.handle_file_share_req_resp_event(e)
+            }
+            SwarmEvent::Behaviour(FileShare(F::Kademlia(e))) => {
+                self.handler.handle_file_share_kad_event(e)
+            }
+            SwarmEvent::Behaviour(FileShare(F::Mdns(e))) => self.on_mdns(e),
+            SwarmEvent::ConnectionEstablished {
+                peer_id, endpoint, ..
+            } => self.on_connection_established(peer_id, endpoint),
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                endpoint,
+                cause,
+                ..
+            } => self.on_connection_closed(peer_id, cause, endpoint),
+            other => debug!(event = ?other, "Received not captured event"),
+        }
     }
 
     fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
         debug!(host = %self.handler.host, ?msg, "Handling core message");
-        use FileShareCoreMessageHandler as FH;
         use NiketsuMessage::*;
         match msg {
-            VideoStatus(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
-            Select(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
-            Playlist(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
-            Status(msg) => HostCoreMessageHandler::handle_core_message(msg, self),
-            FileRequest(msg) => FH::handle_core_message(msg, &mut self.handler),
-            FileResponse(msg) => FH::handle_core_message(msg, &mut self.handler),
-            ChunkRequest(msg) => FH::handle_core_message(msg, &mut self.handler),
-            ChunkResponse(msg) => FH::handle_core_message(msg, &mut self.handler),
-            VideoShare(msg) => FH::handle_core_message(msg, &mut self.handler),
-            msg => msg.broadcast(&mut self.handler),
+            VideoStatus(m) => self.on_core_video_status(m),
+            Select(m) => self.on_core_select(m),
+            Playlist(m) => self.on_core_playlist(m),
+            Status(m) => self.on_core_user_status(m),
+            m @ (FileRequest(_) | FileResponse(_) | ChunkRequest(_) | ChunkResponse(_)
+            | VideoShare(_)) => self.handler.handle_file_share_core_message(m),
+            other => self.handler.broadcast(other),
         }
-    }
-
-    fn handle_swarm_request(
-        &mut self,
-        msg: NiketsuMessage,
-        channel: ResponseChannel<MessageResponse>,
-        peer_id: PeerId,
-    ) -> Result<()> {
-        debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
-        use HostSwarmRequestHandler as SH;
-        use NiketsuMessage::*;
-        match msg {
-            Playlist(msg) => SH::handle_swarm_request(msg, peer_id, channel, self),
-            Status(msg) => SH::handle_swarm_request(msg, peer_id, channel, self),
-            msg => msg.respond_with_err(channel, &mut self.handler),
-        }
-    }
-
-    fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()> {
-        let niketsu_msg: NiketsuMessage = msg.try_into()?;
-        debug!(message = ?niketsu_msg, "Handling broadcast message from swarm");
-        let swarm_broadcast = HostSwarmBroadcast::from(niketsu_msg);
-        swarm_broadcast.handle_swarm_broadcast(peer_id, self)
     }
 }
