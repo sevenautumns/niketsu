@@ -4,12 +4,11 @@ use std::task::{Context, Poll};
 use anyhow::anyhow;
 use libp2p::core::transport::PortUse;
 use libp2p::core::{Endpoint, Multiaddr};
-use libp2p::relay;
 use libp2p::swarm::{
     ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandlerInEvent, THandlerOutEvent,
     ToSwarm,
 };
-use libp2p::PeerId;
+use libp2p::{PeerId, relay};
 
 type Inner = relay::Behaviour;
 
@@ -67,8 +66,12 @@ impl NetworkBehaviour for GatedRelayBehaviour {
                 "relay reservation denied: peer {peer} not allowed"
             )));
         }
-        self.inner
-            .handle_established_inbound_connection(connection_id, peer, local_addr, remote_addr)
+        self.inner.handle_established_inbound_connection(
+            connection_id,
+            peer,
+            local_addr,
+            remote_addr,
+        )
     }
 
     fn handle_pending_outbound_connection(

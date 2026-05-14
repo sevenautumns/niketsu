@@ -63,14 +63,7 @@ impl HostCommunicationHandler {
         };
         message_sender.send(playlist.clone().into()).ok();
         message_sender.send(select.clone().into()).ok();
-        let handler = CommunicationHandler::new(
-            swarm,
-            topic,
-            host,
-            relay_addr.clone(),
-            core_receiver,
-            message_sender,
-        );
+        let handler = CommunicationHandler::new(swarm, topic, host, core_receiver, message_sender);
         Self {
             handler,
             relay_addr,

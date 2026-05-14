@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use libp2p::kad::QueryId;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
-use libp2p::{PeerId, kad};
+use libp2p::{Multiaddr, PeerId, kad};
 use niketsu_core::communicator::{
     ChunkRequestMsg, ChunkResponseMsg, FileRequestMsg, FileResponseMsg, VideoShareMsg,
 };
@@ -113,14 +113,15 @@ impl FileShareConsumer {
             debug!("Provider found");
             self.current_request_provider = Some(*p);
 
-            if !base.swarm.is_connected(p) {
-                let relayed_peer = base
-                    .relay_addr
-                    .clone()
+            // If the host is the provider we are already connected; otherwise
+            // dial via the host's relay circuit so the host bridges to the peer.
+            if *p != base.host && !base.swarm.is_connected(p) {
+                let relayed_peer = Multiaddr::empty()
+                    .with(Protocol::P2p(base.host))
                     .with(Protocol::P2pCircuit)
                     .with(Protocol::P2p(*p));
                 if let Err(err) = base.swarm.dial(relayed_peer) {
-                    error!(?err, "Failed to dial file provider");
+                    error!(?err, "Failed to dial file provider via host relay");
                 }
             }
 

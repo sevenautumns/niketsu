@@ -123,7 +123,6 @@ impl ConnectingHandler {
                 self.swarm,
                 self.topic,
                 host,
-                self.relay_addr,
                 self.core_receiver,
                 self.message_sender,
             )))

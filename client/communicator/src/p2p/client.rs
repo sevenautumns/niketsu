@@ -35,18 +35,10 @@ impl ClientCommunicationHandler {
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
         host: PeerId,
-        relay_addr: Multiaddr,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
     ) -> Self {
-        let handler = CommunicationHandler::new(
-            swarm,
-            topic,
-            host,
-            relay_addr,
-            core_receiver,
-            message_sender,
-        );
+        let handler = CommunicationHandler::new(swarm, topic, host, core_receiver, message_sender);
         Self {
             handler,
             host_conn: None,

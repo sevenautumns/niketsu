@@ -336,18 +336,10 @@ impl CommunicationHandler {
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
         host: PeerId,
-        relay_addr: Multiaddr,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
     ) -> Self {
-        let base = CommonCommunication::new(
-            swarm,
-            topic,
-            host,
-            relay_addr,
-            core_receiver,
-            message_sender,
-        );
+        let base = CommonCommunication::new(swarm, topic, host, core_receiver, message_sender);
         Self {
             base,
             file_share: None,
@@ -430,7 +422,6 @@ pub(crate) struct CommonCommunication {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
     host: PeerId,
-    relay_addr: Multiaddr,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
 }
@@ -440,7 +431,6 @@ impl CommonCommunication {
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
         host: PeerId,
-        relay_addr: Multiaddr,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
     ) -> Self {
@@ -448,7 +438,6 @@ impl CommonCommunication {
             swarm,
             topic,
             host,
-            relay_addr,
             core_receiver,
             message_sender,
         }
