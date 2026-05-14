@@ -4,9 +4,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
 use libp2p::core::ConnectedPoint;
+use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
-use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, mdns, ping};
+use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, identify, mdns, ping};
 use niketsu_core::communicator::{
     ConnectedMsg, PlaylistMsg, SeekMsg, SelectMsg, UserStatusMsg, VideoStatusMsg,
 };
@@ -69,6 +70,29 @@ impl ClientCommunicationHandler {
                 Ok(d) => self.delay = d,
                 Err(error) => warn!(%error, "Failed to get ping rtt"),
             }
+        }
+    }
+
+    fn on_identify(&mut self, event: identify::Event) {
+        let identify::Event::Received { peer_id, info, .. } = event else {
+            return;
+        };
+        if peer_id != self.handler.host {
+            return;
+        }
+        let host_is_relay = info
+            .protocols
+            .iter()
+            .any(|p| p.as_ref().contains("circuit/relay"));
+        if !host_is_relay {
+            return;
+        }
+        let host_circuit = Multiaddr::empty()
+            .with(Protocol::P2p(peer_id))
+            .with(Protocol::P2pCircuit);
+        match self.handler.swarm.listen_on(host_circuit) {
+            Ok(_) => info!(host = %peer_id, "Reserving slot on host relay"),
+            Err(err) => warn!(%err, "Failed to listen on host relay circuit"),
         }
     }
 
@@ -361,6 +385,7 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
         match event {
             SwarmEvent::Behaviour(Transport(T::Ping(e))) => self.on_ping(e),
             SwarmEvent::Behaviour(Transport(T::Dcutr(e))) => self.on_dcutr(e),
+            SwarmEvent::Behaviour(Transport(T::Identify(e))) => self.on_identify(e),
             SwarmEvent::Behaviour(Messaging(M::Gossipsub(e))) => self.on_gossipsub(e),
             SwarmEvent::Behaviour(Messaging(M::RequestResponse(e))) => self.on_msg_req_resp(e),
             SwarmEvent::Behaviour(FileShare(F::RequestResponse(e))) => {
