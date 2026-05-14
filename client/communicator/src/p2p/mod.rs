@@ -4,7 +4,6 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use arcstr::ArcStr;
 use async_trait::async_trait;
-use enum_dispatch::enum_dispatch;
 use file_share::{FileShare, FileShareRequest, FileShareResponseResult};
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
@@ -87,17 +86,10 @@ pub(crate) enum StatusResponse {
 }
 
 #[async_trait]
-#[enum_dispatch]
-pub(crate) trait CommunicationHandlerTrait {
+pub(crate) trait CommunicationHandlerTrait: Send {
     async fn run(&mut self);
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>);
     fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()>;
-}
-
-#[enum_dispatch(CommunicationHandlerTrait)]
-pub(crate) enum Handler {
-    Client(client::ClientCommunicationHandler),
-    Host(host::HostCommunicationHandler),
 }
 
 trait SwarmHandler {

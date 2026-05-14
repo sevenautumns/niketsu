@@ -8,7 +8,7 @@ use niketsu_core::room::RoomName;
 use tracing::{debug, info};
 
 use super::{
-    Behaviour, BehaviourEvent, Handler, TransportBehaviourEvent,
+    Behaviour, BehaviourEvent, CommunicationHandlerTrait, TransportBehaviourEvent,
     auth::AuthEvent,
     client::ClientCommunicationHandler,
     host::HostCommunicationHandler,
@@ -51,7 +51,7 @@ impl ConnectingHandler {
         }
     }
 
-    pub(crate) async fn run(mut self) -> Result<Handler> {
+    pub(crate) async fn run(mut self) -> Result<Box<dyn CommunicationHandlerTrait>> {
         self.swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
         self.swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
         self.swarm.listen_on("/ip6/::/udp/0/quic-v1".parse()?)?;
@@ -108,7 +108,7 @@ impl ConnectingHandler {
 
         if host == local_peer_id {
             let playlist = playlist_task.await.ok().flatten().unwrap_or_default();
-            Ok(Handler::Host(HostCommunicationHandler::new(
+            Ok(Box::new(HostCommunicationHandler::new(
                 self.swarm,
                 self.topic,
                 host,
@@ -119,7 +119,7 @@ impl ConnectingHandler {
                 playlist,
             )))
         } else {
-            Ok(Handler::Client(ClientCommunicationHandler::new(
+            Ok(Box::new(ClientCommunicationHandler::new(
                 self.swarm,
                 self.topic,
                 host,
