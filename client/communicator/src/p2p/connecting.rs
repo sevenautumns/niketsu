@@ -93,6 +93,7 @@ impl ConnectingHandler {
                 self.swarm
                     .listen_on(relay_with_peer.with(Protocol::P2pCircuit))
                     .context("Failed to listen on relay circuit")?;
+                self.swarm.behaviour_mut().transport.relay_server.enable();
                 local_peer_id
             }
         };

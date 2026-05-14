@@ -379,6 +379,13 @@ impl HostCommunicationHandler {
         self.handler
             .swarm
             .behaviour_mut()
+            .transport
+            .relay_server
+            .allow(peer_id);
+
+        self.handler
+            .swarm
+            .behaviour_mut()
             .file_share
             .kademlia
             .add_address(&peer_id, endpoint.get_remote_address().clone());
@@ -402,6 +409,12 @@ impl HostCommunicationHandler {
             self.handler.core_receiver.close();
         } else if !self.handler.swarm.is_connected(&peer_id) {
             debug!("User connection stopped and user removed from map");
+            self.handler
+                .swarm
+                .behaviour_mut()
+                .transport
+                .relay_server
+                .deny(&peer_id);
             let users = self.users.clone();
             let topic = self.handler.topic.clone();
             if let Some(status) = users.get(&peer_id) {
