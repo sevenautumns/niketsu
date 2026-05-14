@@ -26,6 +26,7 @@ use crate::messages::NiketsuMessage;
 
 mod auth;
 mod connecting;
+mod host_relay;
 
 mod client;
 mod file_share;
@@ -34,9 +35,11 @@ mod host;
 static KEYPAIR: Lazy<identity::Keypair> = Lazy::new(identity::Keypair::generate_ed25519);
 
 /// Connection setup: relay, identify, hole-punching, keepalive, and room auth.
+/// `relay_server` is disabled by default and only enabled when this peer is the room host.
 #[derive(NetworkBehaviour)]
 pub(crate) struct TransportBehaviour {
     relay_client: relay::client::Behaviour,
+    relay_server: host_relay::GatedRelayBehaviour,
     identify: identify::Behaviour,
     dcutr: dcutr::Behaviour,
     ping: ping::Behaviour,
@@ -224,9 +227,22 @@ impl P2PClient {
                     .build()
                     .map_err(anyhow::Error::from)?;
 
+                let relay_server_config = relay::Config {
+                    max_reservations: 32,
+                    max_reservations_per_peer: 1,
+                    max_circuits: 64,
+                    max_circuits_per_peer: 4,
+                    reservation_duration: Duration::from_secs(3600),
+                    ..Default::default()
+                };
+
                 Ok(Behaviour {
                     transport: TransportBehaviour {
                         relay_client: relay_behaviour,
+                        relay_server: host_relay::GatedRelayBehaviour::new(
+                            key.public().to_peer_id(),
+                            relay_server_config,
+                        ),
                         identify: identify::Behaviour::new(identify::Config::new(
                             "/niketsu-identify/1".to_string(),
                             key.public(),
