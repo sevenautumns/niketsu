@@ -130,8 +130,7 @@ impl FileShareConsumer {
         } else {
             debug!("No providers found for the requested file");
             let msg = "No providers found for the requested file".into();
-            base.send_chat_message(arcstr::literal!("server"), msg)
-                .ok();
+            base.send_chat_message(arcstr::literal!("server"), msg).ok();
             let msg = NiketsuMessage::VideoProviderStopped(Default::default());
             base.message_sender.send(msg).ok();
         }

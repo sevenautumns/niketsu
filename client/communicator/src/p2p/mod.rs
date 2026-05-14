@@ -53,8 +53,7 @@ pub(crate) struct MessagingBehaviour {
 /// P2P file sharing: provider discovery (kademlia + mDNS) and chunk transfer.
 #[derive(NetworkBehaviour)]
 pub(crate) struct FileShareBehaviour {
-    request_response:
-        request_response::cbor::Behaviour<FileShareRequest, FileShareResponseResult>,
+    request_response: request_response::cbor::Behaviour<FileShareRequest, FileShareResponseResult>,
     kademlia: kad::Behaviour<MemoryStore>,
     mdns: mdns::tokio::Behaviour,
 }
@@ -189,7 +188,6 @@ impl SwarmHandler for Swarm<Behaviour> {
     }
 }
 
-
 #[derive(Debug)]
 pub(crate) struct P2PClient {
     sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
@@ -282,7 +280,13 @@ impl P2PClient {
         let (message_sender, message_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         let mut handler = connecting::ConnectingHandler::new(
-            swarm, relay_addr, room, password, topic, core_receiver, message_sender,
+            swarm,
+            relay_addr,
+            room,
+            password,
+            topic,
+            core_receiver,
+            message_sender,
         )
         .run()
         .await?;
@@ -440,8 +444,3 @@ impl CommonCommunication {
         Ok(())
     }
 }
-
-pub(crate) struct PassthroughMsg {
-    pub(crate) niketsu_msg: NiketsuMessage,
-}
-

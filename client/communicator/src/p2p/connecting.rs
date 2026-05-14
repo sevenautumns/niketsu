@@ -7,12 +7,10 @@ use niketsu_core::playlist::file::PlaylistBrowser;
 use niketsu_core::room::RoomName;
 use tracing::{debug, info};
 
-use super::{
-    Behaviour, BehaviourEvent, CommunicationHandlerTrait, TransportBehaviourEvent,
-    auth::AuthEvent,
-    client::ClientCommunicationHandler,
-    host::HostCommunicationHandler,
-};
+use super::auth::AuthEvent;
+use super::client::ClientCommunicationHandler;
+use super::host::HostCommunicationHandler;
+use super::{Behaviour, BehaviourEvent, CommunicationHandlerTrait, TransportBehaviourEvent};
 use crate::messages::NiketsuMessage;
 
 struct PeerInfo {
@@ -52,7 +50,8 @@ impl ConnectingHandler {
     }
 
     pub(crate) async fn run(mut self) -> Result<Box<dyn CommunicationHandlerTrait>> {
-        self.swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
+        self.swarm
+            .listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
         self.swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
         self.swarm.listen_on("/ip6/::/udp/0/quic-v1".parse()?)?;
         self.swarm.listen_on("/ip6/::/tcp/0".parse()?)?;

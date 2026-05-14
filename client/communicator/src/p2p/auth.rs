@@ -3,7 +3,8 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::anyhow;
-use libp2p::core::{Endpoint, transport::PortUse};
+use libp2p::core::Endpoint;
+use libp2p::core::transport::PortUse;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{
     ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandlerInEvent, THandlerOutEvent,
@@ -59,8 +60,7 @@ impl AuthBehaviour {
                     StreamProtocol::new("/authorisation/1"),
                     ProtocolSupport::Full,
                 )],
-                request_response::Config::default()
-                    .with_request_timeout(Duration::from_secs(10)),
+                request_response::Config::default().with_request_timeout(Duration::from_secs(10)),
             ),
             relay: None,
             events: VecDeque::new(),
@@ -68,7 +68,8 @@ impl AuthBehaviour {
     }
 
     pub(crate) fn initiate(&mut self, relay: PeerId, room: RoomName, password: String) {
-        self.inner.send_request(&relay, InitRequest::new(room, password));
+        self.inner
+            .send_request(&relay, InitRequest::new(room, password));
         self.relay = Some(relay);
     }
 }
@@ -94,8 +95,12 @@ impl NetworkBehaviour for AuthBehaviour {
         local_addr: &Multiaddr,
         remote_addr: &Multiaddr,
     ) -> Result<Self::ConnectionHandler, ConnectionDenied> {
-        self.inner
-            .handle_established_inbound_connection(connection_id, peer, local_addr, remote_addr)
+        self.inner.handle_established_inbound_connection(
+            connection_id,
+            peer,
+            local_addr,
+            remote_addr,
+        )
     }
 
     fn handle_pending_outbound_connection(
