@@ -138,202 +138,165 @@ impl FileShareConsumer {
     }
 }
 
-pub trait FileShareEventHandler {
-    fn handle_event(self, handler: &mut CommunicationHandler);
-}
-
-impl FileShareEventHandler for kad::Event {
-    fn handle_event(self, handler: &mut CommunicationHandler) {
-        if let Some(FileShare::Consumer(consumer)) = &mut handler.file_share {
-            consumer.handle_kad_event(self, &mut handler.base)
+impl CommunicationHandler {
+    pub(super) fn handle_file_share_kad_event(&mut self, event: kad::Event) {
+        if let Some(FileShare::Consumer(consumer)) = &mut self.file_share {
+            consumer.handle_kad_event(event, &mut self.base);
         }
     }
-}
 
-impl FileShareEventHandler for request_response::Event<FileShareRequest, FileShareResponseResult> {
-    fn handle_event(self, handler: &mut CommunicationHandler) {
-        use request_response::Message::*;
-        match self {
+    pub(super) fn handle_file_share_req_resp_event(
+        &mut self,
+        event: request_response::Event<FileShareRequest, FileShareResponseResult>,
+    ) {
+        match event {
             request_response::Event::Message { message, .. } => match message {
-                Request {
+                request_response::Message::Request {
                     request, channel, ..
                 } => match request {
                     FileShareRequest::File(msg) => {
-                        FileShareSwarmRequestHandler::handle_swarm_request(msg, channel, handler)
-                            .ok();
+                        self.fs_swarm_file_request(msg, channel).ok();
                     }
                     FileShareRequest::Chunk(msg) => {
-                        FileShareSwarmRequestHandler::handle_swarm_request(msg, channel, handler)
-                            .ok();
+                        self.fs_swarm_chunk_request(msg, channel).ok();
                     }
                 },
-                Response { response, .. } => {
-                    FileShareSwarmResponseHandler::handle_swarm_response(response, handler).ok();
+                request_response::Message::Response { response, .. } => {
+                    self.fs_swarm_response(response).ok();
                 }
             },
             request_response::Event::OutboundFailure {
                 request_id, error, ..
             } => {
-                if let Some(FileShare::Consumer(consumer)) = &mut handler.file_share {
-                    if consumer.chunk_requests.remove(&request_id) {
-                        warn!(?error, "Chunk request failed. Cache will retry.");
-                        let msg = "Chunk download timeout. Connection might be slow...".to_string();
-                        handler
-                            .base
-                            .send_chat_message(arcstr::literal!("server"), msg)
-                            .ok();
-                    }
-                };
+                if let Some(FileShare::Consumer(consumer)) = &mut self.file_share
+                    && consumer.chunk_requests.remove(&request_id)
+                {
+                    warn!(?error, "Chunk request failed. Cache will retry.");
+                    let msg = "Chunk download timeout. Connection might be slow...".to_string();
+                    self.base
+                        .send_chat_message(arcstr::literal!("server"), msg)
+                        .ok();
+                }
             }
             _ => {}
         }
     }
-}
 
-pub trait FileShareCoreMessageHandler {
-    fn handle_core_message(self, handler: &mut CommunicationHandler) -> Result<()>;
-}
-
-impl FileShareCoreMessageHandler for VideoShareMsg {
-    fn handle_core_message(self, handler: &mut CommunicationHandler) -> Result<()> {
-        handler.reset_requests_responses();
-        let Some(video) = self.video else {
+    pub(super) fn fs_video_share(&mut self, msg: VideoShareMsg) -> Result<()> {
+        self.reset_requests_responses();
+        let Some(video) = msg.video else {
             return Ok(());
         };
-        handler.swarm.start_providing(&video)?;
+        self.swarm.start_providing(&video)?;
         let provider = FileShareProvider::new(video);
-        handler.file_share = Some(FileShare::Provider(provider));
+        self.file_share = Some(FileShare::Provider(provider));
         Ok(())
     }
-}
 
-impl FileShareCoreMessageHandler for ChunkResponseMsg {
-    fn handle_core_message(self, handler: &mut CommunicationHandler) -> Result<()> {
-        let Some(FileShare::Provider(provider)) = &mut handler.file_share else {
+    pub(super) fn fs_chunk_response(&mut self, msg: ChunkResponseMsg) -> Result<()> {
+        let Some(FileShare::Provider(provider)) = &mut self.file_share else {
             bail!("No active file share provider");
         };
-        let Some(channel) = provider.pending_chunk_responses.remove(&self.uuid) else {
+        let Some(channel) = provider.pending_chunk_responses.remove(&msg.uuid) else {
             bail!("No access to response channel for chunk response");
         };
-        let msg = Ok(FileShareResponse::Chunk(self));
-        handler.swarm.send_file_response(channel, msg)
+        let response = Ok(FileShareResponse::Chunk(msg));
+        self.swarm.send_file_response(channel, response)
     }
-}
 
-impl FileShareCoreMessageHandler for ChunkRequestMsg {
-    fn handle_core_message(self, handler: &mut CommunicationHandler) -> Result<()> {
+    pub(super) fn fs_chunk_request(&mut self, msg: ChunkRequestMsg) -> Result<()> {
         // TODO handle issues with provider
-        let Some(FileShare::Consumer(consumer)) = &mut handler.file_share else {
-            let msg = NiketsuMessage::VideoProviderStopped(Default::default());
-            handler.message_sender.send(msg).unwrap();
+        let Some(FileShare::Consumer(consumer)) = &mut self.file_share else {
+            let stopped = NiketsuMessage::VideoProviderStopped(Default::default());
+            self.message_sender.send(stopped).unwrap();
             bail!("No active file share consumer");
         };
         let Some(provider) = consumer.current_request_provider else {
             bail!("No provider available for chunk request")
         };
-        let request_id = handler
+        let request_id = self
             .base
             .swarm
-            .send_file_request(&provider, FileShareRequest::Chunk(self));
-        consumer.chunk_requests.insert(request_id);
+            .send_file_request(&provider, FileShareRequest::Chunk(msg));
+        if let Some(FileShare::Consumer(consumer)) = &mut self.file_share {
+            consumer.chunk_requests.insert(request_id);
+        }
         Ok(())
     }
-}
 
-impl FileShareCoreMessageHandler for FileRequestMsg {
-    fn handle_core_message(self, handler: &mut CommunicationHandler) -> Result<()> {
-        debug!(?self.video, "Requesting file");
+    pub(super) fn fs_file_request(&mut self, msg: FileRequestMsg) -> Result<()> {
+        debug!(?msg.video, "Requesting file");
 
         let mut consumer = FileShareConsumer::default();
-        if let Some(FileShare::Consumer(c)) = &handler.file_share {
+        if let Some(FileShare::Consumer(c)) = &self.file_share {
             consumer.request_providers = c.request_providers.clone();
         }
-        handler.reset_requests_responses();
+        self.reset_requests_responses();
 
-        let kademlia = &mut handler.base.swarm.behaviour_mut().file_share.kademlia;
-        let id = kademlia.get_providers(self.video.as_str().as_bytes().to_vec().into());
+        let kademlia = &mut self.base.swarm.behaviour_mut().file_share.kademlia;
+        let id = kademlia.get_providers(msg.video.as_str().as_bytes().to_vec().into());
 
-        consumer.file_requests.insert(id, self.clone());
-        handler.file_share = Some(FileShare::Consumer(consumer));
+        consumer.file_requests.insert(id, msg);
+        self.file_share = Some(FileShare::Consumer(consumer));
         Ok(())
     }
-}
 
-impl FileShareCoreMessageHandler for FileResponseMsg {
-    fn handle_core_message(self, handler: &mut CommunicationHandler) -> Result<()> {
-        debug!(?self, "Responding to file request ...");
-        let Some(FileShare::Provider(provider)) = &mut handler.file_share else {
+    pub(super) fn fs_file_response(&mut self, msg: FileResponseMsg) -> Result<()> {
+        debug!(?msg, "Responding to file request ...");
+        let Some(FileShare::Provider(provider)) = &mut self.file_share else {
             bail!("No active file share provider");
         };
-        let Some(channel) = provider.pending_file_responses.remove(&self.uuid) else {
+        let Some(channel) = provider.pending_file_responses.remove(&msg.uuid) else {
             bail!("Cannot send file response if response channel does not exist");
         };
 
-        let resp = if self.video.is_none() {
+        let resp = if msg.video.is_none() {
             Err(String::from("Not providing any files"))
         } else {
-            Ok(FileShareResponse::File(self))
+            Ok(FileShareResponse::File(msg))
         };
-        handler.swarm.send_file_response(channel, resp)
+        self.swarm.send_file_response(channel, resp)
     }
-}
 
-pub trait FileShareSwarmRequestHandler {
-    fn handle_swarm_request(
-        self,
+    fn fs_swarm_chunk_request(
+        &mut self,
+        msg: ChunkRequestMsg,
         channel: ResponseChannel<FileShareResponseResult>,
-        handler: &mut CommunicationHandler,
-    ) -> Result<()>;
-}
-
-impl FileShareSwarmRequestHandler for ChunkRequestMsg {
-    fn handle_swarm_request(
-        self,
-        channel: ResponseChannel<FileShareResponseResult>,
-        handler: &mut CommunicationHandler,
     ) -> Result<()> {
-        let Some(FileShare::Provider(provider)) = &mut handler.file_share else {
+        let Some(FileShare::Provider(provider)) = &mut self.file_share else {
             debug!("Got chunk request despite no active provider");
             let resp = Err(String::from("Not providing any files"));
-            return handler.base.swarm.send_file_response(channel, resp);
+            return self.base.swarm.send_file_response(channel, resp);
         };
-        provider.pending_chunk_responses.insert(self.uuid, channel);
-        handler.message_sender.send(self.clone().into())?;
+        provider.pending_chunk_responses.insert(msg.uuid, channel);
+        self.message_sender.send(msg.into())?;
         Ok(())
     }
-}
 
-impl FileShareSwarmRequestHandler for FileRequestMsg {
-    fn handle_swarm_request(
-        self,
+    fn fs_swarm_file_request(
+        &mut self,
+        msg: FileRequestMsg,
         channel: ResponseChannel<FileShareResponseResult>,
-        handler: &mut CommunicationHandler,
     ) -> Result<()> {
-        let Some(FileShare::Provider(provider)) = &mut handler.file_share else {
-            warn!(msg = ?self, "Got file request despite no active provider");
+        let Some(FileShare::Provider(provider)) = &mut self.file_share else {
+            warn!(?msg, "Got file request despite no active provider");
             let resp = Err(String::from("Not providing any files"));
-            return handler.base.swarm.send_file_response(channel, resp);
+            return self.base.swarm.send_file_response(channel, resp);
         };
-        provider.pending_file_responses.insert(self.uuid, channel);
-        handler.message_sender.send(self.clone().into())?;
+        provider.pending_file_responses.insert(msg.uuid, channel);
+        self.message_sender.send(msg.into())?;
         Ok(())
     }
-}
 
-pub trait FileShareSwarmResponseHandler {
-    fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()>;
-}
-
-impl FileShareSwarmResponseHandler for FileShareResponseResult {
-    fn handle_swarm_response(self, handler: &mut CommunicationHandler) -> Result<()> {
-        let Ok(resp) = self else {
-            handler.file_share.take();
+    fn fs_swarm_response(&mut self, resp: FileShareResponseResult) -> Result<()> {
+        let Ok(r) = resp else {
+            self.file_share.take();
             let msg = NiketsuMessage::VideoProviderStopped(Default::default());
-            handler.message_sender.send(msg).unwrap();
-            bail!("{}", self.unwrap_err());
+            self.message_sender.send(msg).unwrap();
+            bail!("{}", resp.unwrap_err());
         };
 
-        handler.message_sender.send(resp.into())?;
+        self.message_sender.send(r.into())?;
         Ok(())
     }
 }

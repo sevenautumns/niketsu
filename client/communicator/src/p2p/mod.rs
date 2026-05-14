@@ -343,19 +343,14 @@ impl CommunicationHandler {
 
     pub fn handle_file_share_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
         use NiketsuMessage::*;
-        use file_share::FileShareCoreMessageHandler as FH;
         match msg {
-            FileRequest(msg) => FH::handle_core_message(msg, self),
-            FileResponse(msg) => FH::handle_core_message(msg, self),
-            ChunkRequest(msg) => FH::handle_core_message(msg, self),
-            ChunkResponse(msg) => FH::handle_core_message(msg, self),
-            VideoShare(msg) => FH::handle_core_message(msg, self),
+            FileRequest(msg) => self.fs_file_request(msg),
+            FileResponse(msg) => self.fs_file_response(msg),
+            ChunkRequest(msg) => self.fs_chunk_request(msg),
+            ChunkResponse(msg) => self.fs_chunk_response(msg),
+            VideoShare(msg) => self.fs_video_share(msg),
             _ => unreachable!("handle_file_share_core_message called with non-file-share message"),
         }
-    }
-
-    pub fn handle_file_share_swarm_event<E: file_share::FileShareEventHandler>(&mut self, event: E) {
-        event.handle_event(self);
     }
 
     pub fn broadcast(&mut self, msg: NiketsuMessage) -> Result<()> {

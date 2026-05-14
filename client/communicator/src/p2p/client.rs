@@ -212,13 +212,13 @@ impl ClientSwarmEventHandler
     for request_response::Event<FileShareRequest, FileShareResponseResult>
 {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        handler.handler.handle_file_share_swarm_event(self);
+        handler.handler.handle_file_share_req_resp_event(self);
     }
 }
 
 impl ClientSwarmEventHandler for kad::Event {
     fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        handler.handler.handle_file_share_swarm_event(self);
+        handler.handler.handle_file_share_kad_event(self);
     }
 }
 
