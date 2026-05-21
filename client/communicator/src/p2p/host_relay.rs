@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::task::{Context, Poll};
 
-use anyhow::anyhow;
 use libp2p::core::transport::PortUse;
 use libp2p::core::{Endpoint, Multiaddr};
 use libp2p::swarm::{
@@ -61,11 +60,10 @@ impl NetworkBehaviour for GatedRelayBehaviour {
         local_addr: &Multiaddr,
         remote_addr: &Multiaddr,
     ) -> Result<Self::ConnectionHandler, ConnectionDenied> {
-        if !self.enabled || !self.allowed.contains(&peer) {
-            return Err(ConnectionDenied::new(anyhow!(
-                "relay reservation denied: peer {peer} not allowed"
-            )));
-        }
+        // Relay reservations are negotiated as streams over an already-established connection,
+        // so this handler is called for the initial transport connection — before the peer has
+        // been added to `allowed` via on_connection_established. Gating here would deny all
+        // inbound connections and break connectivity.
         self.inner.handle_established_inbound_connection(
             connection_id,
             peer,
