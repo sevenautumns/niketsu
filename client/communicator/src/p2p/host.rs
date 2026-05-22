@@ -13,8 +13,8 @@ use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use niketsu_core::communicator::{
-    ConnectedMsg, PlaylistMsg, SelectMsg, StartMsg, UserStatusListMsg, UserStatusMsg,
-    VideoStatusMsg,
+    ConnectedMsg, HostHandoverMsg, PlaylistMsg, SelectMsg, StartMsg, UserStatusListMsg,
+    UserStatusMsg, VideoStatusMsg,
 };
 use niketsu_core::log_err_msg;
 use niketsu_core::playlist::handler::PlaylistHandler;
@@ -33,6 +33,8 @@ use crate::p2p::MessageRequest;
 pub(crate) struct HostCommunicationHandler {
     handler: CommunicationHandler,
     relay_addr: Multiaddr,
+    relay_peer_id: PeerId,
+    password: String,
     status_list: UserStatusListMsg,
     playlist: PlaylistMsg,
     select: SelectMsg,
@@ -47,6 +49,8 @@ impl HostCommunicationHandler {
         topic: gossipsub::IdentTopic,
         host: PeerId,
         relay_addr: Multiaddr,
+        relay_peer_id: PeerId,
+        password: String,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
         room: RoomName,
@@ -67,6 +71,8 @@ impl HostCommunicationHandler {
         Self {
             handler,
             relay_addr,
+            relay_peer_id,
+            password,
             status_list: UserStatusListMsg {
                 room_name: room,
                 users: BTreeSet::default(),
@@ -499,6 +505,37 @@ impl HostCommunicationHandler {
         }
     }
 
+    fn on_core_handover(&mut self, msg: HostHandoverMsg) -> Result<()> {
+        let target_peer = self
+            .users
+            .iter()
+            .find(|(_, s)| s.as_ref().is_some_and(|u| u.name == msg.new_host))
+            .map(|(peer_id, _)| *peer_id);
+        let Some(peer_id) = target_peer else {
+            bail!("handover target '{}' not found in user list", msg.new_host);
+        };
+
+        self.handler
+            .swarm
+            .behaviour_mut()
+            .transport
+            .auth
+            .transfer(
+                self.relay_peer_id,
+                self.status_list.room_name.clone(),
+                self.password.clone(),
+                peer_id,
+            );
+
+        let topic = self.handler.topic.clone();
+        self.handler
+            .swarm
+            .try_broadcast(topic, NiketsuMessage::HostHandover(msg))?;
+
+        self.handler.core_receiver.close();
+        Ok(())
+    }
+
     fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()> {
         let niketsu_msg: NiketsuMessage = msg.try_into()?;
         debug!(message = ?niketsu_msg, "Handling broadcast message from swarm");
@@ -617,6 +654,7 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
             Select(m) => self.on_core_select(m),
             Playlist(m) => self.on_core_playlist(m),
             Status(m) => self.on_core_user_status(m),
+            HostHandover(m) => self.on_core_handover(m),
             m @ (FileRequest(_) | FileResponse(_) | ChunkRequest(_) | ChunkResponse(_)
             | VideoShare(_)) => self.handler.handle_file_share_core_message(m),
             other => self.handler.broadcast(other),

@@ -25,6 +25,7 @@ pub(super) enum NiketsuMessage {
     ChunkResponse(ChunkResponseMsg),
     VideoShare(VideoShareMsg),
     VideoProviderStopped(VideoProviderStoppedMsg),
+    HostHandover(HostHandoverMsg),
 }
 
 impl TryFrom<NiketsuMessage> for IncomingMessage {
@@ -49,6 +50,7 @@ impl TryFrom<NiketsuMessage> for IncomingMessage {
             NiketsuMessage::ChunkResponse(m) => Ok(m.into()),
             NiketsuMessage::ChunkRequest(m) => Ok(m.into()),
             NiketsuMessage::VideoProviderStopped(m) => Ok(m.into()),
+            NiketsuMessage::HostHandover(m) => Ok(m.into()),
             value => Err(value),
         }
     }
@@ -169,6 +171,12 @@ impl From<VideoShareMsg> for NiketsuMessage {
     }
 }
 
+impl From<HostHandoverMsg> for NiketsuMessage {
+    fn from(value: HostHandoverMsg) -> Self {
+        Self::HostHandover(value)
+    }
+}
+
 impl From<OutgoingMessage> for NiketsuMessage {
     fn from(value: OutgoingMessage) -> Self {
         match value {
@@ -186,6 +194,7 @@ impl From<OutgoingMessage> for NiketsuMessage {
             OutgoingMessage::ChunkRequest(msg) => msg.into(),
             OutgoingMessage::ChunkResponse(msg) => msg.into(),
             OutgoingMessage::VideoShareChange(msg) => msg.into(),
+            OutgoingMessage::HostHandover(msg) => msg.into(),
         }
     }
 }

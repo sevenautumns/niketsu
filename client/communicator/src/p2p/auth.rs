@@ -23,6 +23,8 @@ type Inner = request_response::cbor::Behaviour<InitRequest, InitResponse>;
 pub(crate) struct InitRequest {
     room: RoomName,
     password: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    transfer_to: Option<PeerId>,
 }
 
 impl InitRequest {
@@ -30,6 +32,7 @@ impl InitRequest {
         Self {
             room,
             password: digest(password),
+            transfer_to: None,
         }
     }
 }
@@ -70,6 +73,21 @@ impl AuthBehaviour {
     pub(crate) fn initiate(&mut self, relay: PeerId, room: RoomName, password: String) {
         self.inner
             .send_request(&relay, InitRequest::new(room, password));
+        self.relay = Some(relay);
+    }
+
+    pub(crate) fn transfer(
+        &mut self,
+        relay: PeerId,
+        room: RoomName,
+        password: String,
+        new_host: PeerId,
+    ) {
+        self.inner.send_request(&relay, InitRequest {
+            room,
+            password: digest(password),
+            transfer_to: Some(new_host),
+        });
         self.relay = Some(relay);
     }
 }

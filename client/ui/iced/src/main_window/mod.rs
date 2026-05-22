@@ -101,6 +101,7 @@ impl<'a> MainView<'a> {
                                 .push(RoomsWidget::new(
                                     view_model.get_rooms_widget_state(),
                                     &view_model.user(),
+                                    view_model.is_host(),
                                 ))
                                 .width(Length::Fill)
                                 .height(Length::Fill),

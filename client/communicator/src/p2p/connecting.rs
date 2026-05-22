@@ -113,6 +113,8 @@ impl ConnectingHandler {
                 self.topic,
                 host,
                 self.relay_addr,
+                peer_info.relay,
+                self.password,
                 self.core_receiver,
                 self.message_sender,
                 self.room,

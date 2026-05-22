@@ -7,6 +7,7 @@ use iced::{Element, Length, Rectangle, Renderer, Theme};
 use niketsu_core::room::UserList;
 use niketsu_core::user::UserStatus;
 
+use crate::main_window::message::{HandoverButton, MainMessage};
 use crate::message::Message;
 use crate::styling::FileButton;
 
@@ -18,19 +19,30 @@ pub struct RoomsWidget<'a> {
 }
 
 impl RoomsWidget<'_> {
-    pub fn new(state: &UsersWidgetState, this_user: &UserStatus) -> Self {
+    pub fn new(state: &UsersWidgetState, this_user: &UserStatus, is_host: bool) -> Self {
         let elements: Vec<_> = state
             .users
             .iter()
             .map(|u| {
-                row!(
+                let name = u.name.clone();
+                let mut row = row!(
                     Space::new().width(Length::Fixed(5.0)),
                     Button::new(Container::new(u.to_text(this_user)).padding(2))
                         .padding(0)
                         .width(Length::Fill)
                         .style(FileButton::theme(false, true)),
-                )
-                .into()
+                );
+                if is_host && u.name != this_user.name {
+                    row = row.push(
+                        Button::new(Text::new("→H"))
+                            .padding(2)
+                            .on_press(
+                                MainMessage::from(HandoverButton { username: name }).into(),
+                            )
+                            .style(iced::widget::button::secondary),
+                    );
+                }
+                row.into()
             })
             .collect();
 

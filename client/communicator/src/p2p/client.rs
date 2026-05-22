@@ -278,6 +278,10 @@ impl ClientCommunicationHandler {
             VideoStatus(msg) => self.on_broadcast_video_status(msg, peer_id),
             Select(msg) => self.on_broadcast_select(msg),
             Seek(msg) => self.on_broadcast_seek(msg),
+            HostHandover(msg) => {
+                self.handler.message_sender.send(HostHandover(msg))?;
+                Ok(())
+            }
             other => {
                 self.handler.message_sender.send(other)?;
                 Ok(())

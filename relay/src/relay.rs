@@ -30,6 +30,8 @@ struct Behaviour {
 struct InitRequest {
     room: String,
     password: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    transfer_to: Option<PeerId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,6 +197,25 @@ impl Relay {
     ) {
         debug!("Received request from client");
         let mut r = self.rooms.write().await;
+
+        if let Some(new_host) = request.transfer_to {
+            if r.get(&request.room).is_some_and(|(pid, _)| *pid == peer) {
+                if let Some((_, hash)) = r.remove(&request.room) {
+                    r.insert(request.room.clone(), (new_host, hash));
+                    let mut m = self.hosts.write().await;
+                    m.remove(&peer);
+                    m.insert(new_host, request.room.clone());
+                    debug!(%peer, %new_host, room = %request.room, "Host transfer completed");
+                }
+            }
+            self.swarm
+                .behaviour_mut()
+                .init_request_response
+                .send_response(channel, InitResponse { status: ResponseStatus::Ok, peer_id: None })
+                .unwrap_or_default();
+            return;
+        }
+
         let mut status = ResponseStatus::Ok;
         let mut peer_id: Option<PeerId> = None;
         if let Some((pid, req)) = r.get(request.room.as_str()) {
