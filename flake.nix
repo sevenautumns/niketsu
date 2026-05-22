@@ -135,6 +135,14 @@
             root = ./.;
             CARGO_BUILD_TARGET = static-rust-target;
           };
+          niketsu-relay-go = pkgs.buildGoModule {
+            pname = "niketsu-relay-go";
+            version = VERSION;
+            src = ./relay-go;
+            vendorHash = "sha256-EzL9tWZS3+jMsI8yIf4X3oYrUUfrBIo3Dp1LoaQMi2Q=";
+            subPackages = [ "cmd/niketsu-relay" ];
+            meta.mainProgram = "niketsu-relay";
+          };
         };
         devShells.default = pkgs.mkShell {
           inputsFrom = [ packages.niketsu-client ];
@@ -150,6 +158,9 @@
             nixfmt
             mdbook
             yt-dlp
+            go
+            gopls
+            gotools
           ];
         };
         checks = {

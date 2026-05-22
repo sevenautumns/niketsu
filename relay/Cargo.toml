@@ -27,3 +27,6 @@ tracing-appender.workspace = true
 directories.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+cbor4ii = { version = "1", features = ["serde1"] }
+

@@ -1,0 +1,4 @@
+/niketsu-relay
+/dist/
+*.test
+*.out
