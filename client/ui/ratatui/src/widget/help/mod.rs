@@ -39,6 +39,10 @@ static ROOM: Lazy<HelpTab> = Lazy::new(|| HelpTab {
     items: vec![
         vec!["Move up".to_string(), "↑ <Arrow Up>".to_string()],
         vec!["Move down".to_string(), "↓ <Arrow Down>".to_string()],
+        vec![
+            "Hand over host to selected user".to_string(),
+            "<h> (host only)".to_string(),
+        ],
     ],
 });
 

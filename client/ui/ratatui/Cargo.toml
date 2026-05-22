@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 niketsu-core.path = "../../core"
 anyhow.workspace = true
+chrono.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 arcstr.workspace = true

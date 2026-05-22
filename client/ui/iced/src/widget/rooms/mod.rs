@@ -34,7 +34,7 @@ impl RoomsWidget<'_> {
                 );
                 if is_host && u.name != this_user.name {
                     row = row.push(
-                        Button::new(Text::new("→H"))
+                        Button::new(Text::new("Make Host"))
                             .padding(2)
                             .on_press(
                                 MainMessage::from(HandoverButton { username: name }).into(),

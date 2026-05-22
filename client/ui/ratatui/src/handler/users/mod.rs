@@ -1,4 +1,6 @@
+use chrono::Local;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use niketsu_core::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 
 use super::chat::Chat;
 use super::recently::Recently;
@@ -31,7 +33,23 @@ impl EventHandler for Users {
                 KeyCode::Char('h') => {
                     if view.model.is_host.get_inner() {
                         if let Some(user) = view.app.users_widget_state.get_current_user() {
-                            view.model.host_handover(user.name);
+                            let current_name = view.model.user.get_inner().name;
+                            if user.name == current_name {
+                                let msg = PlayerMessage::from(PlayerMessageInner {
+                                    message: "Cannot hand over host role to yourself"
+                                        .to_string(),
+                                    source: MessageSource::Server,
+                                    level: MessageLevel::Warn,
+                                    timestamp: Local::now(),
+                                });
+                                view.model.messages.rcu(|msgs| {
+                                    let mut msgs = msgs.as_ref().clone();
+                                    msgs.push(msg.clone());
+                                    msgs
+                                });
+                            } else {
+                                view.model.host_handover(user.name);
+                            }
                         }
                     }
                 }
