@@ -558,7 +558,7 @@ impl HostCommunicationHandler {
 #[async_trait]
 impl CommunicationHandlerTrait for HostCommunicationHandler {
     async fn run(&mut self) {
-        if let Err(error) = self.handler.message_sender.send(ConnectedMsg.into()) {
+        if let Err(error) = self.handler.message_sender.send(ConnectedMsg { is_host: true }.into()) {
             warn!(%error, "Failed to send connected message to core");
         }
 

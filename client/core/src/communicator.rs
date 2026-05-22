@@ -78,10 +78,12 @@ pub enum IncomingMessage {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-pub struct ConnectedMsg;
+pub struct ConnectedMsg {
+    pub is_host: bool,
+}
 
 impl From<ConnectedMsg> for PlayerMessage {
-    fn from(_: ConnectedMsg) -> Self {
+    fn from(ConnectedMsg { .. }: ConnectedMsg) -> Self {
         PlayerMessageInner {
             message: "connected to server".to_string(),
             source: MessageSource::Internal,
@@ -98,6 +100,7 @@ impl EventHandler for ConnectedMsg {
         model
             .communicator
             .send(OutgoingMessage::from(model.config.status(model.ready)));
+        model.ui.is_host(self.is_host);
         model.ui.player_message(PlayerMessage::from(self));
     }
 }

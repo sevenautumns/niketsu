@@ -215,7 +215,7 @@ impl ClientCommunicationHandler {
                 .kademlia
                 .add_address(&peer_id, endpoint.get_remote_address().clone());
         }
-        if let Err(error) = self.handler.message_sender.send(ConnectedMsg.into()) {
+        if let Err(error) = self.handler.message_sender.send(ConnectedMsg { is_host: false }.into()) {
             warn!(%error, "Failed to send connected message to core");
         }
     }

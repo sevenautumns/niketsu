@@ -38,6 +38,7 @@ pub trait UserInterfaceTrait: std::fmt::Debug + Send {
     fn username_change(&mut self, username: ArcStr);
     fn abort(&mut self);
     fn video_share(&mut self, video_share: bool);
+    fn is_host(&mut self, is_host: bool);
 
     async fn event(&mut self) -> UserInterfaceEvent;
 }
@@ -437,6 +438,7 @@ impl UserInterface {
             user_list: Observed::<_>::default_with_notify(&notify),
             user: Observed::<_>::new(user, &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(1000), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -501,6 +503,10 @@ impl UserInterfaceTrait for UserInterface {
         self.model.video_share.set(video_share)
     }
 
+    fn is_host(&mut self, is_host: bool) {
+        self.model.is_host.set(is_host)
+    }
+
     async fn event(&mut self) -> UserInterfaceEvent {
         self.ui_events.recv().await.expect("ui event stream ended")
     }
@@ -516,6 +522,7 @@ pub struct UiModel {
     pub user: Observed<UserStatus>,
     pub messages: Observed<RingBuffer<PlayerMessage>>,
     pub video_share: Observed<bool>,
+    pub is_host: Observed<bool>,
     pub events: MpscSender<UserInterfaceEvent>,
     pub running: Observed<bool>,
     pub notify: Arc<Notify>,
