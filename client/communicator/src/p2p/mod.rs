@@ -207,7 +207,7 @@ impl P2PClient {
         let keypair = KEYPAIR.clone();
         let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
         quic_config.handshake_timeout = Duration::from_secs(10);
-        quic_config.max_idle_timeout = 10 * 1000;
+        quic_config.max_idle_timeout = 5 * 1000;
 
         let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair.clone())
             .with_tokio()
@@ -249,7 +249,9 @@ impl P2PClient {
                         )),
                         dcutr: dcutr::Behaviour::new(key.public().to_peer_id()),
                         ping: ping::Behaviour::new(
-                            ping::Config::new().with_interval(Duration::from_secs(1)),
+                            ping::Config::new()
+                                .with_interval(Duration::from_secs(1))
+                                .with_timeout(Duration::from_secs(3)),
                         ),
                         auth: auth::AuthBehaviour::new(),
                     },

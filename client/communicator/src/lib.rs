@@ -13,7 +13,7 @@ use self::messages::NiketsuMessage;
 pub mod messages;
 pub mod p2p;
 
-pub const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
+pub const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]

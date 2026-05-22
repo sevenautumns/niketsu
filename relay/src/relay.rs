@@ -70,7 +70,7 @@ pub fn new(config: Config) -> Result<Relay> {
     let keypair = Keypair::from_protobuf_encoding(config.keypair.unwrap().as_slice())?;
     let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
     quic_config.handshake_timeout = Duration::from_secs(10);
-    quic_config.max_idle_timeout = 5 * 1000;
+    quic_config.max_idle_timeout = 3 * 1000;
 
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()

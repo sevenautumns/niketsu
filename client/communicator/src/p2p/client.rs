@@ -55,12 +55,17 @@ impl ClientCommunicationHandler {
             return;
         }
 
-        if let Some(conn) = self.host_conn
-            && event.connection == conn
-        {
-            match event.result {
-                Ok(d) => self.delay = d,
-                Err(error) => warn!(%error, "Failed to get ping rtt"),
+        match event.result {
+            Ok(d) => {
+                if let Some(conn) = self.host_conn
+                    && event.connection == conn
+                {
+                    self.delay = d;
+                }
+            }
+            Err(error) => {
+                warn!(%error, "Ping to host failed, closing connection");
+                self.handler.swarm.close_connection(event.connection);
             }
         }
     }
