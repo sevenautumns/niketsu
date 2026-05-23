@@ -79,6 +79,30 @@ impl FileProgressBar {
     }
 }
 
+pub struct RoleBadge;
+
+impl RoleBadge {
+    pub fn theme(is_host: bool) -> impl Fn(&Theme) -> iced::widget::container::Style {
+        move |theme| {
+            let palette = theme.extended_palette();
+            let (background, text_color) = if is_host {
+                (palette.success.base.color, palette.success.base.text)
+            } else {
+                (palette.primary.base.color, palette.primary.base.text)
+            };
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(background)),
+                text_color: Some(text_color),
+                border: Border {
+                    radius: 10.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }
+    }
+}
+
 pub struct MessageColor;
 
 impl MessageColor {

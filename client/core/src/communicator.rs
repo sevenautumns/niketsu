@@ -188,6 +188,10 @@ impl From<VideoStatusMsg> for OutgoingMessage {
 pub struct UserStatusListMsg {
     pub room_name: RoomName,
     pub users: BTreeSet<UserStatus>,
+    // Username of the current host. Older senders omit this field; serde
+    // defaults to None and the UI hides the per-user host indicator.
+    #[serde(default)]
+    pub host: Option<ArcStr>,
 }
 
 impl EventHandler for UserStatusListMsg {

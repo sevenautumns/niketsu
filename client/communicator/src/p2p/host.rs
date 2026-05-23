@@ -76,6 +76,7 @@ impl HostCommunicationHandler {
             status_list: UserStatusListMsg {
                 room_name: room,
                 users: BTreeSet::default(),
+                host: None,
             },
             playlist,
             users: HashMap::default(),
@@ -102,6 +103,7 @@ impl HostCommunicationHandler {
     fn update_status(&mut self, status: UserStatus, peer_id: PeerId) {
         self.status_list.users.replace(status.clone());
         self.users.insert(peer_id, Some(status));
+        self.refresh_host_name();
     }
 
     fn remove_peer(&mut self, status: &Option<UserStatus>, peer_id: &PeerId) {
@@ -109,6 +111,18 @@ impl HostCommunicationHandler {
             self.status_list.users.remove(s);
         }
         self.users.remove(peer_id);
+        self.refresh_host_name();
+    }
+
+    // Keep status_list.host in sync with whoever currently owns the host peer
+    // id. Called after any mutation of self.users so clients see the right
+    // host-name on the next broadcast.
+    fn refresh_host_name(&mut self) {
+        self.status_list.host = self
+            .users
+            .get(&self.handler.host)
+            .and_then(|s| s.as_ref())
+            .map(|s| s.name.clone());
     }
 
     //TODO: consider caching?

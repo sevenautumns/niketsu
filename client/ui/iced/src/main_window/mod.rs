@@ -15,7 +15,7 @@ use super::widget::playlist::PlaylistWidget;
 use super::widget::rooms::RoomsWidget;
 use crate::main_window::message::ShareButton;
 use crate::message::ToggleReady;
-use crate::styling::ContainerBorder;
+use crate::styling::{ContainerBorder, RoleBadge};
 use crate::widget::file_search::FileSearchWidget;
 use crate::widget::settings::SettingsWidget;
 
@@ -93,16 +93,28 @@ impl<'a> MainView<'a> {
                     .push(
                         Container::new(
                             Column::new()
-                                .push(if view_model.is_host() {
-                                    Text::new("HOST").style(iced::widget::text::success)
-                                } else {
-                                    Text::new("CLIENT").style(iced::widget::text::primary)
-                                })
+                                .push(
+                                    Row::new()
+                                        .push(
+                                            Container::new(
+                                                Text::new(if view_model.is_host() {
+                                                    "Host"
+                                                } else {
+                                                    "Client"
+                                                })
+                                                .size(11),
+                                            )
+                                            .padding([2, 10])
+                                            .style(RoleBadge::theme(view_model.is_host())),
+                                        )
+                                        .push(iced::widget::Space::new().width(Length::Fill)),
+                                )
                                 .push(RoomsWidget::new(
                                     view_model.get_rooms_widget_state(),
                                     &view_model.user(),
                                     view_model.is_host(),
                                 ))
+                                .spacing(SPACING)
                                 .width(Length::Fill)
                                 .height(Length::Fill),
                         )

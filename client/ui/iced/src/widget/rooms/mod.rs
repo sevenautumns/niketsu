@@ -25,12 +25,15 @@ impl RoomsWidget<'_> {
             .iter()
             .map(|u| {
                 let name = u.name.clone();
+                let is_host_user = state.users.is_host_name(&u.name);
                 let mut row = row!(
                     Space::new().width(Length::Fixed(5.0)),
-                    Button::new(Container::new(u.to_text(this_user)).padding(2))
-                        .padding(0)
-                        .width(Length::Fill)
-                        .style(FileButton::theme(false, true)),
+                    Button::new(
+                        Container::new(u.to_text(this_user, is_host_user)).padding(2)
+                    )
+                    .padding(0)
+                    .width(Length::Fill)
+                    .style(FileButton::theme(false, true)),
                 );
                 if is_host && u.name != this_user.name {
                     row = row.push(
@@ -201,11 +204,11 @@ impl<'a> From<RoomsWidget<'a>> for Element<'a, Message> {
 }
 
 trait UserStatusExt {
-    fn to_text<'a>(&self, user: &UserStatus) -> Row<'a, Message>;
+    fn to_text<'a>(&self, user: &UserStatus, is_host: bool) -> Row<'a, Message>;
 }
 
 impl UserStatusExt for UserStatus {
-    fn to_text<'a>(&self, user: &UserStatus) -> Row<'a, Message> {
+    fn to_text<'a>(&self, user: &UserStatus, is_host: bool) -> Row<'a, Message> {
         let mut row = Row::new();
         if self.name.eq(&user.name) {
             row = row.push(Text::new("(me) "));
@@ -214,6 +217,12 @@ impl UserStatusExt for UserStatus {
             true => Text::new("Ready").style(iced::widget::text::success),
             false => Text::new("Not Ready").style(iced::widget::text::danger),
         };
-        row.push(Text::new(format!("{}: ", self.name))).push(ready)
+        let name_label = if is_host {
+            Text::new(format!("{} (host): ", self.name))
+                .style(iced::widget::text::success)
+        } else {
+            Text::new(format!("{}: ", self.name))
+        };
+        row.push(name_label).push(ready)
     }
 }

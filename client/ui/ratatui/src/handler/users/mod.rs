@@ -43,7 +43,7 @@ impl EventHandler for Users {
                                     timestamp: Local::now(),
                                 });
                                 view.model.messages.rcu(|msgs| {
-                                    let mut msgs = msgs.as_ref().clone();
+                                    let mut msgs = niketsu_core::util::ring_buffer::RingBuffer::clone(msgs);
                                     msgs.push(msg.clone());
                                     msgs
                                 });

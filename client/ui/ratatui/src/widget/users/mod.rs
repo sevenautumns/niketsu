@@ -2,8 +2,9 @@ use niketsu_core::room::UserList;
 use niketsu_core::user::UserStatus;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Margin, Rect};
+use ratatui::style::Modifier;
 use ratatui::symbols::scrollbar;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
 };
@@ -99,26 +100,44 @@ impl StatefulWidget for UsersWidget {
             .user_list
             .iter()
             .map(|u| {
-                let name = match u.eq(&state.user) {
-                    true => arcstr::format!("{} (me)", u.name),
-                    false => u.name.clone(),
-                };
+                let is_me = u.eq(&state.user);
+                let is_host_user = state.user_list.is_host_name(&u.name);
+                let row_style = if u.ready { style.green() } else { style.red() };
 
-                match u.ready {
-                    true => ListItem::new(vec![Line::styled(name.to_string(), style.green())]),
-                    false => ListItem::new(vec![Line::styled(name.to_string(), style.red())]),
+                let mut spans: Vec<Span> = Vec::with_capacity(4);
+                spans.push(Span::raw(u.name.to_string()));
+                if is_me {
+                    spans.push(Span::raw(" (me)"));
                 }
+                if is_host_user {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        "(host)",
+                        style.yellow().add_modifier(Modifier::BOLD),
+                    ));
+                }
+                ListItem::new(vec![Line::from(spans).style(row_style)])
             })
             .collect();
 
+        let role_span = if state.is_host {
+            Span::styled(
+                " [HOST]",
+                style.green().add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(" [CLIENT]", style.add_modifier(Modifier::DIM))
+        };
+        let footer = Line::from(vec![
+            Span::raw(format!("({})", state.user_list.len())),
+            role_span,
+        ])
+        .right_aligned();
+
         let messages_block = Block::default()
             .style(style)
-            .title(format!(
-                "Users in room {} [{}]",
-                state.user_list.get_room_name(),
-                if state.is_host { "HOST" } else { "CLIENT" }
-            ))
-            .title_bottom(Line::from(format!("({})", state.user_list.len())).right_aligned())
+            .title(format!("Users in room {}", state.user_list.get_room_name()))
+            .title_bottom(footer)
             .borders(Borders::ALL);
 
         let mut rooms_list = List::new(rooms).block(messages_block);

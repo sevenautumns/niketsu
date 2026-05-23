@@ -11,6 +11,7 @@ pub type RoomName = ArcStr;
 pub struct UserList {
     room: RoomName,
     list: BTreeSet<UserStatus>,
+    host: Option<ArcStr>,
 }
 
 impl UserList {
@@ -38,6 +39,14 @@ impl UserList {
         &self.room
     }
 
+    pub fn host_name(&self) -> Option<&ArcStr> {
+        self.host.as_ref()
+    }
+
+    pub fn is_host_name(&self, name: &str) -> bool {
+        self.host.as_ref().is_some_and(|h| h.as_str() == name)
+    }
+
     pub fn insert(&mut self, user: UserStatus) -> bool {
         self.list.insert(user)
     }
@@ -52,6 +61,7 @@ impl From<UserStatusListMsg> for UserList {
         Self {
             room: value.room_name,
             list: value.users,
+            host: value.host,
         }
     }
 }
