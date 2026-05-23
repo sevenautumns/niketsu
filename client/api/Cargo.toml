@@ -1,0 +1,11 @@
+[package]
+name = "niketsu-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+niketsu-core = { path = "../core" }
+niketsu-video-server = { path = "../player/video_server" }
+tokio.workspace = true
+async-trait.workspace = true
+arcstr.workspace = true

@@ -118,6 +118,7 @@ mod tests {
         let user_list: UserList = UserStatusListMsg {
             room_name: arcstr::literal!("room"),
             users: btreeset,
+            host: None,
         }
         .into();
 

@@ -1,0 +1,9 @@
+[package]
+name = "niketsu-integration-tests"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+niketsu-api = { path = "../api" }
+niketsu-core = { path = "../core" }
+tokio.workspace = true

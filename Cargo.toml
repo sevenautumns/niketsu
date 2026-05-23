@@ -1,8 +1,10 @@
 [workspace]
 members = [
-  "client", 
+  "client",
+  "client/api",
   "client/communicator",
   "client/core",
+  "client/integration-tests",
   "client/player/mpv",
   "client/ui/iced",
   "client/ui/ratatui",

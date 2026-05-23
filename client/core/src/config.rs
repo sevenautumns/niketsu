@@ -23,6 +23,7 @@ pub struct Config {
     #[serde(default = "bootstrap_port", skip_serializing_if = "is_default_port")]
     pub port: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde_as(as = "Option<serde_with::DisplayFromStr>")]
     pub peer_id: Option<PeerId>,
     #[serde(default)]
     pub room: RoomName,

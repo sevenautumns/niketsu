@@ -4324,6 +4324,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "niketsu-api"
+version = "0.1.0"
+dependencies = [
+ "arcstr",
+ "async-trait",
+ "niketsu-core",
+ "niketsu-video-server",
+ "tokio",
+]
+
+[[package]]
 name = "niketsu-communicator"
 version = "0.1.0"
 dependencies = [
@@ -4408,6 +4419,15 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+]
+
+[[package]]
+name = "niketsu-integration-tests"
+version = "0.1.0"
+dependencies = [
+ "niketsu-api",
+ "niketsu-core",
+ "tokio",
 ]
 
 [[package]]
