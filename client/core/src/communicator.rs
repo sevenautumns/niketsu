@@ -52,6 +52,7 @@ pub enum OutgoingMessage {
     ChunkRequest(ChunkRequestMsg),
     ChunkResponse(ChunkResponseMsg),
     VideoShareChange(VideoShareMsg),
+    HostHandover(HostHandoverMsg),
 }
 
 #[enum_dispatch(EventHandler)]
@@ -75,10 +76,13 @@ pub enum IncomingMessage {
     ChunkRequest(ChunkRequestMsg),
     ChunkResponse(ChunkResponseMsg),
     VideoProviderStopped(VideoProviderStoppedMsg),
+    HostHandover(HostHandoverMsg),
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-pub struct ConnectedMsg;
+pub struct ConnectedMsg {
+    pub is_host: bool,
+}
 
 impl From<ConnectedMsg> for PlayerMessage {
     fn from(_: ConnectedMsg) -> Self {
@@ -98,6 +102,7 @@ impl EventHandler for ConnectedMsg {
         model
             .communicator
             .send(OutgoingMessage::from(model.config.status(model.ready)));
+        model.ui.is_host(self.is_host);
         model.ui.player_message(PlayerMessage::from(self));
     }
 }
@@ -763,6 +768,39 @@ impl VideoShareMsg {
 impl From<VideoShareMsg> for OutgoingMessage {
     fn from(value: VideoShareMsg) -> Self {
         Self::VideoShareChange(value)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostHandoverMsg {
+    pub new_host: ArcStr,
+}
+
+impl EventHandler for HostHandoverMsg {
+    fn handle(self, model: &mut CoreModel) {
+        model.ui.player_message(
+            PlayerMessageInner {
+                message: format!("{} is now the host", self.new_host),
+                source: MessageSource::Internal,
+                level: MessageLevel::Success,
+                timestamp: Local::now(),
+            }
+            .into(),
+        );
+        if self.new_host == model.config.username {
+            model.communicator.connect(EndpointInfo {
+                addr: model.config.addr(),
+                room: model.config.room.clone(),
+                password: model.config.password.clone(),
+            });
+        }
+    }
+}
+
+impl From<HostHandoverMsg> for OutgoingMessage {
+    fn from(value: HostHandoverMsg) -> Self {
+        Self::HostHandover(value)
     }
 }
 

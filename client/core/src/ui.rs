@@ -12,7 +12,7 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tracing::{Level, trace};
 
-use super::communicator::{EndpointInfo, PlaylistMsg, SelectMsg, UserMessageMsg};
+use super::communicator::{EndpointInfo, HostHandoverMsg, PlaylistMsg, SelectMsg, UserMessageMsg};
 use super::player::MediaPlayerTrait;
 use super::playlist::Video;
 use super::user::UserStatus;
@@ -38,6 +38,7 @@ pub trait UserInterfaceTrait: std::fmt::Debug + Send {
     fn username_change(&mut self, username: ArcStr);
     fn abort(&mut self);
     fn video_share(&mut self, video_share: bool);
+    fn is_host(&mut self, is_host: bool);
 
     async fn event(&mut self) -> UserInterfaceEvent;
 }
@@ -54,6 +55,7 @@ pub enum UserInterfaceEvent {
     FileShareChange,
     SettingsChange,
     FileRequest,
+    HostHandover,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -385,6 +387,23 @@ impl EventHandler for FileRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostHandover {
+    pub new_host: ArcStr,
+}
+
+impl EventHandler for HostHandover {
+    fn handle(self, model: &mut CoreModel) {
+        trace!("host handover initiated by ui");
+        model.communicator.send(
+            HostHandoverMsg {
+                new_host: self.new_host,
+            }
+            .into(),
+        );
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsChange {
     pub relay: String,
     pub port: u16,
@@ -437,6 +456,7 @@ impl UserInterface {
             user_list: Observed::<_>::default_with_notify(&notify),
             user: Observed::<_>::new(user, &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(1000), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -501,6 +521,10 @@ impl UserInterfaceTrait for UserInterface {
         self.model.video_share.set(video_share)
     }
 
+    fn is_host(&mut self, is_host: bool) {
+        self.model.is_host.set(is_host)
+    }
+
     async fn event(&mut self) -> UserInterfaceEvent {
         self.ui_events.recv().await.expect("ui event stream ended")
     }
@@ -516,6 +540,7 @@ pub struct UiModel {
     pub user: Observed<UserStatus>,
     pub messages: Observed<RingBuffer<PlayerMessage>>,
     pub video_share: Observed<bool>,
+    pub is_host: Observed<bool>,
     pub events: MpscSender<UserInterfaceEvent>,
     pub running: Observed<bool>,
     pub notify: Arc<Notify>,
@@ -664,6 +689,15 @@ impl UiModel {
         let res = self
             .events
             .send(UserInterfaceEvent::FileRequest(FileRequest {}))
+            .map_err(anyhow::Error::from);
+        crate::log_err!(res)
+    }
+
+    pub fn host_handover(&self, new_host: ArcStr) {
+        trace!("host handover to {new_host}");
+        let res = self
+            .events
+            .send(UserInterfaceEvent::HostHandover(HostHandover { new_host }))
             .map_err(anyhow::Error::from);
         crate::log_err!(res)
     }
@@ -1025,6 +1059,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user, &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1053,6 +1088,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user, &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1081,6 +1117,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user.clone(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1106,6 +1143,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1136,6 +1174,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1162,6 +1201,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1188,6 +1228,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1215,6 +1256,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1242,6 +1284,7 @@ mod tests {
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
