@@ -28,6 +28,13 @@ impl EventHandler for Users {
                 }
                 KeyCode::Tab => view.transition_enter(State::from(Recently {})),
                 KeyCode::BackTab => view.transition_enter(State::from(Chat {})),
+                KeyCode::Char('h') => {
+                    if view.model.is_host.get_inner()
+                        && let Some(user) = view.app.users_widget_state.get_current_user()
+                    {
+                        view.model.host_handover(user.name);
+                    }
+                }
                 _ => {}
             }
         }

@@ -91,10 +91,21 @@ impl<'a> MainView<'a> {
                 Column::new()
                     .push(DatabaseWidget::new(view_model.get_database_widget_state()))
                     .push(
-                        Container::new(RoomsWidget::new(
-                            view_model.get_rooms_widget_state(),
-                            &view_model.user(),
-                        ))
+                        Container::new(
+                            Column::new()
+                                .push(if view_model.is_host() {
+                                    Text::new("HOST").style(iced::widget::text::success)
+                                } else {
+                                    Text::new("CLIENT").style(iced::widget::text::primary)
+                                })
+                                .push(RoomsWidget::new(
+                                    view_model.get_rooms_widget_state(),
+                                    &view_model.user(),
+                                    view_model.is_host(),
+                                ))
+                                .width(Length::Fill)
+                                .height(Length::Fill),
+                        )
                         .style(ContainerBorder::theme)
                         .padding(SPACING)
                         .width(Length::Fill)

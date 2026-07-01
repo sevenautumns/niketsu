@@ -113,6 +113,10 @@ impl ViewModel {
     pub fn is_sharing(&self) -> bool {
         self.model.video_share.get_inner()
     }
+
+    pub fn is_host(&self) -> bool {
+        self.model.is_host.get_inner()
+    }
 }
 
 #[derive(Clone)]
