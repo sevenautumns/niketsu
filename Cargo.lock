@@ -4357,6 +4357,7 @@ dependencies = [
  "fuzzy-matcher",
  "im",
  "itertools 0.14.0",
+ "libp2p-identity",
  "mockall",
  "multiaddr",
  "num-traits",

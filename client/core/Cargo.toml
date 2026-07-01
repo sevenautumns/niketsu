@@ -20,6 +20,7 @@ once_cell.workspace = true
 serde_millis.workspace = true
 chrono.workspace = true
 multiaddr.workspace = true
+libp2p-identity = { version = "0.2", features = ["peerid", "serde"] }
 itertools.workspace = true
 async-trait.workspace = true
 ordered-float.workspace = true
