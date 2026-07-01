@@ -140,7 +140,7 @@ pub struct VideoStatusMsg {
 impl PartialEq for VideoStatusMsg {
     fn eq(&self, other: &Self) -> bool {
         let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(self.speed);
+        let speed_other = OrderedFloat(other.speed);
         speed_self.eq(&speed_other)
             && self.video.eq(&other.video)
             && self.position.eq(&other.position)
@@ -158,6 +158,16 @@ impl EventHandler for VideoStatusMsg {
             model.player.unload_video();
             return;
         };
+
+        // The host is only a valid play/position reference once it has the file
+        // loaded. While it is still loading it reports a stale paused=false and
+        // a frozen position from the previous video — following either would
+        // start our (possibly faster-loaded) copy and then yank it back every
+        // heartbeat. Hold paused and wait until the host is actually playing.
+        if !self.file_loaded {
+            model.player.pause();
+            return;
+        }
 
         //TODO check if current video is not the same as host?
         if let Some(paused) = model.player.is_paused() {
@@ -268,7 +278,7 @@ pub struct PlaybackSpeedMsg {
 impl PartialEq for PlaybackSpeedMsg {
     fn eq(&self, other: &Self) -> bool {
         let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(self.speed);
+        let speed_other = OrderedFloat(other.speed);
         speed_self.eq(&speed_other) && self.actor.eq(&other.actor)
     }
 }
