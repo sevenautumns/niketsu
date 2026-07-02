@@ -16,7 +16,6 @@ use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
 use crate::player::MediaPlayerTrait;
 use crate::playlist::Playlist;
-use crate::playlist::file::PlaylistBrowser;
 use crate::room::{RoomName, UserList};
 use crate::user::UserStatus;
 
@@ -346,7 +345,7 @@ impl EventHandler for SeekMsg {
         trace!(seek = ?self, "received");
         let playlist_video = Video::from(self.video.as_str());
         model.playlist.select_playing(&playlist_video);
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
+        model.save_playlist();
         if model
             .player
             .playing_video()
@@ -401,36 +400,7 @@ impl From<SelectMsg> for PlayerMessage {
 impl EventHandler for SelectMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(select = ?self, "received");
-        let mut sharing = false;
-        if let Some(video) = &self.video {
-            model.playlist.select_playing(video);
-            let store = model.database.all_files();
-            model.player.load_video(video.clone(), self.position, store);
-
-            if model.config.auto_share
-                && model.video_provider.sharing()
-                && let Some(file) = model.database.find_file(video.as_str())
-            {
-                model.video_provider.start_providing(file);
-                let msg = VideoShareMsg::new(video.clone());
-                model.communicator.send(msg.into());
-                model.ui.video_share(true);
-                sharing = true;
-            }
-        } else {
-            model.playlist.unload_playing();
-            model.player.unload_video();
-        }
-
-        if !sharing {
-            let msg = VideoShareMsg { video: None };
-            model.communicator.send(msg.into());
-            model.video_provider.stop_providing();
-            model.ui.video_share(false);
-        }
-
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
-        model.ui.video_change(self.video.clone());
+        model.select_video(self.video.as_ref(), self.position);
         model.ui.player_message(PlayerMessage::from(self));
     }
 }
@@ -526,7 +496,7 @@ impl EventHandler for PlaylistMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received playlist");
         model.playlist.replace(self.playlist.clone());
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
+        model.save_playlist();
         model.ui.playlist(self.playlist.clone());
         model.ui.player_message(PlayerMessage::from(self))
     }

@@ -11,7 +11,6 @@ use super::playlist::Video;
 use super::{CoreModel, EventHandler};
 use crate::FilePathSearch;
 use crate::file_database::FileStore;
-use crate::playlist::file::PlaylistBrowser;
 
 pub mod wrapper;
 
@@ -196,7 +195,7 @@ impl EventHandler for PlayerFileEnd {
             model.player.unload_video();
             model.ui.video_change(None);
         }
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
+        model.save_playlist();
         let actor = model.config.username.clone();
         let position = model.player.get_position().unwrap_or_default();
         model.communicator.send(

@@ -97,11 +97,7 @@ pub struct SharingStopped;
 impl EventHandler for SharingStopped {
     fn handle(self, model: &mut CoreModel) {
         trace!("video provider stopped sharing");
-        model.video_provider.stop_providing();
-        model
-            .communicator
-            .send(VideoShareMsg { video: None }.into());
-        model.ui.video_share(false);
+        model.stop_sharing();
         model.ui.player_message(
             PlayerMessageInner {
                 message: "Stopped sharing: failed to read the shared file".into(),

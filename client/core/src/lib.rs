@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use config::Config;
 use directories::ProjectDirs;
 use enum_dispatch::enum_dispatch;
@@ -5,6 +7,8 @@ use futures::future::OptionFuture;
 use logging::ChatLogger;
 use once_cell::sync::Lazy;
 use player::wrapper::MediaPlayerWrapper;
+use playlist::Video;
+use playlist::file::PlaylistBrowser;
 use playlist::handler::PlaylistHandler;
 use tracing::{info, trace};
 use video_provider::VideoProviderTrait;
@@ -54,6 +58,56 @@ pub struct CoreModel {
     pub config: Config,
     pub ready: bool,
     pub running: bool,
+}
+
+impl CoreModel {
+    /// Persist the current playlist for the active room.
+    pub fn save_playlist(&self) {
+        PlaylistBrowser::save(&self.config.room, &self.playlist);
+    }
+
+    /// Stop providing the current file and announce it to the room and UI.
+    pub fn stop_sharing(&mut self) {
+        self.communicator.send(VideoShareMsg { video: None }.into());
+        self.video_provider.stop_providing();
+        self.ui.video_share(false);
+    }
+
+    /// Switch playlist, player, sharing, persistence and UI over to `video` —
+    /// the choreography shared by every video selection, local or remote.
+    pub fn select_video(&mut self, video: Option<&Video>, position: Duration) {
+        match video {
+            Some(video) => {
+                self.playlist.select_playing(video);
+                let store = self.database.all_files();
+                self.player.load_video(video.clone(), position, store);
+                self.reshare_or_stop(video);
+            }
+            None => {
+                self.playlist.unload_playing();
+                self.player.unload_video();
+                self.stop_sharing();
+            }
+        }
+        self.save_playlist();
+        self.ui.video_change(video.cloned());
+    }
+
+    /// Carry auto-sharing over to the newly selected `video` if we are
+    /// currently sharing and have the file; otherwise stop sharing.
+    fn reshare_or_stop(&mut self, video: &Video) {
+        if self.config.auto_share
+            && self.video_provider.sharing()
+            && let Some(file) = self.database.find_file(video.as_str())
+        {
+            self.video_provider.start_providing(file);
+            self.communicator
+                .send(VideoShareMsg::new(video.clone()).into());
+            self.ui.video_share(true);
+        } else {
+            self.stop_sharing();
+        }
+    }
 }
 
 #[derive(Debug)]

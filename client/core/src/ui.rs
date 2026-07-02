@@ -20,10 +20,9 @@ use super::{CoreModel, EventHandler};
 use crate::config::Config;
 use crate::file_database::FileStore;
 use crate::playlist::Playlist;
-use crate::playlist::file::PlaylistBrowser;
 use crate::room::{RoomName, UserList};
 use crate::util::{Observed, RingBuffer};
-use crate::{FileRequestMsg, OutgoingMessage, VideoShareMsg};
+use crate::{FileRequestMsg, OutgoingMessage};
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -70,7 +69,7 @@ impl EventHandler for PlaylistChange {
         let playlist = self.playlist.clone();
 
         model.playlist.replace(self.playlist);
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
+        model.save_playlist();
         model
             .communicator
             .send(PlaylistMsg { actor, playlist }.into())
@@ -82,43 +81,17 @@ pub struct VideoChange {
     pub video: Video,
 }
 
-// the behaviour is similar to SelectMsg handling, so it might be collapsible
 impl EventHandler for VideoChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video change message");
         let actor = model.config.username.clone();
-        let video = Some(self.video.clone());
         let position = Duration::ZERO;
-        let mut sharing = false;
-        model.playlist.select_playing(&self.video);
-        let store = model.database.all_files();
-        model.player.load_video(self.video.clone(), position, store);
-
-        if model.config.auto_share
-            && model.video_provider.sharing()
-            && let Some(file) = model.database.find_file(self.video.as_str())
-        {
-            model.video_provider.start_providing(file);
-            let msg = VideoShareMsg::new(self.video.clone());
-            model.communicator.send(msg.into());
-            model.ui.video_share(true);
-            sharing = true;
-        }
-
-        if !sharing {
-            let msg = VideoShareMsg { video: None };
-            model.communicator.send(msg.into());
-            model.video_provider.stop_providing();
-            model.ui.video_share(false);
-        }
-
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
-        model.ui.video_change(video.clone());
+        model.select_video(Some(&self.video), position);
 
         model.communicator.send(
             SelectMsg {
                 actor,
-                video,
+                video: Some(self.video),
                 position,
             }
             .into(),
@@ -301,13 +274,7 @@ impl EventHandler for FileShareChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video share change message");
         if model.video_provider.sharing() {
-            model
-                .communicator
-                .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
-                    video: None,
-                }));
-            model.video_provider.stop_providing();
-            model.ui.video_share(false);
+            model.stop_sharing();
             return;
         }
 
@@ -719,7 +686,7 @@ mod tests {
     use crate::file_database::{FileEntry, MockFileDatabaseTrait};
     use crate::player::MockMediaPlayerTrait;
     use crate::util::Observed;
-    use crate::{MockVideoProviderTrait, MockVideoServerTrait};
+    use crate::{MockVideoProviderTrait, MockVideoServerTrait, VideoShareMsg};
 
     #[tokio::test]
     async fn test_playlist_change() {
