@@ -15,4 +15,5 @@
 //! client-side half-RTT position compensation does not apply.
 
 mod harness;
+mod properties;
 mod scenarios;

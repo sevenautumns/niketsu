@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ef1f183cd0bf11039b0ec18ab8a4f6ca22ae9d9c8fe1ec0a5dde83ea19bd13ca # shrinks to actions = [Select { peer: 0, video: 0 }, ChangePlaylist { peer: 0, videos: [0] }, Seek { peer: 0, secs: 0 }]
+cc 9ff26733b65761a2800ce3d6292d1099e4e9963f60c6eeb5bef82180d43410aa # shrinks to actions = [Select { peer: 0, video: 0 }, ChangePlaylist { peer: 0, videos: [0] }, Join]
+cc e9aa266f5e5234c28ae0404f84e73ea8725a4f9d2ec854397557296e35a5bccf # shrinks to actions = [ChangePlaylist { peer: 0, videos: [1] }, Select { peer: 0, video: 1 }, FileEnd { peer: 0 }, ChangePlaylist { peer: 0, videos: [0, 0] }]
