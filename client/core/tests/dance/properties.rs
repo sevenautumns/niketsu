@@ -26,7 +26,9 @@ enum Action {
     Seek { peer: usize, secs: u64 },
     Pause { peer: usize },
     Start { peer: usize },
+    ReadyToggle { peer: usize },
     ShareToggle { peer: usize },
+    FileRequest { peer: usize },
     FileEnd { peer: usize },
     HostHeartbeat,
     Handover { target: usize },
@@ -41,7 +43,9 @@ fn action() -> impl Strategy<Value = Action> {
         (0..8usize, 0..500u64).prop_map(|(peer, secs)| Action::Seek { peer, secs }),
         (0..8usize).prop_map(|peer| Action::Pause { peer }),
         (0..8usize).prop_map(|peer| Action::Start { peer }),
+        (0..8usize).prop_map(|peer| Action::ReadyToggle { peer }),
         (0..8usize).prop_map(|peer| Action::ShareToggle { peer }),
+        (0..8usize).prop_map(|peer| Action::FileRequest { peer }),
         (0..8usize).prop_map(|peer| Action::FileEnd { peer }),
         Just(Action::HostHeartbeat),
         (0..8usize).prop_map(|target| Action::Handover { target }),
@@ -54,6 +58,9 @@ fn apply(room: &mut Room, action: Action) {
         Action::ChangePlaylist { peer, videos } => {
             let peer = peer % room.peers.len();
             let playlist = Playlist::from_iter(videos.into_iter().map(|v| POOL[v]));
+            // the real UI shows its own edit immediately
+            // (UiModel::change_playlist); the core only echoes remote ones
+            room.peer(peer).ui.set(|ui| ui.playlist = playlist.clone());
             room.peer(peer).act(ui::PlaylistChange { playlist });
         }
         Action::Select { peer, video } => {
@@ -79,6 +86,12 @@ fn apply(room: &mut Room, action: Action) {
             room.peer(peer).player.set(|player| player.paused = false);
             room.peer(peer).act(PlayerStart);
         }
+        Action::ReadyToggle { peer } => {
+            let peer = peer % room.peers.len();
+            let name = room.peer(peer).name();
+            let ready = !room.peer(peer).model.ready;
+            room.peer(peer).act(ui::UserChange { name, ready });
+        }
         Action::ShareToggle { peer } => {
             let peer = peer % room.peers.len();
             room.peer(peer).act(ui::FileShareChange {});
@@ -90,6 +103,12 @@ fn apply(room: &mut Room, action: Action) {
                     size: 1_000,
                 });
             }
+        }
+        Action::FileRequest { peer } => {
+            // a no-op unless the peer plays a video it does not have on
+            // disk (see ui::FileRequest)
+            let peer = peer % room.peers.len();
+            room.peer(peer).act(ui::FileRequest {});
         }
         Action::FileEnd { peer } => {
             let peer = peer % room.peers.len();
@@ -112,18 +131,58 @@ fn apply(room: &mut Room, action: Action) {
         Action::Join => {
             if room.peers.len() < 4 {
                 let name = format!("peer{}", room.peers.len());
-                room.join(&name, POOL);
+                // late joiners bring no local files, so they exercise the
+                // file-request path
+                room.join(&name, &[]);
             }
         }
     }
     room.pump();
 }
 
+/// Every peer agrees on the playlist, the playlist marker, the loaded
+/// video, and what its UI shows.
+fn assert_room_converged(room: &mut Room) {
+    let playlist = room.peer(0).playlist();
+    let marker = room.peer(0).model.playlist.get_current_video();
+    let video = room.peer(0).player.state().video;
+    let ui = room.peer(0).ui.state();
+    for i in 1..room.peers.len() {
+        assert_eq!(
+            room.peer(i).playlist(),
+            playlist,
+            "peer {i}: playlist diverged"
+        );
+        assert_eq!(
+            room.peer(i).model.playlist.get_current_video(),
+            marker,
+            "peer {i}: playlist marker diverged"
+        );
+        assert_eq!(
+            room.peer(i).player.state().video,
+            video,
+            "peer {i}: loaded video diverged"
+        );
+        let peer_ui = room.peer(i).ui.state();
+        assert_eq!(
+            peer_ui.playing_video, ui.playing_video,
+            "peer {i}: UI video diverged"
+        );
+        assert_eq!(
+            peer_ui.playlist, ui.playlist,
+            "peer {i}: UI playlist diverged"
+        );
+    }
+}
+
 proptest! {
     /// After ANY sequence of user actions — including host handovers and
     /// peers joining mid-session — the room goes quiescent (pump panics on
     /// a message storm) and every peer agrees on the playlist, the loaded
-    /// video, the video shown in the UI, and the playlist marker.
+    /// video, the video and playlist shown in the UI, and the playlist
+    /// marker. After a few quiet host heartbeats everyone also agrees with
+    /// the host on paused/playing, and no video server keeps running when
+    /// no provider is announced.
     ///
     /// The marker assertion guards the select_playing fix: keeping a stale
     /// marker on an out-of-playlist Select made present peers disagree with
@@ -137,7 +196,7 @@ proptest! {
         rt.block_on(async move {
             let mut room = Room::new();
             room.join("alice", POOL);
-            room.join("bob", POOL);
+            room.join("bob", &POOL[..1]);
             room.pump();
 
             for action in actions {
@@ -145,27 +204,38 @@ proptest! {
             }
             room.pump();
 
-            let playlist = room.peer(0).playlist();
-            let video = room.peer(0).player.state().video;
-            let ui_video = room.peer(0).ui.state().playing_video;
-            let marker = room.peer(0).model.playlist.get_current_video();
-            for i in 1..room.peers.len() {
-                assert_eq!(room.peer(i).playlist(), playlist, "peer {i}: playlist diverged");
-                assert_eq!(
-                    room.peer(i).model.playlist.get_current_video(),
-                    marker,
-                    "peer {i}: playlist marker diverged"
-                );
-                assert_eq!(
-                    room.peer(i).player.state().video,
-                    video,
-                    "peer {i}: loaded video diverged"
-                );
-                assert_eq!(
-                    room.peer(i).ui.state().playing_video,
-                    ui_video,
-                    "peer {i}: UI video diverged"
-                );
+            assert_room_converged(&mut room);
+
+            // a few quiet host heartbeats let the reconciliation settle,
+            // and must not break the converged state
+            for _ in 0..3 {
+                let host = room.host_index();
+                room.peer(host).heartbeat();
+                room.pump();
+            }
+            assert_room_converged(&mut room);
+
+            // every peer with a loaded video follows the host's play state
+            let host_player = room.peer(room.host_index()).player.state();
+            if host_player.video.is_some() {
+                for i in 0..room.peers.len() {
+                    assert_eq!(
+                        room.peer(i).player.state().paused,
+                        host_player.paused,
+                        "peer {i}: paused/playing diverged from the host"
+                    );
+                }
+            }
+
+            // when no provider is announced, nobody keeps a video server
+            // running (there is nothing left to stream from)
+            if room.provider_index().is_none() {
+                for i in 0..room.peers.len() {
+                    assert!(
+                        !room.peer(i).video_server.running(),
+                        "peer {i}: video server running without an announced provider"
+                    );
+                }
             }
         });
     }

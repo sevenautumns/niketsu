@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::communicator::{
     CommunicatorTrait, ConnectedMsg, EndpointInfo, IncomingMessage, OutgoingMessage, PlaylistMsg,
-    SelectMsg, UserStatusListMsg, VideoProviderStoppedMsg,
+    SelectMsg, StartMsg, UserStatusListMsg, VideoProviderStoppedMsg,
 };
 use niketsu_core::config::Config;
 use niketsu_core::file_database::{
@@ -154,6 +154,7 @@ impl MediaPlayerTrait for FakePlayer {
 
 #[derive(Debug, Clone, Default)]
 pub struct UiState {
+    pub playlist: Playlist,
     pub playing_video: Option<Video>,
     pub video_share: bool,
     pub is_host: bool,
@@ -165,6 +166,13 @@ pub struct UiHandle(Arc<Mutex<UiState>>);
 impl UiHandle {
     pub fn state(&self) -> UiState {
         self.0.lock().unwrap().clone()
+    }
+
+    /// Mirrors the optimistic local set the real `UiModel` performs for
+    /// its own edits (e.g. `change_playlist`) before the event reaches
+    /// the core.
+    pub fn set(&self, f: impl FnOnce(&mut UiState)) {
+        f(&mut self.0.lock().unwrap())
     }
 }
 
@@ -182,7 +190,10 @@ impl FakeUi {
 impl UserInterfaceTrait for FakeUi {
     fn file_database_status(&mut self, _update_status: f32) {}
     fn file_database(&mut self, _db: FileStore) {}
-    fn playlist(&mut self, _playlist: Playlist) {}
+
+    fn playlist(&mut self, playlist: Playlist) {
+        self.0.lock().unwrap().playlist = playlist;
+    }
 
     fn video_change(&mut self, video: Option<Video>) {
         self.0.lock().unwrap().playing_video = video;
@@ -431,7 +442,7 @@ pub struct Peer {
 }
 
 impl Peer {
-    fn new(name: &str, files: &[&str]) -> Self {
+    fn new(name: &str, files: &[&str], auto_share: bool) -> Self {
         let (player, player_handle) = FakePlayer::new();
         let (ui, ui_handle) = FakeUi::new();
         let (video_server, server_handle) = FakeVideoServer::new();
@@ -441,7 +452,7 @@ impl Peer {
         let config = Config {
             username: ArcStr::from(name),
             room: ArcStr::from("dance"),
-            auto_share: false,
+            auto_share,
             ..Default::default()
         };
         let core = CoreBuilder::builder()
@@ -515,7 +526,16 @@ impl Room {
     /// joiners are greeted with the room's playlist and current selection,
     /// mirroring the host's `send_init_status`.
     pub fn join(&mut self, name: &str, files: &[&str]) -> usize {
-        let mut peer = Peer::new(name, files);
+        self.admit(Peer::new(name, files, false))
+    }
+
+    /// Like [`Room::join`], but the peer carries its share over to new
+    /// selections (`auto_share = true` in its config).
+    pub fn join_with_auto_share(&mut self, name: &str, files: &[&str]) -> usize {
+        self.admit(Peer::new(name, files, true))
+    }
+
+    fn admit(&mut self, mut peer: Peer) -> usize {
         let is_host = self.peers.is_empty();
         ConnectedMsg { is_host }.handle(&mut peer.model);
         if let Some(playlist) = &self.playlist {
@@ -534,6 +554,11 @@ impl Room {
 
     pub fn host_index(&self) -> usize {
         self.host
+    }
+
+    /// The provider currently announced to the room, if any.
+    pub fn provider_index(&self) -> Option<usize> {
+        self.provider
     }
 
     /// Deliver messages until the room is quiescent. Panicking on too
@@ -557,10 +582,31 @@ impl Room {
         panic!("message storm: the room never went quiescent (no-echo rule violated?)");
     }
 
+    /// The host-side auto-start (`handle_all_users_ready` in the real
+    /// `p2p/host.rs`): whenever a status update or a select leaves every
+    /// user ready, the host publishes a Start to the room and to its own
+    /// core.
+    fn start_if_all_ready(&self, actor: &ArcStr) -> Vec<(usize, IncomingMessage)> {
+        if self.statuses.is_empty() || !self.statuses.iter().all(|s| s.ready) {
+            return vec![];
+        }
+        (0..self.peers.len())
+            .map(|to| {
+                (
+                    to,
+                    IncomingMessage::Start(StartMsg {
+                        actor: actor.clone(),
+                    }),
+                )
+            })
+            .collect()
+    }
+
     /// The relay's routing rules, mirroring `client/communicator`:
     /// - only the host's VideoStatus is a valid reference (clients drop
     ///   their own and reject non-host status)
-    /// - user statuses are aggregated into a broadcast status list
+    /// - user statuses are aggregated into a broadcast status list, and
+    ///   the host auto-starts playback when the last user turns ready
     /// - file requests and chunks travel directly between requester and
     ///   the provider announced via VideoShareChange (kademlia + direct
     ///   request-response in the real network)
@@ -587,7 +633,10 @@ impl Room {
             OutgoingMessage::Seek(m) => others(IncomingMessage::Seek(m)),
             OutgoingMessage::Select(m) => {
                 self.select = Some(m.clone());
-                others(IncomingMessage::Select(m))
+                let actor = m.actor.clone();
+                let mut deliveries = others(IncomingMessage::Select(m));
+                deliveries.extend(self.start_if_all_ready(&actor));
+                deliveries
             }
             OutgoingMessage::UserMessage(m) => others(IncomingMessage::UserMessage(m)),
             OutgoingMessage::Playlist(m) => {
@@ -595,15 +644,18 @@ impl Room {
                 others(IncomingMessage::Playlist(m))
             }
             OutgoingMessage::UserStatus(m) => {
+                let actor = m.name.clone();
                 self.statuses.retain(|s| s.name != m.name);
                 self.statuses.insert(m);
                 let list = UserStatusListMsg {
                     room_name: ArcStr::from("dance"),
                     users: self.statuses.clone(),
                 };
-                (0..self.peers.len())
+                let mut deliveries: Vec<(usize, IncomingMessage)> = (0..self.peers.len())
                     .map(|to| (to, IncomingMessage::UserStatusList(list.clone())))
-                    .collect()
+                    .collect();
+                deliveries.extend(self.start_if_all_ready(&actor));
+                deliveries
             }
             OutgoingMessage::HostHandover(m) if from == self.host => {
                 let Some(target) = self.peers.iter().position(|p| p.name == m.new_host) else {
