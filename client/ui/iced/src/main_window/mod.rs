@@ -55,14 +55,14 @@ pub fn view(view_model: &ViewModel) -> Element<'_, Message> {
                         .push(file_search::open_button())
                         .spacing(SPACING),
                 )
-                .push(chat::view(view_model.get_chat_widget_state()))
+                .push(chat::view(&view_model.chat_widget_state))
                 .spacing(SPACING)
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
         .push(
             Column::new()
-                .push(database::view(view_model.get_database_widget_state()))
+                .push(database::view(&view_model.database_widget_state))
                 .push(
                     Container::new(
                         Column::new()
@@ -72,7 +72,7 @@ pub fn view(view_model: &ViewModel) -> Element<'_, Message> {
                                 Text::new("CLIENT").style(iced::widget::text::primary)
                             })
                             .push(rooms::view(
-                                view_model.get_rooms_widget_state(),
+                                &view_model.users_widget_state,
                                 &view_model.user(),
                                 view_model.is_host(),
                             ))
@@ -87,7 +87,7 @@ pub fn view(view_model: &ViewModel) -> Element<'_, Message> {
                 .push(
                     Container::new(
                         Scrollable::new(PlaylistWidget::new(
-                            view_model.get_playlist_widget_state().clone(),
+                            &view_model.playlist_widget_state,
                             view_model.playing_video(),
                         ))
                         .width(Length::Fill)

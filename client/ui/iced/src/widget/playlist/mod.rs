@@ -6,7 +6,7 @@ use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
 use iced::mouse::Cursor;
 use iced::widget::text::Wrapping;
-use iced::widget::{self, Column, Rule, button, text};
+use iced::widget::{Column, button, text};
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use niketsu_core::file_database::FileStore;
 use niketsu_core::playlist::{Playlist, *};
@@ -14,7 +14,7 @@ use tracing::trace;
 
 use self::message::*;
 use crate::message::Message;
-use crate::styling::{FileButton, FileRuleTheme};
+use crate::styling::FileButton;
 
 pub mod message;
 
@@ -24,11 +24,11 @@ pub const PLAYLIST_SPACING: f32 = 2.0;
 
 pub struct PlaylistWidget<'a> {
     base: Element<'a, PlaylistWidgetMessage>,
-    state: PlaylistWidgetState,
+    state: &'a PlaylistWidgetState,
 }
 
-impl PlaylistWidget<'_> {
-    pub fn new(state: PlaylistWidgetState, playing: Option<Video>) -> Self {
+impl<'a> PlaylistWidget<'a> {
+    pub fn new(state: &'a PlaylistWidgetState, playing: Option<Video>) -> Self {
         // TODO Add context menu
 
         let mut file_btns = vec![];
@@ -289,7 +289,7 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
             cursor,
             viewport,
         );
-        // Draw insert_hint
+        // Draw insert hint
         if self.state.interaction.is_press() {
             let inner_state = state.state.downcast_ref::<InnerState>();
             if let Some(Index { position: pos, .. }) =
@@ -300,7 +300,14 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
                     y: pos.y - (PLAYLIST_SPACING / 2.0),
                     ..pos
                 };
-                InsertHint::new(pos).draw(renderer, theme, style, layout, cursor)
+                iced::advanced::Renderer::fill_quad(
+                    renderer,
+                    iced::advanced::renderer::Quad {
+                        bounds: Rectangle::new(pos, Size::new(layout.bounds().width, 1.0)),
+                        ..Default::default()
+                    },
+                    theme.palette().text,
+                );
             }
         }
     }
@@ -503,12 +510,6 @@ impl FileInteraction {
     pub fn is_press(&self) -> bool {
         matches!(self, FileInteraction::Pressing(_))
     }
-    pub fn is_released(&self) -> bool {
-        matches!(self, FileInteraction::Released(_))
-    }
-    pub fn is_none(&self) -> bool {
-        matches!(self, FileInteraction::None)
-    }
 }
 
 impl PlaylistWidgetState {
@@ -539,15 +540,6 @@ impl PlaylistWidgetState {
     pub fn update_file_store(&mut self, store: FileStore) {
         self.file_store = store
     }
-
-    pub fn video_index(&self, video: &Video) -> Option<usize> {
-        for (i, v) in self.playlist.iter().enumerate() {
-            if v.eq(video) {
-                return Some(i);
-            }
-        }
-        None
-    }
 }
 
 impl<'a> From<PlaylistWidget<'a>> for Element<'a, Message> {
@@ -569,60 +561,4 @@ struct Index {
     /// The index, which is used by the playlist for moving
     index_relative: usize,
     position: Point,
-}
-
-pub struct InsertHint<'a> {
-    rule: Rule<'a, Theme>,
-    pos: iced::Point,
-}
-
-impl Default for InsertHint<'_> {
-    fn default() -> Self {
-        Self {
-            rule: widget::rule::horizontal(1).style(FileRuleTheme::theme),
-            pos: iced::Point::default(),
-        }
-    }
-}
-
-impl InsertHint<'_> {
-    pub fn new(pos: iced::Point) -> Self {
-        Self {
-            pos,
-            ..Default::default()
-        }
-    }
-
-    pub fn draw(
-        &mut self,
-        renderer: &mut Renderer,
-        theme: &Theme,
-        style: &iced::advanced::renderer::Style,
-        layout: iced::advanced::Layout<'_>,
-        cursor: Cursor,
-    ) {
-        let limits = iced::advanced::layout::Limits::new(Size::ZERO, layout.bounds().size())
-            .width(Length::Fill)
-            .height(1);
-
-        let mut node =
-            <iced::widget::Rule as iced::advanced::Widget<Message, Theme, Renderer>>::layout(
-                &mut self.rule,
-                &mut iced::advanced::widget::Tree::empty(),
-                renderer,
-                &limits,
-            );
-        node = node.move_to(self.pos);
-        let layout = iced::advanced::Layout::new(&node);
-        <iced::widget::Rule as iced::advanced::Widget<Message, Theme, Renderer>>::draw(
-            &self.rule,
-            &iced::advanced::widget::Tree::empty(),
-            renderer,
-            theme,
-            style,
-            layout,
-            cursor,
-            &layout.bounds(),
-        )
-    }
 }

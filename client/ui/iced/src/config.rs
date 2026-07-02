@@ -2,17 +2,17 @@ use std::convert::Infallible;
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use anyhow::{Result, bail};
 use directories::ProjectDirs;
 use iced::Theme;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, FromInto, SerializeDisplay, serde_as};
 use tracing::{debug, warn};
 
-pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =
-    Lazy::new(|| ProjectDirs::from("de", "autumnal", "niketsu"));
+pub static PROJECT_DIRS: LazyLock<Option<ProjectDirs>> =
+    LazyLock::new(|| ProjectDirs::from("de", "autumnal", "niketsu"));
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone, Debug)]

@@ -4386,7 +4386,6 @@ name = "niketsu-iced"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "arcstr",
  "async-trait",
  "directories",
@@ -4395,7 +4394,6 @@ dependencies = [
  "iced",
  "itertools 0.14.0",
  "niketsu-core",
- "once_cell",
  "palette",
  "serde",
  "serde_with",

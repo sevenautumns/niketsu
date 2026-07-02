@@ -38,7 +38,8 @@ impl MessageHandler for ModelChanged {
         if !model.model.running.get_inner() {
             return iced::exit();
         }
-        Task::none()
+        // Keep the chat pinned to the bottom when new messages arrive.
+        model.chat_widget_state.snap()
     }
 }
 

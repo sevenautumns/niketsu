@@ -1,4 +1,3 @@
-use iced::widget::rule::FillMode;
 use iced::{Border, Color, Shadow, Theme};
 use niketsu_core::ui::MessageLevel;
 
@@ -57,19 +56,6 @@ impl FileButton {
                 text_color: text,
                 snap: false,
             }
-        }
-    }
-}
-
-pub struct FileRuleTheme;
-
-impl FileRuleTheme {
-    pub fn theme(theme: &Theme) -> iced::widget::rule::Style {
-        iced::widget::rule::Style {
-            color: theme.palette().text,
-            radius: 0.0.into(),
-            fill_mode: FillMode::Full,
-            snap: false,
         }
     }
 }

@@ -33,7 +33,7 @@ pub struct ViewModel {
     pub settings_widget_state: SettingsWidgetState,
     pub users_widget_state: UsersWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
-    pub chat_widget_statet: ChatWidgetState,
+    pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
     pub file_search_widget_state: FileSearchWidgetState,
 }
@@ -49,7 +49,7 @@ impl ViewModel {
             settings_widget_state: settings,
             users_widget_state: Default::default(),
             playlist_widget_state: Default::default(),
-            chat_widget_statet: Default::default(),
+            chat_widget_state: Default::default(),
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
         }
@@ -75,7 +75,7 @@ impl ViewModel {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        Task::batch([message.handle(self), self.get_chat_widget_state().snap()])
+        message.handle(self)
     }
 
     pub fn user(&self) -> UserStatus {
@@ -84,22 +84,6 @@ impl ViewModel {
 
     pub fn playing_video(&self) -> Option<Video> {
         self.model.playing_video.get_inner()
-    }
-
-    pub fn get_rooms_widget_state(&self) -> &UsersWidgetState {
-        &self.users_widget_state
-    }
-
-    pub fn get_playlist_widget_state(&self) -> &PlaylistWidgetState {
-        &self.playlist_widget_state
-    }
-
-    pub fn get_chat_widget_state(&self) -> &ChatWidgetState {
-        &self.chat_widget_statet
-    }
-
-    pub fn get_database_widget_state(&self) -> &DatabaseWidgetState {
-        &self.database_widget_state
     }
 
     pub fn update_from_inner_model(&mut self) {
@@ -118,7 +102,7 @@ impl ViewModel {
             .on_change(|ratio| self.database_widget_state.update_progress(ratio));
         self.model
             .messages
-            .on_change_arc(|msgs| self.chat_widget_statet.replace_messages(msgs))
+            .on_change_arc(|msgs| self.chat_widget_state.replace_messages(msgs))
     }
 
     pub fn is_sharing(&self) -> bool {

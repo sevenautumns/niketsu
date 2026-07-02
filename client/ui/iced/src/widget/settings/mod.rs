@@ -35,7 +35,7 @@ pub fn open_button() -> Element<'static, Message> {
 }
 
 pub fn view(state: &SettingsWidgetState) -> Element<'_, Message> {
-    let text_size = *TEXT_SIZE.load_full();
+    let text_size = TEXT_SIZE;
 
     let file_paths: Vec<_> = state
         .config

@@ -27,7 +27,7 @@ pub fn view(state: &DatabaseWidgetState) -> Element<'_, Message> {
         false => ProgressBar::new(0.0..=1.0, state.ratio)
             .style(FileProgressBar::theme(finished))
             // Text size + 2 times default button padding
-            .girth(Length::Fixed(*TEXT_SIZE.load_full() + 16.0))
+            .girth(Length::Fixed(TEXT_SIZE + 16.0))
             .into(),
     };
 
