@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
-use iced::advanced::widget::Operation;
-use iced::mouse::Cursor;
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{Button, Column, Container, Id, Row, Scrollable, Text, TextInput};
-use iced::{Element, Length, Rectangle, Renderer, Task, Theme};
+use iced::{Element, Length, Task};
 use niketsu_core::ui::{MessageSource, PlayerMessage};
 
-use self::message::{ChatWidgetMessage, MessageInput, ScrollMessages, SendMessage};
+use self::message::{MessageInput, ScrollMessages, SendMessage};
 use crate::RingBuffer;
 use crate::message::Message;
 use crate::styling::{ContainerBorder, MessageColor};
@@ -16,149 +14,37 @@ pub mod message;
 
 const SPACING: f32 = 5.0;
 
-pub struct ChatWidget<'a> {
-    base: Element<'a, ChatWidgetMessage>,
-}
-
-impl ChatWidget<'_> {
-    pub fn new(state: &ChatWidgetState) -> Self {
-        let mut column = Column::new()
-            .spacing(SPACING)
+pub fn view(state: &ChatWidgetState) -> Element<'_, Message> {
+    let msgs: Vec<_> = state.messages.iter().map(|m| m.to_text()).collect();
+    let messages = Container::new(
+        Scrollable::new(Column::with_children(msgs))
             .width(Length::Fill)
-            .width(Length::Fill);
+            .on_scroll(|o| ScrollMessages(o.relative_offset()).into())
+            .id(Id::new("messages")),
+    )
+    .style(ContainerBorder::theme)
+    .padding(5.0)
+    .width(Length::Fill)
+    .height(Length::Fill);
 
-        let msgs: Vec<_> = state.messages.iter().map(|m| m.to_text()).collect();
-        let messages = Container::new(
-            Scrollable::new(Column::with_children(msgs))
+    let message_input = Row::new()
+        .push(
+            TextInput::new("Message", &state.message)
                 .width(Length::Fill)
-                .on_scroll(|o| ScrollMessages(o.relative_offset()).into())
-                .id(Id::new("messages")),
+                .on_input(|i| MessageInput(i).into())
+                .on_submit(SendMessage.into()),
         )
-        .style(ContainerBorder::theme)
-        .padding(5.0)
-        .width(Length::Fill)
-        .height(Length::Fill);
-        column = column.push(messages);
+        .push(Button::new("Send").on_press(SendMessage.into()))
+        .spacing(SPACING);
 
-        let message_input = Row::new()
-            .push(
-                TextInput::new("Message", &state.message)
-                    .width(Length::Fill)
-                    .on_input(|i| MessageInput(i).into())
-                    .on_submit(SendMessage.into()),
-            )
-            .push(Button::new("Send").on_press(SendMessage.into()))
-            .spacing(SPACING);
-        column = column.push(message_input);
-
-        let base = column.into();
-        Self { base }
-    }
-}
-
-impl iced::advanced::Widget<ChatWidgetMessage, Theme, Renderer> for ChatWidget<'_> {
-    fn size(&self) -> iced::Size<Length> {
-        self.base.as_widget().size()
-    }
-
-    fn layout(
-        &mut self,
-        tree: &mut iced::advanced::widget::Tree,
-        renderer: &Renderer,
-        limits: &iced::advanced::layout::Limits,
-    ) -> iced::advanced::layout::Node {
-        self.base
-            .as_widget_mut()
-            .layout(&mut tree.children[0], renderer, limits)
-    }
-
-    fn draw(
-        &self,
-        state: &iced::advanced::widget::Tree,
-        renderer: &mut Renderer,
-        theme: &Theme,
-        style: &iced::advanced::renderer::Style,
-        layout: iced::advanced::Layout<'_>,
-        cursor: Cursor,
-        viewport: &Rectangle,
-    ) {
-        self.base.as_widget().draw(
-            &state.children[0],
-            renderer,
-            theme,
-            style,
-            layout,
-            cursor,
-            viewport,
-        );
-    }
-
-    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
-        vec![iced::advanced::widget::Tree::new(&self.base)]
-    }
-
-    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
-        tree.diff_children(std::slice::from_ref(&self.base))
-    }
-
-    fn operate(
-        &mut self,
-        state: &mut iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'_>,
-        renderer: &Renderer,
-        operation: &mut dyn Operation,
-    ) {
-        self.base
-            .as_widget_mut()
-            .operate(&mut state.children[0], layout, renderer, operation);
-    }
-
-    fn mouse_interaction(
-        &self,
-        state: &iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'_>,
-        cursor: Cursor,
-        viewport: &Rectangle,
-        renderer: &Renderer,
-    ) -> iced::advanced::mouse::Interaction {
-        self.base.as_widget().mouse_interaction(
-            &state.children[0],
-            layout,
-            cursor,
-            viewport,
-            renderer,
-        )
-    }
-
-    fn update(
-        &mut self,
-        state: &mut iced::advanced::widget::Tree,
-        event: &iced::Event,
-        layout: iced::advanced::Layout<'_>,
-        cursor: Cursor,
-        renderer: &Renderer,
-        clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, ChatWidgetMessage>,
-        viewport: &Rectangle,
-    ) {
-        self.base.as_widget_mut().update(
-            &mut state.children[0],
-            event,
-            layout,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            viewport,
-        );
-        shell.request_redraw();
-    }
-}
-
-impl<'a> From<ChatWidget<'a>> for Element<'a, Message> {
-    fn from(msgs: ChatWidget<'a>) -> Self {
-        Element::new(msgs).map(Message::from)
-    }
+    Element::from(
+        Column::new()
+            .push(messages)
+            .push(message_input)
+            .spacing(SPACING)
+            .width(Length::Fill),
+    )
+    .map(Message::from)
 }
 
 #[derive(Debug, Clone)]
@@ -195,12 +81,12 @@ impl ChatWidgetState {
     }
 }
 
-pub trait PlayerMessageExt {
-    fn to_text<'a>(&self) -> Element<'a, ChatWidgetMessage>;
+trait PlayerMessageExt {
+    fn to_text<'a>(&self) -> Element<'a, message::ChatWidgetMessage>;
 }
 
 impl PlayerMessageExt for PlayerMessage {
-    fn to_text<'a>(&self) -> Element<'a, ChatWidgetMessage> {
+    fn to_text<'a>(&self) -> Element<'a, message::ChatWidgetMessage> {
         let when = self.timestamp.format("[%H:%M:%S]").to_string();
         let message = &self.message;
 

@@ -9,10 +9,8 @@ use iced::{Element, Event, Length, Rectangle, Renderer, Theme};
 use self::message::{MainMessage, ReadyButton};
 use super::message::Message;
 use super::view::ViewModel;
-use super::widget::chat::ChatWidget;
-use super::widget::database::DatabaseWidget;
 use super::widget::playlist::PlaylistWidget;
-use super::widget::rooms::RoomsWidget;
+use super::widget::{chat, database, rooms};
 use crate::main_window::message::ShareButton;
 use crate::message::ToggleReady;
 use crate::styling::ContainerBorder;
@@ -82,14 +80,14 @@ impl<'a> MainView<'a> {
                             ))
                             .spacing(SPACING),
                     )
-                    .push(ChatWidget::new(view_model.get_chat_widget_state()))
+                    .push(chat::view(view_model.get_chat_widget_state()))
                     .spacing(SPACING)
                     .width(Length::Fill)
                     .height(Length::Fill),
             )
             .push(
                 Column::new()
-                    .push(DatabaseWidget::new(view_model.get_database_widget_state()))
+                    .push(database::view(view_model.get_database_widget_state()))
                     .push(
                         Container::new(
                             Column::new()
@@ -98,7 +96,7 @@ impl<'a> MainView<'a> {
                                 } else {
                                     Text::new("CLIENT").style(iced::widget::text::primary)
                                 })
-                                .push(RoomsWidget::new(
+                                .push(rooms::view(
                                     view_model.get_rooms_widget_state(),
                                     &view_model.user(),
                                     view_model.is_host(),
