@@ -17,6 +17,23 @@ impl ContainerBorder {
     }
 }
 
+pub struct ModalContainer;
+
+impl ModalContainer {
+    pub fn theme(theme: &Theme) -> iced::widget::container::Style {
+        iced::widget::container::Style {
+            background: Some(
+                Color {
+                    a: 0.99,
+                    ..theme.palette().background
+                }
+                .into(),
+            ),
+            ..ContainerBorder::theme(theme)
+        }
+    }
+}
+
 pub struct FileButton;
 
 impl FileButton {

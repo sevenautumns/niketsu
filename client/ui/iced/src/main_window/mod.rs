@@ -5,11 +5,9 @@ use self::message::{MainMessage, ReadyButton};
 use super::message::Message;
 use super::view::ViewModel;
 use super::widget::playlist::PlaylistWidget;
-use super::widget::{chat, database, rooms};
+use super::widget::{chat, database, file_search, rooms, settings};
 use crate::main_window::message::ShareButton;
 use crate::styling::ContainerBorder;
-use crate::widget::file_search::FileSearchWidget;
-use crate::widget::settings::SettingsWidget;
 
 pub(super) mod message;
 
@@ -53,10 +51,8 @@ pub fn view(view_model: &ViewModel) -> Element<'_, Message> {
             Column::new()
                 .push(
                     Row::new()
-                        .push(SettingsWidget::new(view_model.get_settings_widget_state()))
-                        .push(FileSearchWidget::new(
-                            view_model.get_file_search_widget_state(),
-                        ))
+                        .push(settings::open_button())
+                        .push(file_search::open_button())
                         .spacing(SPACING),
                 )
                 .push(chat::view(view_model.get_chat_widget_state()))

@@ -7,8 +7,8 @@ use super::widget::chat::message::ChatWidgetMessage;
 use super::widget::database::message::DatabaseWidgetMessage;
 use super::widget::playlist::message::PlaylistWidgetMessage;
 use crate::view::ViewModel;
-use crate::widget::file_search::message::FileSearchWidgetMessage;
-use crate::widget::settings::message::SettingsWidgetMessage;
+use crate::widget::file_search::message::{FileSearchWidgetMessage, KeyInput};
+use crate::widget::settings::message::{Abort, SettingsWidgetMessage};
 
 #[enum_dispatch]
 pub trait MessageHandler {
@@ -52,6 +52,19 @@ pub struct KeyPress {
 
 impl MessageHandler for KeyPress {
     fn handle(self, model: &mut ViewModel) -> Task<Message> {
+        if model.file_search_widget_state.is_active() {
+            return FileSearchWidgetMessage::from(KeyInput {
+                key: self.key,
+                captured: self.captured,
+            })
+            .handle(model);
+        }
+        if model.settings_widget_state.is_active() {
+            if self.key == Named::Escape {
+                return SettingsWidgetMessage::from(Abort).handle(model);
+            }
+            return Task::none();
+        }
         if !self.captured && self.key == Named::Space {
             model.model.user_ready_toggle();
         }

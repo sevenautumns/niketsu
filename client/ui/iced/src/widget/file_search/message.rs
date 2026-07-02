@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use enum_dispatch::enum_dispatch;
 use iced::Task;
+use iced::keyboard::key::Named;
 use niketsu_core::file_database::FileEntry;
 use niketsu_core::ui::UiModel;
 use niketsu_core::util::FuzzyResult;
@@ -26,6 +27,7 @@ pub enum FileSearchWidgetMessage {
     Select,
     Insert,
     SearchFinished,
+    KeyInput,
 }
 
 impl MessageHandler for FileSearchWidgetMessage {
@@ -149,6 +151,35 @@ impl FileSearchWidgetMessageTrait for Insert {
             model.change_playlist(playlist)
         }
         Task::none()
+    }
+}
+
+/// Keyboard navigation while the file search is open.
+#[derive(Debug, Clone)]
+pub struct KeyInput {
+    pub key: Named,
+    pub captured: bool,
+}
+
+impl FileSearchWidgetMessageTrait for KeyInput {
+    fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Task<Message> {
+        match self.key {
+            Named::ArrowUp if !state.results.is_empty() => {
+                let index = (state.cursor_index + state.results.len() - 1) % state.results.len();
+                Select { index }.handle(state, model)
+            }
+            Named::ArrowDown if !state.results.is_empty() => {
+                let index = (state.cursor_index + 1) % state.results.len();
+                Select { index }.handle(state, model)
+            }
+            // When the query input is focused, Enter already arrives via on_submit.
+            Named::Enter if !self.captured => Insert {
+                index: state.cursor_index,
+            }
+            .handle(state, model),
+            Named::Escape => Close.handle(state, model),
+            _ => Task::none(),
+        }
     }
 }
 

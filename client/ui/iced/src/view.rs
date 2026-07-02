@@ -22,7 +22,10 @@ use super::widget::settings::SettingsWidgetState;
 use super::{PreExistingTokioRuntime, main_window};
 use crate::config::IcedConfig;
 use crate::message::{KeyPress, MessageHandler, ModelChanged};
-use crate::widget::file_search::FileSearchWidgetState;
+use crate::widget::file_search::message::{Close as CloseFileSearch, FileSearchWidgetMessage};
+use crate::widget::file_search::{self, FileSearchWidgetState};
+use crate::widget::settings::message::{Abort, SettingsWidgetMessage};
+use crate::widget::{modal, settings};
 
 #[derive(Debug)]
 pub struct ViewModel {
@@ -53,7 +56,22 @@ impl ViewModel {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        main_window::view(self)
+        let base = main_window::view(self);
+        if self.settings_widget_state.is_active() {
+            return modal(
+                base,
+                settings::view(&self.settings_widget_state),
+                SettingsWidgetMessage::from(Abort).into(),
+            );
+        }
+        if self.file_search_widget_state.is_active() {
+            return modal(
+                base,
+                file_search::view(&self.file_search_widget_state),
+                FileSearchWidgetMessage::from(CloseFileSearch).into(),
+            );
+        }
+        base
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -82,14 +100,6 @@ impl ViewModel {
 
     pub fn get_database_widget_state(&self) -> &DatabaseWidgetState {
         &self.database_widget_state
-    }
-
-    pub fn get_file_search_widget_state(&self) -> &FileSearchWidgetState {
-        &self.file_search_widget_state
-    }
-
-    pub fn get_settings_widget_state(&self) -> &SettingsWidgetState {
-        &self.settings_widget_state
     }
 
     pub fn update_from_inner_model(&mut self) {
@@ -196,7 +206,11 @@ fn key_press(event: Event, status: event::Status, _window: window::Id) -> Option
     else {
         return None;
     };
-    matches!(key, Named::Space).then(|| {
+    matches!(
+        key,
+        Named::Space | Named::Escape | Named::Enter | Named::ArrowUp | Named::ArrowDown
+    )
+    .then(|| {
         KeyPress {
             key,
             captured: matches!(status, event::Status::Captured),
