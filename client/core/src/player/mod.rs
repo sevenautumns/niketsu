@@ -162,6 +162,9 @@ impl EventHandler for PlayerSpeedChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("player speed change");
         let speed = self.speed;
+        // adopt the new speed as our own reference too, or the next host
+        // heartbeat reconciles us right back to the old one
+        model.player.sync_host_speed(speed);
         let actor = model.config.username.clone();
         model
             .communicator
@@ -187,19 +190,8 @@ impl EventHandler for PlayerFileEnd {
             return;
         }
 
-        // TODO refactor
-        let mut video = None;
-        if let Some(next) = model.playlist.advance_to_next() {
-            video = Some(next.clone());
-            model
-                .player
-                .load_video(next.clone(), Duration::ZERO, model.database.all_files());
-            model.ui.video_change(Some(next));
-        } else {
-            model.player.unload_video();
-            model.ui.video_change(None);
-        }
-        model.save_playlist();
+        let video = model.playlist.advance_to_next();
+        model.select_video(video.as_ref(), Duration::ZERO);
         let actor = model.config.username.clone();
         let position = model.player.get_position().unwrap_or_default();
         model.communicator.send(

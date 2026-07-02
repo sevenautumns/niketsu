@@ -513,6 +513,97 @@ async fn host_speed_change_propagates_and_scales_the_catchup() {
     );
 }
 
+/// A client-initiated speed change is adopted by the initiator as its own
+/// reference speed too: the next host heartbeat must not drag the initiator
+/// back to the old speed while everyone else keeps the new one.
+#[tokio::test]
+async fn client_speed_change_survives_the_next_heartbeat() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &["ep1"]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+
+    // bob — a client, not the host — switches his mpv to 1.5x
+    room.peer(bob).player.set(|player| player.speed = 1.5);
+    room.peer(bob).act(PlayerSpeedChange::new(1.5));
+    room.pump();
+    assert_eq!(
+        room.peer(alice).player.state().speed,
+        1.5,
+        "speed change must propagate"
+    );
+
+    // both play in sync; the next host heartbeat reconciles bob against
+    // the host clock and must leave his speed alone
+    room.peer(alice).player.set(|player| {
+        player.paused = false;
+        player.position = Duration::from_secs(100);
+    });
+    room.peer(bob).player.set(|player| {
+        player.paused = false;
+        player.position = Duration::from_secs(100);
+    });
+    room.peer(alice).heartbeat();
+    room.pump();
+
+    assert_eq!(
+        room.peer(bob).player.state().speed,
+        1.5,
+        "the initiator must not be dragged back to the old speed"
+    );
+}
+
+/// A speed change arriving mid-catch-up keeps the lagging client faster
+/// than the new host speed — the carried-over offset must not flip sign
+/// and briefly drop it further behind.
+#[tokio::test]
+async fn speed_change_mid_catchup_keeps_the_client_faster() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &["ep1"]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+
+    // bob fell behind and is catching up by playing faster than the host
+    room.peer(alice).player.set(|player| {
+        player.paused = false;
+        player.position = Duration::from_secs(100);
+    });
+    room.peer(bob).player.set(|player| {
+        player.paused = false;
+        player.position = Duration::from_secs(95);
+    });
+    room.peer(alice).heartbeat();
+    room.pump();
+    assert!(room.peer(bob).player.state().speed > 1.0);
+
+    // mid-ketchup, alice switches to double speed
+    room.peer(alice).player.set(|player| player.speed = 2.0);
+    room.peer(alice).act(PlayerSpeedChange::new(2.0));
+    room.pump();
+
+    let speed = room.peer(bob).player.state().speed;
+    assert!(
+        speed > 2.0 && speed <= 2.0 + 0.15,
+        "a catching-up client must stay faster than the new host speed, got {speed}"
+    );
+}
+
 /// With auto-share on, selecting the next video carries the announced share
 /// over to it; selecting one the provider does not have stops the share and
 /// every consumer's video server with it.
@@ -569,6 +660,59 @@ async fn auto_share_carries_the_share_to_the_next_selection() {
     );
 }
 
+/// When the sharing peer's player finishes a video, advancing to the next
+/// one runs the same choreography as a manual selection: auto-share carries
+/// the share over, and the end of the playlist stops it — on the finishing
+/// peer just like on everyone who receives its Select.
+#[tokio::test]
+async fn file_end_reshares_or_stops_like_a_manual_selection() {
+    let mut room = Room::new();
+    let alice = room.join_with_auto_share("alice", &["ep1", "ep2"]);
+    let bob = room.join("bob", &[]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1", "ep2"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+
+    room.peer(alice).act(ui::FileShareChange {});
+    room.peer(alice).act(video_provider::FileReady {
+        file_name: "ep1".into(),
+        size: 1_000,
+    });
+    room.pump();
+
+    // alice's mpv finishes ep1: the share must follow to ep2 exactly as it
+    // would on a manual selection
+    room.peer(alice).act(PlayerFileEnd(Video::from("ep1")));
+    room.pump();
+    assert_eq!(
+        room.peer(alice).model.video_provider.file_name().as_deref(),
+        Some("ep2"),
+        "file-end must carry the auto-share to the next video"
+    );
+    assert!(room.peer(alice).ui.state().video_share);
+
+    // bob streams the reshared episode
+    room.peer(bob).act(ui::FileRequest {});
+    room.pump();
+    assert!(room.peer(bob).video_server.running());
+
+    // ep2 was the last video: the share stops and bob's server with it
+    room.peer(alice).act(PlayerFileEnd(Video::from("ep2")));
+    room.pump();
+    assert!(!room.peer(alice).model.video_provider.sharing());
+    assert!(!room.peer(alice).ui.state().video_share);
+    assert!(
+        !room.peer(bob).video_server.running(),
+        "the end of the playlist must stop the finishing peer's share"
+    );
+}
+
 /// A file request when nobody announces the file finds no provider: the
 /// requester is told and its video server stops instead of waiting for
 /// chunks that will never come.
@@ -600,6 +744,48 @@ async fn file_request_without_a_provider_stops_the_video_server() {
     assert!(
         !room.peer(bob).video_server.running(),
         "a request without a provider must stop the requester's video server"
+    );
+}
+
+/// A failed file response — the announced provider is not actually serving
+/// the file — stops the requester's video server instead of leaving it up
+/// serving a stream nobody will ever feed.
+#[tokio::test]
+async fn failed_file_response_stops_the_requesters_video_server() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &[]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+
+    room.peer(alice).act(ui::FileShareChange {});
+    room.peer(alice).act(video_provider::FileReady {
+        file_name: "ep1".into(),
+        size: 1_000,
+    });
+    room.pump();
+
+    // bob streams ep1 from alice
+    room.peer(bob).act(ui::FileRequest {});
+    room.pump();
+    assert!(room.peer(bob).video_server.running());
+
+    // alice's provider dies without the room noticing (a stale provider
+    // record): bob's retry still reaches her and is answered with a
+    // failure, which must take his dead stream down with it
+    room.peer(alice).model.video_provider.stop_providing();
+    room.peer(bob).act(ui::FileRequest {});
+    room.pump();
+    assert!(
+        !room.peer(bob).video_server.running(),
+        "a failed file response must stop the requester's video server"
     );
 }
 

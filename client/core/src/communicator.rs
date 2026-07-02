@@ -717,7 +717,12 @@ impl EventHandler for FileResponseMsg {
                 let video = ArcStr::from(video.as_str());
                 model.video_server.start_server(video, self.size);
             }
-            None => debug!("file response contains no video"),
+            None => {
+                debug!("file response contains no video");
+                // a server still up from an earlier stream would keep
+                // serving a file nobody will ever send chunks for
+                model.video_server.stop_server();
+            }
         }
     }
 }
