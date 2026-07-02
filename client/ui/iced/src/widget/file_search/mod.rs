@@ -10,12 +10,9 @@ use iced::widget::{
 use iced::{Element, Event, Length, Rectangle, Renderer, Theme, Vector};
 use itertools::Itertools;
 use niketsu_core::file_database::FileEntry;
-use niketsu_core::fuzzy::FuzzySearch;
 use niketsu_core::util::FuzzyResult;
 
-use self::message::{
-    Activate, Click, Close, FileSearchWidgetMessage, Input, Insert, SearchFinished, Select,
-};
+use self::message::{Activate, Click, Close, FileSearchWidgetMessage, Input, Insert, Select};
 use super::overlay::{ElementOverlay, ElementOverlayConfig};
 use crate::message::Message;
 use crate::styling::FileButton;
@@ -228,12 +225,6 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
                     _ => {}
                 }
             }
-
-            if let Some(search) = &self.state.search
-                && search.is_finished()
-            {
-                shell.publish(SearchFinished.into());
-            }
         }
 
         self.button.as_widget_mut().update(
@@ -289,7 +280,6 @@ impl iced::advanced::Widget<FileSearchWidgetMessage, Theme, Renderer> for FileSe
 #[derive(Debug, Default)]
 pub struct FileSearchWidgetState {
     query: String,
-    search: Option<FuzzySearch<FileEntry>>,
     results: Vec<FuzzyResult<FileEntry>>,
     cursor_index: usize,
     last_click: Option<Instant>,

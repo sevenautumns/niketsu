@@ -2,7 +2,9 @@ use std::time::Instant;
 
 use enum_dispatch::enum_dispatch;
 use iced::Task;
+use niketsu_core::file_database::FileEntry;
 use niketsu_core::ui::UiModel;
+use niketsu_core::util::FuzzyResult;
 
 use super::FileSearchWidgetState;
 use crate::message::{Message, MessageHandler};
@@ -36,6 +38,21 @@ impl MessageHandler for FileSearchWidgetMessage {
     }
 }
 
+/// Runs a fuzzy search on the file database and reports back with a
+/// [`SearchFinished`] message once it completes.
+fn search_task(query: String, model: &UiModel) -> Task<Message> {
+    let search = model
+        .file_database
+        .get_inner_arc()
+        .fuzzy_search(query.clone());
+    Task::perform(search, move |results| {
+        Message::from(FileSearchWidgetMessage::from(SearchFinished {
+            query: query.clone(),
+            results,
+        }))
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct Input {
     pub query: String,
@@ -44,8 +61,7 @@ pub struct Input {
 impl FileSearchWidgetMessageTrait for Input {
     fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Task<Message> {
         state.query.clone_from(&self.query);
-        state.search = Some(model.file_database.get_inner_arc().fuzzy_search(self.query));
-        Task::none()
+        search_task(self.query, model)
     }
 }
 
@@ -54,14 +70,11 @@ pub struct Activate;
 
 impl FileSearchWidgetMessageTrait for Activate {
     fn handle(self, state: &mut FileSearchWidgetState, model: &UiModel) -> Task<Message> {
-        state.search = Some(
-            model
-                .file_database
-                .get_inner_arc()
-                .fuzzy_search(state.query.clone()),
-        );
         state.active = true;
-        iced::widget::operation::focus(iced::widget::Id::new("file_search_query"))
+        Task::batch([
+            search_task(state.query.clone(), model),
+            iced::widget::operation::focus(iced::widget::Id::new("file_search_query")),
+        ])
     }
 }
 
@@ -140,12 +153,16 @@ impl FileSearchWidgetMessageTrait for Insert {
 }
 
 #[derive(Debug, Clone)]
-pub struct SearchFinished;
+pub struct SearchFinished {
+    pub query: String,
+    pub results: Vec<FuzzyResult<FileEntry>>,
+}
 
 impl FileSearchWidgetMessageTrait for SearchFinished {
     fn handle(self, state: &mut FileSearchWidgetState, _: &UiModel) -> Task<Message> {
-        if let Some(results) = state.search.take().and_then(|mut s| s.poll()) {
-            state.results = results.into_iter().take(100).collect();
+        // A newer query may have started in the meantime; drop stale results.
+        if self.query == state.query {
+            state.results = self.results.into_iter().take(100).collect();
             state.cursor_index = state
                 .cursor_index
                 .checked_rem(state.results.len())
