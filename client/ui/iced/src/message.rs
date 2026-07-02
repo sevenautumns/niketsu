@@ -1,5 +1,6 @@
 use enum_dispatch::enum_dispatch;
 use iced::Task;
+use iced::keyboard::key::Named;
 
 use super::main_window::message::MainMessage;
 use super::widget::chat::message::ChatWidgetMessage;
@@ -19,7 +20,7 @@ pub trait MessageHandler {
 pub enum Message {
     Main(MainMessage),
     ModelChanged,
-    ToggleReady,
+    KeyPress,
     //
     SettingsWidget(SettingsWidgetMessage),
     PlaylistWidget(PlaylistWidgetMessage),
@@ -41,12 +42,19 @@ impl MessageHandler for ModelChanged {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ToggleReady;
+/// A named key press observed by the runtime, along with whether some
+/// widget already captured it (e.g. a focused text input).
+#[derive(Debug, Clone, Copy)]
+pub struct KeyPress {
+    pub key: Named,
+    pub captured: bool,
+}
 
-impl MessageHandler for ToggleReady {
+impl MessageHandler for KeyPress {
     fn handle(self, model: &mut ViewModel) -> Task<Message> {
-        model.model.user_ready_toggle();
+        if !self.captured && self.key == Named::Space {
+            model.model.user_ready_toggle();
+        }
         Task::none()
     }
 }

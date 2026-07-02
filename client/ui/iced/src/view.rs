@@ -4,23 +4,24 @@ use std::sync::Arc;
 
 use futures::Future;
 use iced::advanced::subscription::Recipe;
-use iced::{Element, Subscription, Task, Theme};
+use iced::keyboard::Key;
+use iced::keyboard::key::Named;
+use iced::{Element, Event, Subscription, Task, Theme, event, window};
 use niketsu_core::config::Config;
 use niketsu_core::playlist::Video;
 use niketsu_core::ui::{UiModel, UserInterface};
 use niketsu_core::user::UserStatus;
 use tokio::sync::Notify;
 
-use super::PreExistingTokioRuntime;
-use super::main_window::MainView;
 use super::message::Message;
 use super::widget::chat::ChatWidgetState;
 use super::widget::database::DatabaseWidgetState;
 use super::widget::playlist::PlaylistWidgetState;
 use super::widget::rooms::UsersWidgetState;
 use super::widget::settings::SettingsWidgetState;
+use super::{PreExistingTokioRuntime, main_window};
 use crate::config::IcedConfig;
-use crate::message::{MessageHandler, ModelChanged};
+use crate::message::{KeyPress, MessageHandler, ModelChanged};
 use crate::widget::file_search::FileSearchWidgetState;
 
 #[derive(Debug)]
@@ -52,7 +53,7 @@ impl ViewModel {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        MainView::new(self).into()
+        main_window::view(self)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -180,8 +181,28 @@ impl View {
     fn subscription(&self) -> Subscription<Message> {
         let notify = self.view_model.model.notify.clone();
         let model_subscription = ModelSubscription { notify };
-        iced::advanced::subscription::from_recipe(model_subscription)
+        Subscription::batch([
+            iced::advanced::subscription::from_recipe(model_subscription),
+            event::listen_with(key_press),
+        ])
     }
+}
+
+fn key_press(event: Event, status: event::Status, _window: window::Id) -> Option<Message> {
+    let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(key),
+        ..
+    }) = event
+    else {
+        return None;
+    };
+    matches!(key, Named::Space).then(|| {
+        KeyPress {
+            key,
+            captured: matches!(status, event::Status::Captured),
+        }
+        .into()
+    })
 }
 
 pub struct ModelSubscription {
