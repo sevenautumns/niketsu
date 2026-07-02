@@ -68,8 +68,7 @@ impl EventHandler for PlaylistChange {
         let actor = model.config.username.clone();
         let playlist = self.playlist.clone();
 
-        model.playlist.replace(self.playlist);
-        model.save_playlist();
+        model.replace_playlist(self.playlist);
         model
             .communicator
             .send(PlaylistMsg { actor, playlist }.into())
@@ -673,9 +672,8 @@ impl UiModel {
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
-    use std::time::Duration;
 
-    use mockall::predicate::{always, eq};
+    use mockall::predicate::eq;
     use multiaddr::Protocol;
     use tokio::sync::Notify;
 
@@ -683,124 +681,14 @@ mod tests {
     use crate::builder::CoreBuilder;
     use crate::communicator::{MockCommunicatorTrait, OutgoingMessage};
     use crate::config::Config;
-    use crate::file_database::{FileEntry, MockFileDatabaseTrait};
+    use crate::file_database::MockFileDatabaseTrait;
     use crate::player::MockMediaPlayerTrait;
     use crate::util::Observed;
-    use crate::{MockVideoProviderTrait, MockVideoServerTrait, VideoShareMsg};
+    use crate::{MockVideoProviderTrait, MockVideoServerTrait};
 
-    #[tokio::test]
-    async fn test_playlist_change() {
-        let mut communicator = MockCommunicatorTrait::default();
-        let player = MockMediaPlayerTrait::default();
-        let ui = MockUserInterfaceTrait::default();
-        let file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
-        let video_provider = MockVideoProviderTrait::default();
-
-        let user = arcstr::literal!("max");
-        let playlist = Playlist::from_iter(["video1", "video2"]);
-        let config = Config {
-            username: user.clone(),
-            ..Default::default()
-        };
-        let message = OutgoingMessage::from(PlaylistMsg {
-            actor: user.clone(),
-            playlist: playlist.clone(),
-        });
-
-        communicator
-            .expect_send()
-            .with(eq(message))
-            .once()
-            .return_const(());
-
-        let mut core = CoreBuilder::builder()
-            .communicator(Box::new(communicator))
-            .player(Box::new(player))
-            .ui(Box::new(ui))
-            .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
-            .video_provider(Box::new(video_provider))
-            .config(config)
-            .build();
-
-        let change = PlaylistChange { playlist };
-        change.handle(&mut core.model)
-    }
-
-    #[tokio::test]
-    async fn test_video_change() {
-        let mut communicator = MockCommunicatorTrait::default();
-        let mut player = MockMediaPlayerTrait::default();
-        let mut ui = MockUserInterfaceTrait::default();
-        let mut file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
-        let mut video_provider = MockVideoProviderTrait::default();
-
-        let user = arcstr::literal!("max");
-        let video = Video::from("video1");
-        let file = FileEntry::new("video1".into(), "/video1".into(), None);
-        let file_store = FileStore::from_iter([file.clone()]);
-        let pos = Duration::ZERO;
-        let config = Config {
-            username: user.clone(),
-            ..Default::default()
-        };
-        let message = OutgoingMessage::from(SelectMsg {
-            actor: user.clone(),
-            video: Some(video.clone()),
-            position: pos,
-        });
-        let empty_video_share_msg = OutgoingMessage::from(VideoShareMsg { video: None });
-
-        file_database.expect_all_files().return_const(file_store);
-        player.expect_get_speed().return_const(1.1);
-        player
-            .expect_load_video()
-            .with(eq(video.clone()), eq(pos), always())
-            .once()
-            .return_const(());
-
-        video_provider
-            .expect_stop_providing()
-            .once()
-            .return_const(());
-
-        ui.expect_video_share()
-            .with(eq(false))
-            .once()
-            .return_const(());
-
-        ui.expect_video_change()
-            .with(eq(Some(video.clone())))
-            .once()
-            .return_const(());
-
-        communicator
-            .expect_send()
-            .with(eq(message))
-            .once()
-            .return_const(());
-
-        communicator
-            .expect_send()
-            .with(eq(empty_video_share_msg))
-            .once()
-            .return_const(());
-
-        let mut core = CoreBuilder::builder()
-            .communicator(Box::new(communicator))
-            .player(Box::new(player))
-            .ui(Box::new(ui))
-            .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
-            .video_provider(Box::new(video_provider))
-            .config(config)
-            .build();
-
-        let change = VideoChange { video };
-        change.handle(&mut core.model)
-    }
+    // The PlaylistChange and VideoChange handlers are covered by the dance
+    // suite (tests/dance), which asserts the converged room state instead
+    // of pinning the handlers' call sequences on mocks.
 
     #[test]
     fn test_server_change() {

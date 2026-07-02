@@ -129,6 +129,10 @@ impl EventHandler for PlayerPositionChange {
         let Some(video) = model.player.playing_video() else {
             return;
         };
+        // keep the seeker's own marker in sync with what SeekMsg receivers
+        // derive from this message, or the room's markers diverge
+        model.playlist.select_playing(&video);
+        model.save_playlist();
         let actor = model.config.username.clone();
         let position = self.pos;
 

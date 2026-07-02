@@ -7,9 +7,9 @@ use futures::future::OptionFuture;
 use logging::ChatLogger;
 use once_cell::sync::Lazy;
 use player::wrapper::MediaPlayerWrapper;
-use playlist::Video;
 use playlist::file::PlaylistBrowser;
 use playlist::handler::PlaylistHandler;
+use playlist::{Playlist, Video};
 use tracing::{info, trace};
 use video_provider::VideoProviderTrait;
 
@@ -64,6 +64,18 @@ impl CoreModel {
     /// Persist the current playlist for the active room.
     pub fn save_playlist(&self) {
         PlaylistBrowser::save(&self.config.room, &self.playlist);
+    }
+
+    /// Replace the playlist and re-derive the playing marker from the
+    /// player's video, so the marker is a function of the replicated state
+    /// (playlist + running video) and not of the order edits happened in —
+    /// late joiners derive it exactly this way from the replayed state.
+    pub fn replace_playlist(&mut self, playlist: Playlist) {
+        self.playlist.replace(playlist);
+        if let Some(video) = self.player.playing_video() {
+            self.playlist.select_playing(&video);
+        }
+        self.save_playlist();
     }
 
     /// Stop providing the current file and announce it to the room and UI.

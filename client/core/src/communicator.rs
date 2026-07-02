@@ -495,8 +495,7 @@ impl From<PlaylistMsg> for PlayerMessage {
 impl EventHandler for PlaylistMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received playlist");
-        model.playlist.replace(self.playlist.clone());
-        model.save_playlist();
+        model.replace_playlist(self.playlist.clone());
         model.ui.playlist(self.playlist.clone());
         model.ui.player_message(PlayerMessage::from(self))
     }
