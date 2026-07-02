@@ -60,6 +60,32 @@ impl FileButton {
     }
 }
 
+pub struct PlaylistEntry;
+
+impl PlaylistEntry {
+    pub fn theme(
+        pressed: bool,
+        available: bool,
+        playing: bool,
+    ) -> impl Fn(&Theme, iced::widget::button::Status) -> iced::widget::button::Style {
+        move |theme, status| {
+            // Being dragged or missing from the database takes precedence
+            // over the playing highlight.
+            if playing && !pressed && available {
+                let success = theme.extended_palette().success;
+                return iced::widget::button::Style {
+                    shadow: Shadow::default(),
+                    border: Border::default(),
+                    background: Some(success.weak.color.into()),
+                    text_color: success.weak.text,
+                    snap: false,
+                };
+            }
+            FileButton::theme(pressed, available)(theme, status)
+        }
+    }
+}
+
 pub struct FileProgressBar;
 
 impl FileProgressBar {
