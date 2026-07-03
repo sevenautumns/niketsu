@@ -5,7 +5,7 @@ use niketsu_core::file_database::FileStore;
 use self::message::{DatabaseWidgetMessage, StartDbUpdate, StopDbUpdate};
 use crate::TEXT_SIZE;
 use crate::message::Message;
-use crate::styling::{ContainerBorder, FileButton, FileProgressBar};
+use crate::styling::{ContainerBorder, FileProgressBar};
 
 pub mod message;
 
@@ -14,15 +14,15 @@ pub fn view(state: &DatabaseWidgetState) -> Element<'_, Message> {
     let main: Element<_, _> = match finished {
         true => {
             let len = state.database.len();
-            Container::new(
-                Button::new(Text::new(format!("{len} files in database")))
-                    .style(FileButton::theme(false, true)),
-            )
-            .align_x(iced::alignment::Horizontal::Center)
-            .align_y(iced::alignment::Vertical::Center)
-            .style(ContainerBorder::theme)
-            .width(Length::Fill)
-            .into()
+            Container::new(Text::new(format!("{len} files in database")))
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center)
+                .style(ContainerBorder::theme)
+                .width(Length::Fill)
+                // Match the progress bar's girth, so the row height is
+                // stable across both states.
+                .height(Length::Fixed(TEXT_SIZE + 16.0))
+                .into()
         }
         false => ProgressBar::new(0.0..=1.0, state.ratio)
             .style(FileProgressBar::theme(finished))

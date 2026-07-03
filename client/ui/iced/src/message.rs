@@ -1,11 +1,13 @@
 use enum_dispatch::enum_dispatch;
 use iced::Task;
 use iced::keyboard::key::Named;
+use iced::widget::pane_grid;
+use niketsu_core::log_err;
 
 use super::main_window::message::MainMessage;
 use super::widget::chat::message::ChatWidgetMessage;
 use super::widget::database::message::DatabaseWidgetMessage;
-use super::widget::playlist::message::PlaylistWidgetMessage;
+use super::widget::playlist::message::{CloseContext, PlaylistWidgetMessage};
 use crate::view::ViewModel;
 use crate::widget::file_search::message::{FileSearchWidgetMessage, KeyInput};
 use crate::widget::settings::message::{Abort, SettingsWidgetMessage};
@@ -22,6 +24,7 @@ pub enum Message {
     Main(MainMessage),
     ModelChanged,
     KeyPress,
+    PaneResized,
     //
     SettingsWidget(SettingsWidgetMessage),
     PlaylistWidget(PlaylistWidgetMessage),
@@ -38,10 +41,24 @@ impl MessageHandler for ModelChanged {
     fn handle(self, model: &mut ViewModel) -> Task<Message> {
         model.update_from_inner_model();
         if !model.model.running.get_inner() {
+            // Persist layout changes (e.g. the pane split) made this session.
+            log_err!(model.settings_widget_state.iced_config().save());
             return iced::exit();
         }
         // Keep the chat pinned to the bottom when new messages arrive.
         model.chat_widget_state.snap()
+    }
+}
+
+/// The split between the chat pane and the side pane was dragged.
+#[derive(Debug, Clone)]
+pub struct PaneResized(pub pane_grid::ResizeEvent);
+
+impl MessageHandler for PaneResized {
+    fn handle(self, model: &mut ViewModel) -> Task<Message> {
+        model.panes.resize(self.0.split, self.0.ratio);
+        model.settings_widget_state.set_pane_ratio(self.0.ratio);
+        Task::none()
     }
 }
 
@@ -71,6 +88,12 @@ impl MessageHandler for KeyPress {
         if model.user_actions_widget_state.is_active() {
             if self.key == Named::Escape {
                 return UserActionsWidgetMessage::from(CloseUserActions).handle(model);
+            }
+            return Task::none();
+        }
+        if model.playlist_widget_state.context_active() {
+            if self.key == Named::Escape {
+                return PlaylistWidgetMessage::from(CloseContext).handle(model);
             }
             return Task::none();
         }

@@ -195,4 +195,8 @@ impl SettingsWidgetState {
     pub fn iced_config(&self) -> &IcedConfig {
         &self.iced_config
     }
+
+    pub fn set_pane_ratio(&mut self, ratio: f32) {
+        self.iced_config.pane_ratio = ratio;
+    }
 }

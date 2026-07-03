@@ -17,15 +17,22 @@ pub fn view<'a>(
         .iter()
         .map(|u| {
             let name = u.name.clone();
-            let mut button = Button::new(Container::new(u.to_text(this_user, is_host)).padding(2))
-                .padding(0)
-                .width(Length::Fill)
-                .style(FileButton::theme(false, true));
-            if is_host && u.name != this_user.name {
-                button =
-                    button.on_press(UserActionsWidgetMessage::from(Open { user: name }).into());
-            }
-            row!(Space::new().width(Length::Fixed(5.0)), button).into()
+            let mut label = u.to_text(this_user, is_host);
+            let actionable = is_host && u.name != this_user.name;
+            let content: Element<'_, Message> = if actionable {
+                label = label
+                    .push(Space::new().width(Length::Fill))
+                    .push(Text::new("⋯"));
+                Button::new(Container::new(label).padding(2))
+                    .padding(0)
+                    .width(Length::Fill)
+                    .style(FileButton::theme(false, true))
+                    .on_press(UserActionsWidgetMessage::from(Open { user: name }).into())
+                    .into()
+            } else {
+                Container::new(label).padding(2).width(Length::Fill).into()
+            };
+            row!(Space::new().width(Length::Fixed(5.0)), content).into()
         })
         .collect();
 

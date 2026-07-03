@@ -23,6 +23,10 @@ pub enum PlaylistWidgetMessage {
     Move,
     Interaction,
     AutoScroll,
+    OpenContext,
+    CloseContext,
+    ContextPlay,
+    ContextRemove,
 }
 
 impl MessageHandler for PlaylistWidgetMessage {
@@ -83,6 +87,54 @@ impl PlaylistWidgetMessageTrait for Interaction {
     fn handle(self, state: &mut PlaylistWidgetState, _: &UiModel) -> Task<Message> {
         debug!(video = ?self.video, interaction = ?self.interaction);
         state.file_interaction(self.video.clone(), self.interaction.clone());
+        Task::none()
+    }
+}
+
+/// A playlist entry was right-clicked; open its actions modal.
+#[derive(Debug, Clone)]
+pub struct OpenContext {
+    pub video: VideoIndex,
+}
+
+impl PlaylistWidgetMessageTrait for OpenContext {
+    fn handle(self, state: &mut PlaylistWidgetState, _: &UiModel) -> Task<Message> {
+        state.context = Some(self.video);
+        Task::none()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CloseContext;
+
+impl PlaylistWidgetMessageTrait for CloseContext {
+    fn handle(self, state: &mut PlaylistWidgetState, _: &UiModel) -> Task<Message> {
+        state.context = None;
+        Task::none()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextPlay;
+
+impl PlaylistWidgetMessageTrait for ContextPlay {
+    fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel) -> Task<Message> {
+        if let Some(video) = state.context.take() {
+            model.change_video(video.video);
+        }
+        Task::none()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextRemove;
+
+impl PlaylistWidgetMessageTrait for ContextRemove {
+    fn handle(self, state: &mut PlaylistWidgetState, model: &UiModel) -> Task<Message> {
+        if let Some(video) = state.context.take() {
+            state.delete_video(&video.video);
+            model.change_playlist(state.playlist.clone());
+        }
         Task::none()
     }
 }

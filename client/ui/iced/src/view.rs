@@ -6,6 +6,7 @@ use futures::Future;
 use iced::advanced::subscription::Recipe;
 use iced::keyboard::Key;
 use iced::keyboard::key::Named;
+use iced::widget::pane_grid;
 use iced::{Element, Event, Subscription, Task, Theme, event, window};
 use niketsu_core::config::Config;
 use niketsu_core::playlist::Video;
@@ -16,14 +17,16 @@ use tokio::sync::Notify;
 use super::message::Message;
 use super::widget::chat::ChatWidgetState;
 use super::widget::database::DatabaseWidgetState;
-use super::widget::playlist::PlaylistWidgetState;
+use super::widget::playlist::{self, PlaylistWidgetState};
 use super::widget::rooms::UsersWidgetState;
 use super::widget::settings::SettingsWidgetState;
 use super::{PreExistingTokioRuntime, main_window};
 use crate::config::IcedConfig;
+use crate::main_window::PaneKind;
 use crate::message::{KeyPress, MessageHandler, ModelChanged};
 use crate::widget::file_search::message::{Close as CloseFileSearch, FileSearchWidgetMessage};
 use crate::widget::file_search::{self, FileSearchWidgetState};
+use crate::widget::playlist::message::{CloseContext, PlaylistWidgetMessage};
 use crate::widget::settings::message::{Abort, SettingsWidgetMessage};
 use crate::widget::user_actions::message::{Close as CloseUserActions, UserActionsWidgetMessage};
 use crate::widget::user_actions::{self, UserActionsWidgetState};
@@ -39,10 +42,17 @@ pub struct ViewModel {
     pub database_widget_state: DatabaseWidgetState,
     pub file_search_widget_state: FileSearchWidgetState,
     pub user_actions_widget_state: UserActionsWidgetState,
+    pub panes: pane_grid::State<PaneKind>,
 }
 
 impl ViewModel {
     pub fn new(flags: Flags) -> Self {
+        let panes = pane_grid::State::with_configuration(pane_grid::Configuration::Split {
+            axis: pane_grid::Axis::Vertical,
+            ratio: flags.iced_config.pane_ratio,
+            a: Box::new(pane_grid::Configuration::Pane(PaneKind::Chat)),
+            b: Box::new(pane_grid::Configuration::Pane(PaneKind::Controls)),
+        });
         let mut settings = SettingsWidgetState::new(flags.config.clone(), flags.iced_config);
         if !flags.config.auto_connect {
             settings.activate();
@@ -56,6 +66,7 @@ impl ViewModel {
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
             user_actions_widget_state: Default::default(),
+            panes,
         }
     }
 
@@ -80,6 +91,13 @@ impl ViewModel {
                 base,
                 user_actions::view(&self.user_actions_widget_state),
                 UserActionsWidgetMessage::from(CloseUserActions).into(),
+            );
+        }
+        if self.playlist_widget_state.context_active() {
+            return modal(
+                base,
+                playlist::context_view(&self.playlist_widget_state),
+                PlaylistWidgetMessage::from(CloseContext).into(),
             );
         }
         base

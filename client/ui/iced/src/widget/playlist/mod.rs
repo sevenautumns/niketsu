@@ -6,7 +6,7 @@ use iced::keyboard::Key;
 use iced::keyboard::key::Named;
 use iced::mouse::Cursor;
 use iced::widget::text::Wrapping;
-use iced::widget::{Column, button, row, text};
+use iced::widget::{Column, Container, button, row, text};
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use niketsu_core::file_database::FileStore;
 use niketsu_core::playlist::{Playlist, *};
@@ -15,7 +15,7 @@ use tracing::trace;
 use self::message::*;
 use crate::TEXT_SIZE;
 use crate::message::Message;
-use crate::styling::PlaylistEntry;
+use crate::styling::{ModalContainer, PlaylistEntry};
 
 pub mod message;
 
@@ -32,6 +32,45 @@ const AUTOSCROLL_EDGE: f32 = 30.0;
 /// Maximum autoscroll speed in pixels per frame.
 const AUTOSCROLL_SPEED: f32 = 8.0;
 
+/// The actions modal opened by right-clicking a playlist entry.
+pub fn context_view(state: &PlaylistWidgetState) -> Element<'_, Message> {
+    let video = state
+        .context
+        .as_ref()
+        .map(|v| v.video.as_str())
+        .unwrap_or_default();
+    let play_button = button(
+        text("Play")
+            .width(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center),
+    )
+    .on_press(ContextPlay.into())
+    .width(Length::Fill);
+    let remove_button = button(
+        text("Remove")
+            .width(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center),
+    )
+    .on_press(ContextRemove.into())
+    .width(Length::Fill)
+    .style(iced::widget::button::danger);
+    let close_button = button("Close")
+        .on_press(CloseContext.into())
+        .style(iced::widget::button::secondary);
+    let top_row = row!(text(video).width(Length::Fill), close_button).spacing(5);
+    let base = Column::new()
+        .push(top_row)
+        .push(play_button)
+        .push(remove_button)
+        .spacing(5)
+        .padding(5)
+        .width(Length::Fixed(250.0));
+
+    let base: Element<'_, PlaylistWidgetMessage> =
+        Container::new(base).style(ModalContainer::theme).into();
+    base.map(Message::from)
+}
+
 pub struct PlaylistWidget<'a> {
     base: Element<'a, PlaylistWidgetMessage>,
     state: &'a PlaylistWidgetState,
@@ -39,8 +78,6 @@ pub struct PlaylistWidget<'a> {
 
 impl<'a> PlaylistWidget<'a> {
     pub fn new(state: &'a PlaylistWidgetState, playing: Option<Video>) -> Self {
-        // TODO Add context menu
-
         let mut file_btns = vec![];
         for f in state.playlist.iter() {
             let pressed = state.selected.as_ref().is_some_and(|f_i| f.eq(&f_i.video));
@@ -425,6 +462,13 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
                     inner_state.press_position = None;
                     self.released(None, dragged, inner_state, layout, shell)
                 }
+                iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right) => {
+                    if let Cursor::Available(cursor_position) = cursor
+                        && let Some(file) = self.file_at_position(layout, cursor_position)
+                    {
+                        shell.publish(OpenContext { video: file }.into());
+                    }
+                }
                 _ => {}
             },
             iced::Event::Touch(t) => match t {
@@ -530,6 +574,8 @@ pub struct PlaylistWidgetState {
     file_store: FileStore,
     selected: Option<VideoIndex>,
     interaction: FileInteraction,
+    /// The entry whose right-click actions modal is open.
+    context: Option<VideoIndex>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -577,6 +623,10 @@ impl PlaylistWidgetState {
 
     pub fn update_file_store(&mut self, store: FileStore) {
         self.file_store = store
+    }
+
+    pub fn context_active(&self) -> bool {
+        self.context.is_some()
     }
 }
 

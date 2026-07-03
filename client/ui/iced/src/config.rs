@@ -19,11 +19,21 @@ pub static PROJECT_DIRS: LazyLock<Option<ProjectDirs>> =
 pub struct IcedConfig {
     #[serde_as(as = "FromInto<ThemeWrapper>")]
     pub theme: Theme,
+    /// Ratio of the split between the chat pane and the side pane.
+    #[serde(default = "default_pane_ratio")]
+    pub pane_ratio: f32,
+}
+
+fn default_pane_ratio() -> f32 {
+    0.5
 }
 
 impl Default for IcedConfig {
     fn default() -> Self {
-        Self { theme: Theme::Dark }
+        Self {
+            theme: Theme::Dark,
+            pane_ratio: default_pane_ratio(),
+        }
     }
 }
 
