@@ -1,4 +1,3 @@
-use arcstr::ArcStr;
 use enum_dispatch::enum_dispatch;
 use iced::Task;
 use niketsu_core::ui::UiModel;
@@ -19,7 +18,6 @@ pub enum MainMessage {
     StartDbUpdate,
     ShareButton,
     RequestButton,
-    HandoverButton,
 }
 
 impl MessageHandler for MainMessage {
@@ -72,16 +70,5 @@ pub struct RequestButton;
 impl MainMessageTrait for RequestButton {
     fn handle(self, model: &UiModel) {
         model.video_file_request();
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct HandoverButton {
-    pub username: ArcStr,
-}
-
-impl MainMessageTrait for HandoverButton {
-    fn handle(self, model: &UiModel) {
-        model.host_handover(self.username);
     }
 }

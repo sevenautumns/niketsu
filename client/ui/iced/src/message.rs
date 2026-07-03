@@ -9,6 +9,7 @@ use super::widget::playlist::message::PlaylistWidgetMessage;
 use crate::view::ViewModel;
 use crate::widget::file_search::message::{FileSearchWidgetMessage, KeyInput};
 use crate::widget::settings::message::{Abort, SettingsWidgetMessage};
+use crate::widget::user_actions::message::{Close as CloseUserActions, UserActionsWidgetMessage};
 
 #[enum_dispatch]
 pub trait MessageHandler {
@@ -27,6 +28,7 @@ pub enum Message {
     ChatWidget(ChatWidgetMessage),
     DatabaseWidget(DatabaseWidgetMessage),
     FileSearchWidget(FileSearchWidgetMessage),
+    UserActionsWidget(UserActionsWidgetMessage),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -63,6 +65,12 @@ impl MessageHandler for KeyPress {
         if model.settings_widget_state.is_active() {
             if self.key == Named::Escape {
                 return SettingsWidgetMessage::from(Abort).handle(model);
+            }
+            return Task::none();
+        }
+        if model.user_actions_widget_state.is_active() {
+            if self.key == Named::Escape {
+                return UserActionsWidgetMessage::from(CloseUserActions).handle(model);
             }
             return Task::none();
         }

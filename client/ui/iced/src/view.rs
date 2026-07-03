@@ -25,6 +25,8 @@ use crate::message::{KeyPress, MessageHandler, ModelChanged};
 use crate::widget::file_search::message::{Close as CloseFileSearch, FileSearchWidgetMessage};
 use crate::widget::file_search::{self, FileSearchWidgetState};
 use crate::widget::settings::message::{Abort, SettingsWidgetMessage};
+use crate::widget::user_actions::message::{Close as CloseUserActions, UserActionsWidgetMessage};
+use crate::widget::user_actions::{self, UserActionsWidgetState};
 use crate::widget::{modal, settings};
 
 #[derive(Debug)]
@@ -36,6 +38,7 @@ pub struct ViewModel {
     pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
     pub file_search_widget_state: FileSearchWidgetState,
+    pub user_actions_widget_state: UserActionsWidgetState,
 }
 
 impl ViewModel {
@@ -52,6 +55,7 @@ impl ViewModel {
             chat_widget_state: Default::default(),
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
+            user_actions_widget_state: Default::default(),
         }
     }
 
@@ -69,6 +73,13 @@ impl ViewModel {
                 base,
                 file_search::view(&self.file_search_widget_state),
                 FileSearchWidgetMessage::from(CloseFileSearch).into(),
+            );
+        }
+        if self.user_actions_widget_state.is_active() {
+            return modal(
+                base,
+                user_actions::view(&self.user_actions_widget_state),
+                UserActionsWidgetMessage::from(CloseUserActions).into(),
             );
         }
         base

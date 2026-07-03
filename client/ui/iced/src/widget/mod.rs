@@ -9,6 +9,7 @@ pub mod file_search;
 pub mod playlist;
 pub mod rooms;
 pub mod settings;
+pub mod user_actions;
 
 const MODAL_PADDING: f32 = 20.0;
 

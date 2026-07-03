@@ -3,9 +3,9 @@ use iced::{Element, Length};
 use niketsu_core::room::UserList;
 use niketsu_core::user::UserStatus;
 
-use crate::main_window::message::{HandoverButton, MainMessage};
 use crate::message::Message;
 use crate::styling::FileButton;
+use crate::widget::user_actions::message::{Open, UserActionsWidgetMessage};
 
 pub fn view<'a>(
     state: &'a UsersWidgetState,
@@ -17,22 +17,15 @@ pub fn view<'a>(
         .iter()
         .map(|u| {
             let name = u.name.clone();
-            let mut row = row!(
-                Space::new().width(Length::Fixed(5.0)),
-                Button::new(Container::new(u.to_text(this_user)).padding(2))
-                    .padding(0)
-                    .width(Length::Fill)
-                    .style(FileButton::theme(false, true)),
-            );
+            let mut button = Button::new(Container::new(u.to_text(this_user)).padding(2))
+                .padding(0)
+                .width(Length::Fill)
+                .style(FileButton::theme(false, true));
             if is_host && u.name != this_user.name {
-                row = row.push(
-                    Button::new(Text::new("→H"))
-                        .padding(2)
-                        .on_press(MainMessage::from(HandoverButton { username: name }).into())
-                        .style(iced::widget::button::secondary),
-                );
+                button =
+                    button.on_press(UserActionsWidgetMessage::from(Open { user: name }).into());
             }
-            row.into()
+            row!(Space::new().width(Length::Fixed(5.0)), button).into()
         })
         .collect();
 
