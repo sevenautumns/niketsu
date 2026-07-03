@@ -6,7 +6,7 @@ use super::message::Message;
 use super::view::ViewModel;
 use super::widget::playlist::PlaylistWidget;
 use super::widget::{chat, database, file_search, rooms, settings};
-use crate::main_window::message::ShareButton;
+use crate::main_window::message::{RequestButton, ShareButton};
 use crate::styling::ContainerBorder;
 
 pub(super) mod message;
@@ -45,6 +45,13 @@ pub fn view(view_model: &ViewModel) -> Element<'_, Message> {
         .style(iced::widget::button::danger),
     }
     .on_press(MainMessage::from(ShareButton).into());
+
+    let request_btn = Button::new(
+        Text::new("Request")
+            .width(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center),
+    )
+    .on_press(MainMessage::from(RequestButton).into());
 
     Row::new()
         .push(
@@ -99,8 +106,9 @@ pub fn view(view_model: &ViewModel) -> Element<'_, Message> {
                 )
                 .push(
                     Row::new()
-                        .push(ready_btn.width(Length::FillPortion(2)))
+                        .push(ready_btn.width(Length::FillPortion(4)))
                         .push(share_btn.width(Length::FillPortion(1)))
+                        .push(request_btn.width(Length::FillPortion(1)))
                         .spacing(SPACING),
                 )
                 .width(Length::Fill)

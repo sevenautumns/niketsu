@@ -18,6 +18,7 @@ pub enum MainMessage {
     StopDbUpdate,
     StartDbUpdate,
     ShareButton,
+    RequestButton,
     HandoverButton,
 }
 
@@ -62,6 +63,15 @@ pub struct ShareButton;
 impl MainMessageTrait for ShareButton {
     fn handle(self, model: &UiModel) {
         model.video_share_toggle();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RequestButton;
+
+impl MainMessageTrait for RequestButton {
+    fn handle(self, model: &UiModel) {
+        model.video_file_request();
     }
 }
 
