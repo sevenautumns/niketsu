@@ -17,7 +17,7 @@ pub fn view<'a>(
         .iter()
         .map(|u| {
             let name = u.name.clone();
-            let mut button = Button::new(Container::new(u.to_text(this_user)).padding(2))
+            let mut button = Button::new(Container::new(u.to_text(this_user, is_host)).padding(2))
                 .padding(0)
                 .width(Length::Fill)
                 .style(FileButton::theme(false, true));
@@ -45,17 +45,22 @@ impl UsersWidgetState {
     pub fn replace_users(&mut self, users: UserList) {
         self.users = users;
     }
+
+    pub fn room_name(&self) -> &str {
+        self.users.get_room_name()
+    }
 }
 
 trait UserStatusExt {
-    fn to_text<'a>(&self, user: &UserStatus) -> Row<'a, Message>;
+    fn to_text<'a>(&self, user: &UserStatus, is_host: bool) -> Row<'a, Message>;
 }
 
 impl UserStatusExt for UserStatus {
-    fn to_text<'a>(&self, user: &UserStatus) -> Row<'a, Message> {
+    fn to_text<'a>(&self, user: &UserStatus, is_host: bool) -> Row<'a, Message> {
         let mut row = Row::new();
         if self.name.eq(&user.name) {
-            row = row.push(Text::new("(me) "));
+            let role = if is_host { "host" } else { "client" };
+            row = row.push(Text::new(format!("(me, {role}) ")));
         }
         let ready = match self.ready {
             true => Text::new("Ready").style(iced::widget::text::success),

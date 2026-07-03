@@ -73,11 +73,7 @@ pub fn view(view_model: &ViewModel) -> Element<'_, Message> {
                 .push(
                     Container::new(
                         Column::new()
-                            .push(if view_model.is_host() {
-                                Text::new("HOST").style(iced::widget::text::success)
-                            } else {
-                                Text::new("CLIENT").style(iced::widget::text::primary)
-                            })
+                            .push(Text::new(view_model.users_widget_state.room_name()))
                             .push(rooms::view(
                                 &view_model.users_widget_state,
                                 &view_model.user(),
