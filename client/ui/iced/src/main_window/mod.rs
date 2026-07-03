@@ -1,3 +1,4 @@
+use iced::widget::text::Wrapping;
 use iced::widget::{Button, Column, Container, Id, PaneGrid, Row, Scrollable, Text, pane_grid};
 use iced::{Element, Length};
 
@@ -53,45 +54,33 @@ fn chat_pane(view_model: &ViewModel) -> Element<'_, Message> {
         .into()
 }
 
+/// A bottom-row button label: centered, never wrapping to a second
+/// line, so the row keeps a single-line height at any pane width.
+fn button_label(label: &str) -> Text<'_> {
+    Text::new(label)
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Center)
+        .wrapping(Wrapping::None)
+}
+
 fn controls_pane(view_model: &ViewModel) -> Element<'_, Message> {
     let ready_btn = match view_model.user().ready {
-        true => Button::new(
-            Text::new("Ready")
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Center),
-        )
-        .style(iced::widget::button::success),
-        false => Button::new(
-            Text::new("Not Ready")
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Center),
-        )
-        .style(iced::widget::button::danger),
+        true => Button::new(button_label("Ready")).style(iced::widget::button::success),
+        false => Button::new(button_label("Not Ready")).style(iced::widget::button::danger),
     }
+    .clip(true)
     .on_press(MainMessage::from(ReadyButton).into());
 
     let share_btn = match view_model.is_sharing() {
-        true => Button::new(
-            Text::new("sharing")
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Center),
-        )
-        .style(iced::widget::button::success),
-        false => Button::new(
-            Text::new("Not sharing")
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Center),
-        )
-        .style(iced::widget::button::danger),
+        true => Button::new(button_label("sharing")).style(iced::widget::button::success),
+        false => Button::new(button_label("Not sharing")).style(iced::widget::button::danger),
     }
+    .clip(true)
     .on_press(MainMessage::from(ShareButton).into());
 
-    let request_btn = Button::new(
-        Text::new("Request")
-            .width(Length::Fill)
-            .align_x(iced::alignment::Horizontal::Center),
-    )
-    .on_press(MainMessage::from(RequestButton).into());
+    let request_btn = Button::new(button_label("Request"))
+        .clip(true)
+        .on_press(MainMessage::from(RequestButton).into());
 
     Column::new()
         .push(database::view(&view_model.database_widget_state))

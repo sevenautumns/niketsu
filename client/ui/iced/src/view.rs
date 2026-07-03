@@ -72,35 +72,31 @@ impl ViewModel {
 
     pub fn view(&self) -> Element<'_, Message> {
         let base = main_window::view(self);
-        if self.settings_widget_state.is_active() {
-            return modal(
-                base,
-                settings::view(&self.settings_widget_state),
-                SettingsWidgetMessage::from(Abort).into(),
-            );
-        }
-        if self.file_search_widget_state.is_active() {
-            return modal(
-                base,
-                file_search::view(&self.file_search_widget_state),
-                FileSearchWidgetMessage::from(CloseFileSearch).into(),
-            );
-        }
-        if self.user_actions_widget_state.is_active() {
-            return modal(
-                base,
-                user_actions::view(&self.user_actions_widget_state),
-                UserActionsWidgetMessage::from(CloseUserActions).into(),
-            );
-        }
-        if self.playlist_widget_state.context_active() {
-            return modal(
-                base,
-                playlist::context_view(&self.playlist_widget_state),
-                PlaylistWidgetMessage::from(CloseContext).into(),
-            );
-        }
-        base
+        let overlay: Option<(Element<'_, Message>, Message)> =
+            if self.settings_widget_state.is_active() {
+                Some((
+                    settings::view(&self.settings_widget_state),
+                    SettingsWidgetMessage::from(Abort).into(),
+                ))
+            } else if self.file_search_widget_state.is_active() {
+                Some((
+                    file_search::view(&self.file_search_widget_state),
+                    FileSearchWidgetMessage::from(CloseFileSearch).into(),
+                ))
+            } else if self.user_actions_widget_state.is_active() {
+                Some((
+                    user_actions::view(&self.user_actions_widget_state),
+                    UserActionsWidgetMessage::from(CloseUserActions).into(),
+                ))
+            } else if self.playlist_widget_state.context_active() {
+                Some((
+                    playlist::context_view(&self.playlist_widget_state),
+                    PlaylistWidgetMessage::from(CloseContext).into(),
+                ))
+            } else {
+                None
+            };
+        modal(base, overlay)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {

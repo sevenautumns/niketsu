@@ -1,10 +1,9 @@
-use iced::widget::{Button, Column, Container, Id, Row, Scrollable, Space, Text, row};
+use iced::widget::{Column, Container, Id, Row, Scrollable, Space, Text, mouse_area, row};
 use iced::{Element, Length};
 use niketsu_core::room::UserList;
 use niketsu_core::user::UserStatus;
 
 use crate::message::Message;
-use crate::styling::FileButton;
 use crate::widget::user_actions::message::{Open, UserActionsWidgetMessage};
 
 pub fn view<'a>(
@@ -19,18 +18,19 @@ pub fn view<'a>(
             let name = u.name.clone();
             let mut label = u.to_text(this_user, is_host);
             let actionable = is_host && u.name != this_user.name;
-            let content: Element<'_, Message> = if actionable {
+            if actionable {
                 label = label
                     .push(Space::new().width(Length::Fill))
                     .push(Text::new("⋯"));
-                Button::new(Container::new(label).padding(2))
-                    .padding(0)
-                    .width(Length::Fill)
-                    .style(FileButton::theme(false, true))
-                    .on_press(UserActionsWidgetMessage::from(Open { user: name }).into())
+            }
+            let content = Container::new(label).padding(2).width(Length::Fill);
+            let content: Element<'_, Message> = if actionable {
+                mouse_area(content)
+                    .on_right_press(UserActionsWidgetMessage::from(Open { user: name }).into())
+                    .interaction(iced::mouse::Interaction::Pointer)
                     .into()
             } else {
-                Container::new(label).padding(2).width(Length::Fill).into()
+                content.into()
             };
             row!(Space::new().width(Length::Fixed(5.0)), content).into()
         })
