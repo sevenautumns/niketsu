@@ -29,6 +29,8 @@ use crate::messages::NiketsuMessage;
 mod auth;
 mod connecting;
 mod direct_only;
+#[cfg(test)]
+mod direct_only_swarm_tests;
 mod host_relay;
 
 mod client;
