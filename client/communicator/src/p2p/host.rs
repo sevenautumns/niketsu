@@ -200,9 +200,14 @@ impl HostCommunicationHandler {
                 for (peer, addrs) in peer_map {
                     for addr in addrs {
                         debug!(?peer, ?addr, "Handling node and peer");
-                        // put into map until relay connection established
-                        // make sure not to overload dialing all multiaddr
                         self.mdns_users.insert(peer, addr);
+                        // If the peer has not joined the room yet, the dial
+                        // happens later from on_room_auth with whatever is in
+                        // mdns_users — so the map must keep the preferred
+                        // address, not the last candidate tried.
+                        if !self.room.is_connected_user(peer) {
+                            break;
+                        }
                         if self.dial_on_new_connection(peer).is_ok() {
                             // The resulting direct connection sends the initial
                             // room state via on_connection_established.
