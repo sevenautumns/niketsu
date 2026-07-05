@@ -1,6 +1,6 @@
 #![allow(non_upper_case_globals)]
 
-use std::ffi::{CStr, CString, c_char, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Poll, Waker};
@@ -8,7 +8,7 @@ use std::task::{Poll, Waker};
 use arc_swap::ArcSwapOption;
 use enum_dispatch::enum_dispatch;
 use niketsu_core::player::*;
-use tracing::trace;
+use tracing::{trace, warn};
 
 use super::bindings::mpv_event;
 use super::{Mpv, MpvHandle, MpvProperty};
@@ -37,6 +37,7 @@ pub enum MpvEvent {
     MpvFileLoaded,
     MpvSeek,
     MpvEndFile,
+    MpvEndFileError,
     Unparsed,
 }
 
@@ -116,7 +117,16 @@ impl MpvEventTrait for MpvFileLoaded {
     fn process(self, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
         // TODO // a race condition is thinkable where an old file is loaded,
         // TODO // when a new file was already added
+        let was_loaded = matches!(mpv.status.file_load_status, FileLoadStatus::Loaded);
         mpv.status.file_load_status = FileLoadStatus::Loaded;
+        // The first PLAYBACK_RESTART marks the end of the load; clear the flag
+        // set by replace_video in case its MPV_EVENT_SEEK never arrived (e.g.
+        // start=0), otherwise set_position would ignore all future seeks.
+        // Only on the load transition: after ordinary seeks the flag belongs
+        // to MpvSeek, clearing it here could swallow a concurrent seek echo.
+        if !was_loaded {
+            mpv.status.seeking = false;
+        }
         if mpv.status.paused {
             mpv.pause();
         } else {
@@ -155,6 +165,30 @@ impl MpvEventTrait for MpvEndFile {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct MpvEndFileError {
+    error: c_int,
+}
+
+impl MpvEventTrait for MpvEndFileError {
+    fn process(self, mpv: &mut Mpv) -> Option<MediaPlayerEvent> {
+        // mpv reports EOF vs ERROR nondeterministically for remote/interrupted
+        // streams, so an error on an already-loaded file is really the end of
+        // the file: treat it like EOF instead of leaving the player "playing".
+        if matches!(mpv.status.file_load_status, FileLoadStatus::Loaded) {
+            return MpvEndFile.process(mpv);
+        }
+
+        // genuine load failure: keep the retry path
+        let error = mpv_error::try_from(self.error)
+            .map_or_else(|_| self.error.to_string(), |e| e.to_string());
+        warn!(%error, file = ?mpv.status.file, "mpv failed to play file");
+        mpv.status.file_load_status = FileLoadStatus::NotLoaded;
+        mpv.status.seeking = false;
+        None
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Unparsed;
 
 impl MpvEventTrait for Unparsed {
@@ -172,10 +206,13 @@ impl From<mpv_event> for MpvEvent {
             mpv_event_id::MPV_EVENT_SEEK => Self::MpvSeek(MpvSeek),
             mpv_event_id::MPV_EVENT_END_FILE => unsafe {
                 let prop = *(event.data as *mut mpv_event_end_file);
-                if matches!(prop.reason, mpv_end_file_reason::MPV_END_FILE_REASON_EOF) {
-                    return Self::MpvEndFile(MpvEndFile);
+                match prop.reason {
+                    mpv_end_file_reason::MPV_END_FILE_REASON_EOF => Self::MpvEndFile(MpvEndFile),
+                    mpv_end_file_reason::MPV_END_FILE_REASON_ERROR => {
+                        Self::MpvEndFileError(MpvEndFileError { error: prop.error })
+                    }
+                    _ => Self::Unparsed(Unparsed),
                 }
-                Self::Unparsed(Unparsed)
             },
             mpv_event_id::MPV_EVENT_PROPERTY_CHANGE => {
                 let name;
@@ -206,13 +243,14 @@ impl From<mpv_event> for MpvEvent {
 #[derive(Debug, Clone)]
 pub enum PropertyValue {
     Double(f64),
-    Flag(i64),
+    // MPV_FORMAT_FLAG is a C int on the mpv side
+    Flag(c_int),
     String(CString),
 }
 
 impl From<bool> for PropertyValue {
     fn from(value: bool) -> Self {
-        PropertyValue::Flag(value as u8 as i64)
+        PropertyValue::Flag(value as c_int)
     }
 }
 
@@ -229,11 +267,17 @@ impl From<f64> for PropertyValue {
 }
 
 impl PropertyValue {
-    pub fn as_mut_ptr(&self) -> *mut c_void {
+    /// Calls `f` with a pointer matching `self.format()` for `mpv_set_property`.
+    /// For MPV_FORMAT_STRING mpv expects a `char**`, so the pointer has to
+    /// reference a temporary — hence the callback shape.
+    pub fn with_ptr<T>(&self, f: impl FnOnce(*mut c_void) -> T) -> T {
         match self {
-            PropertyValue::Double(double) => double as *const f64 as *mut c_void,
-            PropertyValue::Flag(flag) => flag as *const i64 as *mut c_void,
-            PropertyValue::String(string) => string as *const CString as *mut c_void,
+            PropertyValue::Double(double) => f(double as *const f64 as *mut c_void),
+            PropertyValue::Flag(flag) => f(flag as *const c_int as *mut c_void),
+            PropertyValue::String(string) => {
+                let mut ptr = string.as_ptr();
+                f(&mut ptr as *mut *const c_char as *mut c_void)
+            }
         }
     }
 
@@ -248,7 +292,7 @@ impl PropertyValue {
                 Some(PropertyValue::String(string))
             }
             mpv_format::MPV_FORMAT_FLAG => {
-                Some(PropertyValue::Flag(unsafe { *(data as *mut i64) }))
+                Some(PropertyValue::Flag(unsafe { *(data as *const c_int) }))
             }
             mpv_format::MPV_FORMAT_DOUBLE => {
                 Some(PropertyValue::Double(unsafe { *(data as *mut f64) }))

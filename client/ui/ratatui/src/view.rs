@@ -430,6 +430,10 @@ impl RatatuiView {
             self.app.users_widget_state.set_user_list(users);
         });
 
+        self.model.is_host.on_change(|is_host| {
+            self.app.users_widget_state.set_is_host(is_host);
+        });
+
         self.model.user.on_change(|user| {
             self.app.users_widget_state.set_user(user.clone());
             self.app.chat_widget_state.set_user(user);

@@ -11,7 +11,6 @@ use super::playlist::Video;
 use super::{CoreModel, EventHandler};
 use crate::FilePathSearch;
 use crate::file_database::FileStore;
-use crate::playlist::file::PlaylistBrowser;
 
 pub mod wrapper;
 
@@ -130,6 +129,10 @@ impl EventHandler for PlayerPositionChange {
         let Some(video) = model.player.playing_video() else {
             return;
         };
+        // keep the seeker's own marker in sync with what SeekMsg receivers
+        // derive from this message, or the room's markers diverge
+        model.playlist.select_playing(&video);
+        model.save_playlist();
         let actor = model.config.username.clone();
         let position = self.pos;
 
@@ -159,6 +162,9 @@ impl EventHandler for PlayerSpeedChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("player speed change");
         let speed = self.speed;
+        // adopt the new speed as our own reference too, or the next host
+        // heartbeat reconciles us right back to the old one
+        model.player.sync_host_speed(speed);
         let actor = model.config.username.clone();
         model
             .communicator
@@ -184,19 +190,8 @@ impl EventHandler for PlayerFileEnd {
             return;
         }
 
-        // TODO refactor
-        let mut video = None;
-        if let Some(next) = model.playlist.advance_to_next() {
-            video = Some(next.clone());
-            model
-                .player
-                .load_video(next.clone(), Duration::ZERO, model.database.all_files());
-            model.ui.video_change(Some(next));
-        } else {
-            model.player.unload_video();
-            model.ui.video_change(None);
-        }
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
+        let video = model.playlist.advance_to_next();
+        model.select_video(video.as_ref(), Duration::ZERO);
         let actor = model.config.username.clone();
         let position = model.player.get_position().unwrap_or_default();
         model.communicator.send(

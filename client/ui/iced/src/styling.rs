@@ -1,4 +1,3 @@
-use iced::widget::rule::FillMode;
 use iced::{Border, Color, Shadow, Theme};
 use niketsu_core::ui::MessageLevel;
 
@@ -13,6 +12,23 @@ impl ContainerBorder {
                 radius: 5.0.into(),
             },
             ..Default::default()
+        }
+    }
+}
+
+pub struct ModalContainer;
+
+impl ModalContainer {
+    pub fn theme(theme: &Theme) -> iced::widget::container::Style {
+        iced::widget::container::Style {
+            background: Some(
+                Color {
+                    a: 0.99,
+                    ..theme.palette().background
+                }
+                .into(),
+            ),
+            ..ContainerBorder::theme(theme)
         }
     }
 }
@@ -44,15 +60,28 @@ impl FileButton {
     }
 }
 
-pub struct FileRuleTheme;
+pub struct PlaylistEntry;
 
-impl FileRuleTheme {
-    pub fn theme(theme: &Theme) -> iced::widget::rule::Style {
-        iced::widget::rule::Style {
-            color: theme.palette().text,
-            radius: 0.0.into(),
-            fill_mode: FillMode::Full,
-            snap: false,
+impl PlaylistEntry {
+    pub fn theme(
+        pressed: bool,
+        available: bool,
+        playing: bool,
+    ) -> impl Fn(&Theme, iced::widget::button::Status) -> iced::widget::button::Style {
+        move |theme, status| {
+            // Being dragged or missing from the database takes precedence
+            // over the playing highlight.
+            if playing && !pressed && available {
+                let success = theme.extended_palette().success;
+                return iced::widget::button::Style {
+                    shadow: Shadow::default(),
+                    border: Border::default(),
+                    background: Some(success.weak.color.into()),
+                    text_color: success.weak.text,
+                    snap: false,
+                };
+            }
+            FileButton::theme(pressed, available)(theme, status)
         }
     }
 }

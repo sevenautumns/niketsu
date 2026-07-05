@@ -44,7 +44,7 @@ impl EventHandler for ChunkRequest {
                 uuid: uuid::Uuid::new_v4(),
                 actor: Some(model.config.username.clone()),
                 video: self.file_name.as_str().into(),
-                range: RangeInclusive::new(self.start, self.start + self.length),
+                range: RangeInclusive::new(self.start, self.start + self.length - 1),
             }))
     }
 }

@@ -1,8 +1,8 @@
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::{CStr, CString, c_int, c_void};
 use std::mem::MaybeUninit;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
 use niketsu_core::file_database::{FilePathSearch, FileStore};
@@ -153,6 +153,9 @@ impl Drop for Mpv {
 impl Mpv {
     pub fn new() -> Result<Self> {
         let ctx = unsafe { mpv_create() };
+        if ctx.is_null() {
+            bail!("mpv_create() failed");
+        }
         let handle = MpvHandle(ctx);
         let event_pipe = MpvEventPipe::new(handle);
         let status = MpvStatus::default();
@@ -246,15 +249,10 @@ impl Mpv {
 
     fn set_property(&self, prop: MpvProperty, value: PropertyValue) -> Result<()> {
         let prop: CString = prop.try_into()?;
-        unsafe {
-            let ret = mpv_set_property(
-                self.handle.0,
-                prop.as_ptr(),
-                value.format(),
-                value.as_mut_ptr(),
-            );
-            mpv_error::try_from(ret)?.ok()
-        }
+        let ret = value.with_ptr(|ptr| unsafe {
+            mpv_set_property(self.handle.0, prop.as_ptr(), value.format(), ptr)
+        });
+        mpv_error::try_from(ret)?.ok()
     }
 
     fn observe_property(&self, prop: MpvProperty) -> Result<()> {
@@ -281,7 +279,8 @@ impl Mpv {
 
     fn get_property_flag(&self, prop: MpvProperty) -> Result<bool> {
         let prop: CString = prop.try_into()?;
-        let mut data: MaybeUninit<bool> = MaybeUninit::uninit();
+        // MPV_FORMAT_FLAG writes a C int, not a single byte
+        let mut data: MaybeUninit<c_int> = MaybeUninit::uninit();
         unsafe {
             let ret = mpv_get_property(
                 self.handle.0,
@@ -290,7 +289,7 @@ impl Mpv {
                 data.as_mut_ptr() as *mut c_void,
             );
             mpv_error::try_from(ret)?.ok()?;
-            Ok(data.assume_init())
+            Ok(data.assume_init() != 0)
         }
     }
 
@@ -437,8 +436,12 @@ impl MediaPlayerTrait for Mpv {
     fn unload_video(&mut self) {
         self.status.file_load_status = FileLoadStatus::NotLoaded;
 
-        let cmd: CString = MpvCommand::Loadfile.into();
-        let res = self.send_command(&[&cmd, c"null://", c"replace"]);
+        // `stop` ends with END_FILE reason STOP, which is ignored; loading a
+        // dummy like null:// instead would end with EOF/ERROR and trigger a
+        // spurious PlayerFileEnd or error log (idle + force-window keep the
+        // window open)
+        let cmd: CString = MpvCommand::Stop.into();
+        let res = self.send_command(&[&cmd]);
         log_err!(res)
     }
 

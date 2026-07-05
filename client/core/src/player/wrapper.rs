@@ -67,6 +67,12 @@ impl MediaPlayerWrapper {
         }
     }
 
+    /// The local player already runs at `speed` (the change originated
+    /// there); only the reference speed needs to follow.
+    pub fn sync_host_speed(&mut self, speed: f64) {
+        self.host_speed = speed;
+    }
+
     fn continuous_speed_change(&mut self, client_pos: Duration, host_pos: Duration) {
         let diff = host_pos.saturating_sub(client_pos);
         let min_diff = diff.saturating_sub(MINIMUM_DELAY).as_secs_f64();
@@ -96,7 +102,9 @@ impl MediaPlayerTrait for MediaPlayerWrapper {
     }
 
     fn set_speed(&mut self, speed: f64) {
-        let diff = self.host_speed - self.player.get_speed();
+        // carry the ketchup offset (how much faster/slower than the host we
+        // are playing) over to the new host speed
+        let diff = self.player.get_speed() - self.host_speed;
         self.host_speed = speed;
         self.player.set_speed(speed + diff)
     }

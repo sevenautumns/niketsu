@@ -2,14 +2,17 @@ use std::io::{ErrorKind, SeekFrom};
 
 use arcstr::ArcStr;
 use async_trait::async_trait;
+use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender};
 use tracing::{trace, warn};
-const CHUNK_SIZE: usize = 512_000;
 
+use crate::ui::{MessageLevel, MessageSource, PlayerMessageInner};
 use crate::{CoreModel, EventHandler, FileEntry, VideoShareMsg};
+
+const CHUNK_SIZE: usize = 512_000;
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -28,6 +31,7 @@ pub trait VideoProviderTrait: std::fmt::Debug + Send {
 pub enum VideoProviderEvent {
     ChunkResponse,
     FileReady,
+    SharingStopped,
 }
 
 #[derive(Clone)]
@@ -85,6 +89,27 @@ impl EventHandler for FileReady {
     }
 }
 
+/// Emitted when the file server task stopped on its own, e.g. because the
+/// shared file disappeared or became unreadable.
+#[derive(Debug, Clone)]
+pub struct SharingStopped;
+
+impl EventHandler for SharingStopped {
+    fn handle(self, model: &mut CoreModel) {
+        trace!("video provider stopped sharing");
+        model.stop_sharing();
+        model.ui.player_message(
+            PlayerMessageInner {
+                message: "Stopped sharing: failed to read the shared file".into(),
+                source: MessageSource::Internal,
+                level: MessageLevel::Error,
+                timestamp: Local::now(),
+            }
+            .into(),
+        );
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct VideoProvider {
     file_handle: Option<FileHandle>,
@@ -128,7 +153,13 @@ impl VideoProviderTrait for VideoProvider {
         let Some(handle) = self.file_handle.as_mut() else {
             std::future::pending().await
         };
-        handle.event().await
+        match handle.event().await {
+            Some(event) => event,
+            None => {
+                self.file_handle = None;
+                SharingStopped.into()
+            }
+        }
     }
 }
 
@@ -153,14 +184,29 @@ impl FileServer {
         let (file_tx, file_rx) = tokio::sync::mpsc::channel(1);
         let file_name = file.file_name_arc();
 
+        // On any I/O error the task returns, which closes both channels and
+        // surfaces as a `SharingStopped` event in `VideoProvider::event`.
         tokio::spawn(async move {
-            let file = tokio::fs::File::open(file.path()).await.unwrap();
-            let file_size = file.metadata().await.unwrap().len();
-            file_tx.send(file_size).await.unwrap();
+            let path = file.path().to_path_buf();
+            let file = match File::open(&path).await {
+                Ok(file) => file,
+                Err(error) => return warn!(%error, ?path, "failed to open shared file"),
+            };
+            let file_size = match file.metadata().await {
+                Ok(metadata) => metadata.len(),
+                Err(error) => return warn!(%error, ?path, "failed to read shared file metadata"),
+            };
+            if file_tx.send(file_size).await.is_err() {
+                return;
+            }
             let mut reader = BufReader::new(file);
             while let Some(req) = req_rx.recv().await {
-                let resp = Self::handle_request(req, &mut reader).await;
-                resp_tx.send(resp).ok();
+                match Self::handle_request(req, &mut reader).await {
+                    Ok(resp) => {
+                        resp_tx.send(resp).ok();
+                    }
+                    Err(error) => return warn!(%error, ?path, "failed to read shared file"),
+                }
             }
         });
         FileHandle {
@@ -172,23 +218,27 @@ impl FileServer {
         }
     }
 
-    async fn handle_request(request: Request, reader: &mut BufReader<File>) -> Response {
+    async fn handle_request(
+        request: Request,
+        reader: &mut BufReader<File>,
+    ) -> std::io::Result<Response> {
         let len = CHUNK_SIZE.min(request.len as usize);
         let mut bytes = vec![0; len];
-        reader.seek(SeekFrom::Start(request.start)).await.unwrap();
+        reader.seek(SeekFrom::Start(request.start)).await?;
         let read = reader.read_exact(&mut bytes).await;
         match read {
             Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
-                reader.seek(SeekFrom::Start(request.start)).await.unwrap();
-                let len = reader.read_to_end(&mut bytes).await.unwrap();
-                bytes.truncate(len);
+                // request reaches past EOF: return what the file still has
+                bytes.clear();
+                reader.seek(SeekFrom::Start(request.start)).await?;
+                reader.read_to_end(&mut bytes).await?;
             }
-            err @ Err(_) => err.map(|_| ()).unwrap(),
+            Err(e) => return Err(e),
             Ok(_) => {}
         }
         let start = request.start;
         let uuid = request.uuid;
-        Response { uuid, start, bytes }
+        Ok(Response { uuid, start, bytes })
     }
 }
 
@@ -202,24 +252,26 @@ struct FileHandle {
 }
 
 impl FileHandle {
-    async fn event(&mut self) -> VideoProviderEvent {
+    /// `None` means the file server task died (e.g. the file disappeared or
+    /// became unreadable) and sharing has to stop.
+    async fn event(&mut self) -> Option<VideoProviderEvent> {
         tokio::select! {
-            Some(size) = self.file_rx.recv() => {
+            size = self.file_rx.recv() => {
+                let size = size?;
                 self.size = Some(size);
-                FileReady {
+                Some(FileReady {
                     file_name: self.file_name.clone(),
                     size,
-                }.into()
+                }.into())
             }
-            // TODO what to do if we receive `None` here
-            // TODO this can only happen if the FileServer died
-            Some(Response { uuid, start, bytes }) = self.resp_rx.recv() => {
-                ChunkResponse {
+            resp = self.resp_rx.recv() => {
+                let Response { uuid, start, bytes } = resp?;
+                Some(ChunkResponse {
                     uuid,
                     file_name: self.file_name.clone(),
                     start,
                     bytes,
-                }.into()
+                }.into())
             }
         }
     }
@@ -228,5 +280,47 @@ impl FileHandle {
         if let Err(err) = self.req_tx.send(request) {
             warn!(?err, "failed to send request")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_chunk_request_past_eof_returns_file_tail() {
+        let path = std::env::temp_dir().join(format!("niketsu-eof-test-{}", uuid::Uuid::new_v4()));
+        let content: Vec<u8> = (0..1000u32).flat_map(u32::to_le_bytes).collect();
+        tokio::fs::write(&path, &content).await.unwrap();
+
+        let file = File::open(&path).await.unwrap();
+        let mut reader = BufReader::new(file);
+        let request = Request {
+            uuid: uuid::Uuid::new_v4(),
+            start: 3000,
+            len: 2000,
+        };
+        let response = FileServer::handle_request(request, &mut reader)
+            .await
+            .unwrap();
+        tokio::fs::remove_file(&path).await.ok();
+
+        assert_eq!(response.start, 3000);
+        assert_eq!(response.bytes, content[3000..]);
+    }
+
+    #[tokio::test]
+    async fn test_missing_file_stops_sharing() {
+        let mut provider = VideoProvider::default();
+        provider.start_providing(FileEntry::new(
+            "missing.mkv".into(),
+            "/nonexistent/missing.mkv".into(),
+            None,
+        ));
+        assert!(provider.sharing());
+
+        let event = provider.event().await;
+        assert!(matches!(event, VideoProviderEvent::SharingStopped(_)));
+        assert!(!provider.sharing());
     }
 }

@@ -16,7 +16,6 @@ use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
 use super::{CoreModel, EventHandler};
 use crate::player::MediaPlayerTrait;
 use crate::playlist::Playlist;
-use crate::playlist::file::PlaylistBrowser;
 use crate::room::{RoomName, UserList};
 use crate::user::UserStatus;
 
@@ -52,6 +51,7 @@ pub enum OutgoingMessage {
     ChunkRequest(ChunkRequestMsg),
     ChunkResponse(ChunkResponseMsg),
     VideoShareChange(VideoShareMsg),
+    HostHandover(HostHandoverMsg),
 }
 
 #[enum_dispatch(EventHandler)]
@@ -75,10 +75,13 @@ pub enum IncomingMessage {
     ChunkRequest(ChunkRequestMsg),
     ChunkResponse(ChunkResponseMsg),
     VideoProviderStopped(VideoProviderStoppedMsg),
+    HostHandover(HostHandoverMsg),
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-pub struct ConnectedMsg;
+pub struct ConnectedMsg {
+    pub is_host: bool,
+}
 
 impl From<ConnectedMsg> for PlayerMessage {
     fn from(_: ConnectedMsg) -> Self {
@@ -98,6 +101,7 @@ impl EventHandler for ConnectedMsg {
         model
             .communicator
             .send(OutgoingMessage::from(model.config.status(model.ready)));
+        model.ui.is_host(self.is_host);
         model.ui.player_message(PlayerMessage::from(self));
     }
 }
@@ -140,7 +144,7 @@ pub struct VideoStatusMsg {
 impl PartialEq for VideoStatusMsg {
     fn eq(&self, other: &Self) -> bool {
         let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(self.speed);
+        let speed_other = OrderedFloat(other.speed);
         speed_self.eq(&speed_other)
             && self.video.eq(&other.video)
             && self.position.eq(&other.position)
@@ -158,6 +162,16 @@ impl EventHandler for VideoStatusMsg {
             model.player.unload_video();
             return;
         };
+
+        // The host is only a valid play/position reference once it has the file
+        // loaded. While it is still loading it reports a stale paused=false and
+        // a frozen position from the previous video — following either would
+        // start our (possibly faster-loaded) copy and then yank it back every
+        // heartbeat. Hold paused and wait until the host is actually playing.
+        if !self.file_loaded {
+            model.player.pause();
+            return;
+        }
 
         //TODO check if current video is not the same as host?
         if let Some(paused) = model.player.is_paused() {
@@ -268,7 +282,7 @@ pub struct PlaybackSpeedMsg {
 impl PartialEq for PlaybackSpeedMsg {
     fn eq(&self, other: &Self) -> bool {
         let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(self.speed);
+        let speed_other = OrderedFloat(other.speed);
         speed_self.eq(&speed_other) && self.actor.eq(&other.actor)
     }
 }
@@ -331,7 +345,7 @@ impl EventHandler for SeekMsg {
         trace!(seek = ?self, "received");
         let playlist_video = Video::from(self.video.as_str());
         model.playlist.select_playing(&playlist_video);
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
+        model.save_playlist();
         if model
             .player
             .playing_video()
@@ -386,36 +400,7 @@ impl From<SelectMsg> for PlayerMessage {
 impl EventHandler for SelectMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(select = ?self, "received");
-        let mut sharing = false;
-        if let Some(video) = &self.video {
-            model.playlist.select_playing(video);
-            let store = model.database.all_files();
-            model.player.load_video(video.clone(), self.position, store);
-
-            if model.config.auto_share
-                && model.video_provider.sharing()
-                && let Some(file) = model.database.find_file(video.as_str())
-            {
-                model.video_provider.start_providing(file);
-                let msg = VideoShareMsg::new(video.clone());
-                model.communicator.send(msg.into());
-                model.ui.video_share(true);
-                sharing = true;
-            }
-        } else {
-            model.playlist.unload_playing();
-            model.player.unload_video();
-        }
-
-        if !sharing {
-            let msg = VideoShareMsg { video: None };
-            model.communicator.send(msg.into());
-            model.video_provider.stop_providing();
-            model.ui.video_share(false);
-        }
-
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
-        model.ui.video_change(self.video.clone());
+        model.select_video(self.video.as_ref(), self.position);
         model.ui.player_message(PlayerMessage::from(self));
     }
 }
@@ -510,8 +495,7 @@ impl From<PlaylistMsg> for PlayerMessage {
 impl EventHandler for PlaylistMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received playlist");
-        model.playlist.replace(self.playlist.clone());
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
+        model.replace_playlist(self.playlist.clone());
         model.ui.playlist(self.playlist.clone());
         model.ui.player_message(PlayerMessage::from(self))
     }
@@ -733,7 +717,12 @@ impl EventHandler for FileResponseMsg {
                 let video = ArcStr::from(video.as_str());
                 model.video_server.start_server(video, self.size);
             }
-            None => debug!("file response contains no video"),
+            None => {
+                debug!("file response contains no video");
+                // a server still up from an earlier stream would keep
+                // serving a file nobody will ever send chunks for
+                model.video_server.stop_server();
+            }
         }
     }
 }
@@ -753,6 +742,39 @@ impl VideoShareMsg {
 impl From<VideoShareMsg> for OutgoingMessage {
     fn from(value: VideoShareMsg) -> Self {
         Self::VideoShareChange(value)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostHandoverMsg {
+    pub new_host: ArcStr,
+}
+
+impl EventHandler for HostHandoverMsg {
+    fn handle(self, model: &mut CoreModel) {
+        model.ui.player_message(
+            PlayerMessageInner {
+                message: format!("{} is now the host", self.new_host),
+                source: MessageSource::Internal,
+                level: MessageLevel::Success,
+                timestamp: Local::now(),
+            }
+            .into(),
+        );
+        if self.new_host == model.config.username {
+            model.communicator.connect(EndpointInfo {
+                addr: model.config.addr(),
+                room: model.config.room.clone(),
+                password: model.config.password.clone(),
+            });
+        }
+    }
+}
+
+impl From<HostHandoverMsg> for OutgoingMessage {
+    fn from(value: HostHandoverMsg) -> Self {
+        Self::HostHandover(value)
     }
 }
 

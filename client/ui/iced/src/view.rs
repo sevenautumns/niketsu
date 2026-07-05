@@ -4,24 +4,33 @@ use std::sync::Arc;
 
 use futures::Future;
 use iced::advanced::subscription::Recipe;
-use iced::{Element, Subscription, Task, Theme};
+use iced::keyboard::Key;
+use iced::keyboard::key::Named;
+use iced::widget::pane_grid;
+use iced::{Element, Event, Subscription, Task, Theme, event, window};
 use niketsu_core::config::Config;
 use niketsu_core::playlist::Video;
 use niketsu_core::ui::{UiModel, UserInterface};
 use niketsu_core::user::UserStatus;
 use tokio::sync::Notify;
 
-use super::PreExistingTokioRuntime;
-use super::main_window::MainView;
 use super::message::Message;
 use super::widget::chat::ChatWidgetState;
 use super::widget::database::DatabaseWidgetState;
-use super::widget::playlist::PlaylistWidgetState;
+use super::widget::playlist::{self, PlaylistWidgetState};
 use super::widget::rooms::UsersWidgetState;
 use super::widget::settings::SettingsWidgetState;
+use super::{PreExistingTokioRuntime, main_window};
 use crate::config::IcedConfig;
-use crate::message::{MessageHandler, ModelChanged};
-use crate::widget::file_search::FileSearchWidgetState;
+use crate::main_window::PaneKind;
+use crate::message::{KeyPress, MessageHandler, ModelChanged};
+use crate::widget::file_search::message::{Close as CloseFileSearch, FileSearchWidgetMessage};
+use crate::widget::file_search::{self, FileSearchWidgetState};
+use crate::widget::playlist::message::{CloseContext, PlaylistWidgetMessage};
+use crate::widget::settings::message::{Abort, SettingsWidgetMessage};
+use crate::widget::user_actions::message::{Close as CloseUserActions, UserActionsWidgetMessage};
+use crate::widget::user_actions::{self, UserActionsWidgetState};
+use crate::widget::{modal, settings};
 
 #[derive(Debug)]
 pub struct ViewModel {
@@ -29,13 +38,21 @@ pub struct ViewModel {
     pub settings_widget_state: SettingsWidgetState,
     pub users_widget_state: UsersWidgetState,
     pub playlist_widget_state: PlaylistWidgetState,
-    pub chat_widget_statet: ChatWidgetState,
+    pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
     pub file_search_widget_state: FileSearchWidgetState,
+    pub user_actions_widget_state: UserActionsWidgetState,
+    pub panes: pane_grid::State<PaneKind>,
 }
 
 impl ViewModel {
     pub fn new(flags: Flags) -> Self {
+        let panes = pane_grid::State::with_configuration(pane_grid::Configuration::Split {
+            axis: pane_grid::Axis::Vertical,
+            ratio: flags.iced_config.pane_ratio,
+            a: Box::new(pane_grid::Configuration::Pane(PaneKind::Chat)),
+            b: Box::new(pane_grid::Configuration::Pane(PaneKind::Controls)),
+        });
         let mut settings = SettingsWidgetState::new(flags.config.clone(), flags.iced_config);
         if !flags.config.auto_connect {
             settings.activate();
@@ -45,18 +62,45 @@ impl ViewModel {
             settings_widget_state: settings,
             users_widget_state: Default::default(),
             playlist_widget_state: Default::default(),
-            chat_widget_statet: Default::default(),
+            chat_widget_state: Default::default(),
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
+            user_actions_widget_state: Default::default(),
+            panes,
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        MainView::new(self).into()
+        let base = main_window::view(self);
+        let overlay: Option<(Element<'_, Message>, Message)> =
+            if self.settings_widget_state.is_active() {
+                Some((
+                    settings::view(&self.settings_widget_state),
+                    SettingsWidgetMessage::from(Abort).into(),
+                ))
+            } else if self.file_search_widget_state.is_active() {
+                Some((
+                    file_search::view(&self.file_search_widget_state),
+                    FileSearchWidgetMessage::from(CloseFileSearch).into(),
+                ))
+            } else if self.user_actions_widget_state.is_active() {
+                Some((
+                    user_actions::view(&self.user_actions_widget_state),
+                    UserActionsWidgetMessage::from(CloseUserActions).into(),
+                ))
+            } else if self.playlist_widget_state.context_active() {
+                Some((
+                    playlist::context_view(&self.playlist_widget_state),
+                    PlaylistWidgetMessage::from(CloseContext).into(),
+                ))
+            } else {
+                None
+            };
+        modal(base, overlay)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        Task::batch([message.handle(self), self.get_chat_widget_state().snap()])
+        message.handle(self)
     }
 
     pub fn user(&self) -> UserStatus {
@@ -65,30 +109,6 @@ impl ViewModel {
 
     pub fn playing_video(&self) -> Option<Video> {
         self.model.playing_video.get_inner()
-    }
-
-    pub fn get_rooms_widget_state(&self) -> &UsersWidgetState {
-        &self.users_widget_state
-    }
-
-    pub fn get_playlist_widget_state(&self) -> &PlaylistWidgetState {
-        &self.playlist_widget_state
-    }
-
-    pub fn get_chat_widget_state(&self) -> &ChatWidgetState {
-        &self.chat_widget_statet
-    }
-
-    pub fn get_database_widget_state(&self) -> &DatabaseWidgetState {
-        &self.database_widget_state
-    }
-
-    pub fn get_file_search_widget_state(&self) -> &FileSearchWidgetState {
-        &self.file_search_widget_state
-    }
-
-    pub fn get_settings_widget_state(&self) -> &SettingsWidgetState {
-        &self.settings_widget_state
     }
 
     pub fn update_from_inner_model(&mut self) {
@@ -107,11 +127,15 @@ impl ViewModel {
             .on_change(|ratio| self.database_widget_state.update_progress(ratio));
         self.model
             .messages
-            .on_change_arc(|msgs| self.chat_widget_statet.replace_messages(msgs))
+            .on_change_arc(|msgs| self.chat_widget_state.replace_messages(msgs))
     }
 
     pub fn is_sharing(&self) -> bool {
         self.model.video_share.get_inner()
+    }
+
+    pub fn is_host(&self) -> bool {
+        self.model.is_host.get_inner()
     }
 }
 
@@ -176,8 +200,32 @@ impl View {
     fn subscription(&self) -> Subscription<Message> {
         let notify = self.view_model.model.notify.clone();
         let model_subscription = ModelSubscription { notify };
-        iced::advanced::subscription::from_recipe(model_subscription)
+        Subscription::batch([
+            iced::advanced::subscription::from_recipe(model_subscription),
+            event::listen_with(key_press),
+        ])
     }
+}
+
+fn key_press(event: Event, status: event::Status, _window: window::Id) -> Option<Message> {
+    let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(key),
+        ..
+    }) = event
+    else {
+        return None;
+    };
+    matches!(
+        key,
+        Named::Space | Named::Escape | Named::Enter | Named::ArrowUp | Named::ArrowDown
+    )
+    .then(|| {
+        KeyPress {
+            key,
+            captured: matches!(status, event::Status::Captured),
+        }
+        .into()
+    })
 }
 
 pub struct ModelSubscription {

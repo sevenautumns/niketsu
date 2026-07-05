@@ -18,13 +18,21 @@ impl PlaylistHandler {
         if let Some(playing) = self.playing.as_mut() {
             *playing += 1
         }
-        self.get_current_video()
+        let video = self.get_current_video();
+        // past the end the marker must clear, not dangle: a later, longer
+        // playlist would resurrect a dangling index as a phantom selection
+        if video.is_none() {
+            self.playing = None;
+        }
+        video
     }
 
+    /// Clears the marker when the video is not in the playlist, so every
+    /// peer — including later joiners, who only get the last Select
+    /// replayed — agrees on "nothing selected" instead of some peers
+    /// keeping a stale marker.
     pub fn select_playing(&mut self, video: &Video) {
-        if let Some(index) = self.playlist.find(video) {
-            self.playing = Some(index);
-        }
+        self.playing = self.playlist.find(video);
     }
 
     pub fn unload_playing(&mut self) {
@@ -38,9 +46,7 @@ impl PlaylistHandler {
     pub fn replace(&mut self, playlist: Playlist) {
         let playing = self.get_current_video();
         self.playlist = playlist;
-        if let Some(playing) = playing {
-            self.playing = self.playlist.find(&playing);
-        }
+        self.playing = playing.and_then(|playing| self.playlist.find(&playing));
     }
 }
 
@@ -86,6 +92,32 @@ mod tests {
         handler.replace(new_playlist.clone());
         // Ensure the playlist is replaced and contains Video 2.
         assert_eq!(handler.get_playlist().get(0), Some(&video2));
+    }
+
+    #[test]
+    fn test_advance_past_end_clears_marker_for_good() {
+        let mut handler = PlaylistHandler::default();
+        handler.replace(Playlist::from_iter(["Video 1"]));
+        handler.select_playing(&Video::from("Video 1"));
+
+        assert_eq!(handler.advance_to_next(), None);
+
+        // a longer playlist must not resurrect the expired marker
+        handler.replace(Playlist::from_iter(["Video 2", "Video 3"]));
+        assert_eq!(handler.get_current_video(), None);
+    }
+
+    #[test]
+    fn test_select_playing_missing_video_clears_marker() {
+        let mut handler = PlaylistHandler::default();
+        let video1 = Video::from("Video 1");
+        handler.replace(Playlist::from_iter(["Video 1"]));
+
+        handler.select_playing(&video1);
+        assert_eq!(handler.get_current_video(), Some(video1));
+
+        handler.select_playing(&Video::from("Video 2"));
+        assert_eq!(handler.get_current_video(), None);
     }
 
     #[test]

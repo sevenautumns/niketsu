@@ -30,6 +30,8 @@ struct Behaviour {
 struct InitRequest {
     room: String,
     password: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    transfer_to: Option<PeerId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,7 +72,7 @@ pub fn new(config: Config) -> Result<Relay> {
     let keypair = Keypair::from_protobuf_encoding(config.keypair.unwrap().as_slice())?;
     let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
     quic_config.handshake_timeout = Duration::from_secs(10);
-    quic_config.max_idle_timeout = 5 * 1000;
+    quic_config.max_idle_timeout = 3 * 1000;
 
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
@@ -83,7 +85,21 @@ pub fn new(config: Config) -> Result<Relay> {
         .with_behaviour(|key| Behaviour {
             relay: relay::Behaviour::new(
                 key.public().to_peer_id(),
-                libp2p::relay::Config::default(),
+                // Circuits through the public relay are only a hole-punch
+                // rendezvous: the client keeps all niketsu protocols off
+                // relayed connections (see DirectOnly in the communicator), so
+                // nothing but identify/DCUtR/ping ever flows here. Clients
+                // abort a punch after 30 s, so any older circuit is dead
+                // weight; the duration cap only needs to stay above that
+                // client deadline. The byte cap guards against peers that
+                // don't play by DirectOnly's rules.
+                relay::Config {
+                    max_circuits: 128,
+                    max_circuits_per_peer: 4,
+                    max_circuit_duration: Duration::from_secs(60),
+                    max_circuit_bytes: 128 * 1024,
+                    ..Default::default()
+                },
             ),
             ping: ping::Behaviour::new(
                 ping::Config::new()
@@ -195,6 +211,34 @@ impl Relay {
     ) {
         debug!("Received request from client");
         let mut r = self.rooms.write().await;
+
+        if let Some(new_host) = request.transfer_to {
+            // Only the current host of the room may transfer it.
+            let mut status = ResponseStatus::Err;
+            if r.get(&request.room).is_some_and(|(pid, _)| *pid == peer)
+                && let Some((_, hash)) = r.remove(&request.room)
+            {
+                r.insert(request.room.clone(), (new_host, hash));
+                let mut m = self.hosts.write().await;
+                m.remove(&peer);
+                m.insert(new_host, request.room.clone());
+                debug!(%peer, %new_host, room = %request.room, "Host transfer completed");
+                status = ResponseStatus::Ok;
+            }
+            self.swarm
+                .behaviour_mut()
+                .init_request_response
+                .send_response(
+                    channel,
+                    InitResponse {
+                        status,
+                        peer_id: None,
+                    },
+                )
+                .unwrap_or_default();
+            return;
+        }
+
         let mut status = ResponseStatus::Ok;
         let mut peer_id: Option<PeerId> = None;
         if let Some((pid, req)) = r.get(request.room.as_str()) {

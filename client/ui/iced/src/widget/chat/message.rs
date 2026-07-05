@@ -22,7 +22,7 @@ pub enum ChatWidgetMessage {
 
 impl MessageHandler for ChatWidgetMessage {
     fn handle(self, model: &mut ViewModel) -> Task<Message> {
-        ChatWidgetMessageTrait::handle(self, &mut model.chat_widget_statet, &model.model)
+        ChatWidgetMessageTrait::handle(self, &mut model.chat_widget_state, &model.model)
     }
 }
 
