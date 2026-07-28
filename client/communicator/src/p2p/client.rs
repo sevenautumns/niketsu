@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -20,6 +20,35 @@ use super::{
 };
 use crate::messages::NiketsuMessage;
 
+/// Number of ping samples the delay estimate is taken over. Pings run once a
+/// second, so this covers the last ten.
+const DELAY_WINDOW: usize = 10;
+
+/// Round-trip samples to the host, of which the estimate is the *minimum*:
+/// congestion and scheduling only ever add to a round-trip time, so the
+/// smallest recent sample is the one least polluted by them. The estimate
+/// shifts the host position we reconcile against, so a single spike on a
+/// flaky link must not move it — which is exactly what an average would do.
+#[derive(Debug, Default)]
+struct HostDelay {
+    samples: VecDeque<Duration>,
+}
+
+impl HostDelay {
+    fn push(&mut self, sample: Duration) {
+        if self.samples.len() == DELAY_WINDOW {
+            self.samples.pop_front();
+        }
+        self.samples.push_back(sample);
+    }
+
+    /// Zero until the first ping answers, which leaves the host's reported
+    /// position uncorrected rather than guessing at a delay.
+    fn get(&self) -> Duration {
+        self.samples.iter().copied().min().unwrap_or_default()
+    }
+}
+
 pub(crate) struct ClientCommunicationHandler {
     handler: CommunicationHandler,
     /// Direct connection to the host, arriving either via DCUtR hole punch
@@ -37,7 +66,7 @@ pub(crate) struct ClientCommunicationHandler {
     host_circuit_reserved: bool,
     video_status: VideoStatusMsg,
     is_seeking: bool,
-    delay: Duration,
+    delay: HostDelay,
 }
 
 impl ClientCommunicationHandler {
@@ -61,7 +90,7 @@ impl ClientCommunicationHandler {
             host_circuit_reserved: false,
             video_status: VideoStatusMsg::default(),
             is_seeking: false,
-            delay: Duration::default(),
+            delay: HostDelay::default(),
         }
     }
 
@@ -76,7 +105,7 @@ impl ClientCommunicationHandler {
                 if let Some(conn) = self.host_conn
                     && event.connection == conn
                 {
-                    self.delay = d;
+                    self.delay.push(d);
                 }
             }
             Err(error) => {
@@ -303,7 +332,7 @@ impl ClientCommunicationHandler {
             && !video_status.paused
         {
             debug!("add delay to position");
-            video_status.position = Some(pos + self.delay.div_f64(2.0));
+            video_status.position = Some(pos + self.delay.get().div_f64(2.0));
         }
 
         self.handler.base.message_sender.send(video_status.into())?;
@@ -443,5 +472,45 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
             | VideoShare(_)) => self.handler.handle_file_share_core_message(m),
             other => self.handler.broadcast(other),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_samples_means_no_correction() {
+        assert_eq!(HostDelay::default().get(), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_single_spike_does_not_move_the_delay() {
+        let mut delay = HostDelay::default();
+        for _ in 0..5 {
+            delay.push(Duration::from_millis(40));
+        }
+        delay.push(Duration::from_secs(4));
+
+        assert_eq!(
+            delay.get(),
+            Duration::from_millis(40),
+            "one congested sample must not shift the host position"
+        );
+    }
+
+    #[test]
+    fn a_sustained_change_is_followed_once_the_window_turns_over() {
+        let mut delay = HostDelay::default();
+        delay.push(Duration::from_millis(40));
+        for _ in 0..DELAY_WINDOW {
+            delay.push(Duration::from_millis(200));
+        }
+
+        assert_eq!(
+            delay.get(),
+            Duration::from_millis(200),
+            "a link that is genuinely slower must be picked up"
+        );
     }
 }
