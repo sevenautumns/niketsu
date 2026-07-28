@@ -8,7 +8,9 @@
 
 use std::time::Duration;
 
-use niketsu_core::player::{PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerStart};
+use niketsu_core::player::{
+    PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart,
+};
 use niketsu_core::playlist::Playlist;
 use niketsu_core::{ui, video_provider};
 use proptest::prelude::*;
@@ -16,6 +18,8 @@ use proptest::prelude::*;
 use crate::harness::Room;
 
 const POOL: &[&str] = &["ep1", "ep2", "ep3"];
+
+const SPEEDS: &[f64] = &[0.5, 1.0, 1.5, 2.0];
 
 /// Everything a user (or their mpv) can do to the room. Peer indices are
 /// taken modulo the current peer count when applied.
@@ -26,6 +30,7 @@ enum Action {
     Seek { peer: usize, secs: u64 },
     Pause { peer: usize },
     Start { peer: usize },
+    SpeedChange { peer: usize, speed: usize },
     ReadyToggle { peer: usize },
     ShareToggle { peer: usize },
     FileRequest { peer: usize },
@@ -43,6 +48,7 @@ fn action() -> impl Strategy<Value = Action> {
         (0..8usize, 0..500u64).prop_map(|(peer, secs)| Action::Seek { peer, secs }),
         (0..8usize).prop_map(|peer| Action::Pause { peer }),
         (0..8usize).prop_map(|peer| Action::Start { peer }),
+        (0..8usize, 0..SPEEDS.len()).prop_map(|(peer, speed)| Action::SpeedChange { peer, speed }),
         (0..8usize).prop_map(|peer| Action::ReadyToggle { peer }),
         (0..8usize).prop_map(|peer| Action::ShareToggle { peer }),
         (0..8usize).prop_map(|peer| Action::FileRequest { peer }),
@@ -85,6 +91,13 @@ fn apply(room: &mut Room, action: Action) {
             let peer = peer % room.peers.len();
             room.peer(peer).player.set(|player| player.paused = false);
             room.peer(peer).act(PlayerStart);
+        }
+        Action::SpeedChange { peer, speed } => {
+            // mpv already turned the knob before the event reaches the core
+            let peer = peer % room.peers.len();
+            let speed = SPEEDS[speed];
+            room.peer(peer).player.set(|player| player.speed = speed);
+            room.peer(peer).act(PlayerSpeedChange::new(speed));
         }
         Action::ReadyToggle { peer } => {
             let peer = peer % room.peers.len();
@@ -214,6 +227,17 @@ proptest! {
                 room.pump();
             }
             assert_room_converged(&mut room);
+
+            // every peer plays at the speed the room agreed on, whether it
+            // was there when the speed changed or joined afterwards
+            let host_speed = room.peer(room.host_index()).player.state().speed;
+            for i in 0..room.peers.len() {
+                assert_eq!(
+                    room.peer(i).player.state().speed,
+                    host_speed,
+                    "peer {i}: playback speed diverged from the host"
+                );
+            }
 
             // every peer with a loaded video follows the host's play state
             let host_player = room.peer(room.host_index()).player.state();

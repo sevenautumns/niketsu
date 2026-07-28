@@ -361,6 +361,60 @@ async fn late_joiner_gets_playlist_selection_and_position() {
     assert!(!room.peer(charlie).player.state().paused);
 }
 
+/// A peer joining a session that already runs at another speed adopts it
+/// from the host's heartbeat: the speed change itself was announced long
+/// before the joiner existed.
+#[tokio::test]
+async fn late_joiner_adopts_the_running_speed() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+
+    // the room has been running at 1.5x, 100 seconds in
+    room.peer(alice).player.set(|player| player.speed = 1.5);
+    room.peer(alice).act(PlayerSpeedChange::new(1.5));
+    room.peer(alice).player.set(|player| {
+        player.paused = false;
+        player.position = Duration::from_secs(100);
+    });
+    room.peer(alice).heartbeat();
+    room.pump();
+
+    let charlie = room.join("charlie", &["ep1"]);
+    room.pump();
+    room.peer(alice).heartbeat();
+    room.pump();
+
+    assert_eq!(
+        room.peer(charlie).player.state().speed,
+        1.5,
+        "a joiner must play at the speed the room is running at, not at 1.0"
+    );
+
+    // the joiner reconciles against that speed too, so it tolerates the
+    // same drift as everyone else instead of being hard-synced constantly
+    room.peer(charlie).player.set(|player| {
+        player.paused = false;
+        player.position = Duration::from_secs(97);
+    });
+    room.peer(alice).heartbeat();
+    room.pump();
+
+    assert_eq!(
+        room.peer(charlie).player.state().position,
+        Duration::from_secs(97),
+        "the joiner's tolerance must scale with the room's speed"
+    );
+}
+
 /// A peer without the file requests it, the provider answers, and chunks
 /// flow from the provider's disk to the requester's video server.
 #[tokio::test]

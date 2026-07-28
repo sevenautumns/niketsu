@@ -36,7 +36,10 @@ impl EventHandler for Heartbeat {
         trace!("heartbeat");
         let video = model.player.playing_video();
         let position = model.player.get_position();
-        let speed = model.player.get_speed();
+        // the speed the room agreed on, which is not necessarily what the
+        // local player was last told (a user turning the knob in mpv reaches
+        // us as an event)
+        let speed = model.player.host_speed();
         let paused = model.player.is_paused().unwrap_or(true);
         let cache = model.player.cache_available();
         let file_loaded = model.player.video_loaded();
@@ -109,7 +112,7 @@ mod tests {
 
         player.expect_playing_video().return_const::<Video>(video);
         player.expect_get_position().return_const(position);
-        player.expect_get_speed().return_const(speed);
+        player.expect_set_speed().return_const(());
         player.expect_is_paused().return_const(paused);
         player.expect_cache_available().return_const(cache);
         player.expect_video_loaded().return_const(true);
@@ -128,6 +131,9 @@ mod tests {
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
+
+        // the room's speed is what the status reports
+        core.model.player.set_speed(speed);
 
         Heartbeat.handle(&mut core.model)
     }

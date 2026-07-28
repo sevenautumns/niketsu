@@ -61,6 +61,12 @@ impl MediaPlayerWrapper {
     pub fn sync_host_speed(&mut self, speed: f64) {
         self.host_speed = speed;
     }
+
+    /// The speed the room plays at — what the host announces and every other
+    /// peer adopts.
+    pub fn host_speed(&self) -> f64 {
+        self.host_speed
+    }
 }
 
 #[async_trait]
@@ -77,7 +83,12 @@ impl MediaPlayerTrait for MediaPlayerWrapper {
         self.player.is_paused()
     }
 
+    /// The host repeats the room's speed with every heartbeat, so following
+    /// it has to be free when nothing changed.
     fn set_speed(&mut self, speed: f64) {
+        if self.host_speed == speed {
+            return;
+        }
         self.host_speed = speed;
         self.player.set_speed(speed)
     }

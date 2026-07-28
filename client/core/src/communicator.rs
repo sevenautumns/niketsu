@@ -157,6 +157,15 @@ impl Eq for VideoStatusMsg {}
 impl EventHandler for VideoStatusMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received video status for reconciliation");
+
+        // PlaybackSpeed only announces a change, so the heartbeat is the only
+        // place the room's speed is repeated: a peer that joined a session
+        // already running at another speed learns it here, and would otherwise
+        // keep playing at its own speed and drift out of sync every few
+        // seconds. The speed is independent of what is loaded, so it is
+        // adopted even while the host has no video.
+        model.player.set_speed(self.speed);
+
         let (Some(pos), Some(_)) = (self.position, self.video) else {
             trace!("video status sent without position or video: unloading video");
             model.player.unload_video();
