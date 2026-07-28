@@ -2,28 +2,25 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tracing::trace;
 
 use super::MediaPlayerTrait;
 use crate::playlist::Video;
 use crate::{FilePathSearch, FileStore, MediaPlayerEvent, PlayerPositionChange};
 
+/// How far the local position may drift from the host before it is corrected.
+/// Wide enough to swallow ping jitter and short stalls: correcting is more
+/// disruptive than the drift it removes, so it has to stay rare.
+const TOLERANCE: Duration = Duration::from_millis(2500);
+
+/// Past this the local player is not drifting, it is stuck (buffering, a slow
+/// stream). Jumping forward would skip content nobody has seen, so the room is
+/// asked to wait instead.
 const MAXIMUM_DELAY: Duration = Duration::from_secs(20);
-
-const MINIMUM_DELAY: Duration = Duration::from_secs(1);
-
-const DELAY_RANGE: Duration = MAXIMUM_DELAY.saturating_sub(MINIMUM_DELAY);
-
-const MAXIMUM_SPEED_DIFF: f64 = 0.15;
-
-const MINIMUM_SPEED_DIFF: f64 = 0.03;
-
-const SPEED_RANGE: f64 = MAXIMUM_SPEED_DIFF - MINIMUM_SPEED_DIFF;
 
 #[derive(Debug)]
 pub struct MediaPlayerWrapper {
     player: Box<dyn MediaPlayerTrait>,
-    // keep track of speed of host to allow for divergent client speed for ketchup
+    // keep track of the speed the host dictates for the room
     host_speed: f64,
     events: VecDeque<MediaPlayerEvent>,
 }
@@ -42,28 +39,20 @@ impl MediaPlayerWrapper {
             return;
         };
 
-        //TODO refactor
-        // flexible delay based on current speed
-        let current_speed = self.player.get_speed();
-        let min_delay = MINIMUM_DELAY.mul_f64(self.host_speed);
+        // positions are media time, the thresholds are what a viewer
+        // perceives: at double speed a gap closes twice as fast, so twice
+        // as much of it is tolerable
+        let tolerance = TOLERANCE.mul_f64(self.host_speed);
         let max_delay = MAXIMUM_DELAY.mul_f64(self.host_speed);
 
         match current_pos {
-            d if d <= pos.saturating_add(min_delay) && d >= pos.saturating_sub(min_delay) => {
-                if current_speed != self.host_speed {
-                    self.player.set_speed(self.host_speed);
-                }
-            }
-            d if d >= pos.saturating_add(max_delay) => {
-                self.player.set_position(pos);
+            d if d <= pos.saturating_add(tolerance) && d >= pos.saturating_sub(tolerance) => {
+                // in sync: leave the player alone
             }
             d if d <= pos.saturating_sub(max_delay) => self
                 .events
                 .push_back(PlayerPositionChange { pos: d }.into()),
-            d if d > pos.saturating_add(min_delay) || d < pos.saturating_sub(min_delay) => {
-                self.continuous_speed_change(d, pos)
-            }
-            _ => trace!("position should not be possible"),
+            _ => self.player.set_position(pos),
         }
     }
 
@@ -71,19 +60,6 @@ impl MediaPlayerWrapper {
     /// there); only the reference speed needs to follow.
     pub fn sync_host_speed(&mut self, speed: f64) {
         self.host_speed = speed;
-    }
-
-    fn continuous_speed_change(&mut self, client_pos: Duration, host_pos: Duration) {
-        let diff = host_pos.saturating_sub(client_pos);
-        let min_diff = diff.saturating_sub(MINIMUM_DELAY).as_secs_f64();
-        let mut speed_increase =
-            min_diff / DELAY_RANGE.as_secs_f64() * SPEED_RANGE + MINIMUM_SPEED_DIFF;
-
-        if host_pos < client_pos {
-            speed_increase *= -1.0;
-        }
-        self.player
-            .set_speed(self.host_speed * (1.0 + speed_increase));
     }
 }
 
@@ -102,11 +78,8 @@ impl MediaPlayerTrait for MediaPlayerWrapper {
     }
 
     fn set_speed(&mut self, speed: f64) {
-        // carry the ketchup offset (how much faster/slower than the host we
-        // are playing) over to the new host speed
-        let diff = self.player.get_speed() - self.host_speed;
         self.host_speed = speed;
-        self.player.set_speed(speed + diff)
+        self.player.set_speed(speed)
     }
 
     fn get_speed(&self) -> f64 {

@@ -99,10 +99,11 @@ async fn clients_hold_paused_while_host_is_still_loading() {
     assert_eq!(bob_player.position, Duration::ZERO);
 }
 
-/// A client slightly behind the host catches up by playing faster, never by
-/// seeking; only a divergence beyond the maximum delay snaps the position.
+/// A client within the tolerance is left alone — no seek and, above all, no
+/// speed correction, which would be audible for as long as it takes to close
+/// the gap. Drifting past the tolerance costs one seek.
 #[tokio::test]
-async fn lagging_client_speeds_up_instead_of_seeking() {
+async fn small_drift_is_tolerated_and_larger_drift_hard_syncs() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
     let bob = room.join("bob", &["ep1"]);
@@ -116,14 +117,14 @@ async fn lagging_client_speeds_up_instead_of_seeking() {
     });
     room.pump();
 
-    // both play, but bob fell 5 seconds behind (within the catch-up window)
+    // both play, but bob is 2 seconds behind — within the tolerance
     room.peer(alice).player.set(|player| {
         player.paused = false;
         player.position = Duration::from_secs(100);
     });
     room.peer(bob).player.set(|player| {
         player.paused = false;
-        player.position = Duration::from_secs(95);
+        player.position = Duration::from_secs(98);
     });
     room.peer(alice).heartbeat();
     room.pump();
@@ -131,26 +132,40 @@ async fn lagging_client_speeds_up_instead_of_seeking() {
     let bob_player = room.peer(bob).player.state();
     assert_eq!(
         bob_player.position,
-        Duration::from_secs(95),
-        "small lag must not cause a seek"
+        Duration::from_secs(98),
+        "a drift within the tolerance must not cause a seek"
     );
-    assert!(
-        bob_player.speed > 1.0 && bob_player.speed < 1.15,
-        "client should catch up via a bounded speed increase, got {}",
-        bob_player.speed
+    assert_eq!(
+        bob_player.speed, 1.0,
+        "a drift must never be corrected by changing the speed"
     );
 
-    // bob diverged beyond the maximum delay: position snaps to the host
+    // bob drifted past the tolerance: one seek puts him back on the host
     room.peer(bob)
         .player
-        .set(|player| player.position = Duration::from_secs(130));
+        .set(|player| player.position = Duration::from_secs(95));
+    room.peer(alice).heartbeat();
+    room.pump();
+
+    let bob_player = room.peer(bob).player.state();
+    assert_eq!(
+        bob_player.position,
+        Duration::from_secs(100),
+        "a drift past the tolerance must hard-sync"
+    );
+    assert_eq!(bob_player.speed, 1.0);
+
+    // ...and so does a client that ran ahead
+    room.peer(bob)
+        .player
+        .set(|player| player.position = Duration::from_secs(110));
     room.peer(alice).heartbeat();
     room.pump();
 
     assert_eq!(
         room.peer(bob).player.state().position,
         Duration::from_secs(100),
-        "divergence beyond the maximum delay must hard-sync"
+        "a client ahead of the host must hard-sync too"
     );
 }
 
@@ -268,7 +283,7 @@ async fn host_handover_moves_the_position_authority() {
     assert!(!room.peer(alice).ui.state().is_host);
     assert!(room.peer(bob).ui.state().is_host);
 
-    // bob's clock is now the reference: a lagging alice catches up to him
+    // bob's clock is now the reference: a drifting alice syncs to him
     room.peer(bob).player.set(|player| {
         player.paused = false;
         player.position = Duration::from_secs(100);
@@ -279,8 +294,9 @@ async fn host_handover_moves_the_position_authority() {
     });
     room.peer(bob).heartbeat();
     room.pump();
-    assert!(
-        room.peer(alice).player.state().speed > 1.0,
+    assert_eq!(
+        room.peer(alice).player.state().position,
+        Duration::from_secs(100),
         "after handover, clients must follow the new host's clock"
     );
 
@@ -454,10 +470,11 @@ async fn pause_propagates_and_all_ready_auto_starts() {
     }
 }
 
-/// A host speed change propagates to every player, and a lagging client's
-/// catch-up speed scales relative to the host speed instead of 1.0.
+/// A host speed change propagates to every player, and the tolerance scales
+/// with it: positions are media time, so at double speed twice as much of a
+/// gap amounts to the same wait for the viewer.
 #[tokio::test]
-async fn host_speed_change_propagates_and_scales_the_catchup() {
+async fn host_speed_change_propagates_and_scales_the_tolerance() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
     let bob = room.join("bob", &["ep1"]);
@@ -481,35 +498,36 @@ async fn host_speed_change_propagates_and_scales_the_catchup() {
         "speed change must propagate"
     );
 
-    // bob fell behind while both play at double speed: he catches up by
-    // playing faster than the host speed, still within the bounded window
+    // 4 seconds apart is beyond the tolerance at 1x, but not at 2x
     room.peer(alice).player.set(|player| {
         player.paused = false;
         player.position = Duration::from_secs(100);
     });
     room.peer(bob).player.set(|player| {
         player.paused = false;
-        player.position = Duration::from_secs(95);
+        player.position = Duration::from_secs(96);
     });
     room.peer(alice).heartbeat();
     room.pump();
 
-    let speed = room.peer(bob).player.state().speed;
-    assert!(
-        speed > 2.0 && speed < 2.0 * 1.15,
-        "catch-up must speed up relative to the host speed, got {speed}"
+    assert_eq!(
+        room.peer(bob).player.state().position,
+        Duration::from_secs(96),
+        "the tolerance must scale with the speed the room plays at"
     );
 
-    // back in sync, bob settles on the host speed exactly
+    // 7 seconds is beyond it even at double speed
     room.peer(bob)
         .player
-        .set(|player| player.position = Duration::from_secs(100));
+        .set(|player| player.position = Duration::from_secs(93));
     room.peer(alice).heartbeat();
     room.pump();
+
+    let bob_player = room.peer(bob).player.state();
+    assert_eq!(bob_player.position, Duration::from_secs(100));
     assert_eq!(
-        room.peer(bob).player.state().speed,
-        2.0,
-        "in sync, the client must run at the host speed again"
+        bob_player.speed, 2.0,
+        "hard-syncing must leave the room's speed alone"
     );
 }
 
@@ -558,49 +576,6 @@ async fn client_speed_change_survives_the_next_heartbeat() {
         room.peer(bob).player.state().speed,
         1.5,
         "the initiator must not be dragged back to the old speed"
-    );
-}
-
-/// A speed change arriving mid-catch-up keeps the lagging client faster
-/// than the new host speed — the carried-over offset must not flip sign
-/// and briefly drop it further behind.
-#[tokio::test]
-async fn speed_change_mid_catchup_keeps_the_client_faster() {
-    let mut room = Room::new();
-    let alice = room.join("alice", &["ep1"]);
-    let bob = room.join("bob", &["ep1"]);
-    room.pump();
-
-    room.peer(alice).act(ui::PlaylistChange {
-        playlist: Playlist::from_iter(["ep1"]),
-    });
-    room.peer(alice).act(ui::VideoChange {
-        video: Video::from("ep1"),
-    });
-    room.pump();
-
-    // bob fell behind and is catching up by playing faster than the host
-    room.peer(alice).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(100);
-    });
-    room.peer(bob).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(95);
-    });
-    room.peer(alice).heartbeat();
-    room.pump();
-    assert!(room.peer(bob).player.state().speed > 1.0);
-
-    // mid-ketchup, alice switches to double speed
-    room.peer(alice).player.set(|player| player.speed = 2.0);
-    room.peer(alice).act(PlayerSpeedChange::new(2.0));
-    room.pump();
-
-    let speed = room.peer(bob).player.state().speed;
-    assert!(
-        speed > 2.0 && speed <= 2.0 + 0.15,
-        "a catching-up client must stay faster than the new host speed, got {speed}"
     );
 }
 
