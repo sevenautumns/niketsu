@@ -14,7 +14,7 @@ use libp2p::{
     Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, identity, kad, mdns, noise,
     ping, relay, tcp, yamux,
 };
-use niketsu_core::communicator::UserMessageMsg;
+use niketsu_core::communicator::{IncomingMessage, OutgoingMessage, UserMessageMsg};
 use niketsu_core::log_err_msg;
 use niketsu_core::playlist::Video;
 use niketsu_core::room::RoomName;
@@ -36,7 +36,6 @@ mod host_relay;
 mod client;
 mod file_share;
 mod host;
-mod room;
 
 use direct_only::DirectOnly;
 
@@ -56,7 +55,7 @@ pub(crate) const DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 #[allow(clippy::large_enum_variant)]
 enum LoopEvent {
     Swarm(SwarmEvent<BehaviourEvent>),
-    Core(Option<NiketsuMessage>),
+    Core(Option<OutgoingMessage>),
     /// The client's direct-connection deadline elapsed; abort the loop so the
     /// core reconnects.
     Abort,
@@ -132,7 +131,7 @@ pub(crate) enum StatusResponse {
 #[async_trait]
 pub(crate) trait CommunicationHandlerTrait: Send {
     fn handler_mut(&mut self) -> &mut CommunicationHandler;
-    fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()>;
+    fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()>;
     fn handle_swarm_broadcast(&mut self, data: Vec<u8>, source: PeerId) -> Result<()>;
     fn handle_swarm_request(
         &mut self,
@@ -348,8 +347,8 @@ impl SwarmHandler for Swarm<Behaviour> {
 
 #[derive(Debug)]
 pub(crate) struct P2PClient {
-    sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
-    receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
+    sender: tokio::sync::mpsc::UnboundedSender<OutgoingMessage>,
+    receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingMessage>,
     _handler: tokio::task::JoinHandle<()>,
 }
 
@@ -491,11 +490,11 @@ impl P2PClient {
         Ok(client)
     }
 
-    pub(crate) async fn next(&mut self) -> Option<NiketsuMessage> {
+    pub(crate) async fn next(&mut self) -> Option<IncomingMessage> {
         self.receiver.recv().await
     }
 
-    pub(crate) fn send(&self, msg: NiketsuMessage) -> Result<()> {
+    pub(crate) fn send(&self, msg: OutgoingMessage) -> Result<()> {
         debug!(?msg, "Sending message");
         Ok(self.sender.send(msg)?)
     }
@@ -511,8 +510,8 @@ impl CommunicationHandler {
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
         host: PeerId,
-        core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
-        message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+        core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
+        message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
     ) -> Self {
         let base = CommonCommunication::new(swarm, topic, host, core_receiver, message_sender);
         Self {
@@ -528,21 +527,45 @@ impl CommunicationHandler {
         self.file_share.take();
     }
 
-    pub fn handle_file_share_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
-        use NiketsuMessage::*;
-        match msg {
+    /// Routing shared by both roles: room-wide gossip and file sharing.
+    /// Returns the message back if it needs role-specific handling.
+    pub fn route_core_message(
+        &mut self,
+        msg: OutgoingMessage,
+    ) -> Result<std::result::Result<(), OutgoingMessage>> {
+        use OutgoingMessage::*;
+        let routed = match msg {
+            VideoStatus(msg) => self.broadcast(msg.into()),
+            Start(msg) => self.broadcast(msg.into()),
+            Pause(msg) => self.broadcast(msg.into()),
+            PlaybackSpeed(msg) => self.broadcast(msg.into()),
+            Seek(msg) => self.broadcast(msg.into()),
+            UserMessage(msg) => self.broadcast(msg.into()),
+            Select(msg) => {
+                // a new selection ends whatever file share ran for the old one
+                self.reset_requests_responses();
+                self.broadcast(msg.into())
+            }
             FileRequest(msg) => self.fs_file_request(msg),
             FileResponse(msg) => self.fs_file_response(msg),
             ChunkRequest(msg) => self.fs_chunk_request(msg),
             ChunkResponse(msg) => self.fs_chunk_response(msg),
-            VideoShare(msg) => self.fs_video_share(msg),
-            _ => unreachable!("handle_file_share_core_message called with non-file-share message"),
-        }
+            VideoShareChange(msg) => self.fs_video_share(msg),
+            other @ (Playlist(_) | UserStatus(_) | UserStatusList(_) | ToPeer(_)
+            | HostHandover(_)) => return Ok(Err(other)),
+        };
+        routed.map(Ok)
     }
 
     pub fn broadcast(&mut self, msg: NiketsuMessage) -> Result<()> {
         let topic = self.base.topic.clone();
         self.base.swarm.try_broadcast(topic, msg)
+    }
+
+    /// Hands a room message from the network to the core.
+    pub fn forward(&mut self, msg: impl Into<IncomingMessage>) -> Result<()> {
+        self.base.message_sender.send(msg.into())?;
+        Ok(())
     }
 
     pub fn respond_with_err(
@@ -555,12 +578,13 @@ impl CommunicationHandler {
         bail!("Received unexpected direct message: {msg:?}");
     }
 
+    /// Hands a direct request to the core and acknowledges it.
     pub fn send_to_core(
         &mut self,
-        msg: NiketsuMessage,
+        msg: impl Into<IncomingMessage>,
         channel: ResponseChannel<MessageResponse>,
     ) -> Result<()> {
-        let resp = match self.base.message_sender.send(msg.clone()) {
+        let resp = match self.base.message_sender.send(msg.into()) {
             Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
             Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
         };
@@ -570,11 +594,8 @@ impl CommunicationHandler {
     pub fn handle_swarm_response(&self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
         debug!(message = ?msg, peer = ?peer_id, "Received response");
         match msg.0 {
-            Response::Message(niketsu_message) => match niketsu_message {
-                NiketsuMessage::FileResponse(_) | NiketsuMessage::ChunkResponse(_) => Ok(()),
-                msg => bail!("Did not expect response {msg:?}"),
-            },
-            _ => Ok(()),
+            Response::Message(msg) => bail!("Did not expect response {msg:?}"),
+            Response::Status(_) => Ok(()),
         }
     }
 }
@@ -583,8 +604,8 @@ pub(crate) struct CommonCommunication {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
     host: PeerId,
-    core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
-    message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+    core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
+    message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
     /// Deadline for getting a direct connection to the host. Only the client
     /// arms it (see [`arm_direct_deadline`]); the host leaves it `None` so the
     /// shared run loop never aborts for the host.
@@ -596,8 +617,8 @@ impl CommonCommunication {
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
         host: PeerId,
-        core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
-        message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+        core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
+        message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
     ) -> Self {
         Self {
             swarm,
@@ -623,7 +644,7 @@ impl CommonCommunication {
 
     pub fn send_chat_message(&self, actor: ArcStr, message: String) -> Result<()> {
         let msg = UserMessageMsg { actor, message };
-        self.message_sender.send(NiketsuMessage::UserMessage(msg))?;
+        self.message_sender.send(msg.into())?;
         Ok(())
     }
 }

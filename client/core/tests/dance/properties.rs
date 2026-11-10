@@ -35,7 +35,7 @@ enum Action {
     ShareToggle { peer: usize },
     FileRequest { peer: usize },
     FileEnd { peer: usize },
-    HostHeartbeat,
+    Heartbeat,
     Handover { target: usize },
     Join,
 }
@@ -53,7 +53,7 @@ fn action() -> impl Strategy<Value = Action> {
         (0..8usize).prop_map(|peer| Action::ShareToggle { peer }),
         (0..8usize).prop_map(|peer| Action::FileRequest { peer }),
         (0..8usize).prop_map(|peer| Action::FileEnd { peer }),
-        Just(Action::HostHeartbeat),
+        Just(Action::Heartbeat),
         (0..8usize).prop_map(|target| Action::Handover { target }),
         Just(Action::Join),
     ]
@@ -129,10 +129,7 @@ fn apply(room: &mut Room, action: Action) {
                 room.peer(peer).act(PlayerFileEnd(video));
             }
         }
-        Action::HostHeartbeat => {
-            let host = room.host_index();
-            room.peer(host).heartbeat();
-        }
+        Action::Heartbeat => room.heartbeat(),
         Action::Handover { target } => {
             let target = target % room.peers.len();
             let host = room.host_index();
@@ -193,7 +190,7 @@ proptest! {
     /// peers joining mid-session — the room goes quiescent (pump panics on
     /// a message storm) and every peer agrees on the playlist, the loaded
     /// video, the video and playlist shown in the UI, and the playlist
-    /// marker. After a few quiet host heartbeats everyone also agrees with
+    /// marker. After a few quiet heartbeats everyone also agrees with
     /// the host on paused/playing, and no video server keeps running when
     /// no provider is announced.
     ///
@@ -219,11 +216,10 @@ proptest! {
 
             assert_room_converged(&mut room);
 
-            // a few quiet host heartbeats let the reconciliation settle,
+            // a few quiet heartbeats let the reconciliation settle,
             // and must not break the converged state
             for _ in 0..3 {
-                let host = room.host_index();
-                room.peer(host).heartbeat();
+                room.heartbeat();
                 room.pump();
             }
             assert_room_converged(&mut room);

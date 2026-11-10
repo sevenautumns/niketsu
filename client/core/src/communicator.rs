@@ -7,9 +7,10 @@ use async_trait::async_trait;
 use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use multiaddr::Multiaddr;
+pub use multiaddr::PeerId;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
@@ -17,6 +18,7 @@ use super::{CoreModel, EventHandler};
 use crate::player::MediaPlayerTrait;
 use crate::playlist::Playlist;
 use crate::room::{RoomName, UserList};
+use crate::sync::ClientSync;
 use crate::user::UserStatus;
 
 #[cfg_attr(test, mockall::automock)]
@@ -35,6 +37,9 @@ pub struct EndpointInfo {
     pub password: String,
 }
 
+/// What the core asks the communicator to deliver. The communicator decides
+/// only *how* a message travels for its role (gossip broadcast, or a direct
+/// request to the host); *whether* and *what* to send is decided here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutgoingMessage {
     VideoStatus(VideoStatusMsg),
@@ -44,14 +49,20 @@ pub enum OutgoingMessage {
     Seek(SeekMsg),
     Select(SelectMsg),
     UserMessage(UserMessageMsg),
+    /// A client sends it to the host, the host to the room.
     Playlist(PlaylistMsg),
+    /// A client's own status, sent to the host.
     UserStatus(UserStatusMsg),
+    /// The host's view of who is in the room, sent to the room.
+    UserStatusList(UserStatusListMsg),
+    /// A message for exactly one peer rather than the room.
+    ToPeer(ToPeerMsg),
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
     ChunkRequest(ChunkRequestMsg),
     ChunkResponse(ChunkResponseMsg),
     VideoShareChange(VideoShareMsg),
-    HostHandover(HostHandoverMsg),
+    HostHandover(HostHandoverRequest),
 }
 
 #[enum_dispatch(EventHandler)]
@@ -76,9 +87,13 @@ pub enum IncomingMessage {
     ChunkResponse(ChunkResponseMsg),
     VideoProviderStopped(VideoProviderStoppedMsg),
     HostHandover(HostHandoverMsg),
+    PeerConnected(PeerConnectedMsg),
+    PeerDisconnected(PeerDisconnectedMsg),
+    PeerStatus(PeerStatusMsg),
+    HostRoundTrip(HostRoundTripMsg),
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConnectedMsg {
     pub is_host: bool,
 }
@@ -98,11 +113,148 @@ impl From<ConnectedMsg> for PlayerMessage {
 impl EventHandler for ConnectedMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("server connection established");
-        model
-            .communicator
-            .send(OutgoingMessage::from(model.config.status(model.ready)));
+        if self.is_host {
+            model.become_host();
+        } else {
+            model.host = None;
+        }
+        model.joined_room = Some(model.config.room.clone());
+        // round trips of an earlier connection say nothing about this one
+        model.sync = ClientSync::default();
+        model.publish_status();
         model.ui.is_host(self.is_host);
         model.ui.player_message(PlayerMessage::from(self));
+    }
+}
+
+/// A peer reachable over a direct connection, so room messages can flow.
+/// The host greets it with the room state; this repeats for every new
+/// direct connection to the same peer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeerConnectedMsg {
+    pub peer: PeerId,
+}
+
+impl EventHandler for PeerConnectedMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(peer = %self.peer, "peer connected");
+        let Some(host) = &mut model.host else {
+            debug!(peer = %self.peer, "ignoring peer connection as a client");
+            return;
+        };
+        if !host.users.contains(&self.peer) {
+            host.users.add_connected(self.peer);
+        }
+        let playlist = host.playlist.clone();
+        let select = host.select.clone();
+        let users = host.users.status_list().clone();
+        debug!(?users, peer = %self.peer, "sending room state to peer");
+        model
+            .communicator
+            .send(ToPeerMsg::new(self.peer, DirectMessage::Playlist(playlist)).into());
+        model
+            .communicator
+            .send(ToPeerMsg::new(self.peer, DirectMessage::Select(select)).into());
+        model
+            .communicator
+            .send(OutgoingMessage::UserStatusList(users));
+    }
+}
+
+/// The last connection to a peer closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeerDisconnectedMsg {
+    pub peer: PeerId,
+}
+
+impl EventHandler for PeerDisconnectedMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(peer = %self.peer, "peer disconnected");
+        let Some(host) = &mut model.host else {
+            return;
+        };
+        if host.users.remove(&self.peer) {
+            model.publish_user_list();
+        } else {
+            debug!(peer = %self.peer, "disconnected peer was not in the room");
+        }
+    }
+}
+
+/// A peer's own status, as sent to the host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerStatusMsg {
+    pub peer: PeerId,
+    pub status: UserStatus,
+}
+
+impl EventHandler for PeerStatusMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(peer = %self.peer, status = ?self.status, "peer status");
+        let Some(host) = &mut model.host else {
+            warn!(peer = %self.peer, "received a peer status without being the host");
+            return;
+        };
+        if let Some(forced) = host.users.apply_status(self.status, self.peer) {
+            model
+                .communicator
+                .send(ToPeerMsg::new(self.peer, DirectMessage::UserStatus(forced)).into());
+        }
+        let actor = model.host.as_ref().map(|host| host.actor_of(&self.peer));
+        if let Some(actor) = actor {
+            model.start_if_all_ready(actor);
+        }
+        model.publish_user_list();
+    }
+}
+
+/// One measured round trip to the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostRoundTripMsg {
+    pub rtt: Duration,
+}
+
+impl EventHandler for HostRoundTripMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(rtt = ?self.rtt, "host round trip");
+        model.sync.delay.push(self.rtt);
+    }
+}
+
+/// What the host can address to a single peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectMessage {
+    Playlist(PlaylistMsg),
+    Select(SelectMsg),
+    /// A rename the host forces on the peer.
+    UserStatus(UserStatusMsg),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToPeerMsg {
+    pub peer: PeerId,
+    pub message: DirectMessage,
+}
+
+impl ToPeerMsg {
+    pub fn new(peer: PeerId, message: DirectMessage) -> Self {
+        Self { peer, message }
+    }
+}
+
+impl From<ToPeerMsg> for OutgoingMessage {
+    fn from(value: ToPeerMsg) -> Self {
+        Self::ToPeer(value)
+    }
+}
+
+impl From<DirectMessage> for IncomingMessage {
+    fn from(value: DirectMessage) -> Self {
+        match value {
+            DirectMessage::Playlist(msg) => msg.into(),
+            DirectMessage::Select(msg) => msg.into(),
+            DirectMessage::UserStatus(msg) => msg.into(),
+        }
     }
 }
 
@@ -158,6 +310,11 @@ impl EventHandler for VideoStatusMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received video status for reconciliation");
 
+        if model.sync.is_seeking() {
+            debug!("can not determine client position during seek");
+            return;
+        }
+
         // PlaybackSpeed only announces a change, so the heartbeat is the only
         // place the room's speed is repeated: a peer that joined a session
         // already running at another speed learns it here, and would otherwise
@@ -191,6 +348,7 @@ impl EventHandler for VideoStatusMsg {
             }
         }
 
+        let pos = model.sync.host_position(pos, self.paused);
         model.player.reconcile(pos)
     }
 }
@@ -352,6 +510,7 @@ impl From<SeekMsg> for PlayerMessage {
 impl EventHandler for SeekMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(seek = ?self, "received");
+        model.sync.seek_started();
         let playlist_video = Video::from(self.video.as_str());
         model.playlist.select_playing(&playlist_video);
         model.save_playlist();
@@ -409,8 +568,12 @@ impl From<SelectMsg> for PlayerMessage {
 impl EventHandler for SelectMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(select = ?self, "received");
-        model.select_video(self.video.as_ref(), self.position);
-        model.ui.player_message(PlayerMessage::from(self));
+        model.apply_select(self.clone());
+        if let Some(host) = &mut model.host {
+            let actor = self.actor.clone();
+            host.select = self;
+            model.start_if_all_ready(actor);
+        }
     }
 }
 
@@ -504,9 +667,12 @@ impl From<PlaylistMsg> for PlayerMessage {
 impl EventHandler for PlaylistMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received playlist");
-        model.replace_playlist(self.playlist.clone());
-        model.ui.playlist(self.playlist.clone());
-        model.ui.player_message(PlayerMessage::from(self))
+        model.apply_playlist(self.clone());
+        if model.host.is_some() {
+            // a client's edit reaches the room only through the host
+            model.communicator.send(self.clone().into());
+            model.host_adopt_playlist(self);
+        }
     }
 }
 
@@ -781,9 +947,24 @@ impl EventHandler for HostHandoverMsg {
     }
 }
 
-impl From<HostHandoverMsg> for OutgoingMessage {
-    fn from(value: HostHandoverMsg) -> Self {
+/// The host hands the room over to `peer`, which goes by `new_host`. The
+/// communicator asks the relay to transfer the room and announces the new
+/// host to the room.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostHandoverRequest {
+    pub peer: PeerId,
+    pub new_host: ArcStr,
+}
+
+impl From<HostHandoverRequest> for OutgoingMessage {
+    fn from(value: HostHandoverRequest) -> Self {
         Self::HostHandover(value)
+    }
+}
+
+impl From<UserStatusListMsg> for OutgoingMessage {
+    fn from(value: UserStatusListMsg) -> Self {
+        Self::UserStatusList(value)
     }
 }
 

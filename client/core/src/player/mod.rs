@@ -4,9 +4,7 @@ use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use tracing::{trace, warn};
 
-use super::communicator::{
-    OutgoingMessage, PauseMsg, PlaybackSpeedMsg, SeekMsg, SelectMsg, StartMsg,
-};
+use super::communicator::{PauseMsg, PlaybackSpeedMsg, SeekMsg, SelectMsg, StartMsg};
 use super::playlist::Video;
 use super::{CoreModel, EventHandler};
 use crate::FilePathSearch;
@@ -59,9 +57,7 @@ impl EventHandler for PlayerPause {
             name: model.config.username.clone(),
             ready: false,
         });
-        model
-            .communicator
-            .send(OutgoingMessage::from(model.config.status(model.ready)));
+        model.publish_status();
         model.communicator.send(
             PauseMsg {
                 actor: model.config.username.clone(),
@@ -82,9 +78,7 @@ impl EventHandler for PlayerStart {
             name: model.config.username.clone(),
             ready: true,
         });
-        model
-            .communicator
-            .send(OutgoingMessage::from(model.config.status(model.ready)));
+        model.publish_status();
         model.communicator.send(
             StartMsg {
                 actor: model.config.username.clone(),
@@ -100,9 +94,7 @@ pub struct PlayerCachePause;
 impl EventHandler for PlayerCachePause {
     fn handle(self, model: &mut CoreModel) {
         trace!("player cache pause");
-        model
-            .communicator
-            .send(OutgoingMessage::from(model.config.status(model.ready)));
+        model.publish_status();
         model.communicator.send(
             PauseMsg {
                 actor: model.config.username.clone(),
@@ -194,14 +186,11 @@ impl EventHandler for PlayerFileEnd {
         model.select_video(video.as_ref(), Duration::ZERO);
         let actor = model.config.username.clone();
         let position = model.player.get_position().unwrap_or_default();
-        model.communicator.send(
-            SelectMsg {
-                actor,
-                video,
-                position,
-            }
-            .into(),
-        );
+        model.publish_select(SelectMsg {
+            actor,
+            video,
+            position,
+        });
     }
 }
 

@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use niketsu_core::player::{PlayerFileEnd, PlayerPause, PlayerSpeedChange, PlayerStart};
+use niketsu_core::player::{
+    PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart,
+};
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::{ui, video_provider, video_server};
 
@@ -903,4 +905,358 @@ async fn stale_chunk_responses_are_dropped_not_misrouted() {
         vec![(512, vec![8; 512])],
         "responses must reach exactly their requester"
     );
+}
+
+fn users(names: &[(&str, bool)]) -> Vec<(String, bool)> {
+    names.iter().map(|(n, r)| (n.to_string(), *r)).collect()
+}
+
+/// Everyone, late joiners included, sees the same user list, and the host
+/// keeps it current as users come, ready up and leave.
+#[tokio::test]
+async fn the_user_list_follows_joins_ready_changes_and_departures() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &[]);
+    let bob = room.join("bob", &[]);
+    room.pump();
+
+    let charlie = room.join("charlie", &[]);
+    room.pump();
+    let everyone = users(&[("alice", false), ("bob", false), ("charlie", false)]);
+    for who in [alice, bob, charlie] {
+        assert_eq!(room.peer(who).ui.state().user_names(), everyone);
+    }
+
+    let name = room.peer(bob).name();
+    room.peer(bob).act(ui::UserChange { name, ready: true });
+    room.pump();
+    let bob_ready = users(&[("alice", false), ("bob", true), ("charlie", false)]);
+    for who in [alice, bob, charlie] {
+        assert_eq!(room.peer(who).ui.state().user_names(), bob_ready);
+    }
+
+    room.leave(charlie);
+    room.pump();
+    let without_charlie = users(&[("alice", false), ("bob", true)]);
+    for who in [alice, bob] {
+        assert_eq!(
+            room.peer(who).ui.state().user_names(),
+            without_charlie,
+            "a departed user must drop out of everyone's list"
+        );
+    }
+}
+
+/// A joiner whose name is taken is renamed by the host, and the rename
+/// reaches the joiner itself.
+#[tokio::test]
+async fn the_host_resolves_username_collisions() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &[]);
+    let bob = room.join("bob", &[]);
+    room.pump();
+
+    let impostor = room.join("bob", &[]);
+    room.pump();
+
+    let renamed = room.peer(impostor).name();
+    assert_ne!(renamed, "bob", "the joiner must not keep a taken name");
+    assert!(renamed.starts_with("bob_"));
+    assert_eq!(room.peer(bob).name(), "bob", "the first bob keeps his name");
+
+    let expected = users(&[("alice", false), ("bob", false), (renamed.as_str(), false)]);
+    for who in [alice, bob, impostor] {
+        assert_eq!(room.peer(who).ui.state().user_names(), expected);
+    }
+
+    // renaming into a taken name is resolved the same way
+    room.peer(bob).act(ui::UserChange {
+        name: "alice".into(),
+        ready: false,
+    });
+    room.pump();
+    let bob_now = room.peer(bob).name();
+    assert!(bob_now.starts_with("alice_"), "got {bob_now}");
+    assert_eq!(room.peer(alice).name(), "alice");
+    assert_eq!(room.peer(alice).ui.state().users.len(), 3);
+}
+
+/// When the last user readies up — here a client, so the decision is the
+/// host's reaction to a peer's status — playback starts for everyone.
+#[tokio::test]
+async fn a_client_readying_up_last_auto_starts_the_room() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &["ep1"]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+
+    let name = room.peer(alice).name();
+    room.peer(alice).act(ui::UserChange { name, ready: true });
+    room.pump();
+    for who in [alice, bob] {
+        assert!(
+            room.peer(who).player.state().paused,
+            "one ready user out of two must not start anything"
+        );
+    }
+
+    let name = room.peer(bob).name();
+    room.peer(bob).act(ui::UserChange { name, ready: true });
+    room.pump();
+    for who in [alice, bob] {
+        assert!(
+            !room.peer(who).player.state().paused,
+            "the last user readying up must start the room"
+        );
+    }
+}
+
+/// A client removing the running video from the playlist makes the host
+/// move the whole room on to the video that took its place.
+#[tokio::test]
+async fn removing_the_running_video_selects_its_successor() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1", "ep2", "ep3"]);
+    let bob = room.join("bob", &["ep1", "ep2", "ep3"]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1", "ep2", "ep3"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep2"),
+    });
+    room.pump();
+
+    // bob deletes ep2 while it runs
+    let playlist = Playlist::from_iter(["ep1", "ep3"]);
+    room.peer(bob).ui.set(|ui| ui.playlist = playlist.clone());
+    room.peer(bob).act(ui::PlaylistChange { playlist });
+    room.pump();
+
+    for who in [alice, bob] {
+        let peer = room.peer(who);
+        assert_eq!(peer.playlist(), Playlist::from_iter(["ep1", "ep3"]));
+        assert_eq!(peer.player.state().video, Some(Video::from("ep3")));
+        assert_eq!(
+            peer.model.playlist.get_current_video(),
+            Some(Video::from("ep3"))
+        );
+    }
+
+    // a late joiner gets the same picture
+    let charlie = room.join("charlie", &[]);
+    room.pump();
+    assert_eq!(
+        room.peer(charlie).player.state().video,
+        Some(Video::from("ep3"))
+    );
+}
+
+/// After a seek arrives, a client ignores the host's clock until its own
+/// player has moved: a heartbeat the host sent before applying the seek
+/// would otherwise drag the client back to where the room was.
+#[tokio::test]
+async fn a_client_ignores_the_host_clock_until_its_seek_has_landed() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &["ep1"]);
+    let charlie = room.join("charlie", &["ep1"]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+    for who in [alice, bob, charlie] {
+        room.peer(who).player.set(|player| {
+            player.paused = false;
+            player.position = Duration::from_secs(10);
+        });
+    }
+    room.heartbeat();
+    room.pump();
+
+    // bob seeks; charlie receives it, alice (the host) too
+    room.peer(bob)
+        .player
+        .set(|player| player.position = Duration::from_secs(300));
+    room.peer(bob)
+        .act(PlayerPositionChange::new(Duration::from_secs(300)));
+    room.pump();
+    assert_eq!(
+        room.peer(charlie).player.state().position,
+        Duration::from_secs(300)
+    );
+
+    // a stale host heartbeat, as if sent before the host applied the seek
+    room.peer(alice)
+        .player
+        .set(|player| player.position = Duration::from_secs(10));
+    room.peer(alice).heartbeat();
+    room.pump();
+    assert_eq!(
+        room.peer(charlie).player.state().position,
+        Duration::from_secs(300),
+        "a client must not be yanked back while its seek settles"
+    );
+
+    // charlie's player moved on; from now on the host's clock counts again
+    room.peer(charlie)
+        .player
+        .set(|player| player.position = Duration::from_secs(301));
+    room.peer(charlie).heartbeat();
+    room.peer(alice)
+        .player
+        .set(|player| player.position = Duration::from_secs(320));
+    room.peer(alice).heartbeat();
+    room.pump();
+    assert_eq!(
+        room.peer(charlie).player.state().position,
+        Duration::from_secs(320)
+    );
+}
+
+/// The host's position is half a round trip old when it arrives; a playing
+/// client reconciles against where the host is by now, a paused one against
+/// the reported position as is.
+#[tokio::test]
+async fn clients_compensate_the_host_position_for_the_network_delay() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &["ep1"]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+
+    // a quiet ping of 400ms and one congested one, which must not count
+    room.round_trip(bob, Duration::from_millis(400));
+    room.round_trip(bob, Duration::from_secs(3));
+
+    room.peer(alice).player.set(|player| {
+        player.paused = false;
+        player.position = Duration::from_secs(100);
+    });
+    room.peer(bob).player.set(|player| {
+        player.paused = false;
+        player.position = Duration::from_secs(90);
+    });
+    room.peer(alice).heartbeat();
+    room.pump();
+    assert_eq!(
+        room.peer(bob).player.state().position,
+        Duration::from_millis(100_200),
+        "a playing host is half the quietest round trip further by now"
+    );
+
+    // 2.6s ahead of the reported position, but only 2.4s ahead of where
+    // the host is by now: within the tolerance
+    room.peer(bob)
+        .player
+        .set(|player| player.position = Duration::from_millis(102_600));
+    room.peer(bob).heartbeat();
+    room.peer(alice).heartbeat();
+    room.pump();
+    assert_eq!(
+        room.peer(bob).player.state().position,
+        Duration::from_millis(102_600)
+    );
+
+    // a paused host does not move while the message travels
+    room.peer(alice).player.set(|player| player.paused = true);
+    room.peer(bob).player.set(|player| {
+        player.paused = true;
+        player.position = Duration::from_secs(90);
+    });
+    room.peer(bob).heartbeat();
+    room.peer(alice).heartbeat();
+    room.pump();
+    assert_eq!(
+        room.peer(bob).player.state().position,
+        Duration::from_secs(100)
+    );
+}
+
+/// A handover keeps the room's state: the new host does not restart the
+/// running video, and everyone who reconnects to it — the old host
+/// included — is greeted with the playlist, the video at the new host's
+/// position, and the full user list.
+#[tokio::test]
+async fn a_handover_keeps_the_room_running() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1", "ep2"]);
+    let bob = room.join("bob", &["ep1", "ep2"]);
+    let charlie = room.join("charlie", &["ep1", "ep2"]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1", "ep2"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep2"),
+    });
+    room.pump();
+    for who in [alice, bob, charlie] {
+        room.peer(who).player.set(|player| {
+            player.paused = false;
+            player.position = Duration::from_secs(60);
+        });
+    }
+
+    let new_host = room.peer(bob).name();
+    room.peer(alice).act(ui::HostHandover { new_host });
+    room.pump();
+
+    assert_eq!(room.host_index(), bob);
+    let bob_player = room.peer(bob).player.state();
+    assert_eq!(bob_player.video, Some(Video::from("ep2")));
+    assert_eq!(
+        bob_player.position,
+        Duration::from_secs(60),
+        "the new host must not restart the running video"
+    );
+    let everyone = users(&[("alice", false), ("bob", false), ("charlie", false)]);
+    for who in [alice, bob, charlie] {
+        let peer = room.peer(who);
+        assert_eq!(peer.playlist(), Playlist::from_iter(["ep1", "ep2"]));
+        assert_eq!(peer.player.state().video, Some(Video::from("ep2")));
+        assert_eq!(peer.player.state().position, Duration::from_secs(60));
+        assert_eq!(peer.ui.state().user_names(), everyone);
+    }
+}
+
+/// Only the host can hand the room over; a client asking for it sends
+/// nothing, and nobody reconnects.
+#[tokio::test]
+async fn a_client_cannot_hand_over_the_room() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &[]);
+    let bob = room.join("bob", &[]);
+    let charlie = room.join("charlie", &[]);
+    room.pump();
+
+    let new_host = room.peer(charlie).name();
+    room.peer(bob).act(ui::HostHandover { new_host });
+    room.pump();
+
+    assert_eq!(room.host_index(), alice);
+    assert!(room.peer(alice).ui.state().is_host);
+    assert!(!room.peer(charlie).ui.state().is_host);
 }

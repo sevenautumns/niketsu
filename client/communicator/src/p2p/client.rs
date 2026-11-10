@@ -1,7 +1,6 @@
-use std::collections::{HashMap, VecDeque};
-use std::time::Duration;
+use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use libp2p::core::ConnectedPoint;
 use libp2p::multiaddr::Protocol;
@@ -9,7 +8,7 @@ use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, mdns, ping};
 use niketsu_core::communicator::{
-    ConnectedMsg, PlaylistMsg, SeekMsg, SelectMsg, UserStatusMsg, VideoStatusMsg,
+    ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
 };
 use tracing::{debug, error, info, warn};
 
@@ -20,40 +19,11 @@ use super::{
 };
 use crate::messages::NiketsuMessage;
 
-/// Number of ping samples the delay estimate is taken over. Pings run once a
-/// second, so this covers the last ten.
-const DELAY_WINDOW: usize = 10;
-
-/// Round-trip samples to the host, of which the estimate is the *minimum*:
-/// congestion and scheduling only ever add to a round-trip time, so the
-/// smallest recent sample is the one least polluted by them. The estimate
-/// shifts the host position we reconcile against, so a single spike on a
-/// flaky link must not move it — which is exactly what an average would do.
-#[derive(Debug, Default)]
-struct HostDelay {
-    samples: VecDeque<Duration>,
-}
-
-impl HostDelay {
-    fn push(&mut self, sample: Duration) {
-        if self.samples.len() == DELAY_WINDOW {
-            self.samples.pop_front();
-        }
-        self.samples.push_back(sample);
-    }
-
-    /// Zero until the first ping answers, which leaves the host's reported
-    /// position uncorrected rather than guessing at a delay.
-    fn get(&self) -> Duration {
-        self.samples.iter().copied().min().unwrap_or_default()
-    }
-}
-
 pub(crate) struct ClientCommunicationHandler {
     handler: CommunicationHandler,
     /// Direct connection to the host, arriving either via DCUtR hole punch
-    /// or via the host's mDNS LAN dial. Ping delay samples are only taken
-    /// from this connection.
+    /// or via the host's mDNS LAN dial. Round trips to the host are only
+    /// reported from this connection.
     host_conn: Option<ConnectionId>,
     /// Relayed (circuit) connections per peer: the rendezvous to the host and
     /// the file-share rendezvous to provider peers. A circuit only carries
@@ -64,9 +34,6 @@ pub(crate) struct ClientCommunicationHandler {
     /// creating a fresh relay-client listener (each one makes and renews its
     /// own reservation) every time the host connection is re-established.
     host_circuit_reserved: bool,
-    video_status: VideoStatusMsg,
-    is_seeking: bool,
-    delay: HostDelay,
 }
 
 impl ClientCommunicationHandler {
@@ -74,8 +41,8 @@ impl ClientCommunicationHandler {
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
         host: PeerId,
-        core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
-        message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+        core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
+        message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
     ) -> Self {
         let mut handler =
             CommunicationHandler::new(swarm, topic, host, core_receiver, message_sender);
@@ -88,9 +55,6 @@ impl ClientCommunicationHandler {
             host_conn: None,
             relayed_conns: HashMap::new(),
             host_circuit_reserved: false,
-            video_status: VideoStatusMsg::default(),
-            is_seeking: false,
-            delay: HostDelay::default(),
         }
     }
 
@@ -101,11 +65,12 @@ impl ClientCommunicationHandler {
         }
 
         match event.result {
-            Ok(d) => {
+            Ok(rtt) => {
                 if let Some(conn) = self.host_conn
                     && event.connection == conn
+                    && let Err(error) = self.handler.forward(HostRoundTripMsg { rtt })
                 {
-                    self.delay.push(d);
+                    warn!(%error, "Failed to report round trip to core");
                 }
             }
             Err(error) => {
@@ -317,64 +282,10 @@ impl ClientCommunicationHandler {
         }
     }
 
-    fn on_broadcast_video_status(&mut self, msg: VideoStatusMsg, peer_id: PeerId) -> Result<()> {
-        if peer_id != self.handler.base.host {
-            anyhow::bail!("Received video status from non-host peer: {peer_id:?}")
-        }
-
-        if self.is_seeking {
-            debug!("can not determine client position during seek");
-            return Ok(());
-        }
-
-        let mut video_status = msg;
-        if let Some(pos) = video_status.position
-            && !video_status.paused
-        {
-            debug!("add delay to position");
-            video_status.position = Some(pos + self.delay.get().div_f64(2.0));
-        }
-
-        self.handler.base.message_sender.send(video_status.into())?;
-        Ok(())
-    }
-
-    fn on_broadcast_select(&mut self, msg: SelectMsg) -> Result<()> {
-        self.handler.reset_requests_responses();
-        self.handler.base.message_sender.send(msg.into())?;
-        Ok(())
-    }
-
-    fn on_broadcast_seek(&mut self, msg: SeekMsg) -> Result<()> {
-        self.is_seeking = true;
-        self.handler.base.message_sender.send(msg.into())?;
-        Ok(())
-    }
-
-    fn on_core_user_status(&mut self, msg: UserStatusMsg) -> Result<()> {
+    fn send_to_host(&mut self, msg: NiketsuMessage) -> Result<()> {
         let host = self.handler.base.host;
-        self.handler.base.swarm.send_request(&host, msg.into());
+        self.handler.base.swarm.send_request(&host, msg);
         Ok(())
-    }
-
-    fn on_core_playlist(&mut self, msg: PlaylistMsg) -> Result<()> {
-        let host = self.handler.base.host;
-        self.handler.base.swarm.send_request(&host, msg.into());
-        Ok(())
-    }
-
-    fn on_core_video_status(&mut self, msg: VideoStatusMsg) -> Result<()> {
-        if msg.position != self.video_status.position {
-            self.is_seeking = false;
-            self.video_status = msg;
-        }
-        Ok(())
-    }
-
-    fn on_core_select(&mut self, msg: SelectMsg) -> Result<()> {
-        let topic = self.handler.base.topic.clone();
-        self.handler.reset_requests_responses();
-        self.handler.base.swarm.try_broadcast(topic, msg.into())
     }
 }
 
@@ -429,16 +340,18 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
 
     fn handle_swarm_broadcast(&mut self, data: Vec<u8>, source: PeerId) -> Result<()> {
         let niketsu_msg: NiketsuMessage = data.try_into()?;
-        debug!(message = ?niketsu_msg, "Received broadcast");
+        debug!(message = ?niketsu_msg, %source, "Received broadcast");
         use NiketsuMessage::*;
         match niketsu_msg {
-            VideoStatus(msg) => self.on_broadcast_video_status(msg, source),
-            Select(msg) => self.on_broadcast_select(msg),
-            Seek(msg) => self.on_broadcast_seek(msg),
-            other => {
-                self.handler.base.message_sender.send(other)?;
-                Ok(())
+            // only the host's clock is a reference for the room
+            VideoStatus(_) if source != self.handler.base.host => {
+                bail!("Received video status from non-host peer: {source:?}")
             }
+            Select(msg) => {
+                self.handler.reset_requests_responses();
+                self.handler.forward(msg)
+            }
+            other => self.handler.forward(other),
         }
     }
 
@@ -460,57 +373,19 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
         }
     }
 
-    fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
+    fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()> {
         debug!(?msg, host = %self.handler.base.host, peer = %self.handler.base.swarm.local_peer_id(), "Handling core message");
-        use NiketsuMessage::*;
+        let Err(msg) = self.handler.route_core_message(msg)? else {
+            return Ok(());
+        };
+        use OutgoingMessage::*;
         match msg {
-            VideoStatus(m) => self.on_core_video_status(m),
-            Select(m) => self.on_core_select(m),
-            Playlist(m) => self.on_core_playlist(m),
-            Status(m) => self.on_core_user_status(m),
-            m @ (FileRequest(_) | FileResponse(_) | ChunkRequest(_) | ChunkResponse(_)
-            | VideoShare(_)) => self.handler.handle_file_share_core_message(m),
-            other => self.handler.broadcast(other),
+            Playlist(m) => self.send_to_host(m.into()),
+            UserStatus(m) => self.send_to_host(m.into()),
+            other @ (UserStatusList(_) | ToPeer(_) | HostHandover(_)) => {
+                bail!("Only the host sends {other:?}")
+            }
+            other => bail!("Unrouted core message: {other:?}"),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn no_samples_means_no_correction() {
-        assert_eq!(HostDelay::default().get(), Duration::ZERO);
-    }
-
-    #[test]
-    fn a_single_spike_does_not_move_the_delay() {
-        let mut delay = HostDelay::default();
-        for _ in 0..5 {
-            delay.push(Duration::from_millis(40));
-        }
-        delay.push(Duration::from_secs(4));
-
-        assert_eq!(
-            delay.get(),
-            Duration::from_millis(40),
-            "one congested sample must not shift the host position"
-        );
-    }
-
-    #[test]
-    fn a_sustained_change_is_followed_once_the_window_turns_over() {
-        let mut delay = HostDelay::default();
-        delay.push(Duration::from_millis(40));
-        for _ in 0..DELAY_WINDOW {
-            delay.push(Duration::from_millis(200));
-        }
-
-        assert_eq!(
-            delay.get(),
-            Duration::from_millis(200),
-            "a link that is genuinely slower must be picked up"
-        );
     }
 }

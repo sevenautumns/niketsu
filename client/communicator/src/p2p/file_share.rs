@@ -6,7 +6,8 @@ use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::{Multiaddr, PeerId, kad};
 use niketsu_core::communicator::{
-    ChunkRequestMsg, ChunkResponseMsg, FileRequestMsg, FileResponseMsg, VideoShareMsg,
+    ChunkRequestMsg, ChunkResponseMsg, FileRequestMsg, FileResponseMsg, IncomingMessage,
+    VideoProviderStoppedMsg, VideoShareMsg,
 };
 use niketsu_core::log_err_msg;
 use niketsu_core::playlist::Video;
@@ -14,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, warn};
 
 use super::{CommonCommunication, CommunicationHandler};
-use crate::NiketsuMessage;
 use crate::p2p::SwarmHandler;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -123,8 +123,9 @@ impl FileShareConsumer {
             debug!("No providers found for the requested file");
             let msg = "No providers found for the requested file".into();
             base.send_chat_message(arcstr::literal!("server"), msg).ok();
-            let msg = NiketsuMessage::VideoProviderStopped(Default::default());
-            base.message_sender.send(msg).ok();
+            base.message_sender
+                .send(VideoProviderStoppedMsg.into())
+                .ok();
             return;
         };
 
@@ -204,8 +205,10 @@ impl CommunicationHandler {
                     self.base
                         .send_chat_message(arcstr::literal!("server"), msg)
                         .ok();
-                    let msg = NiketsuMessage::VideoProviderStopped(Default::default());
-                    self.base.message_sender.send(msg).ok();
+                    self.base
+                        .message_sender
+                        .send(VideoProviderStoppedMsg.into())
+                        .ok();
                 }
             }
             _ => {}
@@ -237,8 +240,10 @@ impl CommunicationHandler {
     pub(super) fn fs_chunk_request(&mut self, msg: ChunkRequestMsg) -> Result<()> {
         // TODO handle issues with provider
         let Some(FileShare::Consumer(consumer)) = &mut self.file_share else {
-            let stopped = NiketsuMessage::VideoProviderStopped(Default::default());
-            self.base.message_sender.send(stopped).ok();
+            self.base
+                .message_sender
+                .send(VideoProviderStoppedMsg.into())
+                .ok();
             bail!("No active file share consumer");
         };
         let Some(provider) = consumer.current_request_provider else {
@@ -340,13 +345,15 @@ impl CommunicationHandler {
             return Ok(());
         };
         self.file_share.take();
-        let msg = NiketsuMessage::VideoProviderStopped(Default::default());
-        self.base.message_sender.send(msg).ok();
+        self.base
+            .message_sender
+            .send(VideoProviderStoppedMsg.into())
+            .ok();
         bail!("{error}");
     }
 }
 
-impl From<FileShareResponse> for NiketsuMessage {
+impl From<FileShareResponse> for IncomingMessage {
     fn from(value: FileShareResponse) -> Self {
         match value {
             FileShareResponse::File(file_response_msg) => file_response_msg.into(),

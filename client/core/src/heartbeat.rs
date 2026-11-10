@@ -43,6 +43,12 @@ impl EventHandler for Heartbeat {
         let paused = model.player.is_paused().unwrap_or(true);
         let cache = model.player.cache_available();
         let file_loaded = model.player.video_loaded();
+        model.sync.observe_local_position(position);
+        // only the host's clock is the room's reference
+        let Some(host) = &mut model.host else {
+            return;
+        };
+        host.select.position = position.unwrap_or_default();
         model.communicator.send(
             VideoStatusMsg {
                 video,
@@ -64,11 +70,12 @@ mod tests {
 
     use super::*;
     use crate::builder::CoreBuilder;
-    use crate::communicator::{MockCommunicatorTrait, OutgoingMessage};
+    use crate::communicator::{MockCommunicatorTrait, OutgoingMessage, PlaylistMsg, SelectMsg};
     use crate::config::Config;
     use crate::file_database::MockFileDatabaseTrait;
     use crate::player::MockMediaPlayerTrait;
     use crate::playlist::Video;
+    use crate::room::HostRoom;
     use crate::ui::MockUserInterfaceTrait;
     use crate::{MockVideoProviderTrait, MockVideoServerTrait};
 
@@ -134,7 +141,54 @@ mod tests {
 
         // the room's speed is what the status reports
         core.model.player.set_speed(speed);
+        core.model.host = Some(host_room());
 
-        Heartbeat.handle(&mut core.model)
+        Heartbeat.handle(&mut core.model);
+
+        let select = &core.model.host.as_ref().unwrap().select;
+        assert_eq!(
+            select.position,
+            Duration::from_secs(15),
+            "late joiners must start where the host's clock is"
+        );
+    }
+
+    fn host_room() -> HostRoom {
+        HostRoom::new(
+            "room".into(),
+            PlaylistMsg::default(),
+            SelectMsg {
+                actor: "host".into(),
+                position: Duration::ZERO,
+                video: None,
+            },
+        )
+    }
+
+    #[test]
+    fn clients_do_not_send_heartbeats() {
+        let communicator = MockCommunicatorTrait::default();
+        let mut player = MockMediaPlayerTrait::default();
+
+        player.expect_playing_video().return_const(None::<Video>);
+        player
+            .expect_get_position()
+            .return_const(Some(Duration::from_secs(3)));
+        player.expect_is_paused().return_const(true);
+        player.expect_cache_available().return_const(false);
+        player.expect_video_loaded().return_const(false);
+
+        let mut core = CoreBuilder::builder()
+            .communicator(Box::new(communicator))
+            .player(Box::new(player))
+            .ui(Box::new(MockUserInterfaceTrait::default()))
+            .file_database(Box::new(MockFileDatabaseTrait::default()))
+            .video_server(Box::new(MockVideoServerTrait::default()))
+            .video_provider(Box::new(MockVideoProviderTrait::default()))
+            .config(Config::default())
+            .build();
+
+        // the mock communicator fails the test on any send
+        Heartbeat.handle(&mut core.model);
     }
 }

@@ -6,9 +6,7 @@ use async_trait::async_trait;
 use niketsu_core::communicator::*;
 use p2p::P2PClient;
 use tokio::task::JoinHandle;
-use tracing::{error, warn};
-
-use self::messages::NiketsuMessage;
+use tracing::error;
 
 pub mod messages;
 pub mod p2p;
@@ -33,9 +31,8 @@ impl Connection {
     async fn receive(&mut self, endpoint: &EndpointInfo) -> IncomingMessage {
         loop {
             match self {
-                Connection::Connected(c) => match c.recv().await.map(IncomingMessage::try_from) {
-                    Ok(Ok(msg)) => return msg,
-                    Ok(Err(msg)) => warn!(?msg, "received unexpected message"),
+                Connection::Connected(c) => match c.recv().await {
+                    Ok(msg) => return msg,
                     Err(c) => *self = c,
                 },
                 Connection::Connecting(c) => {
@@ -61,7 +58,7 @@ pub struct Connected {
 }
 
 impl Connected {
-    async fn recv(&mut self) -> std::result::Result<NiketsuMessage, Connection> {
+    async fn recv(&mut self) -> std::result::Result<IncomingMessage, Connection> {
         if let Some(msg) = self.p2p.next().await {
             return Ok(msg);
         }
@@ -70,7 +67,7 @@ impl Connected {
         ))))
     }
 
-    fn send(&mut self, msg: NiketsuMessage) -> std::result::Result<(), Connection> {
+    fn send(&mut self, msg: OutgoingMessage) -> std::result::Result<(), Connection> {
         self.p2p
             .send(msg)
             .inspect_err(|error| error!(%error, "Connection error"))
@@ -148,7 +145,7 @@ impl CommunicatorTrait for P2PCommunicator {
 
     fn send(&mut self, msg: OutgoingMessage) {
         if let Connection::Connected(con) = &mut self.connection
-            && let Err(con) = con.send(msg.into())
+            && let Err(con) = con.send(msg)
         {
             self.connection = con
         }

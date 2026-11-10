@@ -1,5 +1,5 @@
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
-use std::time::Duration;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -9,30 +9,36 @@ use libp2p::request_response::ResponseChannel;
 use libp2p::swarm::{ConnectionError, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use niketsu_core::communicator::{
-    ConnectedMsg, HostHandoverMsg, PlaylistMsg, SelectMsg, StartMsg, UserStatusMsg, VideoStatusMsg,
+    ConnectedMsg, HostHandoverMsg, HostHandoverRequest, IncomingMessage, OutgoingMessage,
+    PeerConnectedMsg, PeerDisconnectedMsg, PeerStatusMsg,
 };
 use niketsu_core::log_err_msg;
-use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::room::RoomName;
-use niketsu_core::user::UserStatus;
 use tracing::{debug, error, warn};
 
 use super::auth::AuthEvent;
-use super::room::{RoomUsers, select_next};
 use super::{
     Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait,
-    FileShareBehaviourEvent, MessageResponse, Response, StatusResponse, SwarmHandler,
-    TransportBehaviourEvent,
+    FileShareBehaviourEvent, MessageResponse, SwarmHandler, TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
+
+/// How a room peer is reachable from the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerLink {
+    /// Only via the relay circuit, which carries hole-punch coordination
+    /// but no room messages (see DirectOnly).
+    Relayed,
+    /// Over a direct connection.
+    Direct,
+}
 
 pub(crate) struct HostCommunicationHandler {
     handler: CommunicationHandler,
     relay_peer_id: PeerId,
     password: String,
-    room: RoomUsers,
-    playlist: PlaylistMsg,
-    select: SelectMsg,
+    room: RoomName,
+    peers: HashMap<PeerId, PeerLink>,
     mdns_users: HashMap<PeerId, Multiaddr>,
     handover_pending: bool,
 }
@@ -45,22 +51,10 @@ impl HostCommunicationHandler {
         host: PeerId,
         relay_peer_id: PeerId,
         password: String,
-        core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
-        message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+        core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
+        message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
         room: RoomName,
-        playlist_handler: PlaylistHandler,
     ) -> Self {
-        let playlist = PlaylistMsg {
-            actor: arcstr::literal!("host"),
-            playlist: playlist_handler.get_playlist(),
-        };
-        let select = SelectMsg {
-            actor: arcstr::literal!("host"),
-            position: Duration::default(),
-            video: playlist_handler.get_current_video(),
-        };
-        message_sender.send(playlist.clone().into()).ok();
-        message_sender.send(select.clone().into()).ok();
         message_sender
             .send(ConnectedMsg { is_host: true }.into())
             .ok();
@@ -69,62 +63,17 @@ impl HostCommunicationHandler {
             handler,
             relay_peer_id,
             password,
-            room: RoomUsers::new(room),
-            playlist,
-            select,
+            room,
+            peers: HashMap::default(),
             mdns_users: HashMap::default(),
             handover_pending: false,
         }
     }
 
-    fn send_init_status(&mut self, peer_id: PeerId) -> Result<()> {
-        let status_list = self.room.status_list().clone();
-        debug!(?status_list, "Sending initial status");
-
-        let msg = NiketsuMessage::Playlist(self.playlist.clone());
-        self.handler.base.swarm.send_request(&peer_id, msg);
-
-        let msg = NiketsuMessage::Select(self.select.clone());
-        self.handler.base.swarm.send_request(&peer_id, msg);
-
-        let topic = self.handler.base.topic.clone();
-        let msg = NiketsuMessage::StatusList(status_list);
-        self.handler.base.swarm.try_broadcast(topic, msg)
-    }
-
-    fn handle_status(&mut self, status: UserStatus, peer_id: PeerId) {
-        if let Some(forced) = self.room.apply_status(status, peer_id) {
-            let msg = NiketsuMessage::Status(forced);
-            self.handler.base.swarm.send_request(&peer_id, msg);
-        }
-    }
-
-    fn handle_all_users_ready(&mut self, peer_id: PeerId) -> Result<()> {
-        if self.room.all_ready() {
-            debug!("All users are ready. Publishing start to gossipsub");
-            let actor = match self.room.peer_status(&peer_id) {
-                Some(Some(status)) => status.name.clone(),
-                Some(None) => arcstr::literal!("unknown"),
-                None => arcstr::literal!("server"),
-            };
-            let start_msg = NiketsuMessage::Start(StartMsg { actor });
-            self.handler.base.message_sender.send(start_msg.clone())?;
-            let topic = self.handler.base.topic.clone();
-            self.handler.base.swarm.try_broadcast(topic, start_msg)?;
-        }
-        Ok(())
-    }
-
-    fn handle_new_playlist(&mut self, playlist: &PlaylistMsg, peer_id: PeerId) -> Result<()> {
-        if let Some(select_msg) = select_next(&self.playlist, &self.select, playlist) {
-            self.select = select_msg.clone();
-            let msg: NiketsuMessage = select_msg.into();
-            self.handler.base.message_sender.send(msg.clone())?;
-            let topic = self.handler.base.topic.clone();
-            self.handler.base.swarm.try_broadcast(topic, msg)?;
-            self.handle_all_users_ready(peer_id)?;
-        }
-        Ok(())
+    /// A peer that joined via the relay and still waits for a direct
+    /// connection, which a LAN dial can provide.
+    fn awaits_direct(&self, peer_id: &PeerId) -> bool {
+        self.peers.get(peer_id) == Some(&PeerLink::Relayed)
     }
 
     fn dial_peer(&mut self, peer_id: PeerId, addr: &Multiaddr) -> Result<()> {
@@ -158,19 +107,18 @@ impl HostCommunicationHandler {
     }
 
     fn dial_on_new_connection(&mut self, peer_id: PeerId) -> Result<()> {
-        let mdns_users = self.mdns_users.clone();
-        let Some(addr) = mdns_users.get(&peer_id) else {
+        let Some(addr) = self.mdns_users.get(&peer_id).cloned() else {
             debug!(?peer_id, "peer_id not in mdns users");
             bail!("peer_id not in mDNS users. Not dialing");
         };
 
         // only works if host has established connection via relay beforehand
-        if !self.room.is_connected_user(peer_id) {
-            debug!(?peer_id, "peer not connected via relay");
-            bail!("peer is not connected via relay. Not dialing");
+        if !self.awaits_direct(&peer_id) {
+            debug!(?peer_id, "peer not waiting for a direct connection");
+            bail!("peer is not connected via relay only. Not dialing");
         }
 
-        self.dial_peer(peer_id, addr)
+        self.dial_peer(peer_id, &addr)
     }
 
     fn on_mdns(&mut self, event: mdns::Event) {
@@ -202,15 +150,15 @@ impl HostCommunicationHandler {
                         debug!(?peer, ?addr, "Handling node and peer");
                         self.mdns_users.insert(peer, addr);
                         // If the peer has not joined the room yet, the dial
-                        // happens later from on_room_auth with whatever is in
-                        // mdns_users — so the map must keep the preferred
-                        // address, not the last candidate tried.
-                        if !self.room.is_connected_user(peer) {
+                        // happens later from on_connection_established with
+                        // whatever is in mdns_users — so the map must keep the
+                        // preferred address, not the last candidate tried.
+                        if !self.awaits_direct(&peer) {
                             break;
                         }
                         if self.dial_on_new_connection(peer).is_ok() {
-                            // The resulting direct connection sends the initial
-                            // room state via on_connection_established.
+                            // The resulting direct connection is reported to
+                            // the core via on_connection_established.
                             break;
                         }
                     }
@@ -228,12 +176,12 @@ impl HostCommunicationHandler {
     fn on_connection_established(&mut self, peer_id: PeerId, endpoint: ConnectedPoint) {
         // The relay circuit is only a rendezvous for hole punching: messaging
         // runs on a dummy handler there (see DirectOnly). Track the peer so the
-        // mDNS dialer can upgrade to a direct LAN connection, but do not send
-        // room state until a direct connection exists.
+        // mDNS dialer can upgrade to a direct LAN connection, but do not report
+        // it to the core until a direct connection exists.
         if endpoint.is_relayed() {
             debug!(%peer_id, "Client connected via relay; awaiting direct connection");
-            if !self.room.contains(&peer_id) {
-                self.room.add_connected(peer_id);
+            if let Entry::Vacant(entry) = self.peers.entry(peer_id) {
+                entry.insert(PeerLink::Relayed);
                 if let Err(err) = self.dial_on_new_connection(peer_id) {
                     debug!(?err);
                 }
@@ -242,9 +190,7 @@ impl HostCommunicationHandler {
         }
 
         debug!(%peer_id, "Direct connection to client established");
-        if !self.room.contains(&peer_id) {
-            self.room.add_connected(peer_id);
-        }
+        self.peers.insert(peer_id, PeerLink::Direct);
 
         self.handler
             .base
@@ -265,8 +211,8 @@ impl HostCommunicationHandler {
             .gossipsub;
         gossip.add_explicit_peer(&peer_id);
 
-        let res = self.send_init_status(peer_id);
-        log_err_msg!(res, "Failed to send initial messages to client");
+        let res = self.handler.forward(PeerConnectedMsg { peer: peer_id });
+        log_err_msg!(res, "Failed to report connected peer to core");
     }
 
     fn on_connection_closed(
@@ -285,109 +231,29 @@ impl HostCommunicationHandler {
                 "Connection of host to relay server closed"
             );
             self.handler.base.core_receiver.close();
+            return;
+        }
+
+        debug!(%peer_id, "User connection stopped");
+        // Gossipsub redials disconnected explicit peers forever; forget
+        // departed clients.
+        self.handler
+            .base
+            .swarm
+            .behaviour_mut()
+            .messaging
+            .inner_mut()
+            .gossipsub
+            .remove_explicit_peer(&peer_id);
+        if self.peers.remove(&peer_id).is_some() {
+            let res = self.handler.forward(PeerDisconnectedMsg { peer: peer_id });
+            log_err_msg!(res, "Failed to report disconnected peer to core");
         } else {
-            debug!("User connection stopped and user removed from map");
-            // Gossipsub redials disconnected explicit peers forever; forget
-            // departed clients.
-            self.handler
-                .base
-                .swarm
-                .behaviour_mut()
-                .messaging
-                .inner_mut()
-                .gossipsub
-                .remove_explicit_peer(&peer_id);
-            let topic = self.handler.base.topic.clone();
-            if self.room.remove(&peer_id) {
-                let status_list = NiketsuMessage::StatusList(self.room.status_list().clone());
-                let res = self.handler.base.message_sender.send(status_list.clone());
-                log_err_msg!(res, "Failed to send status list to core");
-                let res = self.handler.base.swarm.try_broadcast(topic, status_list);
-                log_err_msg!(res, "Failed to broadcast status list");
-            } else {
-                warn!(?peer_id, "Expected peer to be included in list");
-            }
+            warn!(?peer_id, "Expected peer to be known");
         }
     }
 
-    fn on_swarm_request_user_status(
-        &mut self,
-        msg: UserStatusMsg,
-        peer_id: PeerId,
-        channel: ResponseChannel<MessageResponse>,
-    ) -> Result<()> {
-        self.handle_status(msg, peer_id);
-        if let Err(err) = self.handle_all_users_ready(peer_id) {
-            let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            self.handler
-                .base
-                .swarm
-                .send_message_response(channel, resp)?;
-            return Err(err);
-        }
-
-        let msg = NiketsuMessage::StatusList(self.room.status_list().clone());
-        if let Err(err) = self.handler.base.message_sender.send(msg.clone()) {
-            let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            self.handler
-                .base
-                .swarm
-                .send_message_response(channel, resp)?;
-            return Err(anyhow::Error::from(err));
-        }
-
-        let topic = self.handler.base.topic.clone();
-        let resp = match self.handler.base.swarm.try_broadcast(topic, msg) {
-            Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
-            Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
-        };
-        self.handler.base.swarm.send_message_response(channel, resp)
-    }
-
-    fn on_swarm_request_playlist(
-        &mut self,
-        msg: PlaylistMsg,
-        peer_id: PeerId,
-        channel: ResponseChannel<MessageResponse>,
-    ) -> Result<()> {
-        let wrapped = NiketsuMessage::Playlist(msg.clone());
-        if let Err(err) = self.handler.base.message_sender.send(wrapped.clone()) {
-            let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            self.handler
-                .base
-                .swarm
-                .send_message_response(channel, resp)?;
-            return Err(anyhow::Error::from(err));
-        }
-
-        let topic = self.handler.base.topic.clone();
-        if let Err(err) = self.handler.base.swarm.try_broadcast(topic, wrapped) {
-            let resp = MessageResponse(Response::Status(StatusResponse::Err));
-            self.handler
-                .base
-                .swarm
-                .send_message_response(channel, resp)?;
-            return Err(err);
-        }
-
-        match self.handle_new_playlist(&msg, peer_id) {
-            Ok(_) => {
-                self.playlist = msg;
-                let resp = MessageResponse(Response::Status(StatusResponse::Ok));
-                self.handler.base.swarm.send_message_response(channel, resp)
-            }
-            Err(_) => self.handler.base.swarm.send_message_response(
-                channel,
-                MessageResponse(Response::Status(StatusResponse::Err)),
-            ),
-        }
-    }
-
-    fn on_core_handover(&mut self, msg: HostHandoverMsg) -> Result<()> {
-        let Some(peer_id) = self.room.find_by_name(&msg.new_host) else {
-            bail!("handover target '{}' not found in user list", msg.new_host);
-        };
-
+    fn on_core_handover(&mut self, request: HostHandoverRequest) -> Result<()> {
         self.handler
             .base
             .swarm
@@ -396,16 +262,15 @@ impl HostCommunicationHandler {
             .auth
             .transfer(
                 self.relay_peer_id,
-                self.room.status_list().room_name.clone(),
+                self.room.clone(),
                 self.password.clone(),
-                peer_id,
+                request.peer,
             );
 
-        let topic = self.handler.base.topic.clone();
-        self.handler
-            .base
-            .swarm
-            .try_broadcast(topic, NiketsuMessage::HostHandover(msg))?;
+        let announce = HostHandoverMsg {
+            new_host: request.new_host,
+        };
+        self.handler.broadcast(announce.into())?;
 
         // Both the transfer request and the broadcast are only queued in the
         // behaviours at this point. Closing the core receiver now would let the
@@ -427,47 +292,6 @@ impl HostCommunicationHandler {
         // broadcast queued before it) have left this node. Stop the host loop;
         // the core reconnects and rejoins as a regular client.
         self.handler.base.core_receiver.close();
-    }
-
-    fn on_broadcast_select(&mut self, msg: SelectMsg, peer_id: PeerId) -> Result<()> {
-        let wrapped = NiketsuMessage::Select(msg.clone());
-        self.select = msg;
-        self.handler.base.message_sender.send(wrapped)?;
-        self.handle_all_users_ready(peer_id)?;
-        self.handler.reset_requests_responses();
-        Ok(())
-    }
-
-    fn on_core_user_status(&mut self, msg: UserStatusMsg) -> Result<()> {
-        let peer_id = self.handler.base.host;
-        self.room.update_status(msg, peer_id);
-        self.handle_all_users_ready(peer_id)?;
-        let niketsu_msg = NiketsuMessage::StatusList(self.room.status_list().clone());
-        self.handler.base.message_sender.send(niketsu_msg.clone())?; // is this necessary?
-        let topic = self.handler.base.topic.clone();
-        self.handler.base.swarm.try_broadcast(topic, niketsu_msg)
-    }
-
-    fn on_core_playlist(&mut self, msg: PlaylistMsg) -> Result<()> {
-        self.handle_new_playlist(&msg, self.handler.base.host)?;
-        self.playlist = msg.clone();
-        let topic = self.handler.base.topic.clone();
-        self.handler.base.swarm.try_broadcast(topic, msg.into())
-    }
-
-    fn on_core_video_status(&mut self, msg: VideoStatusMsg) -> Result<()> {
-        self.select.position = msg.position.unwrap_or_default();
-        let topic = self.handler.base.topic.clone();
-        self.handler.base.swarm.try_broadcast(topic, msg.into())
-    }
-
-    fn on_core_select(&mut self, msg: SelectMsg) -> Result<()> {
-        self.select = msg.clone();
-        let topic = self.handler.base.topic.clone();
-        self.handler.base.swarm.try_broadcast(topic, msg.into())?;
-        self.handle_all_users_ready(self.handler.base.host)?;
-        self.handler.reset_requests_responses();
-        Ok(())
     }
 }
 
@@ -506,38 +330,56 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
         debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
         use NiketsuMessage::*;
         match msg {
-            Playlist(m) => self.on_swarm_request_playlist(m, peer_id, channel),
-            Status(m) => self.on_swarm_request_user_status(m, peer_id, channel),
+            Playlist(m) => self.handler.send_to_core(m, channel),
+            Status(status) => {
+                let msg = PeerStatusMsg {
+                    peer: peer_id,
+                    status,
+                };
+                self.handler.send_to_core(msg, channel)
+            }
             other => self.handler.respond_with_err(other, channel),
         }
     }
 
     fn handle_swarm_broadcast(&mut self, data: Vec<u8>, source: PeerId) -> Result<()> {
         let niketsu_msg: NiketsuMessage = data.try_into()?;
-        debug!(message = ?niketsu_msg, "Handling broadcast message from swarm");
+        debug!(message = ?niketsu_msg, %source, "Handling broadcast message from swarm");
         use NiketsuMessage::*;
         match niketsu_msg {
-            Select(m) => self.on_broadcast_select(m, source),
+            Select(m) => {
+                self.handler.reset_requests_responses();
+                self.handler.forward(m)
+            }
             m @ (Pause(_) | Start(_) | PlaybackSpeed(_) | Seek(_) | UserMessage(_)) => {
-                self.handler.base.message_sender.send(m)?;
-                Ok(())
+                self.handler.forward(m)
             }
             other => bail!("Host received unexpected broadcast message: {other:?}"),
         }
     }
 
-    fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
+    fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()> {
         debug!(host = %self.handler.base.host, ?msg, "Handling core message");
-        use NiketsuMessage::*;
+        let Err(msg) = self.handler.route_core_message(msg)? else {
+            return Ok(());
+        };
+        use OutgoingMessage::*;
         match msg {
-            VideoStatus(m) => self.on_core_video_status(m),
-            Select(m) => self.on_core_select(m),
-            Playlist(m) => self.on_core_playlist(m),
-            Status(m) => self.on_core_user_status(m),
+            Playlist(m) => self.handler.broadcast(m.into()),
+            UserStatusList(m) => self.handler.broadcast(m.into()),
+            ToPeer(m) => {
+                self.handler
+                    .base
+                    .swarm
+                    .send_request(&m.peer, m.message.into());
+                Ok(())
+            }
             HostHandover(m) => self.on_core_handover(m),
-            m @ (FileRequest(_) | FileResponse(_) | ChunkRequest(_) | ChunkResponse(_)
-            | VideoShare(_)) => self.handler.handle_file_share_core_message(m),
-            other => self.handler.broadcast(other),
+            UserStatus(m) => {
+                warn!(?m, "The host's own status never leaves the host");
+                Ok(())
+            }
+            other => bail!("Unrouted core message: {other:?}"),
         }
     }
 }

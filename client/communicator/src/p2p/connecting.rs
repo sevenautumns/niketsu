@@ -3,7 +3,7 @@ use futures::StreamExt;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{Swarm, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, gossipsub, identify};
-use niketsu_core::playlist::file::PlaylistBrowser;
+use niketsu_core::communicator::{IncomingMessage, OutgoingMessage};
 use niketsu_core::room::RoomName;
 use tracing::{debug, info};
 
@@ -11,7 +11,6 @@ use super::auth::AuthEvent;
 use super::client::ClientCommunicationHandler;
 use super::host::HostCommunicationHandler;
 use super::{Behaviour, BehaviourEvent, CommunicationHandlerTrait, TransportBehaviourEvent};
-use crate::messages::NiketsuMessage;
 
 struct PeerInfo {
     relay: PeerId,
@@ -24,8 +23,8 @@ pub(crate) struct ConnectingHandler {
     room: RoomName,
     password: String,
     topic: gossipsub::IdentTopic,
-    core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
-    message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+    core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
+    message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
 }
 
 impl ConnectingHandler {
@@ -35,8 +34,8 @@ impl ConnectingHandler {
         room: RoomName,
         password: String,
         topic: gossipsub::IdentTopic,
-        core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
-        message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+        core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
+        message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
     ) -> Self {
         Self {
             swarm,
@@ -60,10 +59,6 @@ impl ConnectingHandler {
         self.swarm
             .dial(self.relay_addr.clone())
             .context("Failed to dial relay")?;
-
-        let room2 = self.room.clone();
-        let playlist_task =
-            tokio::task::spawn(async move { PlaylistBrowser::get_first(&room2).await });
 
         let peer_info = self.connect().await?;
         let local_peer_id = *self.swarm.local_peer_id();
@@ -103,7 +98,6 @@ impl ConnectingHandler {
         info!(%local_peer_id, "Connection setup complete");
 
         if host == local_peer_id {
-            let playlist = playlist_task.await.ok().flatten().unwrap_or_default();
             Ok(Box::new(HostCommunicationHandler::new(
                 self.swarm,
                 self.topic,
@@ -113,7 +107,6 @@ impl ConnectingHandler {
                 self.core_receiver,
                 self.message_sender,
                 self.room,
-                playlist,
             )))
         } else {
             Ok(Box::new(ClientCommunicationHandler::new(

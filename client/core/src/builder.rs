@@ -6,10 +6,12 @@ use crate::file_database::FileDatabaseTrait;
 use crate::logging::ChatLogger;
 use crate::player::MediaPlayerTrait;
 use crate::player::wrapper::MediaPlayerWrapper;
+use crate::playlist::file::PlaylistBrowser;
 use crate::playlist::handler::PlaylistHandler;
+use crate::sync::ClientSync;
 use crate::ui::UserInterfaceTrait;
 use crate::video_provider::VideoProviderTrait;
-use crate::{Core, CoreModel, VideoServerTrait};
+use crate::{Core, CoreModel, SavedPlaylistLoader, VideoServerTrait};
 
 #[derive(TypedBuilder)]
 #[builder(build_method(into = Core))]
@@ -23,11 +25,17 @@ pub struct CoreBuilder {
     #[builder(default)]
     chat_logger: Option<ChatLogger>,
     config: Config,
+    #[builder(default = PlaylistBrowser::latest_for_room)]
+    saved_playlist: SavedPlaylistLoader,
 }
 
 impl From<CoreBuilder> for CoreModel {
     fn from(builder: CoreBuilder) -> Self {
         Self {
+            host: None,
+            sync: ClientSync::default(),
+            joined_room: None,
+            saved_playlist: builder.saved_playlist,
             communicator: builder.communicator,
             database: builder.file_database,
             player: MediaPlayerWrapper::new(builder.player),

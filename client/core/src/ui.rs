@@ -10,9 +10,11 @@ use enum_dispatch::enum_dispatch;
 use multiaddr::Multiaddr;
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
-use tracing::{Level, trace};
+use tracing::{Level, trace, warn};
 
-use super::communicator::{EndpointInfo, HostHandoverMsg, PlaylistMsg, SelectMsg, UserMessageMsg};
+use super::communicator::{
+    EndpointInfo, HostHandoverRequest, PlaylistMsg, SelectMsg, UserMessageMsg,
+};
 use super::player::MediaPlayerTrait;
 use super::playlist::Video;
 use super::user::UserStatus;
@@ -69,9 +71,7 @@ impl EventHandler for PlaylistChange {
         let playlist = self.playlist.clone();
 
         model.replace_playlist(self.playlist);
-        model
-            .communicator
-            .send(PlaylistMsg { actor, playlist }.into())
+        model.publish_playlist(PlaylistMsg { actor, playlist })
     }
 }
 
@@ -87,14 +87,11 @@ impl EventHandler for VideoChange {
         let position = Duration::ZERO;
         model.select_video(Some(&self.video), position);
 
-        model.communicator.send(
-            SelectMsg {
-                actor,
-                video: Some(self.video),
-                position,
-            }
-            .into(),
-        );
+        model.publish_select(SelectMsg {
+            actor,
+            video: Some(self.video),
+            position,
+        });
     }
 }
 
@@ -136,9 +133,7 @@ impl EventHandler for UserChange {
         trace!("user change message");
         model.config.username = self.name;
         model.ready = self.ready;
-        model
-            .communicator
-            .send(model.config.status(model.ready).into());
+        model.publish_status();
     }
 }
 
@@ -360,8 +355,26 @@ pub struct HostHandover {
 impl EventHandler for HostHandover {
     fn handle(self, model: &mut CoreModel) {
         trace!("host handover initiated by ui");
+        let Some(host) = &model.host else {
+            warn!("only the host can hand the room over");
+            return;
+        };
+        let Some(peer) = host.users.find_by_name(&self.new_host) else {
+            warn!(new_host = %self.new_host, "handover target not found in user list");
+            model.ui.player_message(
+                PlayerMessageInner {
+                    message: format!("Cannot hand over to {}: not in the room", self.new_host),
+                    source: MessageSource::Internal,
+                    level: MessageLevel::Error,
+                    timestamp: Local::now(),
+                }
+                .into(),
+            );
+            return;
+        };
         model.communicator.send(
-            HostHandoverMsg {
+            HostHandoverRequest {
+                peer,
                 new_host: self.new_host,
             }
             .into(),
