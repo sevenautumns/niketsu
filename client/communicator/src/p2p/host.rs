@@ -9,8 +9,8 @@ use libp2p::request_response::ResponseChannel;
 use libp2p::swarm::{ConnectionError, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use niketsu_core::communicator::{
-    ConnectedMsg, HostHandoverMsg, HostHandoverRequest, IncomingMessage, OutgoingMessage,
-    PeerConnectedMsg, PeerDisconnectedMsg, PeerStatusMsg,
+    ConnectedMsg, HostHandoverMsg, HostHandoverRequest, HostInstruction, IncomingMessage,
+    OutgoingMessage, PeerConnectedMsg, PeerDisconnectedMsg, PeerStatusMsg,
 };
 use niketsu_core::log_err_msg;
 use niketsu_core::room::RoomName;
@@ -280,6 +280,23 @@ impl HostCommunicationHandler {
         Ok(())
     }
 
+    fn on_core_instruction(&mut self, instruction: HostInstruction) -> Result<()> {
+        use HostInstruction::*;
+        match instruction {
+            VideoStatus(m) => self.handler.broadcast(m.into()),
+            Playlist(m) => self.handler.broadcast(m.into()),
+            UserStatusList(m) => self.handler.broadcast(m.into()),
+            ToPeer(m) => {
+                self.handler
+                    .base
+                    .swarm
+                    .send_request(&m.peer, m.message.into());
+                Ok(())
+            }
+            HostHandover(m) => self.on_core_handover(m),
+        }
+    }
+
     fn on_auth(&mut self, event: AuthEvent) {
         if !self.handover_pending {
             return;
@@ -360,26 +377,10 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
 
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()> {
         debug!(host = %self.handler.base.host, ?msg, "Handling core message");
-        let Err(msg) = self.handler.route_core_message(msg)? else {
-            return Ok(());
-        };
-        use OutgoingMessage::*;
         match msg {
-            Playlist(m) => self.handler.broadcast(m.into()),
-            UserStatusList(m) => self.handler.broadcast(m.into()),
-            ToPeer(m) => {
-                self.handler
-                    .base
-                    .swarm
-                    .send_request(&m.peer, m.message.into());
-                Ok(())
-            }
-            HostHandover(m) => self.on_core_handover(m),
-            UserStatus(m) => {
-                warn!(?m, "The host's own status never leaves the host");
-                Ok(())
-            }
-            other => bail!("Unrouted core message: {other:?}"),
+            OutgoingMessage::Room(m) => self.handler.route_room_message(m),
+            OutgoingMessage::Host(m) => self.on_core_instruction(m),
+            OutgoingMessage::Client(m) => self.handler.drop_for_other_role(m),
         }
     }
 }

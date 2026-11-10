@@ -33,6 +33,7 @@ num-traits = "0.2"
 whoami = "2.0"
 serde_yaml = "0.9"
 typed-builder = "0.23"
+fake = "5.1"
 uuid = { version = "1.19.0", features = [ "v4", "serde", "fast-rng" ] } 
 
 [dev-dependencies]

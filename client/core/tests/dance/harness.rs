@@ -8,9 +8,9 @@ use arcstr::ArcStr;
 use async_trait::async_trait;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::communicator::{
-    CommunicatorTrait, ConnectedMsg, EndpointInfo, HostHandoverMsg, HostRoundTripMsg,
-    IncomingMessage, OutgoingMessage, PeerConnectedMsg, PeerDisconnectedMsg, PeerId, PeerStatusMsg,
-    VideoProviderStoppedMsg,
+    ClientRequest, CommunicatorTrait, ConnectedMsg, EndpointInfo, HostHandoverMsg, HostInstruction,
+    HostRoundTripMsg, IncomingMessage, OutgoingMessage, PeerConnectedMsg, PeerDisconnectedMsg,
+    PeerId, PeerStatusMsg, RoomMessage, VideoProviderStoppedMsg,
 };
 use niketsu_core::config::Config;
 use niketsu_core::file_database::{
@@ -23,7 +23,7 @@ use niketsu_core::room::UserList;
 use niketsu_core::ui::{PlayerMessage, UserChange, UserInterfaceEvent, UserInterfaceTrait};
 use niketsu_core::video_provider::{VideoProviderEvent, VideoProviderTrait};
 use niketsu_core::video_server::{VideoServerEvent, VideoServerTrait};
-use niketsu_core::{CoreModel, EventHandler};
+use niketsu_core::{CoreModel, EventHandler, SavedPlaylistLoader};
 
 // ------------------------------------------------------------------
 // Fake player: stands in for mpv. State is shared with the test via a
@@ -465,7 +465,13 @@ fn peer_id(index: usize) -> PeerId {
 }
 
 impl Peer {
-    fn new(index: usize, name: &str, files: &[&str], auto_share: bool) -> Self {
+    fn new(
+        index: usize,
+        name: &str,
+        files: &[&str],
+        auto_share: bool,
+        saved: SavedPlaylistLoader,
+    ) -> Self {
         let (player, player_handle) = FakePlayer::new();
         let (ui, ui_handle) = FakeUi::new();
         let (video_server, server_handle) = FakeVideoServer::new();
@@ -486,9 +492,9 @@ impl Peer {
             .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
-            // every room in the dance starts empty, independent of what
-            // earlier runs saved
-            .saved_playlist(|_| None)
+            // what a room has saved is the Room's to say, independent of
+            // what earlier runs saved
+            .saved_playlist(saved)
             .build();
         Self {
             model: core.model,
@@ -542,25 +548,40 @@ pub struct Room {
     /// request-response channels in `p2p/file_share.rs` do.
     file_requests: HashMap<uuid::Uuid, usize>,
     chunk_requests: HashMap<uuid::Uuid, usize>,
+    /// What a fresh host finds saved for the room; nothing unless set.
+    saved: Option<SavedPlaylistLoader>,
 }
 
 impl Room {
+    /// A room with nothing saved.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A room for which `saved` yields the playlist of an earlier session.
+    pub fn with_saved_playlist(saved: SavedPlaylistLoader) -> Self {
+        Self {
+            saved: Some(saved),
+            ..Self::default()
+        }
+    }
+
+    fn saved(&self) -> SavedPlaylistLoader {
+        self.saved.unwrap_or(|_| None)
     }
 
     /// The first peer to join is the host, as with the real relay. Later
     /// joiners connect to the host, whose core greets them.
     pub fn join(&mut self, name: &str, files: &[&str]) -> usize {
         let index = self.peers.len();
-        self.admit(Peer::new(index, name, files, false))
+        self.admit(Peer::new(index, name, files, false, self.saved()))
     }
 
     /// Like [`Room::join`], but the peer carries its share over to new
     /// selections (`auto_share = true` in its config).
     pub fn join_with_auto_share(&mut self, name: &str, files: &[&str]) -> usize {
         let index = self.peers.len();
-        self.admit(Peer::new(index, name, files, true))
+        self.admit(Peer::new(index, name, files, true, self.saved()))
     }
 
     fn admit(&mut self, peer: Peer) -> usize {
@@ -630,9 +651,10 @@ impl Room {
         self.provider
     }
 
-    /// Deliver messages until the room is quiescent. Panicking on too
-    /// many rounds is the no-echo rule: no handler may re-emit the
-    /// broadcast it is reacting to, or the room never settles.
+    /// Finish the reads in flight, then deliver messages until the room is
+    /// quiescent. Panicking on too many rounds is the no-echo rule: no
+    /// handler may re-emit the broadcast it is reacting to, or the room
+    /// never settles.
     pub fn pump(&mut self) {
         for _ in 0..100 {
             let mut deliveries = Vec::new();
@@ -669,37 +691,39 @@ impl Room {
     /// - a host handover moves the room at the relay: the target comes
     ///   back as the host and everyone else reconnects to it as a client
     fn route(&mut self, from: usize, msg: OutgoingMessage) -> Vec<(usize, IncomingMessage)> {
+        // like the role handlers, a peer's messages of the other role's
+        // group go nowhere
+        let from_host = from == self.host;
+        match msg {
+            OutgoingMessage::Room(m) => self.route_room(from, m),
+            OutgoingMessage::Host(m) if from_host => self.route_instruction(from, m),
+            OutgoingMessage::Client(m) if !from_host => self.route_request(from, m),
+            OutgoingMessage::Host(_) | OutgoingMessage::Client(_) => vec![],
+        }
+    }
+
+    /// The host's instructions: gossip to the room, or a direct request to
+    /// one peer.
+    fn route_instruction(
+        &mut self,
+        from: usize,
+        msg: HostInstruction,
+    ) -> Vec<(usize, IncomingMessage)> {
         let others = |m: IncomingMessage| -> Vec<(usize, IncomingMessage)> {
             (0..self.peers.len())
                 .filter(|to| *to != from && self.peers[*to].online)
                 .map(|to| (to, m.clone()))
                 .collect()
         };
-        let from_host = from == self.host;
         match msg {
-            OutgoingMessage::VideoStatus(m) if from_host => others(m.into()),
-            OutgoingMessage::VideoStatus(_) => vec![],
-            OutgoingMessage::Start(m) => others(m.into()),
-            OutgoingMessage::Pause(m) => others(m.into()),
-            OutgoingMessage::PlaybackSpeed(m) => others(m.into()),
-            OutgoingMessage::Seek(m) => others(m.into()),
-            OutgoingMessage::Select(m) => others(m.into()),
-            OutgoingMessage::UserMessage(m) => others(m.into()),
-            OutgoingMessage::Playlist(m) if from_host => others(m.into()),
-            OutgoingMessage::Playlist(m) => vec![(self.host, m.into())],
-            OutgoingMessage::UserStatus(_) if from_host => vec![],
-            OutgoingMessage::UserStatus(status) => {
-                let peer = self.peers[from].id;
-                vec![(self.host, PeerStatusMsg { peer, status }.into())]
-            }
-            OutgoingMessage::UserStatusList(m) if from_host => others(m.into()),
-            OutgoingMessage::UserStatusList(_) => vec![],
-            OutgoingMessage::ToPeer(m) if from_host => match self.index_of(&m.peer) {
+            HostInstruction::VideoStatus(m) => others(m.into()),
+            HostInstruction::Playlist(m) => others(m.into()),
+            HostInstruction::UserStatusList(m) => others(m.into()),
+            HostInstruction::ToPeer(m) => match self.index_of(&m.peer) {
                 Some(to) => vec![(to, m.message.into())],
                 None => vec![],
             },
-            OutgoingMessage::ToPeer(_) => vec![],
-            OutgoingMessage::HostHandover(m) if from_host => {
+            HostInstruction::HostHandover(m) => {
                 let Some(target) = self.index_of(&m.peer) else {
                     return vec![];
                 };
@@ -717,8 +741,35 @@ impl Room {
                 }
                 deliveries
             }
-            OutgoingMessage::HostHandover(_) => vec![],
-            OutgoingMessage::VideoShareChange(m) => match m.video {
+        }
+    }
+
+    /// A client's requests go directly to the host.
+    fn route_request(&mut self, from: usize, msg: ClientRequest) -> Vec<(usize, IncomingMessage)> {
+        match msg {
+            ClientRequest::Playlist(m) => vec![(self.host, m.into())],
+            ClientRequest::UserStatus(status) => {
+                let peer = self.peers[from].id;
+                vec![(self.host, PeerStatusMsg { peer, status }.into())]
+            }
+        }
+    }
+
+    fn route_room(&mut self, from: usize, msg: RoomMessage) -> Vec<(usize, IncomingMessage)> {
+        let others = |m: IncomingMessage| -> Vec<(usize, IncomingMessage)> {
+            (0..self.peers.len())
+                .filter(|to| *to != from && self.peers[*to].online)
+                .map(|to| (to, m.clone()))
+                .collect()
+        };
+        match msg {
+            RoomMessage::Start(m) => others(m.into()),
+            RoomMessage::Pause(m) => others(m.into()),
+            RoomMessage::PlaybackSpeed(m) => others(m.into()),
+            RoomMessage::Seek(m) => others(m.into()),
+            RoomMessage::Select(m) => others(m.into()),
+            RoomMessage::UserMessage(m) => others(m.into()),
+            RoomMessage::VideoShareChange(m) => match m.video {
                 Some(_) => {
                     self.provider = Some(from);
                     vec![]
@@ -731,7 +782,7 @@ impl Room {
                 }
                 None => vec![],
             },
-            OutgoingMessage::FileRequest(m) => match self.provider {
+            RoomMessage::FileRequest(m) => match self.provider {
                 Some(provider) if provider != from => {
                     self.file_requests.insert(m.uuid, from);
                     vec![(provider, IncomingMessage::FileRequest(m))]
@@ -743,11 +794,11 @@ impl Room {
                     IncomingMessage::VideoProviderStopped(VideoProviderStoppedMsg),
                 )],
             },
-            OutgoingMessage::FileResponse(m) => match self.file_requests.remove(&m.uuid) {
+            RoomMessage::FileResponse(m) => match self.file_requests.remove(&m.uuid) {
                 Some(requester) => vec![(requester, IncomingMessage::FileResponse(m))],
                 None => vec![],
             },
-            OutgoingMessage::ChunkRequest(m) => match self.provider {
+            RoomMessage::ChunkRequest(m) => match self.provider {
                 Some(provider) if provider != from => {
                     self.chunk_requests.insert(m.uuid, from);
                     vec![(provider, IncomingMessage::ChunkRequest(m))]
@@ -757,7 +808,7 @@ impl Room {
                     IncomingMessage::VideoProviderStopped(VideoProviderStoppedMsg),
                 )],
             },
-            OutgoingMessage::ChunkResponse(m) => match self.chunk_requests.remove(&m.uuid) {
+            RoomMessage::ChunkResponse(m) => match self.chunk_requests.remove(&m.uuid) {
                 Some(requester) => vec![(requester, IncomingMessage::ChunkResponse(m))],
                 None => vec![],
             },

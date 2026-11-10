@@ -339,7 +339,7 @@ impl EventHandler for FileRequest {
 
         model
             .communicator
-            .send(OutgoingMessage::FileRequest(FileRequestMsg {
+            .send(OutgoingMessage::from(FileRequestMsg {
                 uuid: uuid::Uuid::new_v4(),
                 actor,
                 video: current_video,

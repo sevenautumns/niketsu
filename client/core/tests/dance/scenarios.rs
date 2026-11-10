@@ -5,7 +5,9 @@ use std::time::Duration;
 use niketsu_core::player::{
     PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart,
 };
+use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::playlist::{Playlist, Video};
+use niketsu_core::room::RoomName;
 use niketsu_core::{ui, video_provider, video_server};
 
 use crate::harness::Room;
@@ -1239,6 +1241,60 @@ async fn a_handover_keeps_the_room_running() {
         assert_eq!(peer.player.state().video, Some(Video::from("ep2")));
         assert_eq!(peer.player.state().position, Duration::from_secs(60));
         assert_eq!(peer.ui.state().user_names(), everyone);
+    }
+}
+
+/// The playlist of an earlier session: ep1 and ep2, with ep2 playing.
+fn saved_playlist(_: &RoomName) -> Option<PlaylistHandler> {
+    let mut saved = PlaylistHandler::default();
+    saved.replace(Playlist::from_iter(["ep1", "ep2"]));
+    saved.select_playing(&Video::from("ep2"));
+    Some(saved)
+}
+
+/// A host starting a room fresh restores the room's saved playlist and
+/// selection, and peers joining later are greeted with it.
+#[tokio::test]
+async fn a_fresh_host_restores_the_rooms_saved_playlist() {
+    let mut room = Room::with_saved_playlist(saved_playlist);
+    let alice = room.join("alice", &["ep1", "ep2"]);
+    let bob = room.join("bob", &["ep1", "ep2"]);
+    room.pump();
+
+    for who in [alice, bob] {
+        let peer = room.peer(who);
+        assert_eq!(peer.playlist(), Playlist::from_iter(["ep1", "ep2"]));
+        assert_eq!(peer.player.state().video, Some(Video::from("ep2")));
+        assert_eq!(peer.player.state().position, Duration::ZERO);
+        assert_eq!(peer.ui.state().playing_video, Some(Video::from("ep2")));
+    }
+}
+
+/// A core that already followed the room keeps the room's state when it
+/// becomes host, whatever is saved for the room.
+#[tokio::test]
+async fn a_new_host_of_the_same_room_ignores_the_saved_playlist() {
+    let mut room = Room::with_saved_playlist(saved_playlist);
+    let alice = room.join("alice", &["ep1", "ep2", "ep3"]);
+    let bob = room.join("bob", &["ep1", "ep2", "ep3"]);
+    room.pump();
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep3"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep3"),
+    });
+    room.pump();
+
+    let new_host = room.peer(bob).name();
+    room.peer(alice).act(ui::HostHandover { new_host });
+    room.pump();
+
+    assert_eq!(room.host_index(), bob);
+    for who in [alice, bob] {
+        let peer = room.peer(who);
+        assert_eq!(peer.playlist(), Playlist::from_iter(["ep3"]));
+        assert_eq!(peer.player.state().video, Some(Video::from("ep3")));
     }
 }
 

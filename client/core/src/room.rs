@@ -1,15 +1,36 @@
-use std::collections::{BTreeSet, HashMap};
+//! The room as this core takes part in it. The host keeps the authoritative
+//! [`HostRoom`] and decides everything the room agrees on: who is in it,
+//! what a peer joining later is greeted with, forced renames, when playback
+//! starts, which video follows a removed one, and what a fresh room starts
+//! from. A client forwards its own changes to the host and follows what the
+//! room sends it.
+
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use arcstr::ArcStr;
 use multiaddr::PeerId;
-use tracing::debug;
+use tracing::{debug, warn};
 
 pub(crate) use crate::UserStatusListMsg;
-use crate::communicator::{PlaylistMsg, SelectMsg};
+use crate::communicator::{
+    ClientRequest, DirectMessage, HostInstruction, OutgoingMessage, PlaylistMsg, SelectMsg,
+    StartMsg, ToPeerMsg,
+};
+use crate::player::MediaPlayerTrait;
+use crate::ui::PlayerMessage;
 pub(crate) use crate::user::UserStatus;
+use crate::{CoreModel, EventHandler};
+
+mod users;
+
+pub use users::{NameSuffixes, RoomUsers};
 
 pub type RoomName = ArcStr;
+
+/// The actor of what the host does on the room's behalf rather than a
+/// user's.
+const HOST_ACTOR: ArcStr = arcstr::literal!("host");
 
 #[derive(Debug, Clone, Default)]
 pub struct UserList {
@@ -88,148 +109,240 @@ impl HostRoom {
             None => arcstr::literal!("server"),
         }
     }
+
+    /// Admits a directly connected peer and returns what greets it: the
+    /// room's playlist and selection for the peer, and the user list for the
+    /// room. A peer connecting again is greeted again.
+    pub fn greet(&mut self, peer: PeerId) -> [OutgoingMessage; 3] {
+        if !self.users.contains(&peer) {
+            self.users.add_connected(peer);
+        }
+        let users = self.users.status_list().clone();
+        debug!(?users, %peer, "greeting peer with the room state");
+        [
+            ToPeerMsg::new(peer, DirectMessage::Playlist(self.playlist.clone())).into(),
+            ToPeerMsg::new(peer, DirectMessage::Select(self.select.clone())).into(),
+            users.into(),
+        ]
+    }
+
+    /// Applies a peer's own status. Returns the forced rename to send back
+    /// when the peer asked for a name that is taken.
+    pub fn peer_status(&mut self, peer: PeerId, status: UserStatus) -> Option<OutgoingMessage> {
+        let forced = self.users.apply_status(status, peer)?;
+        Some(ToPeerMsg::new(peer, DirectMessage::UserStatus(forced)).into())
+    }
+
+    /// Takes `msg` as the room's playlist. Returns the selection the room
+    /// moves on to when the playlist lost the selected video.
+    pub fn adopt_playlist(&mut self, msg: PlaylistMsg) -> Option<SelectMsg> {
+        let next = select_next(&self.playlist, &self.select, &msg);
+        self.playlist = msg;
+        if let Some(select) = &next {
+            self.select = select.clone();
+        }
+        next
+    }
+
+    pub fn adopt_select(&mut self, msg: SelectMsg) {
+        self.select = msg;
+    }
+
+    /// Playback starts for the whole room once every user, the host
+    /// included, is ready.
+    pub fn start_if_all_ready(&self, actor: ArcStr) -> Option<StartMsg> {
+        self.users.all_ready().then_some(StartMsg { actor })
+    }
 }
 
-/// Who is in the room, as the host sees it. Remote peers are keyed by their
-/// peer id; the host itself has its own slot, since it never talks to
-/// itself over the network.
-#[derive(Debug, Clone)]
-pub struct RoomUsers {
-    status_list: UserStatusListMsg,
-    local: Option<UserStatus>,
-    peers: HashMap<PeerId, Option<UserStatus>>,
-}
-
-impl RoomUsers {
-    pub fn new(room: RoomName) -> Self {
-        Self {
-            status_list: UserStatusListMsg {
-                room_name: room,
-                users: BTreeSet::default(),
-            },
-            local: None,
-            peers: HashMap::default(),
-        }
+/// How this core takes part in the room. For its own changes a client sends
+/// a request to the host, while the host adopts the change into the room
+/// directly; everything a host decides on the room's behalf is here too.
+impl CoreModel {
+    pub fn is_host(&self) -> bool {
+        self.host.is_some()
     }
 
-    pub fn status_list(&self) -> &UserStatusListMsg {
-        &self.status_list
-    }
-
-    pub fn contains(&self, peer: &PeerId) -> bool {
-        self.peers.contains_key(peer)
-    }
-
-    pub fn add_connected(&mut self, peer: PeerId) {
-        self.peers.insert(peer, None);
-    }
-
-    /// `None`: peer unknown; `Some(None)`: connected but no status yet;
-    /// `Some(Some(_))`: established user.
-    pub fn peer_status(&self, peer: &PeerId) -> Option<&Option<UserStatus>> {
-        self.peers.get(peer)
-    }
-
-    // user that already sent status message and is known
-    fn is_established_user(&self, peer: &PeerId) -> bool {
-        self.peers.get(peer).is_some_and(|s| s.is_some())
-    }
-
-    // user that established connection but did not send status yet
-    pub fn is_connected_user(&self, peer: &PeerId) -> bool {
-        self.peers.get(peer).is_some_and(|s| s.is_none())
-    }
-
-    pub fn all_ready(&self) -> bool {
-        self.status_list.users.iter().all(|u| u.ready)
-    }
-
-    /// Finds the remote peer currently using `name`. The host's own slot is
-    /// never returned: it cannot be the target of anything sent to a peer.
-    pub fn find_by_name(&self, name: &str) -> Option<PeerId> {
-        self.peers
-            .iter()
-            .find(|(_, s)| s.as_ref().is_some_and(|u| u.name == name))
-            .map(|(peer, _)| *peer)
-    }
-
-    /// Removes the peer from the user map and the status list.
-    /// Returns false if the peer was not known at all.
-    pub fn remove(&mut self, peer: &PeerId) -> bool {
-        let Some(status) = self.peers.remove(peer) else {
-            return false;
-        };
-        if let Some(s) = status {
-            self.status_list.users.remove(&s);
-        }
-        true
-    }
-
-    fn username_exists(&self, name: &str) -> bool {
-        self.status_list.users.iter().any(|u| u.name == name)
-    }
-
-    fn roll_new_username(&self, username: &str) -> ArcStr {
-        let mut suffix = 2u32;
-        let mut candidate = arcstr::format!("{username}_{suffix}");
-        while self.username_exists(&candidate) {
-            suffix += 1;
-            candidate = arcstr::format!("{username}_{suffix}");
-        }
-        candidate
-    }
-
-    /// The host's own status. It is never force-renamed: the host decides
-    /// names, so its own wins.
-    pub fn update_local(&mut self, status: UserStatus) {
-        if let Some(old) = self.local.take()
-            && old.name != status.name
-        {
-            self.status_list.users.remove(&old);
-        }
-        self.status_list.users.replace(status.clone());
-        self.local = Some(status);
-    }
-
-    fn update_peer(&mut self, status: UserStatus, peer: PeerId) {
-        self.status_list.users.replace(status.clone());
-        self.peers.insert(peer, Some(status));
-    }
-
-    /// Applies a peer's status update. If the requested name collides with
-    /// another user's name, a fresh one is rolled; the returned status is
-    /// the forced rename that must be sent back to the peer.
-    pub fn apply_status(&mut self, status: UserStatus, peer: PeerId) -> Option<UserStatus> {
-        let mut forced = None;
-        let mut new_status = status.clone();
-
-        if self.is_established_user(&peer) {
-            let old_status = self.peers.get(&peer).cloned().flatten();
-            let renamed = old_status.as_ref().is_some_and(|s| s.name != status.name);
-            if renamed {
-                if self.username_exists(&status.name) {
-                    new_status = UserStatus {
-                        name: self.roll_new_username(&status.name),
-                        ready: status.ready,
-                    };
-                    forced = Some(new_status.clone());
-                }
-                if let Some(s) = &old_status {
-                    self.status_list.users.remove(s);
-                }
+    /// Takes over the room. A core that already followed this room keeps
+    /// what it has — playlist, running video and position — so a handover
+    /// or a lost host does not interrupt playback. Otherwise the room starts
+    /// from its saved playlist.
+    pub(crate) fn become_host(&mut self) {
+        let room = self.config.room.clone();
+        let select = if self.joined_room.as_ref() == Some(&room) {
+            SelectMsg {
+                actor: HOST_ACTOR,
+                position: self.player.get_position().unwrap_or_default(),
+                video: self.player.playing_video(),
             }
-            // same name: typical status update, only need to update map & list
-        } else if self.is_connected_user(&peer) && self.username_exists(&status.name) {
-            // new user whose name is already taken
-            new_status = UserStatus {
-                name: self.roll_new_username(&status.name),
-                ready: status.ready,
+        } else {
+            let saved = (self.saved_playlist)(&room).unwrap_or_default();
+            let select = SelectMsg {
+                actor: HOST_ACTOR,
+                position: Duration::ZERO,
+                video: saved.get_current_video(),
             };
-            forced = Some(new_status.clone());
-        }
+            self.apply_playlist(PlaylistMsg {
+                actor: HOST_ACTOR,
+                playlist: saved.get_playlist(),
+            });
+            self.apply_select(select.clone());
+            select
+        };
+        let playlist = PlaylistMsg {
+            actor: HOST_ACTOR,
+            playlist: self.playlist.get_playlist(),
+        };
+        self.host = Some(HostRoom::new(room, playlist, select));
+    }
 
-        self.update_peer(new_status, peer);
-        forced
+    /// The host greets a peer that is reachable over a direct connection.
+    pub(crate) fn greet_peer(&mut self, peer: PeerId) {
+        let Some(host) = &mut self.host else {
+            debug!(%peer, "ignoring peer connection as a client");
+            return;
+        };
+        for msg in host.greet(peer) {
+            self.communicator.send(msg);
+        }
+    }
+
+    /// The host drops a peer whose last connection closed.
+    pub(crate) fn peer_left(&mut self, peer: PeerId) {
+        let Some(host) = &mut self.host else {
+            return;
+        };
+        if host.users.remove(&peer) {
+            self.publish_user_list();
+        } else {
+            debug!(%peer, "disconnected peer was not in the room");
+        }
+    }
+
+    /// The host applies a peer's own status.
+    pub(crate) fn peer_status(&mut self, peer: PeerId, status: UserStatus) {
+        let Some(host) = &mut self.host else {
+            warn!(%peer, "received a peer status without being the host");
+            return;
+        };
+        if let Some(rename) = host.peer_status(peer, status) {
+            self.communicator.send(rename);
+        }
+        let actor = host.actor_of(&peer);
+        self.start_if_all_ready(actor);
+        self.publish_user_list();
+    }
+
+    /// Shows a playlist that arrived from the room (or was restored).
+    pub(crate) fn apply_playlist(&mut self, msg: PlaylistMsg) {
+        self.replace_playlist(msg.playlist.clone());
+        self.ui.playlist(msg.playlist.clone());
+        self.ui.player_message(PlayerMessage::from(msg));
+    }
+
+    /// Plays a selection that arrived from the room (or was restored).
+    pub(crate) fn apply_select(&mut self, msg: SelectMsg) {
+        self.select_video(msg.video.as_ref(), msg.position);
+        self.ui.player_message(PlayerMessage::from(msg));
+    }
+
+    /// A playlist from the room: a client follows it; the host also adopts a
+    /// client's edit and passes it on, since it reaches the room only
+    /// through the host.
+    pub(crate) fn receive_playlist(&mut self, msg: PlaylistMsg) {
+        self.apply_playlist(msg.clone());
+        if self.is_host() {
+            self.communicator
+                .send(HostInstruction::Playlist(msg.clone()).into());
+            self.host_adopt_playlist(msg);
+        }
+    }
+
+    /// A selection from the room, which the host also adopts.
+    pub(crate) fn receive_select(&mut self, msg: SelectMsg) {
+        self.apply_select(msg.clone());
+        self.host_adopt_select(msg);
+    }
+
+    /// Announces our own status: a client tells the host, the host updates
+    /// the room directly.
+    pub fn publish_status(&mut self) {
+        let status = self.config.status(self.ready);
+        let Some(host) = &mut self.host else {
+            self.communicator
+                .send(ClientRequest::UserStatus(status).into());
+            return;
+        };
+        let actor = status.name.clone();
+        host.users.update_local(status);
+        self.start_if_all_ready(actor);
+        self.publish_user_list();
+    }
+
+    /// Our own playlist edit, already applied locally.
+    pub fn publish_playlist(&mut self, msg: PlaylistMsg) {
+        if !self.is_host() {
+            self.communicator.send(ClientRequest::Playlist(msg).into());
+            return;
+        }
+        self.host_adopt_playlist(msg.clone());
+        self.communicator
+            .send(HostInstruction::Playlist(msg).into());
+    }
+
+    /// Our own selection, already applied locally.
+    pub fn publish_select(&mut self, msg: SelectMsg) {
+        self.communicator.send(msg.clone().into());
+        self.host_adopt_select(msg);
+    }
+
+    /// The host takes `msg` as the room's playlist. If the playlist lost the
+    /// selected video, the host moves the room on to the one that took its
+    /// place.
+    fn host_adopt_playlist(&mut self, msg: PlaylistMsg) {
+        let Some(host) = &mut self.host else {
+            return;
+        };
+        let actor = msg.actor.clone();
+        let next = host.adopt_playlist(msg);
+        let Some(select) = next else {
+            return;
+        };
+        self.apply_select(select.clone());
+        self.communicator.send(select.into());
+        self.start_if_all_ready(actor);
+    }
+
+    fn host_adopt_select(&mut self, msg: SelectMsg) {
+        let Some(host) = &mut self.host else {
+            return;
+        };
+        let actor = msg.actor.clone();
+        host.adopt_select(msg);
+        self.start_if_all_ready(actor);
+    }
+
+    fn start_if_all_ready(&mut self, actor: ArcStr) {
+        let Some(start) = self
+            .host
+            .as_ref()
+            .and_then(|host| host.start_if_all_ready(actor))
+        else {
+            return;
+        };
+        debug!("All users are ready. Starting playback for the room");
+        self.communicator.send(start.clone().into());
+        start.handle(self);
+    }
+
+    /// The host shows the room's user list and sends it to the room.
+    fn publish_user_list(&mut self) {
+        let Some(host) = &self.host else {
+            return;
+        };
+        let list = host.users.status_list().clone();
+        self.ui.user_list(UserList::from(list.clone()));
+        self.communicator.send(list.into());
     }
 }
 
@@ -274,7 +387,7 @@ pub fn select_next(
 
     let new_select = new_playlist.playlist.get(new_position)?;
     Some(SelectMsg {
-        actor: arcstr::literal!("host"),
+        actor: HOST_ACTOR,
         position: Duration::ZERO,
         video: Some(new_select.clone()),
     })
@@ -339,191 +452,6 @@ mod tests {
         assert!(user_list.contains_user(&user_name));
     }
 
-    fn peer(n: u8) -> PeerId {
-        // an identity multihash: a valid peer id without key material
-        PeerId::from_bytes(&[0x00, 4, n, n, n, n]).unwrap()
-    }
-
-    fn status(name: &str, ready: bool) -> UserStatus {
-        UserStatus {
-            name: name.into(),
-            ready,
-        }
-    }
-
-    fn names(room: &RoomUsers) -> Vec<&str> {
-        room.status_list()
-            .users
-            .iter()
-            .map(|u| u.name.as_str())
-            .collect()
-    }
-
-    #[test]
-    fn new_user_keeps_free_name() {
-        let mut room = RoomUsers::new("room".into());
-        let alice = peer(1);
-        room.add_connected(alice);
-
-        let forced = room.apply_status(status("alice", false), alice);
-
-        assert!(forced.is_none());
-        assert_eq!(names(&room), vec!["alice"]);
-    }
-
-    #[test]
-    fn new_user_with_taken_name_is_renamed() {
-        let mut room = RoomUsers::new("room".into());
-        let (alice, intruder) = (peer(1), peer(2));
-        room.add_connected(alice);
-        room.apply_status(status("alice", true), alice);
-        room.add_connected(intruder);
-
-        let forced = room.apply_status(status("alice", false), intruder);
-
-        let forced = forced.expect("collision must force a rename");
-        assert_ne!(forced.name, "alice");
-        assert!(forced.name.starts_with("alice_"));
-        assert_eq!(room.status_list().users.len(), 2);
-        // the original user is untouched
-        assert_eq!(room.find_by_name("alice"), Some(alice));
-        assert_eq!(room.find_by_name(forced.name.as_str()), Some(intruder));
-    }
-
-    #[test]
-    fn new_user_taking_the_hosts_name_is_renamed() {
-        let mut room = RoomUsers::new("room".into());
-        room.update_local(status("alice", true));
-        let intruder = peer(2);
-        room.add_connected(intruder);
-
-        let forced = room.apply_status(status("alice", false), intruder);
-
-        let forced = forced.expect("the host's name is taken too");
-        assert!(forced.name.starts_with("alice_"));
-        assert_eq!(room.status_list().users.len(), 2);
-        assert_eq!(room.find_by_name("alice"), None, "the host is no peer");
-    }
-
-    #[test]
-    fn rolled_names_avoid_each_other() {
-        let mut room = RoomUsers::new("room".into());
-        room.update_local(status("alice", true));
-        let mut rolled = vec![];
-        for n in 2..6 {
-            let p = peer(n);
-            room.add_connected(p);
-            rolled.push(room.apply_status(status("alice", false), p).unwrap().name);
-        }
-
-        rolled.sort();
-        rolled.dedup();
-        assert_eq!(rolled.len(), 4, "every collision must get its own name");
-        assert_eq!(room.status_list().users.len(), 5);
-    }
-
-    #[test]
-    fn ready_toggle_updates_in_place() {
-        let mut room = RoomUsers::new("room".into());
-        let alice = peer(1);
-        room.add_connected(alice);
-        room.apply_status(status("alice", false), alice);
-        assert!(!room.all_ready());
-
-        let forced = room.apply_status(status("alice", true), alice);
-
-        assert!(forced.is_none());
-        assert_eq!(names(&room), vec!["alice"]);
-        assert!(room.all_ready());
-    }
-
-    #[test]
-    fn all_ready_includes_the_host() {
-        let mut room = RoomUsers::new("room".into());
-        let bob = peer(2);
-        room.add_connected(bob);
-        room.apply_status(status("bob", true), bob);
-        room.update_local(status("alice", false));
-        assert!(!room.all_ready());
-
-        room.update_local(status("alice", true));
-        assert!(room.all_ready());
-    }
-
-    #[test]
-    fn host_rename_replaces_its_old_entry() {
-        let mut room = RoomUsers::new("room".into());
-        room.update_local(status("alice", true));
-        room.update_local(status("alicia", true));
-
-        assert_eq!(names(&room), vec!["alicia"]);
-    }
-
-    #[test]
-    fn rename_to_free_name_replaces_old_entry() {
-        let mut room = RoomUsers::new("room".into());
-        let alice = peer(1);
-        room.add_connected(alice);
-        room.apply_status(status("alice", true), alice);
-
-        let forced = room.apply_status(status("alicia", true), alice);
-
-        assert!(forced.is_none());
-        assert_eq!(names(&room), vec!["alicia"]);
-        assert_eq!(room.find_by_name("alicia"), Some(alice));
-    }
-
-    #[test]
-    fn rename_into_collision_is_rerolled_and_leaves_other_user_alone() {
-        let mut room = RoomUsers::new("room".into());
-        let (alice, bob) = (peer(1), peer(2));
-        room.add_connected(alice);
-        room.apply_status(status("alice", true), alice);
-        room.add_connected(bob);
-        room.apply_status(status("bob", true), bob);
-
-        // bob renames himself to "alice"
-        let forced = room.apply_status(status("alice", true), bob);
-
-        let forced = forced.expect("collision must force a rename");
-        assert!(forced.name.starts_with("alice_"));
-        // alice keeps her entry, bob's old name is gone, no ghost entries
-        assert_eq!(room.status_list().users.len(), 2);
-        assert_eq!(room.find_by_name("alice"), Some(alice));
-        assert_eq!(room.find_by_name("bob"), None);
-        assert_eq!(room.find_by_name(forced.name.as_str()), Some(bob));
-    }
-
-    #[test]
-    fn remove_drops_user_and_status() {
-        let mut room = RoomUsers::new("room".into());
-        let alice = peer(1);
-        room.add_connected(alice);
-        room.apply_status(status("alice", false), alice);
-
-        assert!(room.remove(&alice));
-        assert!(names(&room).is_empty());
-        assert!(!room.contains(&alice));
-        assert!(!room.remove(&alice));
-    }
-
-    #[test]
-    fn connection_states_are_tracked() {
-        let mut room = RoomUsers::new("room".into());
-        let alice = peer(1);
-        assert!(room.peer_status(&alice).is_none());
-
-        room.add_connected(alice);
-        assert!(room.is_connected_user(&alice));
-
-        room.apply_status(status("alice", false), alice);
-        assert!(!room.is_connected_user(&alice));
-        assert_eq!(
-            room.peer_status(&alice),
-            Some(&Some(status("alice", false)))
-        );
-    }
-
     fn playlist_msg(videos: &[&str]) -> PlaylistMsg {
         PlaylistMsg {
             actor: arcstr::literal!("test"),
@@ -541,6 +469,44 @@ mod tests {
 
     fn selected(result: Option<SelectMsg>) -> Option<String> {
         result.and_then(|s| s.video).map(|v| v.as_str().to_string())
+    }
+
+    fn peer(n: u8) -> PeerId {
+        PeerId::from_bytes(&[0x00, 4, n, n, n, n]).unwrap()
+    }
+
+    #[test]
+    fn greeting_admits_the_peer_once_and_replays_the_room() {
+        let mut room = HostRoom::new("room".into(), playlist_msg(&["a"]), select_msg(Some("a")));
+        let bob = peer(2);
+
+        let greeting = room.greet(bob);
+        room.greet(bob);
+
+        assert!(room.users.is_connected_user(&bob));
+        assert_eq!(
+            greeting[0],
+            ToPeerMsg::new(bob, DirectMessage::Playlist(playlist_msg(&["a"]))).into()
+        );
+        assert_eq!(
+            greeting[1],
+            ToPeerMsg::new(bob, DirectMessage::Select(select_msg(Some("a")))).into()
+        );
+    }
+
+    #[test]
+    fn adopting_a_playlist_without_the_selected_video_moves_on() {
+        let mut room = HostRoom::new(
+            "room".into(),
+            playlist_msg(&["a", "b", "c"]),
+            select_msg(Some("b")),
+        );
+
+        let next = room.adopt_playlist(playlist_msg(&["a", "c"]));
+
+        assert_eq!(selected(next), Some("c".into()));
+        assert_eq!(room.select.video, Some(Video::from("c")));
+        assert_eq!(room.playlist, playlist_msg(&["a", "c"]));
     }
 
     #[test]

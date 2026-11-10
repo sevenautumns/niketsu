@@ -10,7 +10,7 @@ use multiaddr::Multiaddr;
 pub use multiaddr::PeerId;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use super::playlist::Video;
 use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
@@ -40,29 +40,106 @@ pub struct EndpointInfo {
 /// What the core asks the communicator to deliver. The communicator decides
 /// only *how* a message travels for its role (gossip broadcast, or a direct
 /// request to the host); *whether* and *what* to send is decided here.
+///
+/// Messages are grouped by the role that may send them, so each role's
+/// handler matches exhaustively over its own group. Which role the core
+/// holds is a runtime fact (the relay assigns it on connect, and a message
+/// can still be queued while the role changes), so a message of the other
+/// role's group can still reach a handler; it is dropped there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutgoingMessage {
-    VideoStatus(VideoStatusMsg),
+    Room(RoomMessage),
+    Host(HostInstruction),
+    Client(ClientRequest),
+}
+
+/// Sent the same way whichever role this core holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RoomMessage {
     Start(StartMsg),
     Pause(PauseMsg),
     PlaybackSpeed(PlaybackSpeedMsg),
     Seek(SeekMsg),
     Select(SelectMsg),
     UserMessage(UserMessageMsg),
-    /// A client sends it to the host, the host to the room.
-    Playlist(PlaylistMsg),
-    /// A client's own status, sent to the host.
-    UserStatus(UserStatusMsg),
-    /// The host's view of who is in the room, sent to the room.
-    UserStatusList(UserStatusListMsg),
-    /// A message for exactly one peer rather than the room.
-    ToPeer(ToPeerMsg),
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
     ChunkRequest(ChunkRequestMsg),
     ChunkResponse(ChunkResponseMsg),
     VideoShareChange(VideoShareMsg),
+}
+
+/// What only the host sends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostInstruction {
+    /// The host's clock, the room's reference.
+    VideoStatus(VideoStatusMsg),
+    /// The room's playlist, sent to the room.
+    Playlist(PlaylistMsg),
+    /// The host's view of who is in the room, sent to the room.
+    UserStatusList(UserStatusListMsg),
+    /// A message for exactly one peer rather than the room.
+    ToPeer(ToPeerMsg),
     HostHandover(HostHandoverRequest),
+}
+
+/// What only a client sends, each a request to the host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClientRequest {
+    /// An edit of the room's playlist, for the host to adopt.
+    Playlist(PlaylistMsg),
+    /// The client's own status.
+    UserStatus(UserStatusMsg),
+}
+
+impl From<RoomMessage> for OutgoingMessage {
+    fn from(value: RoomMessage) -> Self {
+        Self::Room(value)
+    }
+}
+
+impl From<HostInstruction> for OutgoingMessage {
+    fn from(value: HostInstruction) -> Self {
+        Self::Host(value)
+    }
+}
+
+impl From<ClientRequest> for OutgoingMessage {
+    fn from(value: ClientRequest) -> Self {
+        Self::Client(value)
+    }
+}
+
+/// `From<$msg> for OutgoingMessage` for messages whose sending role follows
+/// from their type. A playlist is sent by both roles with different meaning,
+/// so it is wrapped explicitly.
+macro_rules! outgoing_from {
+    ($($msg:ty => $outer:ident($group:ident::$variant:ident)),* $(,)?) => {
+        $(impl From<$msg> for OutgoingMessage {
+            fn from(value: $msg) -> Self {
+                Self::$outer($group::$variant(value))
+            }
+        })*
+    };
+}
+
+outgoing_from! {
+    StartMsg => Room(RoomMessage::Start),
+    PauseMsg => Room(RoomMessage::Pause),
+    PlaybackSpeedMsg => Room(RoomMessage::PlaybackSpeed),
+    SeekMsg => Room(RoomMessage::Seek),
+    SelectMsg => Room(RoomMessage::Select),
+    UserMessageMsg => Room(RoomMessage::UserMessage),
+    FileRequestMsg => Room(RoomMessage::FileRequest),
+    FileResponseMsg => Room(RoomMessage::FileResponse),
+    ChunkRequestMsg => Room(RoomMessage::ChunkRequest),
+    ChunkResponseMsg => Room(RoomMessage::ChunkResponse),
+    VideoShareMsg => Room(RoomMessage::VideoShareChange),
+    VideoStatusMsg => Host(HostInstruction::VideoStatus),
+    UserStatusListMsg => Host(HostInstruction::UserStatusList),
+    ToPeerMsg => Host(HostInstruction::ToPeer),
+    HostHandoverRequest => Host(HostInstruction::HostHandover),
+    UserStatusMsg => Client(ClientRequest::UserStatus),
 }
 
 #[enum_dispatch(EventHandler)]
@@ -138,26 +215,7 @@ pub struct PeerConnectedMsg {
 impl EventHandler for PeerConnectedMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(peer = %self.peer, "peer connected");
-        let Some(host) = &mut model.host else {
-            debug!(peer = %self.peer, "ignoring peer connection as a client");
-            return;
-        };
-        if !host.users.contains(&self.peer) {
-            host.users.add_connected(self.peer);
-        }
-        let playlist = host.playlist.clone();
-        let select = host.select.clone();
-        let users = host.users.status_list().clone();
-        debug!(?users, peer = %self.peer, "sending room state to peer");
-        model
-            .communicator
-            .send(ToPeerMsg::new(self.peer, DirectMessage::Playlist(playlist)).into());
-        model
-            .communicator
-            .send(ToPeerMsg::new(self.peer, DirectMessage::Select(select)).into());
-        model
-            .communicator
-            .send(OutgoingMessage::UserStatusList(users));
+        model.greet_peer(self.peer);
     }
 }
 
@@ -170,14 +228,7 @@ pub struct PeerDisconnectedMsg {
 impl EventHandler for PeerDisconnectedMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(peer = %self.peer, "peer disconnected");
-        let Some(host) = &mut model.host else {
-            return;
-        };
-        if host.users.remove(&self.peer) {
-            model.publish_user_list();
-        } else {
-            debug!(peer = %self.peer, "disconnected peer was not in the room");
-        }
+        model.peer_left(self.peer);
     }
 }
 
@@ -191,20 +242,7 @@ pub struct PeerStatusMsg {
 impl EventHandler for PeerStatusMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(peer = %self.peer, status = ?self.status, "peer status");
-        let Some(host) = &mut model.host else {
-            warn!(peer = %self.peer, "received a peer status without being the host");
-            return;
-        };
-        if let Some(forced) = host.users.apply_status(self.status, self.peer) {
-            model
-                .communicator
-                .send(ToPeerMsg::new(self.peer, DirectMessage::UserStatus(forced)).into());
-        }
-        let actor = model.host.as_ref().map(|host| host.actor_of(&self.peer));
-        if let Some(actor) = actor {
-            model.start_if_all_ready(actor);
-        }
-        model.publish_user_list();
+        model.peer_status(self.peer, self.status);
     }
 }
 
@@ -239,12 +277,6 @@ pub struct ToPeerMsg {
 impl ToPeerMsg {
     pub fn new(peer: PeerId, message: DirectMessage) -> Self {
         Self { peer, message }
-    }
-}
-
-impl From<ToPeerMsg> for OutgoingMessage {
-    fn from(value: ToPeerMsg) -> Self {
-        Self::ToPeer(value)
     }
 }
 
@@ -353,12 +385,6 @@ impl EventHandler for VideoStatusMsg {
     }
 }
 
-impl From<VideoStatusMsg> for OutgoingMessage {
-    fn from(value: VideoStatusMsg) -> Self {
-        Self::VideoStatus(value)
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UserStatusListMsg {
@@ -400,12 +426,6 @@ impl EventHandler for StartMsg {
     }
 }
 
-impl From<StartMsg> for OutgoingMessage {
-    fn from(value: StartMsg) -> Self {
-        Self::Start(value)
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PauseMsg {
@@ -430,12 +450,6 @@ impl EventHandler for PauseMsg {
         trace!("received pause");
         model.player.pause();
         model.ui.player_message(PlayerMessage::from(self))
-    }
-}
-
-impl From<PauseMsg> for OutgoingMessage {
-    fn from(value: PauseMsg) -> Self {
-        Self::Pause(value)
     }
 }
 
@@ -475,12 +489,6 @@ impl EventHandler for PlaybackSpeedMsg {
         trace!("received speed change");
         model.player.set_speed(self.speed);
         model.ui.player_message(PlayerMessage::from(self))
-    }
-}
-
-impl From<PlaybackSpeedMsg> for OutgoingMessage {
-    fn from(value: PlaybackSpeedMsg) -> Self {
-        Self::PlaybackSpeed(value)
     }
 }
 
@@ -532,12 +540,6 @@ impl EventHandler for SeekMsg {
     }
 }
 
-impl From<SeekMsg> for OutgoingMessage {
-    fn from(value: SeekMsg) -> Self {
-        Self::Seek(value)
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectMsg {
@@ -568,18 +570,7 @@ impl From<SelectMsg> for PlayerMessage {
 impl EventHandler for SelectMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(select = ?self, "received");
-        model.apply_select(self.clone());
-        if let Some(host) = &mut model.host {
-            let actor = self.actor.clone();
-            host.select = self;
-            model.start_if_all_ready(actor);
-        }
-    }
-}
-
-impl From<SelectMsg> for OutgoingMessage {
-    fn from(value: SelectMsg) -> Self {
-        Self::Select(value)
+        model.receive_select(self);
     }
 }
 
@@ -608,12 +599,6 @@ impl EventHandler for UserMessageMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(user_message = ?self, "received");
         model.ui.player_message(PlayerMessage::from(self))
-    }
-}
-
-impl From<UserMessageMsg> for OutgoingMessage {
-    fn from(value: UserMessageMsg) -> Self {
-        Self::UserMessage(value)
     }
 }
 
@@ -667,18 +652,7 @@ impl From<PlaylistMsg> for PlayerMessage {
 impl EventHandler for PlaylistMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received playlist");
-        model.apply_playlist(self.clone());
-        if model.host.is_some() {
-            // a client's edit reaches the room only through the host
-            model.communicator.send(self.clone().into());
-            model.host_adopt_playlist(self);
-        }
-    }
-}
-
-impl From<PlaylistMsg> for OutgoingMessage {
-    fn from(value: PlaylistMsg) -> Self {
-        Self::Playlist(value)
+        model.receive_playlist(self);
     }
 }
 
@@ -706,12 +680,6 @@ impl From<UserStatus> for PlayerMessage {
     }
 }
 
-impl From<UserStatus> for OutgoingMessage {
-    fn from(value: UserStatus) -> Self {
-        Self::UserStatus(value)
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChunkRequestMsg {
@@ -728,12 +696,6 @@ impl EventHandler for ChunkRequestMsg {
         model
             .video_provider
             .request_chunk(self.uuid, self.video.as_str(), start, len);
-    }
-}
-
-impl From<ChunkRequestMsg> for OutgoingMessage {
-    fn from(value: ChunkRequestMsg) -> Self {
-        Self::ChunkRequest(value)
     }
 }
 
@@ -756,12 +718,6 @@ impl std::fmt::Debug for ChunkResponseMsg {
             .field("start", &self.start)
             .field("bytes", &"[not shown]")
             .finish()
-    }
-}
-
-impl From<ChunkResponseMsg> for OutgoingMessage {
-    fn from(value: ChunkResponseMsg) -> Self {
-        Self::ChunkResponse(value)
     }
 }
 
@@ -796,17 +752,11 @@ impl From<FileRequestMsg> for PlayerMessage {
     }
 }
 
-impl From<FileRequestMsg> for OutgoingMessage {
-    fn from(value: FileRequestMsg) -> Self {
-        Self::FileRequest(value)
-    }
-}
-
 impl EventHandler for FileRequestMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(file_request = ?self, "received");
         model.ui.player_message(self.clone().into());
-        let failed_response = OutgoingMessage::FileResponse(FileResponseMsg {
+        let failed_response = OutgoingMessage::from(FileResponseMsg {
             uuid: self.uuid,
             actor: model.config.username.clone(),
             video: None,
@@ -815,7 +765,7 @@ impl EventHandler for FileRequestMsg {
 
         let Some(file_name) = model.video_provider.file_name() else {
             model.communicator.send(failed_response);
-            let msg = OutgoingMessage::UserMessage(UserMessageMsg {
+            let msg = OutgoingMessage::from(UserMessageMsg {
                 actor: arcstr::literal!("server message"),
                 message: "File provider is currently not sharing. Try again later".into(),
             });
@@ -825,7 +775,7 @@ impl EventHandler for FileRequestMsg {
 
         if !file_name.as_str().eq(self.video.as_str()) {
             model.communicator.send(failed_response);
-            let msg = OutgoingMessage::UserMessage(UserMessageMsg {
+            let msg = OutgoingMessage::from(UserMessageMsg {
                 actor: arcstr::literal!("server message"),
                 message: "File provider is currently providing another file. Try again later"
                     .into(),
@@ -836,7 +786,7 @@ impl EventHandler for FileRequestMsg {
 
         let Some(size) = model.video_provider.size() else {
             model.communicator.send(failed_response);
-            let msg = OutgoingMessage::UserMessage(UserMessageMsg {
+            let msg = OutgoingMessage::from(UserMessageMsg {
                 actor: arcstr::literal!("server message"),
                 message: "File provider has no info on the file. Try again later".into(),
             });
@@ -877,12 +827,6 @@ impl From<FileResponseMsg> for PlayerMessage {
     }
 }
 
-impl From<FileResponseMsg> for OutgoingMessage {
-    fn from(value: FileResponseMsg) -> Self {
-        Self::FileResponse(value)
-    }
-}
-
 impl EventHandler for FileResponseMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received file response message");
@@ -911,12 +855,6 @@ pub struct VideoShareMsg {
 impl VideoShareMsg {
     pub fn new(video: Video) -> Self {
         Self { video: Some(video) }
-    }
-}
-
-impl From<VideoShareMsg> for OutgoingMessage {
-    fn from(value: VideoShareMsg) -> Self {
-        Self::VideoShareChange(value)
     }
 }
 
@@ -954,18 +892,6 @@ impl EventHandler for HostHandoverMsg {
 pub struct HostHandoverRequest {
     pub peer: PeerId,
     pub new_host: ArcStr,
-}
-
-impl From<HostHandoverRequest> for OutgoingMessage {
-    fn from(value: HostHandoverRequest) -> Self {
-        Self::HostHandover(value)
-    }
-}
-
-impl From<UserStatusListMsg> for OutgoingMessage {
-    fn from(value: UserStatusListMsg) -> Self {
-        Self::UserStatusList(value)
-    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]

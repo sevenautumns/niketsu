@@ -1,0 +1,421 @@
+use std::collections::{BTreeSet, HashMap};
+
+use arcstr::ArcStr;
+use fake::Fake;
+use fake::faker::company::en::Buzzword;
+use multiaddr::PeerId;
+
+use super::{RoomName, UserStatus, UserStatusListMsg};
+
+/// Where the suffix of a forced name comes from: a user whose name is taken
+/// is renamed to `name_<suffix>`.
+pub type NameSuffixes = fn() -> String;
+
+fn buzzword() -> String {
+    Buzzword().fake()
+}
+
+/// How many suffixes are tried before a counter is appended, so finding a
+/// free name ends even when every suffix is taken.
+const SUFFIX_ROLLS: usize = 16;
+
+/// Who is in the room, as the host sees it. Remote peers are keyed by their
+/// peer id; the host itself has its own slot, since it never talks to
+/// itself over the network.
+#[derive(Debug, Clone)]
+pub struct RoomUsers {
+    status_list: UserStatusListMsg,
+    local: Option<UserStatus>,
+    peers: HashMap<PeerId, Option<UserStatus>>,
+    suffixes: NameSuffixes,
+}
+
+impl RoomUsers {
+    /// Forced names get a buzzword suffix.
+    pub fn new(room: RoomName) -> Self {
+        Self::with_suffixes(room, buzzword)
+    }
+
+    pub fn with_suffixes(room: RoomName, suffixes: NameSuffixes) -> Self {
+        Self {
+            status_list: UserStatusListMsg {
+                room_name: room,
+                users: BTreeSet::default(),
+            },
+            local: None,
+            peers: HashMap::default(),
+            suffixes,
+        }
+    }
+
+    pub fn status_list(&self) -> &UserStatusListMsg {
+        &self.status_list
+    }
+
+    pub fn contains(&self, peer: &PeerId) -> bool {
+        self.peers.contains_key(peer)
+    }
+
+    pub fn add_connected(&mut self, peer: PeerId) {
+        self.peers.insert(peer, None);
+    }
+
+    /// `None`: peer unknown; `Some(None)`: connected but no status yet;
+    /// `Some(Some(_))`: established user.
+    pub fn peer_status(&self, peer: &PeerId) -> Option<&Option<UserStatus>> {
+        self.peers.get(peer)
+    }
+
+    // user that already sent status message and is known
+    fn is_established_user(&self, peer: &PeerId) -> bool {
+        self.peers.get(peer).is_some_and(|s| s.is_some())
+    }
+
+    // user that established connection but did not send status yet
+    pub fn is_connected_user(&self, peer: &PeerId) -> bool {
+        self.peers.get(peer).is_some_and(|s| s.is_none())
+    }
+
+    pub fn all_ready(&self) -> bool {
+        self.status_list.users.iter().all(|u| u.ready)
+    }
+
+    /// Finds the remote peer currently using `name`. The host's own slot is
+    /// never returned: it cannot be the target of anything sent to a peer.
+    pub fn find_by_name(&self, name: &str) -> Option<PeerId> {
+        self.peers
+            .iter()
+            .find(|(_, s)| s.as_ref().is_some_and(|u| u.name == name))
+            .map(|(peer, _)| *peer)
+    }
+
+    /// Removes the peer from the user map and the status list.
+    /// Returns false if the peer was not known at all.
+    pub fn remove(&mut self, peer: &PeerId) -> bool {
+        let Some(status) = self.peers.remove(peer) else {
+            return false;
+        };
+        if let Some(s) = status {
+            self.status_list.users.remove(&s);
+        }
+        true
+    }
+
+    /// Whether any user, the host included, goes by `name`.
+    fn username_exists(&self, name: &str) -> bool {
+        self.status_list.users.iter().any(|u| u.name == name)
+    }
+
+    /// A name no user goes by: `username_<suffix>`, rolled again while
+    /// taken, with a counter appended once the rolls are used up.
+    fn roll_new_username(&self, username: &str) -> ArcStr {
+        let mut candidate = ArcStr::default();
+        for _ in 0..SUFFIX_ROLLS {
+            candidate = arcstr::format!("{username}_{}", (self.suffixes)());
+            if !self.username_exists(&candidate) {
+                return candidate;
+            }
+        }
+        let mut counter = 2u32;
+        loop {
+            let numbered = arcstr::format!("{candidate}_{counter}");
+            if !self.username_exists(&numbered) {
+                return numbered;
+            }
+            counter += 1;
+        }
+    }
+
+    /// The host's own status. It is never force-renamed: the host decides
+    /// names, so its own wins.
+    pub fn update_local(&mut self, status: UserStatus) {
+        if let Some(old) = self.local.take()
+            && old.name != status.name
+        {
+            self.status_list.users.remove(&old);
+        }
+        self.status_list.users.replace(status.clone());
+        self.local = Some(status);
+    }
+
+    fn update_peer(&mut self, status: UserStatus, peer: PeerId) {
+        self.status_list.users.replace(status.clone());
+        self.peers.insert(peer, Some(status));
+    }
+
+    /// Applies a peer's status update. If the requested name collides with
+    /// another user's name, a fresh one is rolled; the returned status is
+    /// the forced rename that must be sent back to the peer.
+    pub fn apply_status(&mut self, status: UserStatus, peer: PeerId) -> Option<UserStatus> {
+        let mut forced = None;
+        let mut new_status = status.clone();
+
+        if self.is_established_user(&peer) {
+            let old_status = self.peers.get(&peer).cloned().flatten();
+            let renamed = old_status.as_ref().is_some_and(|s| s.name != status.name);
+            if renamed {
+                if self.username_exists(&status.name) {
+                    new_status = UserStatus {
+                        name: self.roll_new_username(&status.name),
+                        ready: status.ready,
+                    };
+                    forced = Some(new_status.clone());
+                }
+                if let Some(s) = &old_status {
+                    self.status_list.users.remove(s);
+                }
+            }
+            // same name: typical status update, only need to update map & list
+        } else if self.is_connected_user(&peer) && self.username_exists(&status.name) {
+            // new user whose name is already taken
+            new_status = UserStatus {
+                name: self.roll_new_username(&status.name),
+                ready: status.ready,
+            };
+            forced = Some(new_status.clone());
+        }
+
+        self.update_peer(new_status, peer);
+        forced
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn peer(n: u8) -> PeerId {
+        // an identity multihash: a valid peer id without key material
+        PeerId::from_bytes(&[0x00, 4, n, n, n, n]).unwrap()
+    }
+
+    fn status(name: &str, ready: bool) -> UserStatus {
+        UserStatus {
+            name: name.into(),
+            ready,
+        }
+    }
+
+    fn names(room: &RoomUsers) -> Vec<&str> {
+        room.status_list()
+            .users
+            .iter()
+            .map(|u| u.name.as_str())
+            .collect()
+    }
+
+    fn synergy() -> String {
+        "synergy".into()
+    }
+
+    /// A room whose forced names are predictable.
+    fn room() -> RoomUsers {
+        RoomUsers::with_suffixes("room".into(), synergy)
+    }
+
+    #[test]
+    fn new_user_keeps_free_name() {
+        let mut room = room();
+        let alice = peer(1);
+        room.add_connected(alice);
+
+        let forced = room.apply_status(status("alice", false), alice);
+
+        assert!(forced.is_none());
+        assert_eq!(names(&room), vec!["alice"]);
+    }
+
+    #[test]
+    fn new_user_with_taken_name_is_renamed() {
+        let mut room = room();
+        let (alice, intruder) = (peer(1), peer(2));
+        room.add_connected(alice);
+        room.apply_status(status("alice", true), alice);
+        room.add_connected(intruder);
+
+        let forced = room.apply_status(status("alice", false), intruder);
+
+        let forced = forced.expect("collision must force a rename");
+        assert_eq!(forced.name, "alice_synergy");
+        assert_eq!(room.status_list().users.len(), 2);
+        // the original user is untouched
+        assert_eq!(room.find_by_name("alice"), Some(alice));
+        assert_eq!(room.find_by_name("alice_synergy"), Some(intruder));
+    }
+
+    #[test]
+    fn forced_names_are_buzzwords_by_default() {
+        let mut room = RoomUsers::new("room".into());
+        room.update_local(status("alice", true));
+        let intruder = peer(2);
+        room.add_connected(intruder);
+
+        let forced = room.apply_status(status("alice", false), intruder).unwrap();
+
+        let suffix = forced.name.strip_prefix("alice_").unwrap();
+        assert!(!suffix.is_empty());
+        assert!(
+            !suffix.chars().all(|c| c.is_ascii_digit()),
+            "a buzzword, not a counter: {suffix}"
+        );
+    }
+
+    #[test]
+    fn new_user_taking_the_hosts_name_is_renamed() {
+        let mut room = room();
+        room.update_local(status("alice", true));
+        let intruder = peer(2);
+        room.add_connected(intruder);
+
+        let forced = room.apply_status(status("alice", false), intruder);
+
+        let forced = forced.expect("the host's name is taken too");
+        assert_eq!(forced.name, "alice_synergy");
+        assert_eq!(room.status_list().users.len(), 2);
+        assert_eq!(room.find_by_name("alice"), None, "the host is no peer");
+    }
+
+    #[test]
+    fn rolled_names_avoid_each_other() {
+        let mut room = room();
+        room.update_local(status("alice", true));
+        let mut rolled = vec![];
+        for n in 2..6 {
+            let p = peer(n);
+            room.add_connected(p);
+            rolled.push(room.apply_status(status("alice", false), p).unwrap().name);
+        }
+
+        // the one suffix is taken after the first roll, so a counter follows
+        assert_eq!(
+            rolled,
+            [
+                "alice_synergy",
+                "alice_synergy_2",
+                "alice_synergy_3",
+                "alice_synergy_4"
+            ]
+        );
+        assert_eq!(room.status_list().users.len(), 5);
+    }
+
+    #[test]
+    fn a_forced_name_avoids_the_hosts_name() {
+        let mut room = room();
+        // the host took the name the first roll would produce
+        room.update_local(status("alice_synergy", true));
+        let alice = peer(1);
+        room.add_connected(alice);
+        room.apply_status(status("alice", true), alice);
+        let intruder = peer(2);
+        room.add_connected(intruder);
+
+        let forced = room.apply_status(status("alice", false), intruder).unwrap();
+
+        assert_eq!(forced.name, "alice_synergy_2");
+        assert_eq!(room.status_list().users.len(), 3);
+    }
+
+    #[test]
+    fn ready_toggle_updates_in_place() {
+        let mut room = room();
+        let alice = peer(1);
+        room.add_connected(alice);
+        room.apply_status(status("alice", false), alice);
+        assert!(!room.all_ready());
+
+        let forced = room.apply_status(status("alice", true), alice);
+
+        assert!(forced.is_none());
+        assert_eq!(names(&room), vec!["alice"]);
+        assert!(room.all_ready());
+    }
+
+    #[test]
+    fn all_ready_includes_the_host() {
+        let mut room = room();
+        let bob = peer(2);
+        room.add_connected(bob);
+        room.apply_status(status("bob", true), bob);
+        room.update_local(status("alice", false));
+        assert!(!room.all_ready());
+
+        room.update_local(status("alice", true));
+        assert!(room.all_ready());
+    }
+
+    #[test]
+    fn host_rename_replaces_its_old_entry() {
+        let mut room = room();
+        room.update_local(status("alice", true));
+        room.update_local(status("alicia", true));
+
+        assert_eq!(names(&room), vec!["alicia"]);
+    }
+
+    #[test]
+    fn rename_to_free_name_replaces_old_entry() {
+        let mut room = room();
+        let alice = peer(1);
+        room.add_connected(alice);
+        room.apply_status(status("alice", true), alice);
+
+        let forced = room.apply_status(status("alicia", true), alice);
+
+        assert!(forced.is_none());
+        assert_eq!(names(&room), vec!["alicia"]);
+        assert_eq!(room.find_by_name("alicia"), Some(alice));
+    }
+
+    #[test]
+    fn rename_into_collision_is_rerolled_and_leaves_other_user_alone() {
+        let mut room = room();
+        let (alice, bob) = (peer(1), peer(2));
+        room.add_connected(alice);
+        room.apply_status(status("alice", true), alice);
+        room.add_connected(bob);
+        room.apply_status(status("bob", true), bob);
+
+        // bob renames himself to "alice"
+        let forced = room.apply_status(status("alice", true), bob);
+
+        let forced = forced.expect("collision must force a rename");
+        assert_eq!(forced.name, "alice_synergy");
+        // alice keeps her entry, bob's old name is gone, no ghost entries
+        assert_eq!(room.status_list().users.len(), 2);
+        assert_eq!(room.find_by_name("alice"), Some(alice));
+        assert_eq!(room.find_by_name("bob"), None);
+        assert_eq!(room.find_by_name("alice_synergy"), Some(bob));
+    }
+
+    #[test]
+    fn remove_drops_user_and_status() {
+        let mut room = room();
+        let alice = peer(1);
+        room.add_connected(alice);
+        room.apply_status(status("alice", false), alice);
+
+        assert!(room.remove(&alice));
+        assert!(names(&room).is_empty());
+        assert!(!room.contains(&alice));
+        assert!(!room.remove(&alice));
+    }
+
+    #[test]
+    fn connection_states_are_tracked() {
+        let mut room = room();
+        let alice = peer(1);
+        assert!(room.peer_status(&alice).is_none());
+
+        room.add_connected(alice);
+        assert!(room.is_connected_user(&alice));
+
+        room.apply_status(status("alice", false), alice);
+        assert!(!room.is_connected_user(&alice));
+        assert_eq!(
+            room.peer_status(&alice),
+            Some(&Some(status("alice", false)))
+        );
+    }
+}

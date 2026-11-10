@@ -40,7 +40,7 @@ impl EventHandler for ChunkRequest {
         trace!("video server chunk request");
         model
             .communicator
-            .send(OutgoingMessage::ChunkRequest(ChunkRequestMsg {
+            .send(OutgoingMessage::from(ChunkRequestMsg {
                 uuid: uuid::Uuid::new_v4(),
                 actor: Some(model.config.username.clone()),
                 video: self.file_name.as_str().into(),

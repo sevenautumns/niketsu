@@ -58,15 +58,13 @@ impl EventHandler for ChunkResponse {
         trace!("video provider chunk response");
         model
             .communicator
-            .send(crate::OutgoingMessage::ChunkResponse(
-                crate::ChunkResponseMsg {
-                    uuid: self.uuid,
-                    actor: Some(model.config.username.clone()),
-                    video: (&self.file_name).into(),
-                    start: self.start,
-                    bytes: self.bytes,
-                },
-            ));
+            .send(crate::OutgoingMessage::from(crate::ChunkResponseMsg {
+                uuid: self.uuid,
+                actor: Some(model.config.username.clone()),
+                video: (&self.file_name).into(),
+                start: self.start,
+                bytes: self.bytes,
+            }));
     }
 }
 

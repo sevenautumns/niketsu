@@ -14,7 +14,7 @@ use libp2p::{
     Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, identity, kad, mdns, noise,
     ping, relay, tcp, yamux,
 };
-use niketsu_core::communicator::{IncomingMessage, OutgoingMessage, UserMessageMsg};
+use niketsu_core::communicator::{IncomingMessage, OutgoingMessage, RoomMessage, UserMessageMsg};
 use niketsu_core::log_err_msg;
 use niketsu_core::playlist::Video;
 use niketsu_core::room::RoomName;
@@ -528,14 +528,9 @@ impl CommunicationHandler {
     }
 
     /// Routing shared by both roles: room-wide gossip and file sharing.
-    /// Returns the message back if it needs role-specific handling.
-    pub fn route_core_message(
-        &mut self,
-        msg: OutgoingMessage,
-    ) -> Result<std::result::Result<(), OutgoingMessage>> {
-        use OutgoingMessage::*;
-        let routed = match msg {
-            VideoStatus(msg) => self.broadcast(msg.into()),
+    pub fn route_room_message(&mut self, msg: RoomMessage) -> Result<()> {
+        use RoomMessage::*;
+        match msg {
             Start(msg) => self.broadcast(msg.into()),
             Pause(msg) => self.broadcast(msg.into()),
             PlaybackSpeed(msg) => self.broadcast(msg.into()),
@@ -551,10 +546,16 @@ impl CommunicationHandler {
             ChunkRequest(msg) => self.fs_chunk_request(msg),
             ChunkResponse(msg) => self.fs_chunk_response(msg),
             VideoShareChange(msg) => self.fs_video_share(msg),
-            other @ (Playlist(_) | UserStatus(_) | UserStatusList(_) | ToPeer(_)
-            | HostHandover(_)) => return Ok(Err(other)),
-        };
-        routed.map(Ok)
+        }
+    }
+
+    /// A message of the other role's group reaches a handler only when the
+    /// core still acts on a role this connection does not have, e.g. while
+    /// the core has not yet seen the `ConnectedMsg` of a reconnect. It has no
+    /// meaning here.
+    pub fn drop_for_other_role(&self, msg: impl std::fmt::Debug) -> Result<()> {
+        warn!(?msg, "Dropping a core message meant for the other role");
+        Ok(())
     }
 
     pub fn broadcast(&mut self, msg: NiketsuMessage) -> Result<()> {

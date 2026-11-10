@@ -8,7 +8,7 @@ use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, mdns, ping};
 use niketsu_core::communicator::{
-    ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
+    ClientRequest, ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
 };
 use tracing::{debug, error, info, warn};
 
@@ -375,17 +375,11 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
 
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()> {
         debug!(?msg, host = %self.handler.base.host, peer = %self.handler.base.swarm.local_peer_id(), "Handling core message");
-        let Err(msg) = self.handler.route_core_message(msg)? else {
-            return Ok(());
-        };
-        use OutgoingMessage::*;
         match msg {
-            Playlist(m) => self.send_to_host(m.into()),
-            UserStatus(m) => self.send_to_host(m.into()),
-            other @ (UserStatusList(_) | ToPeer(_) | HostHandover(_)) => {
-                bail!("Only the host sends {other:?}")
-            }
-            other => bail!("Unrouted core message: {other:?}"),
+            OutgoingMessage::Room(m) => self.handler.route_room_message(m),
+            OutgoingMessage::Client(ClientRequest::Playlist(m)) => self.send_to_host(m.into()),
+            OutgoingMessage::Client(ClientRequest::UserStatus(m)) => self.send_to_host(m.into()),
+            OutgoingMessage::Host(m) => self.handler.drop_for_other_role(m),
         }
     }
 }
