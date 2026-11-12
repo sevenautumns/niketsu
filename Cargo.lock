@@ -4330,13 +4330,17 @@ dependencies = [
  "im",
  "libp2p",
  "niketsu-core",
+ "niketsu-relay",
+ "niketsu-video-server",
  "ordered-float 5.3.0",
  "serde",
  "serde_json",
  "serde_millis",
  "sha256",
+ "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
