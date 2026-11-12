@@ -34,6 +34,11 @@ pub(crate) struct ClientCommunicationHandler {
     /// creating a fresh relay-client listener (each one makes and renews its
     /// own reservation) every time the host connection is re-established.
     host_circuit_reserved: bool,
+    /// Whether a playlist or a selection was broadcast to this peer. The
+    /// host's greeting travels as direct requests, which a broadcast sent
+    /// after it can overtake; the greeting is then the older state.
+    heard_playlist: bool,
+    heard_select: bool,
 }
 
 impl ClientCommunicationHandler {
@@ -62,6 +67,8 @@ impl ClientCommunicationHandler {
             host_conn: None,
             relayed_conns: HashMap::new(),
             host_circuit_reserved: false,
+            heard_playlist: false,
+            heard_select: false,
         }
     }
 
@@ -338,11 +345,19 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
         peer_id: PeerId,
     ) -> Result<()> {
         debug!("Received swarm request {msg:?}");
-        if peer_id == self.handler.base.host {
-            self.handler.send_to_core(msg, channel)
-        } else {
-            self.handler.respond_with_err(msg, channel)
+        if peer_id != self.handler.base.host {
+            return self.handler.respond_with_err(msg, channel);
         }
+        let overtaken = match msg {
+            NiketsuMessage::Playlist(_) => self.heard_playlist,
+            NiketsuMessage::Select(_) => self.heard_select,
+            _ => false,
+        };
+        if overtaken {
+            debug!("Dropping the greeting's state, a broadcast was newer");
+            return self.handler.acknowledge(channel);
+        }
+        self.handler.send_to_core(msg, channel)
     }
 
     fn handle_swarm_broadcast(&mut self, data: Vec<u8>, source: PeerId) -> Result<()> {
@@ -355,7 +370,12 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
                 bail!("Received video status from non-host peer: {source:?}")
             }
             Select(msg) => {
+                self.heard_select = true;
                 self.handler.reset_requests_responses();
+                self.handler.forward(msg)
+            }
+            Playlist(msg) => {
+                self.heard_playlist = true;
                 self.handler.forward(msg)
             }
             other => self.handler.forward(other),

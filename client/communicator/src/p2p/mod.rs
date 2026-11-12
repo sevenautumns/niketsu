@@ -618,6 +618,12 @@ impl CommunicationHandler {
         bail!("Received unexpected direct message: {msg:?}");
     }
 
+    /// Answers a direct request that needs no further handling.
+    pub fn acknowledge(&mut self, channel: ResponseChannel<MessageResponse>) -> Result<()> {
+        let resp = MessageResponse(Response::Status(StatusResponse::Ok));
+        self.base.swarm.send_message_response(channel, resp)
+    }
+
     /// Hands a direct request to the core and acknowledges it.
     pub fn send_to_core(
         &mut self,
