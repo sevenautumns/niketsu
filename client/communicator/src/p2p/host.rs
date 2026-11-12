@@ -367,8 +367,11 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
         }
     }
 
-    fn handle_swarm_broadcast(&mut self, data: Vec<u8>, source: PeerId) -> Result<()> {
-        let niketsu_msg: NiketsuMessage = data.try_into()?;
+    fn handle_swarm_broadcast(
+        &mut self,
+        niketsu_msg: NiketsuMessage,
+        source: PeerId,
+    ) -> Result<()> {
         debug!(message = ?niketsu_msg, %source, "Handling broadcast message from swarm");
         use NiketsuMessage::*;
         match niketsu_msg {

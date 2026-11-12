@@ -40,6 +40,7 @@ mod host_relay;
 mod client;
 mod file_share;
 mod host;
+mod order;
 
 use direct_only::DirectOnly;
 
@@ -138,7 +139,7 @@ pub(crate) enum StatusResponse {
 pub(crate) trait CommunicationHandlerTrait: Send {
     fn handler_mut(&mut self) -> &mut CommunicationHandler;
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()>;
-    fn handle_swarm_broadcast(&mut self, data: Vec<u8>, source: PeerId) -> Result<()>;
+    fn handle_swarm_broadcast(&mut self, msg: NiketsuMessage, source: PeerId) -> Result<()>;
     fn handle_swarm_request(
         &mut self,
         msg: NiketsuMessage,
@@ -234,11 +235,19 @@ pub(crate) trait CommunicationHandlerTrait: Send {
                 );
                 // propagation_source is only the last hop in the gossip mesh;
                 // the signed source identifies the actual author.
-                let Some(source) = message.source else {
+                let (Some(source), Some(sequence)) = (message.source, message.sequence_number)
+                else {
                     warn!(%message_id, "Dropping gossipsub message without signed source");
                     return;
                 };
-                let res = self.handle_swarm_broadcast(message.data, source);
+                let msg = match NiketsuMessage::try_from(message.data) {
+                    Ok(msg) => msg,
+                    Err(error) => return error!(%error, "Failed to read broadcast message"),
+                };
+                if self.handler_mut().newest.is_stale(source, sequence, &msg) {
+                    return debug!(?msg, %source, "Dropping a broadcast that a newer one replaced");
+                }
+                let res = self.handle_swarm_broadcast(msg, source);
                 log_err_msg!(res, "Failed to handle broadcast message");
             }
             gossipsub_event => debug!(
@@ -553,6 +562,7 @@ impl P2PClient {
 pub(crate) struct CommunicationHandler {
     base: CommonCommunication,
     file_share: Option<FileShare>,
+    newest: order::Newest,
 }
 
 impl CommunicationHandler {
@@ -575,6 +585,7 @@ impl CommunicationHandler {
         Self {
             base,
             file_share: None,
+            newest: order::Newest::default(),
         }
     }
 
