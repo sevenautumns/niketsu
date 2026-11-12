@@ -13,7 +13,7 @@ use niketsu_core::communicator::{
 use tracing::{debug, error, info, warn};
 
 use super::{
-    Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait,
+    Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandler, CommunicationHandlerTrait,
     DIRECT_CONNECT_TIMEOUT, FileShareBehaviourEvent, MessageResponse, SwarmHandler,
     TransportBehaviourEvent,
 };
@@ -43,9 +43,16 @@ impl ClientCommunicationHandler {
         host: PeerId,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
+        chunk_routes: ChunkRoutes,
     ) -> Self {
-        let mut handler =
-            CommunicationHandler::new(swarm, topic, host, core_receiver, message_sender);
+        let mut handler = CommunicationHandler::new(
+            swarm,
+            topic,
+            host,
+            core_receiver,
+            message_sender,
+            chunk_routes,
+        );
         // We reach the client handler connected only via the relay circuit. Give
         // hole punching a bounded window to upgrade to a direct connection;
         // otherwise the loop aborts and the core reconnects.

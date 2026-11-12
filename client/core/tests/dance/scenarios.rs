@@ -8,7 +8,7 @@ use niketsu_core::player::{
 use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::RoomName;
-use niketsu_core::{ui, video_provider, video_server};
+use niketsu_core::{ui, video_provider};
 
 use crate::harness::Room;
 
@@ -419,68 +419,6 @@ async fn late_joiner_adopts_the_running_speed() {
     );
 }
 
-/// A peer without the file requests it, the provider answers, and chunks
-/// flow from the provider's disk to the requester's video server.
-#[tokio::test]
-async fn requested_file_is_streamed_chunk_by_chunk() {
-    let mut room = Room::new();
-    let alice = room.join("alice", &["ep1"]);
-    let bob = room.join("bob", &[]);
-    room.pump();
-
-    room.peer(alice).act(ui::PlaylistChange {
-        playlist: Playlist::from_iter(["ep1"]),
-    });
-    room.peer(alice).act(ui::VideoChange {
-        video: Video::from("ep1"),
-    });
-    room.pump();
-
-    // alice shares her local copy of the running video
-    room.peer(alice).act(ui::FileShareChange {});
-    room.peer(alice).act(video_provider::FileReady {
-        file_name: "ep1".into(),
-        size: 1_000,
-    });
-    room.pump();
-
-    // bob has no local file and asks the room for it
-    room.peer(bob).act(ui::FileRequest {});
-    room.pump();
-    assert!(
-        room.peer(bob).video_server.running(),
-        "provider's file response must start the requester's video server"
-    );
-
-    // bob's video server needs the first chunk
-    room.peer(bob).act(video_server::ChunkRequest {
-        file_name: "ep1".into(),
-        start: 0,
-        length: 512,
-    });
-    room.pump();
-
-    // the request arrived at alice's provider, and only there
-    let requests = room.peer(alice).provider.requests();
-    assert_eq!(requests.len(), 1);
-    assert_eq!((requests[0].start, requests[0].len), (0, 512));
-
-    // alice's provider serves the chunk from disk
-    room.peer(alice).act(video_provider::ChunkResponse {
-        uuid: requests[0].uuid,
-        file_name: "ep1".into(),
-        start: 0,
-        bytes: vec![7; 512],
-    });
-    room.pump();
-
-    assert_eq!(
-        room.peer(bob).video_server.chunks(),
-        vec![(0, vec![7; 512])],
-        "the chunk must land in the requester's video server"
-    );
-}
-
 /// One peer pausing pauses everyone; when the last unready user readies up,
 /// the host auto-starts playback for the whole room.
 #[tokio::test]
@@ -819,93 +757,6 @@ async fn failed_file_response_stops_the_requesters_video_server() {
     assert!(
         !room.peer(bob).video_server.running(),
         "a failed file response must stop the requester's video server"
-    );
-}
-
-/// Chunk responses whose uuid is no longer pending are dropped by the
-/// network, not delivered to another consumer's video server.
-#[tokio::test]
-async fn stale_chunk_responses_are_dropped_not_misrouted() {
-    let mut room = Room::new();
-    let alice = room.join("alice", &["ep1"]);
-    let bob = room.join("bob", &[]);
-    let charlie = room.join("charlie", &[]);
-    room.pump();
-
-    room.peer(alice).act(ui::PlaylistChange {
-        playlist: Playlist::from_iter(["ep1"]),
-    });
-    room.peer(alice).act(ui::VideoChange {
-        video: Video::from("ep1"),
-    });
-    room.pump();
-
-    room.peer(alice).act(ui::FileShareChange {});
-    room.peer(alice).act(video_provider::FileReady {
-        file_name: "ep1".into(),
-        size: 1_000,
-    });
-    room.pump();
-
-    // both consumers stream from alice and each ask for one chunk
-    for who in [bob, charlie] {
-        room.peer(who).act(ui::FileRequest {});
-    }
-    room.pump();
-    room.peer(bob).act(video_server::ChunkRequest {
-        file_name: "ep1".into(),
-        start: 0,
-        length: 512,
-    });
-    room.peer(charlie).act(video_server::ChunkRequest {
-        file_name: "ep1".into(),
-        start: 512,
-        length: 512,
-    });
-    room.pump();
-
-    let requests = room.peer(alice).provider.requests();
-    assert_eq!(requests.len(), 2);
-
-    // alice answers bob's chunk twice: the duplicate's uuid is no longer
-    // pending and must be dropped
-    for _ in 0..2 {
-        room.peer(alice).act(video_provider::ChunkResponse {
-            uuid: requests[0].uuid,
-            file_name: "ep1".into(),
-            start: 0,
-            bytes: vec![7; 512],
-        });
-        room.pump();
-    }
-
-    // ...as must a response with a uuid nobody ever asked for
-    room.peer(alice).act(video_provider::ChunkResponse {
-        uuid: uuid::Uuid::new_v4(),
-        file_name: "ep1".into(),
-        start: 999,
-        bytes: vec![9; 8],
-    });
-    room.pump();
-
-    // charlie's answer still routes to charlie, and only to charlie
-    room.peer(alice).act(video_provider::ChunkResponse {
-        uuid: requests[1].uuid,
-        file_name: "ep1".into(),
-        start: 512,
-        bytes: vec![8; 512],
-    });
-    room.pump();
-
-    assert_eq!(
-        room.peer(bob).video_server.chunks(),
-        vec![(0, vec![7; 512])],
-        "the duplicate and unknown responses must be dropped"
-    );
-    assert_eq!(
-        room.peer(charlie).video_server.chunks(),
-        vec![(512, vec![8; 512])],
-        "responses must reach exactly their requester"
     );
 }
 

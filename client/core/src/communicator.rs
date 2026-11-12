@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::ops::RangeInclusive;
 use std::time::Duration;
 
 use arcstr::ArcStr;
@@ -64,8 +63,6 @@ pub enum RoomMessage {
     UserMessage(UserMessageMsg),
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
-    ChunkRequest(ChunkRequestMsg),
-    ChunkResponse(ChunkResponseMsg),
     VideoShareChange(VideoShareMsg),
 }
 
@@ -132,8 +129,6 @@ outgoing_from! {
     UserMessageMsg => Room(RoomMessage::UserMessage),
     FileRequestMsg => Room(RoomMessage::FileRequest),
     FileResponseMsg => Room(RoomMessage::FileResponse),
-    ChunkRequestMsg => Room(RoomMessage::ChunkRequest),
-    ChunkResponseMsg => Room(RoomMessage::ChunkResponse),
     VideoShareMsg => Room(RoomMessage::VideoShareChange),
     VideoStatusMsg => Host(HostInstruction::VideoStatus),
     UserStatusListMsg => Host(HostInstruction::UserStatusList),
@@ -160,8 +155,6 @@ pub enum IncomingMessage {
     UserStatus(UserStatusMsg),
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
-    ChunkRequest(ChunkRequestMsg),
-    ChunkResponse(ChunkResponseMsg),
     VideoProviderStopped(VideoProviderStoppedMsg),
     HostHandover(HostHandoverMsg),
     PeerConnected(PeerConnectedMsg),
@@ -677,55 +670,6 @@ impl From<UserStatus> for PlayerMessage {
             timestamp: Local::now(),
         }
         .into()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChunkRequestMsg {
-    pub uuid: uuid::Uuid,
-    pub actor: Option<ArcStr>,
-    pub video: Video,
-    pub range: RangeInclusive<u64>,
-}
-
-impl EventHandler for ChunkRequestMsg {
-    fn handle(self, model: &mut CoreModel) {
-        let start = *self.range.start();
-        let len = self.range.end() - self.range.start() + 1;
-        model
-            .video_provider
-            .request_chunk(self.uuid, self.video.as_str(), start, len);
-    }
-}
-
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChunkResponseMsg {
-    pub uuid: uuid::Uuid,
-    pub actor: Option<ArcStr>,
-    pub video: Video,
-    pub start: u64,
-    pub bytes: Vec<u8>,
-}
-
-impl std::fmt::Debug for ChunkResponseMsg {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ChunkResponseMsg")
-            .field("uuid", &self.uuid)
-            .field("actor", &self.actor)
-            .field("video", &self.video)
-            .field("start", &self.start)
-            .field("bytes", &"[not shown]")
-            .finish()
-    }
-}
-
-impl EventHandler for ChunkResponseMsg {
-    fn handle(self, model: &mut CoreModel) {
-        model
-            .video_server
-            .insert_chunk(self.video.as_str(), self.start, self.bytes)
     }
 }
 

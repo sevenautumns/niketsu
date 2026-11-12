@@ -1,18 +1,18 @@
 use std::net::SocketAddr;
-use std::ops::RangeInclusive;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use arcstr::ArcStr;
 use async_trait::async_trait;
 use moka::future::Cache;
-use niketsu_core::video_server::{ChunkRequest, ServerOnline, VideoServerEvent, VideoServerTrait};
+use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
+use niketsu_core::video_server::{ServerOnline, VideoServerEvent, VideoServerTrait};
 use nom::{IResult, Parser};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Notify;
-use tokio::sync::mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{Notify, oneshot};
 use tracing::{debug, trace, warn};
 
 const CHUNK_SIZE: u64 = 512_000;
@@ -23,9 +23,20 @@ const CACHE_ENTRIES: u64 = 100;
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct VideoServer {
+    route: ChunkRoute,
     server: Option<TcpServerHandle>,
+}
+
+impl VideoServer {
+    /// The server fetches its chunks over `route`.
+    pub fn new(route: ChunkRoute) -> Self {
+        Self {
+            route,
+            server: None,
+        }
+    }
 }
 
 #[async_trait]
@@ -36,20 +47,9 @@ impl VideoServerTrait for VideoServer {
 
     fn start_server(&mut self, file_name: ArcStr, file_size: u64) {
         self.stop_server();
-        let tcp_server = TcpServer::new(file_name, file_size);
+        let tcp_server = TcpServer::new(file_name, file_size, self.route.clone());
         let handle = tcp_server.server_loop();
         self.server = Some(handle);
-    }
-
-    fn insert_chunk(&mut self, file_name: &str, start: u64, bytes: Vec<u8>) {
-        let Some(handle) = &self.server else {
-            return;
-        };
-        if !handle.file_name.eq(file_name) {
-            return;
-        }
-        let cache = handle.cache.clone();
-        tokio::spawn(async move { cache.insert(start, bytes).await });
     }
 
     fn addr(&self) -> Option<SocketAddr> {
@@ -66,17 +66,22 @@ impl VideoServerTrait for VideoServer {
 
 #[derive(Debug)]
 struct VideoCache {
-    sender: UnboundedSender<RangeInclusive<u64>>,
+    file_name: ArcStr,
+    route: ChunkRoute,
+    /// Closed once the server is stopped.
+    running: Sender<()>,
     cache: Arc<Cache<u64, Vec<u8>>>,
     notify: Arc<Notify>,
 }
 
 impl VideoCache {
-    fn new(sender: UnboundedSender<RangeInclusive<u64>>) -> Self {
+    fn new(file_name: ArcStr, route: ChunkRoute, running: Sender<()>) -> Self {
         let cache = Arc::new(Cache::new(CACHE_ENTRIES));
         let notify = Arc::new(Notify::new());
         Self {
-            sender,
+            file_name,
+            route,
+            running,
             cache,
             notify,
         }
@@ -105,13 +110,31 @@ impl VideoCache {
         false
     }
 
-    /// requests a chunk if it is not in the cache yet
-    async fn request_chunk(&self, start: u64, end: u64) -> Result<()> {
+    /// requests a chunk if it is not in the cache yet, waiting while the
+    /// route is full
+    async fn request_chunk(self: &Arc<Self>, start: u64, end: u64) -> Result<()> {
+        if self.running.is_closed() {
+            bail!("Cache stopped");
+        }
         if start > end || self.refresh_chunk(start).await {
             return Ok(());
         }
-        let end = end.min(start + CHUNK_SIZE);
-        self.sender.send(start..=end).map_err(anyhow::Error::from)
+        let sender = self.route.sender().context("No route to fetch chunks")?;
+        let (reply, bytes) = oneshot::channel();
+        let request = ChunkRequest {
+            file_name: self.file_name.clone(),
+            start,
+            len: (end - start + 1).min(CHUNK_SIZE),
+            reply,
+        };
+        sender.send(request).await?;
+        let cache = self.clone();
+        tokio::spawn(async move {
+            if let Ok(bytes) = bytes.await {
+                cache.insert(start, bytes).await;
+            }
+        });
+        Ok(())
     }
 
     /// wait for a chunk starting at <start> to arrive in the cache
@@ -125,13 +148,13 @@ impl VideoCache {
     }
 
     /// obtain a chunk, starting at <start>, preferably ending at <end>
-    async fn obtain_chunk(&self, start: u64, end: u64) -> Result<Vec<u8>> {
+    async fn obtain_chunk(self: &Arc<Self>, start: u64, end: u64) -> Result<Vec<u8>> {
         for i in 0..=MAX_RETRY {
             let chunk = tokio::time::timeout(TIMEOUT, self.wait_for_chunk(start)).await;
             if let Some(chunk) = chunk.ok().flatten() {
                 return Ok(chunk);
             }
-            if self.sender.is_closed() {
+            if self.running.is_closed() {
                 bail!("Cache stopped");
             }
             if i != MAX_RETRY {
@@ -145,32 +168,23 @@ impl VideoCache {
 
 #[derive(Debug)]
 struct TcpServerHandle {
-    _terminator: Sender<()>,
+    _running: Receiver<()>,
     addr_rx: Receiver<SocketAddr>,
     addr: Option<SocketAddr>,
     file_name: ArcStr,
-    cache: Arc<VideoCache>,
-    req_rx: UnboundedReceiver<RangeInclusive<u64>>,
 }
 
 impl TcpServerHandle {
     async fn event(&mut self) -> VideoServerEvent {
-        tokio::select! {
-            Some(addr) = self.addr_rx.recv() => {
-                self.addr = Some(addr);
-                ServerOnline {
-                    file_name: self.file_name.clone(),
-                    addr,
-                }.into()
-            },
-            Some(req) = self.req_rx.recv() => {
-                ChunkRequest {
-                    file_name: self.file_name.clone(),
-                    start: *req.start(),
-                    length: req.end() - req.start() + 1
-                }.into()
-            }
+        let Some(addr) = self.addr_rx.recv().await else {
+            return std::future::pending().await;
+        };
+        self.addr = Some(addr);
+        ServerOnline {
+            file_name: self.file_name.clone(),
+            addr,
         }
+        .into()
     }
 }
 
@@ -178,25 +192,23 @@ struct TcpServer {
     file_name: ArcStr,
     file_size: u64,
     cache: Arc<VideoCache>,
-    receiver: UnboundedReceiver<RangeInclusive<u64>>,
+    running: Receiver<()>,
 }
 
 impl TcpServer {
-    fn new(file_name: ArcStr, file_size: u64) -> Self {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        let cache = Arc::new(VideoCache::new(sender));
+    fn new(file_name: ArcStr, file_size: u64, route: ChunkRoute) -> Self {
+        let (sender, running) = tokio::sync::mpsc::channel(1);
+        let cache = Arc::new(VideoCache::new(file_name.clone(), route, sender));
         Self {
             file_name,
             file_size,
             cache,
-            receiver,
+            running,
         }
     }
 
     fn server_loop(self) -> TcpServerHandle {
-        let (_terminator, mut rx) = tokio::sync::mpsc::channel(1);
         let (addr_tx, addr_rx) = tokio::sync::mpsc::channel(1);
-        let cache = self.cache.clone();
         tokio::spawn(async move {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
 
@@ -205,7 +217,7 @@ impl TcpServer {
             debug!(%addr, "opened local video server");
             loop {
                 tokio::select! {
-                    _ = rx.recv() => {
+                    _ = self.cache.running.closed() => {
                         return;
                     }
                     Ok((socket, _)) = listener.accept() => {
@@ -216,11 +228,9 @@ impl TcpServer {
             }
         });
         TcpServerHandle {
-            _terminator,
+            _running: self.running,
             addr_rx,
             addr: None,
-            cache,
-            req_rx: self.receiver,
             file_name: self.file_name,
         }
     }

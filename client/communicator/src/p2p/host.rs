@@ -18,7 +18,7 @@ use tracing::{debug, error, warn};
 
 use super::auth::AuthEvent;
 use super::{
-    Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait,
+    Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandler, CommunicationHandlerTrait,
     FileShareBehaviourEvent, MessageResponse, SwarmHandler, TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
@@ -54,11 +54,19 @@ impl HostCommunicationHandler {
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
         room: RoomName,
+        chunk_routes: ChunkRoutes,
     ) -> Self {
         message_sender
             .send(ConnectedMsg { is_host: true }.into())
             .ok();
-        let handler = CommunicationHandler::new(swarm, topic, host, core_receiver, message_sender);
+        let handler = CommunicationHandler::new(
+            swarm,
+            topic,
+            host,
+            core_receiver,
+            message_sender,
+            chunk_routes,
+        );
         Self {
             handler,
             relay_peer_id,

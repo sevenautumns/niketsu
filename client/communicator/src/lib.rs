@@ -3,8 +3,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
+use niketsu_core::chunk::ChunkRoute;
 use niketsu_core::communicator::*;
-use p2p::P2PClient;
+use p2p::{ChunkRoutes, P2PClient};
 use tokio::task::JoinHandle;
 use tracing::error;
 
@@ -28,7 +29,11 @@ impl Default for Connection {
 }
 
 impl Connection {
-    async fn receive(&mut self, endpoint: &EndpointInfo) -> IncomingMessage {
+    async fn receive(
+        &mut self,
+        endpoint: &EndpointInfo,
+        chunk_routes: &ChunkRoutes,
+    ) -> IncomingMessage {
         loop {
             match self {
                 Connection::Connected(c) => match c.recv().await {
@@ -40,7 +45,7 @@ impl Connection {
                 }
                 Connection::Disconnected(d) => {
                     let reason = d.reason.clone();
-                    *self = d.reconnect(endpoint).await;
+                    *self = d.reconnect(endpoint, chunk_routes).await;
                     if let Some(r) = reason {
                         return IncomingMessage::from(ServerMessageMsg {
                             message: r.to_string(),
@@ -83,11 +88,16 @@ pub struct Connecting {
 }
 
 impl Connecting {
-    fn new(endpoint: EndpointInfo) -> Self {
+    fn new(endpoint: EndpointInfo, chunk_routes: ChunkRoutes) -> Self {
         let connect_task = tokio::task::spawn(async move {
             tokio::time::timeout(
                 CONNECT_TIMEOUT,
-                P2PClient::new(endpoint.addr, endpoint.room, endpoint.password),
+                P2PClient::new(
+                    endpoint.addr,
+                    endpoint.room,
+                    endpoint.password,
+                    chunk_routes,
+                ),
             )
             .await
             .context("Connection timeout")?
@@ -120,27 +130,41 @@ impl Disconnected {
         }
     }
 
-    async fn reconnect(&self, endpoint: &EndpointInfo) -> Connection {
+    async fn reconnect(&self, endpoint: &EndpointInfo, chunk_routes: &ChunkRoutes) -> Connection {
         let elapsed = self.when.map(|i| i.elapsed()).unwrap_or(Duration::MAX);
         let remaining = RECONNECT_INTERVAL.saturating_sub(elapsed);
         if !remaining.is_zero() {
             tokio::time::sleep(remaining).await;
         }
-        Connection::Connecting(Connecting::new(endpoint.clone()))
+        Connection::Connecting(Connecting::new(endpoint.clone(), chunk_routes.clone()))
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct P2PCommunicator {
     connection: Connection,
     endpoint: Option<EndpointInfo>,
+    chunk_routes: ChunkRoutes,
+}
+
+impl P2PCommunicator {
+    /// The communicator fetches the chunk requests of `fetch` from the
+    /// provider, and hands the chunk requests of other peers to `provide`.
+    pub fn new(fetch: ChunkRoute, provide: ChunkRoute) -> Self {
+        Self {
+            connection: Connection::default(),
+            endpoint: None,
+            chunk_routes: ChunkRoutes { fetch, provide },
+        }
+    }
 }
 
 #[async_trait]
 impl CommunicatorTrait for P2PCommunicator {
     fn connect(&mut self, endpoint: EndpointInfo) {
         self.endpoint.replace(endpoint.clone());
-        self.connection = Connection::Connecting(Connecting::new(endpoint))
+        let chunk_routes = self.chunk_routes.clone();
+        self.connection = Connection::Connecting(Connecting::new(endpoint, chunk_routes))
     }
 
     fn send(&mut self, msg: OutgoingMessage) {
@@ -155,7 +179,7 @@ impl CommunicatorTrait for P2PCommunicator {
         let Some(endpoint) = &self.endpoint else {
             return std::future::pending().await;
         };
-        self.connection.receive(endpoint).await
+        self.connection.receive(endpoint, &self.chunk_routes).await
     }
 
     fn has_endpoint(&self) -> bool {

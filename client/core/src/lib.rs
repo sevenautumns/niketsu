@@ -24,6 +24,7 @@ use self::video_provider::*;
 use self::video_server::*;
 
 pub mod builder;
+pub mod chunk;
 pub mod communicator;
 pub mod config;
 pub mod file_database;

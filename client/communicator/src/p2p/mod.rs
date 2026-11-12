@@ -4,8 +4,10 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use arcstr::ArcStr;
 use async_trait::async_trait;
-use file_share::{FileShare, FileShareRequest, FileShareResponseResult};
+pub(crate) use file_share::ChunkRoutes;
+use file_share::{ChunkRead, FileShare, FileShareRequest, FileShareResponseResult};
 use futures::StreamExt;
+use futures::stream::FuturesUnordered;
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
 use libp2p::request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel};
@@ -14,6 +16,7 @@ use libp2p::{
     Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, identity, kad, mdns, noise,
     ping, relay, tcp, yamux,
 };
+use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
 use niketsu_core::communicator::{IncomingMessage, OutgoingMessage, RoomMessage, UserMessageMsg};
 use niketsu_core::log_err_msg;
 use niketsu_core::playlist::Video;
@@ -56,6 +59,10 @@ pub(crate) const DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 enum LoopEvent {
     Swarm(SwarmEvent<BehaviourEvent>),
     Core(Option<OutgoingMessage>),
+    /// The local video server needs a chunk from the provider.
+    FetchChunk(ChunkRequest),
+    /// The local video provider read a chunk for another peer.
+    ChunkRead(ResponseChannel<FileShareResponseResult>, Option<Vec<u8>>),
     /// The client's direct-connection deadline elapsed; abort the loop so the
     /// core reconnects.
     Abort,
@@ -156,10 +163,18 @@ pub(crate) trait CommunicationHandlerTrait: Send {
     async fn run(&mut self) {
         loop {
             let next = {
-                let base = &mut self.handler_mut().base;
+                let handler = self.handler_mut();
+                let can_fetch = handler.can_fetch_chunk();
+                let base = &mut handler.base;
                 tokio::select! {
                     event = base.swarm.select_next_some() => LoopEvent::Swarm(event),
                     msg = base.core_receiver.recv() => LoopEvent::Core(msg),
+                    Some(request) = base.chunk_fetches.recv(), if can_fetch => {
+                        LoopEvent::FetchChunk(request)
+                    }
+                    Some((channel, bytes)) = base.chunk_reads.next() => {
+                        LoopEvent::ChunkRead(channel, bytes)
+                    }
                     _ = wait_deadline(&mut base.direct_connection_deadline) => LoopEvent::Abort,
                 }
             };
@@ -169,6 +184,14 @@ pub(crate) trait CommunicationHandlerTrait: Send {
                     debug!(?msg, "Handling core message");
                     let res = self.handle_core_message(msg);
                     log_err_msg!(res, "Handling message caused error");
+                }
+                LoopEvent::FetchChunk(request) => {
+                    let res = self.handler_mut().fs_fetch_chunk(request);
+                    log_err_msg!(res, "Failed to fetch chunk");
+                }
+                LoopEvent::ChunkRead(channel, bytes) => {
+                    let res = self.handler_mut().fs_chunk_read(channel, bytes);
+                    log_err_msg!(res, "Failed to answer chunk request");
                 }
                 LoopEvent::Core(None) => {
                     error!("Channel of core closed. Stopping p2p event loop");
@@ -357,6 +380,7 @@ impl P2PClient {
         relay_addr: Multiaddr,
         room: RoomName,
         password: String,
+        chunk_routes: ChunkRoutes,
     ) -> Result<P2PClient> {
         let keypair = KEYPAIR.clone();
         let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
@@ -477,6 +501,7 @@ impl P2PClient {
             topic,
             core_receiver,
             message_sender,
+            chunk_routes,
         )
         .run()
         .await?;
@@ -512,8 +537,16 @@ impl CommunicationHandler {
         host: PeerId,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
+        chunk_routes: ChunkRoutes,
     ) -> Self {
-        let base = CommonCommunication::new(swarm, topic, host, core_receiver, message_sender);
+        let base = CommonCommunication::new(
+            swarm,
+            topic,
+            host,
+            core_receiver,
+            message_sender,
+            chunk_routes,
+        );
         Self {
             base,
             file_share: None,
@@ -543,8 +576,6 @@ impl CommunicationHandler {
             }
             FileRequest(msg) => self.fs_file_request(msg),
             FileResponse(msg) => self.fs_file_response(msg),
-            ChunkRequest(msg) => self.fs_chunk_request(msg),
-            ChunkResponse(msg) => self.fs_chunk_response(msg),
             VideoShareChange(msg) => self.fs_video_share(msg),
         }
     }
@@ -607,6 +638,11 @@ pub(crate) struct CommonCommunication {
     host: PeerId,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
+    /// Chunk requests of the local video server.
+    chunk_fetches: tokio::sync::mpsc::Receiver<ChunkRequest>,
+    /// Where chunk requests of other peers go to the local video provider.
+    provide: ChunkRoute,
+    chunk_reads: FuturesUnordered<ChunkRead>,
     /// Deadline for getting a direct connection to the host. Only the client
     /// arms it (see [`arm_direct_deadline`]); the host leaves it `None` so the
     /// shared run loop never aborts for the host.
@@ -620,6 +656,7 @@ impl CommonCommunication {
         host: PeerId,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
+        chunk_routes: ChunkRoutes,
     ) -> Self {
         Self {
             swarm,
@@ -627,6 +664,9 @@ impl CommonCommunication {
             host,
             core_receiver,
             message_sender,
+            chunk_fetches: chunk_routes.fetch.serve(file_share::CHUNK_FETCHES),
+            provide: chunk_routes.provide,
+            chunk_reads: FuturesUnordered::new(),
             direct_connection_deadline: None,
         }
     }

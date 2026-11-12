@@ -10,7 +10,9 @@ use tracing::{debug, info};
 use super::auth::AuthEvent;
 use super::client::ClientCommunicationHandler;
 use super::host::HostCommunicationHandler;
-use super::{Behaviour, BehaviourEvent, CommunicationHandlerTrait, TransportBehaviourEvent};
+use super::{
+    Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandlerTrait, TransportBehaviourEvent,
+};
 
 struct PeerInfo {
     relay: PeerId,
@@ -25,9 +27,11 @@ pub(crate) struct ConnectingHandler {
     topic: gossipsub::IdentTopic,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
+    chunk_routes: ChunkRoutes,
 }
 
 impl ConnectingHandler {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         swarm: Swarm<Behaviour>,
         relay_addr: Multiaddr,
@@ -36,6 +40,7 @@ impl ConnectingHandler {
         topic: gossipsub::IdentTopic,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
+        chunk_routes: ChunkRoutes,
     ) -> Self {
         Self {
             swarm,
@@ -45,6 +50,7 @@ impl ConnectingHandler {
             topic,
             core_receiver,
             message_sender,
+            chunk_routes,
         }
     }
 
@@ -107,6 +113,7 @@ impl ConnectingHandler {
                 self.core_receiver,
                 self.message_sender,
                 self.room,
+                self.chunk_routes,
             )))
         } else {
             Ok(Box::new(ClientCommunicationHandler::new(
@@ -115,6 +122,7 @@ impl ConnectingHandler {
                 host,
                 self.core_receiver,
                 self.message_sender,
+                self.chunk_routes,
             )))
         }
     }

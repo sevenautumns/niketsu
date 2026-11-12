@@ -1,4 +1,37 @@
+use tokio::io::AsyncReadExt;
+
 use super::*;
+
+#[tokio::test]
+async fn test_range_is_served_from_chunks_fetched_over_the_route() {
+    let content: Vec<u8> = (0..1_200_000u32).map(|i| i as u8).collect();
+    let route = ChunkRoute::default();
+    let mut requests = route.serve(1);
+    let file = content.clone();
+    tokio::spawn(async move {
+        while let Some(request) = requests.recv().await {
+            assert_eq!(request.file_name, "video.mkv");
+            let start = request.start as usize;
+            let end = (start + request.len as usize).min(file.len());
+            request.reply.send(file[start..end].to_vec()).ok();
+        }
+    });
+
+    let mut server = VideoServer::new(route);
+    server.start_server("video.mkv".into(), content.len() as u64);
+    let VideoServerEvent::ServerOnline(online) = server.event().await;
+
+    let mut stream = TcpStream::connect(online.addr).await.unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nRange: bytes=100-\r\n\r\n")
+        .await
+        .unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.unwrap();
+
+    let body_start = response.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    assert_eq!(response[body_start..], content[100..]);
+}
 
 #[test]
 fn test_range_struct_methods() {

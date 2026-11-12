@@ -312,34 +312,24 @@ impl FileDatabaseTrait for FakeDatabase {
 }
 
 // ------------------------------------------------------------------
-// Fake video server: records what it serves and which chunks arrived.
+// Fake video server: records what it serves.
 // ------------------------------------------------------------------
 
-#[derive(Debug, Default)]
-struct ServerState {
-    running: Option<ArcStr>,
-    chunks: Vec<(u64, Vec<u8>)>,
-}
-
 #[derive(Debug, Clone)]
-pub struct ServerHandle(Arc<Mutex<ServerState>>);
+pub struct ServerHandle(Arc<Mutex<Option<ArcStr>>>);
 
 impl ServerHandle {
     pub fn running(&self) -> bool {
-        self.0.lock().unwrap().running.is_some()
-    }
-
-    pub fn chunks(&self) -> Vec<(u64, Vec<u8>)> {
-        self.0.lock().unwrap().chunks.clone()
+        self.0.lock().unwrap().is_some()
     }
 }
 
 #[derive(Debug)]
-struct FakeVideoServer(Arc<Mutex<ServerState>>);
+struct FakeVideoServer(Arc<Mutex<Option<ArcStr>>>);
 
 impl FakeVideoServer {
     fn new() -> (Self, ServerHandle) {
-        let state = Arc::new(Mutex::new(ServerState::default()));
+        let state = Arc::new(Mutex::new(None));
         (Self(state.clone()), ServerHandle(state))
     }
 }
@@ -347,17 +337,11 @@ impl FakeVideoServer {
 #[async_trait]
 impl VideoServerTrait for FakeVideoServer {
     fn stop_server(&mut self) {
-        self.0.lock().unwrap().running = None;
+        *self.0.lock().unwrap() = None;
     }
 
     fn start_server(&mut self, file_name: ArcStr, _file_size: u64) {
-        let mut state = self.0.lock().unwrap();
-        state.running = Some(file_name);
-        state.chunks.clear();
-    }
-
-    fn insert_chunk(&mut self, _file_name: &str, start: u64, bytes: Vec<u8>) {
-        self.0.lock().unwrap().chunks.push((start, bytes));
+        *self.0.lock().unwrap() = Some(file_name);
     }
 
     fn addr(&self) -> Option<SocketAddr> {
@@ -370,69 +354,32 @@ impl VideoServerTrait for FakeVideoServer {
 }
 
 // ------------------------------------------------------------------
-// Fake video provider: records which chunks the core asked it to read
-// so tests can answer them with ChunkResponse events.
+// Fake video provider: records which file it provides.
 // ------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy)]
-pub struct ChunkRequested {
-    pub uuid: uuid::Uuid,
-    pub start: u64,
-    pub len: u64,
-}
-
 #[derive(Debug, Default)]
-struct ProviderState {
-    providing: Option<ArcStr>,
-    requests: Vec<ChunkRequested>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ProviderHandle(Arc<Mutex<ProviderState>>);
-
-impl ProviderHandle {
-    pub fn requests(&self) -> Vec<ChunkRequested> {
-        self.0.lock().unwrap().requests.clone()
-    }
-}
-
-#[derive(Debug)]
-struct FakeVideoProvider(Arc<Mutex<ProviderState>>);
-
-impl FakeVideoProvider {
-    fn new() -> (Self, ProviderHandle) {
-        let state = Arc::new(Mutex::new(ProviderState::default()));
-        (Self(state.clone()), ProviderHandle(state))
-    }
-}
+struct FakeVideoProvider(Option<ArcStr>);
 
 #[async_trait]
 impl VideoProviderTrait for FakeVideoProvider {
     fn start_providing(&mut self, file: FileEntry) {
-        self.0.lock().unwrap().providing = Some(file.file_name_arc());
+        self.0 = Some(file.file_name_arc());
     }
 
     fn stop_providing(&mut self) {
-        self.0.lock().unwrap().providing = None;
-    }
-
-    fn request_chunk(&mut self, uuid: uuid::Uuid, file_name: &str, start: u64, len: u64) {
-        let mut state = self.0.lock().unwrap();
-        if state.providing.as_deref() == Some(file_name) {
-            state.requests.push(ChunkRequested { uuid, start, len });
-        }
+        self.0 = None;
     }
 
     fn size(&self) -> Option<u64> {
-        self.0.lock().unwrap().providing.as_ref().map(|_| 1_000)
+        self.0.as_ref().map(|_| 1_000)
     }
 
     fn sharing(&self) -> bool {
-        self.0.lock().unwrap().providing.is_some()
+        self.0.is_some()
     }
 
     fn file_name(&self) -> Option<ArcStr> {
-        self.0.lock().unwrap().providing.clone()
+        self.0.clone()
     }
 
     async fn event(&mut self) -> VideoProviderEvent {
@@ -449,7 +396,6 @@ pub struct Peer {
     pub player: PlayerHandle,
     pub ui: UiHandle,
     pub video_server: ServerHandle,
-    pub provider: ProviderHandle,
     /// The transport identity the communicator reports for this peer.
     pub id: PeerId,
     /// False once the peer left the room; it then neither sends nor
@@ -475,7 +421,6 @@ impl Peer {
         let (player, player_handle) = FakePlayer::new();
         let (ui, ui_handle) = FakeUi::new();
         let (video_server, server_handle) = FakeVideoServer::new();
-        let (video_provider, provider_handle) = FakeVideoProvider::new();
         let communicator = FakeCommunicator::default();
         let outbox = communicator.outbox.clone();
         let config = Config {
@@ -490,7 +435,7 @@ impl Peer {
             .ui(Box::new(ui))
             .file_database(Box::new(FakeDatabase::new(files)))
             .video_server(Box::new(video_server))
-            .video_provider(Box::new(video_provider))
+            .video_provider(Box::new(FakeVideoProvider::default()))
             .config(config)
             // what a room has saved is the Room's to say, independent of
             // what earlier runs saved
@@ -501,7 +446,6 @@ impl Peer {
             player: player_handle,
             ui: ui_handle,
             video_server: server_handle,
-            provider: provider_handle,
             id: peer_id(index),
             online: true,
             outbox,
@@ -547,7 +491,6 @@ pub struct Room {
     /// uuid → requester, for routing responses back like the direct
     /// request-response channels in `p2p/file_share.rs` do.
     file_requests: HashMap<uuid::Uuid, usize>,
-    chunk_requests: HashMap<uuid::Uuid, usize>,
     /// What a fresh host finds saved for the room; nothing unless set.
     saved: Option<SavedPlaylistLoader>,
 }
@@ -685,9 +628,9 @@ impl Room {
     /// - a client's playlist and status are requests to the host; the
     ///   host's playlist and user list are gossip
     /// - `ToPeer` is a direct request to exactly that peer
-    /// - file requests and chunks travel directly between requester and
-    ///   the provider announced via VideoShareChange (kademlia + direct
-    ///   request-response in the real network)
+    /// - file requests travel directly between requester and the provider
+    ///   announced via VideoShareChange (kademlia + direct request-response
+    ///   in the real network)
     /// - a host handover moves the room at the relay: the target comes
     ///   back as the host and everyone else reconnects to it as a client
     fn route(&mut self, from: usize, msg: OutgoingMessage) -> Vec<(usize, IncomingMessage)> {
@@ -796,20 +739,6 @@ impl Room {
             },
             RoomMessage::FileResponse(m) => match self.file_requests.remove(&m.uuid) {
                 Some(requester) => vec![(requester, IncomingMessage::FileResponse(m))],
-                None => vec![],
-            },
-            RoomMessage::ChunkRequest(m) => match self.provider {
-                Some(provider) if provider != from => {
-                    self.chunk_requests.insert(m.uuid, from);
-                    vec![(provider, IncomingMessage::ChunkRequest(m))]
-                }
-                _ => vec![(
-                    from,
-                    IncomingMessage::VideoProviderStopped(VideoProviderStoppedMsg),
-                )],
-            },
-            RoomMessage::ChunkResponse(m) => match self.chunk_requests.remove(&m.uuid) {
-                Some(requester) => vec![(requester, IncomingMessage::ChunkResponse(m))],
                 None => vec![],
             },
         }

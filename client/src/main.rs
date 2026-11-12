@@ -5,6 +5,7 @@ use clap::Parser;
 use niketsu::cli::Args;
 use niketsu_communicator::P2PCommunicator;
 use niketsu_core::builder::CoreBuilder;
+use niketsu_core::chunk::ChunkRoute;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::FileDatabase;
 use niketsu_core::logging::setup_logger;
@@ -42,9 +43,11 @@ async fn run_app(args: Args) -> Result<()> {
     }
 
     let player = Mpv::new().unwrap();
-    let communicator = P2PCommunicator::default();
-    let video_server = VideoServer::default();
-    let video_provider = VideoProvider::default();
+    let fetch = ChunkRoute::default();
+    let provide = ChunkRoute::default();
+    let communicator = P2PCommunicator::new(fetch.clone(), provide.clone());
+    let video_server = VideoServer::new(fetch);
+    let video_provider = VideoProvider::new(provide);
     let mut file_database = FileDatabase::default();
     if !args.skip_database_refresh {
         file_database = FileDatabase::new(config.media_dirs.iter().map(PathBuf::from).collect());

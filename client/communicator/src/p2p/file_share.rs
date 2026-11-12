@@ -1,26 +1,50 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
+use arcstr::ArcStr;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use libp2p::kad::QueryId;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::{Multiaddr, PeerId, kad};
+use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
 use niketsu_core::communicator::{
-    ChunkRequestMsg, ChunkResponseMsg, FileRequestMsg, FileResponseMsg, IncomingMessage,
-    VideoProviderStoppedMsg, VideoShareMsg,
+    FileRequestMsg, FileResponseMsg, VideoProviderStoppedMsg, VideoShareMsg,
 };
 use niketsu_core::log_err_msg;
 use niketsu_core::playlist::Video;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::oneshot;
 use tracing::{debug, error, warn};
 
 use super::{CommonCommunication, CommunicationHandler};
 use crate::p2p::SwarmHandler;
 
+/// Chunks of the local video server requested from the provider and not yet
+/// answered. The video server waits beyond that, so a slow provider slows it.
+pub(super) const CHUNK_FETCHES: usize = 4;
+
+/// The chunk routes of this peer, see [`niketsu_core::chunk`].
+#[derive(Debug, Clone)]
+pub(crate) struct ChunkRoutes {
+    /// Requests of the local video server, which the communicator fetches
+    /// from the provider.
+    pub fetch: ChunkRoute,
+    /// Requests of other peers, which the local video provider answers.
+    pub provide: ChunkRoute,
+}
+
+/// A chunk the local video provider reads for another peer, answered on the
+/// response channel. `None` means it cannot be served.
+pub(super) type ChunkRead =
+    BoxFuture<'static, (ResponseChannel<FileShareResponseResult>, Option<Vec<u8>>)>;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum FileShareRequest {
     File(FileRequestMsg),
-    Chunk(ChunkRequestMsg),
+    Chunk { video: ArcStr, start: u64, len: u64 },
 }
 
 pub(crate) type FileShareResponseResult = std::result::Result<FileShareResponse, String>;
@@ -28,7 +52,16 @@ pub(crate) type FileShareResponseResult = std::result::Result<FileShareResponse,
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum FileShareResponse {
     File(FileResponseMsg),
-    Chunk(ChunkResponseMsg),
+    Chunk(ChunkBytes),
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ChunkBytes(Vec<u8>);
+
+impl std::fmt::Debug for ChunkBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ChunkBytes({} bytes)", self.0.len())
+    }
 }
 
 #[derive(Debug)]
@@ -39,7 +72,6 @@ pub(crate) enum FileShare {
 
 #[derive(Debug)]
 pub struct FileShareProvider {
-    pending_chunk_responses: HashMap<uuid::Uuid, ResponseChannel<FileShareResponseResult>>,
     pending_file_responses: HashMap<uuid::Uuid, ResponseChannel<FileShareResponseResult>>,
     current_response: Video,
 }
@@ -47,7 +79,6 @@ pub struct FileShareProvider {
 impl FileShareProvider {
     pub fn new(video: Video) -> Self {
         Self {
-            pending_chunk_responses: Default::default(),
             pending_file_responses: Default::default(),
             current_response: video,
         }
@@ -61,7 +92,7 @@ impl FileShareProvider {
 #[derive(Debug, Default)]
 pub struct FileShareConsumer {
     file_requests: HashMap<QueryId, FileRequestMsg>,
-    chunk_requests: HashSet<OutboundRequestId>,
+    chunk_requests: HashMap<OutboundRequestId, oneshot::Sender<Vec<u8>>>,
     /// The in-flight file request, kept so a failure (typically a timeout
     /// after a failed hole punch) is reported to the core instead of leaving
     /// the consumer waiting forever.
@@ -171,8 +202,8 @@ impl CommunicationHandler {
                     FileShareRequest::File(msg) => {
                         self.fs_swarm_file_request(msg, channel).ok();
                     }
-                    FileShareRequest::Chunk(msg) => {
-                        self.fs_swarm_chunk_request(msg, channel).ok();
+                    FileShareRequest::Chunk { video, start, len } => {
+                        self.fs_swarm_chunk_request(video, start, len, channel).ok();
                     }
                 },
                 request_response::Message::Response {
@@ -188,7 +219,7 @@ impl CommunicationHandler {
                 let Some(FileShare::Consumer(consumer)) = &mut self.file_share else {
                     return;
                 };
-                if consumer.chunk_requests.remove(&request_id) {
+                if consumer.chunk_requests.remove(&request_id).is_some() {
                     warn!(?error, "Chunk request failed. Cache will retry.");
                     let msg = "Chunk download timeout. Connection might be slow...".to_string();
                     self.base
@@ -226,18 +257,16 @@ impl CommunicationHandler {
         Ok(())
     }
 
-    pub(super) fn fs_chunk_response(&mut self, msg: ChunkResponseMsg) -> Result<()> {
-        let Some(FileShare::Provider(provider)) = &mut self.file_share else {
-            bail!("No active file share provider");
-        };
-        let Some(channel) = provider.pending_chunk_responses.remove(&msg.uuid) else {
-            bail!("No access to response channel for chunk response");
-        };
-        let response = Ok(FileShareResponse::Chunk(msg));
-        self.base.swarm.send_file_response(channel, response)
+    /// Whether another chunk of the local video server may be requested from
+    /// the provider, see [`CHUNK_FETCHES`].
+    pub(super) fn can_fetch_chunk(&self) -> bool {
+        match &self.file_share {
+            Some(FileShare::Consumer(consumer)) => consumer.chunk_requests.len() < CHUNK_FETCHES,
+            _ => true,
+        }
     }
 
-    pub(super) fn fs_chunk_request(&mut self, msg: ChunkRequestMsg) -> Result<()> {
+    pub(super) fn fs_fetch_chunk(&mut self, request: ChunkRequest) -> Result<()> {
         // TODO handle issues with provider
         let Some(FileShare::Consumer(consumer)) = &mut self.file_share else {
             self.base
@@ -249,14 +278,32 @@ impl CommunicationHandler {
         let Some(provider) = consumer.current_request_provider else {
             bail!("No provider available for chunk request")
         };
-        let request_id = self
-            .base
-            .swarm
-            .send_file_request(&provider, FileShareRequest::Chunk(msg));
-        if let Some(FileShare::Consumer(consumer)) = &mut self.file_share {
-            consumer.chunk_requests.insert(request_id);
-        }
+        let ChunkRequest {
+            file_name,
+            start,
+            len,
+            reply,
+        } = request;
+        let msg = FileShareRequest::Chunk {
+            video: file_name,
+            start,
+            len,
+        };
+        let request_id = self.base.swarm.send_file_request(&provider, msg);
+        consumer.chunk_requests.insert(request_id, reply);
         Ok(())
+    }
+
+    pub(super) fn fs_chunk_read(
+        &mut self,
+        channel: ResponseChannel<FileShareResponseResult>,
+        bytes: Option<Vec<u8>>,
+    ) -> Result<()> {
+        let response = match bytes {
+            Some(bytes) => Ok(FileShareResponse::Chunk(ChunkBytes(bytes))),
+            None => Err(String::from("Not providing the requested file")),
+        };
+        self.base.swarm.send_file_response(channel, response)
     }
 
     pub(super) fn fs_file_request(&mut self, msg: FileRequestMsg) -> Result<()> {
@@ -299,19 +346,43 @@ impl CommunicationHandler {
         self.base.swarm.send_file_response(channel, resp)
     }
 
+    /// Hands the request to the local video provider. When its queue is
+    /// full, the request is dropped unanswered; the requester sees a failed
+    /// request and its video server asks again later.
     fn fs_swarm_chunk_request(
         &mut self,
-        msg: ChunkRequestMsg,
+        file_name: ArcStr,
+        start: u64,
+        len: u64,
         channel: ResponseChannel<FileShareResponseResult>,
     ) -> Result<()> {
-        let Some(FileShare::Provider(provider)) = &mut self.file_share else {
-            debug!("Got chunk request despite no active provider");
-            let resp = Err(String::from("Not providing any files"));
-            return self.base.swarm.send_file_response(channel, resp);
+        let (reply, bytes) = oneshot::channel();
+        let request = ChunkRequest {
+            file_name,
+            start,
+            len,
+            reply,
         };
-        provider.pending_chunk_responses.insert(msg.uuid, channel);
-        self.base.message_sender.send(msg.into())?;
-        Ok(())
+        let sent = match self.base.provide.sender() {
+            Some(sender) => sender.try_send(request),
+            None => Err(TrySendError::Closed(request)),
+        };
+        match sent {
+            Ok(()) => {
+                let read = async move { (channel, bytes.await.ok()) };
+                self.base.chunk_reads.push(read.boxed());
+                Ok(())
+            }
+            Err(TrySendError::Full(_)) => {
+                debug!("Video provider is busy, dropping chunk request");
+                Ok(())
+            }
+            Err(TrySendError::Closed(_)) => {
+                debug!("Got chunk request despite no active provider");
+                let resp = Err(String::from("Not providing any files"));
+                self.base.swarm.send_file_response(channel, resp)
+            }
+        }
     }
 
     fn fs_swarm_file_request(
@@ -334,30 +405,41 @@ impl CommunicationHandler {
         request_id: OutboundRequestId,
         resp: FileShareResponseResult,
     ) -> Result<()> {
+        let mut reply = None;
+        let mut is_file_request = false;
         if let Some(FileShare::Consumer(consumer)) = &mut self.file_share {
-            consumer.chunk_requests.remove(&request_id);
-            if consumer.file_request == Some(request_id) {
+            reply = consumer.chunk_requests.remove(&request_id);
+            is_file_request = consumer.file_request == Some(request_id);
+            if is_file_request {
                 consumer.file_request = None;
             }
         }
-        let Err(error) = resp else {
-            self.base.message_sender.send(resp.unwrap().into())?;
-            return Ok(());
-        };
-        self.file_share.take();
-        self.base
-            .message_sender
-            .send(VideoProviderStoppedMsg.into())
-            .ok();
-        bail!("{error}");
-    }
-}
-
-impl From<FileShareResponse> for IncomingMessage {
-    fn from(value: FileShareResponse) -> Self {
-        match value {
-            FileShareResponse::File(file_response_msg) => file_response_msg.into(),
-            FileShareResponse::Chunk(chunk_response_msg) => chunk_response_msg.into(),
+        match resp {
+            Ok(FileShareResponse::Chunk(ChunkBytes(bytes))) => {
+                // a request no longer pending has nobody waiting for it
+                if let Some(reply) = reply {
+                    reply.send(bytes).ok();
+                }
+                Ok(())
+            }
+            Ok(FileShareResponse::File(msg)) => {
+                self.base.message_sender.send(msg.into())?;
+                Ok(())
+            }
+            // the answer to a request of an earlier file share says nothing
+            // about the current one
+            Err(error) if reply.is_none() && !is_file_request => {
+                debug!(%error, "Ignoring the failure of a request no longer pending");
+                Ok(())
+            }
+            Err(error) => {
+                self.file_share.take();
+                self.base
+                    .message_sender
+                    .send(VideoProviderStoppedMsg.into())
+                    .ok();
+                bail!("{error}");
+            }
         }
     }
 }
