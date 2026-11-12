@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
+use libp2p::identity::Keypair;
 use niketsu_core::chunk::ChunkRoute;
 use niketsu_core::communicator::*;
 use p2p::{ChunkRoutes, P2PClient};
@@ -29,11 +30,7 @@ impl Default for Connection {
 }
 
 impl Connection {
-    async fn receive(
-        &mut self,
-        endpoint: &EndpointInfo,
-        chunk_routes: &ChunkRoutes,
-    ) -> IncomingMessage {
+    async fn receive(&mut self, endpoint: &EndpointInfo, node: &Node) -> IncomingMessage {
         loop {
             match self {
                 Connection::Connected(c) => match c.recv().await {
@@ -45,7 +42,7 @@ impl Connection {
                 }
                 Connection::Disconnected(d) => {
                     let reason = d.reason.clone();
-                    *self = d.reconnect(endpoint, chunk_routes).await;
+                    *self = d.reconnect(endpoint, node).await;
                     if let Some(r) = reason {
                         return IncomingMessage::from(ServerMessageMsg {
                             message: r.to_string(),
@@ -88,16 +85,11 @@ pub struct Connecting {
 }
 
 impl Connecting {
-    fn new(endpoint: EndpointInfo, chunk_routes: ChunkRoutes) -> Self {
+    fn new(endpoint: EndpointInfo, node: Node) -> Self {
         let connect_task = tokio::task::spawn(async move {
             tokio::time::timeout(
                 CONNECT_TIMEOUT,
-                P2PClient::new(
-                    endpoint.addr,
-                    endpoint.room,
-                    endpoint.password,
-                    chunk_routes,
-                ),
+                P2PClient::new(node, endpoint.addr, endpoint.room, endpoint.password),
             )
             .await
             .context("Connection timeout")?
@@ -130,21 +122,31 @@ impl Disconnected {
         }
     }
 
-    async fn reconnect(&self, endpoint: &EndpointInfo, chunk_routes: &ChunkRoutes) -> Connection {
+    async fn reconnect(&self, endpoint: &EndpointInfo, node: &Node) -> Connection {
         let elapsed = self.when.map(|i| i.elapsed()).unwrap_or(Duration::MAX);
         let remaining = RECONNECT_INTERVAL.saturating_sub(elapsed);
         if !remaining.is_zero() {
             tokio::time::sleep(remaining).await;
         }
-        Connection::Connecting(Connecting::new(endpoint.clone(), chunk_routes.clone()))
+        Connection::Connecting(Connecting::new(endpoint.clone(), node.clone()))
     }
+}
+
+/// What every connection of one communicator has in common.
+#[derive(Debug, Clone)]
+pub(crate) struct Node {
+    /// The identity is the communicator's, so a reconnect keeps the peer id.
+    pub(crate) keypair: Keypair,
+    /// Whether peers on the local network are discovered through mDNS.
+    pub(crate) mdns: bool,
+    pub(crate) chunk_routes: ChunkRoutes,
 }
 
 #[derive(Debug)]
 pub struct P2PCommunicator {
     connection: Connection,
     endpoint: Option<EndpointInfo>,
-    chunk_routes: ChunkRoutes,
+    node: Node,
 }
 
 impl P2PCommunicator {
@@ -154,8 +156,18 @@ impl P2PCommunicator {
         Self {
             connection: Connection::default(),
             endpoint: None,
-            chunk_routes: ChunkRoutes { fetch, provide },
+            node: Node {
+                keypair: Keypair::generate_ed25519(),
+                mdns: true,
+                chunk_routes: ChunkRoutes { fetch, provide },
+            },
         }
+    }
+
+    /// Reaches peers through the relay only, leaving the local network alone.
+    pub fn without_mdns(mut self) -> Self {
+        self.node.mdns = false;
+        self
     }
 }
 
@@ -163,8 +175,7 @@ impl P2PCommunicator {
 impl CommunicatorTrait for P2PCommunicator {
     fn connect(&mut self, endpoint: EndpointInfo) {
         self.endpoint.replace(endpoint.clone());
-        let chunk_routes = self.chunk_routes.clone();
-        self.connection = Connection::Connecting(Connecting::new(endpoint, chunk_routes))
+        self.connection = Connection::Connecting(Connecting::new(endpoint, self.node.clone()))
     }
 
     fn send(&mut self, msg: OutgoingMessage) {
@@ -179,7 +190,7 @@ impl CommunicatorTrait for P2PCommunicator {
         let Some(endpoint) = &self.endpoint else {
             return std::future::pending().await;
         };
-        self.connection.receive(endpoint, &self.chunk_routes).await
+        self.connection.receive(endpoint, &self.node).await
     }
 
     fn has_endpoint(&self) -> bool {

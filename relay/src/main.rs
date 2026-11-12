@@ -1,13 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
 use libp2p::identity::Keypair;
+use niketsu_relay::cli::{Args, setup_logger};
+use niketsu_relay::config::Config;
+use niketsu_relay::relay;
 use tracing::{info, warn};
-
-use crate::cli::{Args, setup_logger};
-use crate::config::Config;
-mod cli;
-mod config;
-mod relay;
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -11,22 +11,23 @@ use futures::stream::FuturesUnordered;
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
 use libp2p::request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel};
+use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
-    Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, identity, kad, mdns, noise,
-    ping, relay, tcp, yamux,
+    Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, kad, mdns, noise, ping, relay,
+    tcp, yamux,
 };
 use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
 use niketsu_core::communicator::{IncomingMessage, OutgoingMessage, RoomMessage, UserMessageMsg};
 use niketsu_core::log_err_msg;
 use niketsu_core::playlist::Video;
 use niketsu_core::room::RoomName;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha256::digest;
 use tokio::spawn;
 use tracing::{debug, error, trace, warn};
 
+use crate::Node;
 use crate::messages::NiketsuMessage;
 
 mod auth;
@@ -41,8 +42,6 @@ mod file_share;
 mod host;
 
 use direct_only::DirectOnly;
-
-static KEYPAIR: Lazy<identity::Keypair> = Lazy::new(identity::Keypair::generate_ed25519);
 
 /// How long a client waits for a *direct* connection to the host (via DCUtR
 /// hole punching or a mDNS LAN dial) before giving up and reconnecting. The
@@ -102,7 +101,7 @@ pub(crate) struct MessagingBehaviour {
 pub(crate) struct FileShareBehaviour {
     request_response: request_response::cbor::Behaviour<FileShareRequest, FileShareResponseResult>,
     kademlia: kad::Behaviour<MemoryStore>,
-    mdns: mdns::tokio::Behaviour,
+    mdns: Toggle<mdns::tokio::Behaviour>,
 }
 
 #[derive(NetworkBehaviour)]
@@ -377,12 +376,16 @@ pub(crate) struct P2PClient {
 
 impl P2PClient {
     pub(crate) async fn new(
+        node: Node,
         relay_addr: Multiaddr,
         room: RoomName,
         password: String,
-        chunk_routes: ChunkRoutes,
     ) -> Result<P2PClient> {
-        let keypair = KEYPAIR.clone();
+        let Node {
+            keypair,
+            mdns,
+            chunk_routes,
+        } = node;
         let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
         quic_config.handshake_timeout = Duration::from_secs(10);
         quic_config.max_idle_timeout = 5 * 1000;
@@ -475,10 +478,15 @@ impl P2PClient {
                             keypair.public().to_peer_id(),
                             MemoryStore::new(key.public().to_peer_id()),
                         ),
-                        mdns: mdns::tokio::Behaviour::new(
-                            mdns::Config::default(),
-                            key.public().to_peer_id(),
-                        )?,
+                        mdns: mdns
+                            .then(|| {
+                                mdns::tokio::Behaviour::new(
+                                    mdns::Config::default(),
+                                    key.public().to_peer_id(),
+                                )
+                            })
+                            .transpose()?
+                            .into(),
                     }),
                 })
             })?
