@@ -7,7 +7,6 @@ use futures::future::OptionFuture;
 use logging::ChatLogger;
 use once_cell::sync::Lazy;
 use player::wrapper::MediaPlayerWrapper;
-use playlist::file::PlaylistBrowser;
 use playlist::handler::PlaylistHandler;
 use playlist::{Playlist, Video};
 use room::{HostRoom, RoomName};
@@ -53,6 +52,9 @@ pub trait EventHandler {
 /// yet: the most recently saved playlist of the room, if any.
 pub type SavedPlaylistLoader = fn(&RoomName) -> Option<PlaylistHandler>;
 
+/// Where this core persists the playlist of a room after every change.
+pub type PlaylistSaver = fn(&RoomName, &PlaylistHandler);
+
 #[derive(Debug)]
 pub struct CoreModel {
     pub communicator: Box<dyn CommunicatorTrait>,
@@ -74,12 +76,13 @@ pub struct CoreModel {
     /// core has been connected to it.
     pub joined_room: Option<RoomName>,
     pub(crate) saved_playlist: SavedPlaylistLoader,
+    pub(crate) save_playlist: PlaylistSaver,
 }
 
 impl CoreModel {
     /// Persist the current playlist for the active room.
     pub fn save_playlist(&self) {
-        PlaylistBrowser::save(&self.config.room, &self.playlist);
+        (self.save_playlist)(&self.config.room, &self.playlist);
     }
 
     /// Replace the playlist and re-derive the playing marker from the

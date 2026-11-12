@@ -11,7 +11,7 @@ use crate::playlist::handler::PlaylistHandler;
 use crate::sync::ClientSync;
 use crate::ui::UserInterfaceTrait;
 use crate::video_provider::VideoProviderTrait;
-use crate::{Core, CoreModel, SavedPlaylistLoader, VideoServerTrait};
+use crate::{Core, CoreModel, PlaylistSaver, SavedPlaylistLoader, VideoServerTrait};
 
 #[derive(TypedBuilder)]
 #[builder(build_method(into = Core))]
@@ -27,6 +27,8 @@ pub struct CoreBuilder {
     config: Config,
     #[builder(default = PlaylistBrowser::latest_for_room)]
     saved_playlist: SavedPlaylistLoader,
+    #[builder(default = PlaylistBrowser::save)]
+    save_playlist: PlaylistSaver,
 }
 
 impl From<CoreBuilder> for CoreModel {
@@ -42,6 +44,7 @@ impl From<CoreBuilder> for CoreModel {
             config: builder.config,
             playlist: PlaylistHandler::default(),
             saved_playlist: builder.saved_playlist,
+            save_playlist: builder.save_playlist,
             chat_logger: builder.chat_logger,
             video_server: builder.video_server,
             video_provider: builder.video_provider,

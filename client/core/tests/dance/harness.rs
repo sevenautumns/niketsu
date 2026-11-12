@@ -440,6 +440,7 @@ impl Peer {
             // what a room has saved is the Room's to say, independent of
             // what earlier runs saved
             .saved_playlist(saved)
+            .save_playlist(|_, _| {})
             .build();
         Self {
             model: core.model,
