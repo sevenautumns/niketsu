@@ -69,13 +69,13 @@ impl Connected {
         ))))
     }
 
-    fn send(&mut self, msg: OutgoingMessage) -> std::result::Result<(), Connection> {
-        self.p2p
-            .send(msg)
-            .inspect_err(|error| error!(%error, "Connection error"))
-            .map_err(Some)
-            .map_err(Disconnected::now)
-            .map_err(Connection::Disconnected)
+    /// A send fails once the connection's event loop has ended. The messages
+    /// it handed over before that are still to be received, so the
+    /// connection stays until `recv` finds it drained.
+    fn send(&mut self, msg: OutgoingMessage) {
+        if let Err(error) = self.p2p.send(msg) {
+            error!(%error, "Connection error");
+        }
     }
 }
 
@@ -179,10 +179,8 @@ impl CommunicatorTrait for P2PCommunicator {
     }
 
     fn send(&mut self, msg: OutgoingMessage) {
-        if let Connection::Connected(con) = &mut self.connection
-            && let Err(con) = con.send(msg)
-        {
-            self.connection = con
+        if let Connection::Connected(con) = &mut self.connection {
+            con.send(msg)
         }
     }
 
@@ -199,4 +197,31 @@ impl CommunicatorTrait for P2PCommunicator {
 }
 
 #[cfg(test)]
-mod test {}
+mod test {
+    use super::*;
+
+    /// The room's last words to a peer can be the ones that matter most: a
+    /// handover is announced right before the old host closes the room.
+    #[tokio::test]
+    async fn messages_of_an_ended_connection_survive_a_failed_send() {
+        let handover = HostHandoverMsg {
+            new_host: "bob".into(),
+        };
+        let mut communicator = P2PCommunicator::new(ChunkRoute::default(), ChunkRoute::default());
+        communicator.endpoint = Some(EndpointInfo {
+            addr: "/ip4/127.0.0.1/udp/1/quic-v1".parse().unwrap(),
+            room: "room".into(),
+            password: String::new(),
+        });
+        communicator.connection = Connection::Connected(Connected {
+            p2p: P2PClient::ended_with(vec![handover.clone().into()]),
+        });
+
+        communicator.send(VideoShareMsg { video: None }.into());
+
+        let IncomingMessage::HostHandover(received) = communicator.receive().await else {
+            panic!("the handover was dropped with the connection");
+        };
+        assert_eq!(received, handover);
+    }
+}

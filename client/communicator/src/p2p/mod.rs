@@ -533,6 +533,23 @@ impl P2PClient {
     }
 }
 
+#[cfg(test)]
+impl P2PClient {
+    /// A client whose event loop has ended after handing over `messages`.
+    pub(crate) fn ended_with(messages: Vec<IncomingMessage>) -> Self {
+        let (sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (message_sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        for message in messages {
+            message_sender.send(message).unwrap();
+        }
+        Self {
+            sender,
+            receiver,
+            _handler: spawn(async {}),
+        }
+    }
+}
+
 pub(crate) struct CommunicationHandler {
     base: CommonCommunication,
     file_share: Option<FileShare>,
