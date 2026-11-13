@@ -3,10 +3,9 @@ use std::collections::HashMap;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use libp2p::core::ConnectedPoint;
-use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
-use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, mdns, ping};
+use libp2p::{PeerId, dcutr, gossipsub, mdns, ping};
 use niketsu_core::communicator::{
     ClientRequest, ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
 };
@@ -101,19 +100,20 @@ impl ClientCommunicationHandler {
     /// non-relayed connections, and every `listen_on` of the circuit spawns
     /// another listener whose own reservation renewals count against the host
     /// relay's per-peer rate limit.
-    fn reserve_host_circuit(&mut self, host: PeerId) {
+    fn reserve_host_circuit(&mut self) {
         if self.host_circuit_reserved {
             return;
         }
-        let host_circuit = Multiaddr::empty()
-            .with(Protocol::P2p(host))
-            .with(Protocol::P2pCircuit);
-        match self.handler.base.swarm.listen_on(host_circuit) {
+        let Some(host_circuit) = self.handler.base.host_circuit() else {
+            warn!("Host address unknown, cannot reserve slot on host relay");
+            return;
+        };
+        match self.handler.base.swarm.listen_on(host_circuit.clone()) {
             Ok(_) => {
-                info!(%host, "Reserving slot on host relay");
+                info!(%host_circuit, "Reserving slot on host relay");
                 self.host_circuit_reserved = true;
             }
-            Err(err) => warn!(%err, "Failed to listen on host relay circuit"),
+            Err(err) => warn!(?err, %host_circuit, "Failed to listen on host relay circuit"),
         }
     }
 
@@ -211,7 +211,10 @@ impl ClientCommunicationHandler {
 
         info!(%connection_id, ?endpoint, "Direct connection to host established!");
         self.host_conn = Some(connection_id);
-        self.reserve_host_circuit(peer_id);
+        self.handler
+            .base
+            .set_host_addr(endpoint.get_remote_address());
+        self.reserve_host_circuit();
         let gossip = &mut self
             .handler
             .base

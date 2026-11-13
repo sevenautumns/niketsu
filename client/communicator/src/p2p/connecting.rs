@@ -1,11 +1,19 @@
+use std::collections::HashSet;
+use std::time::Duration;
+
 use anyhow::{Context, Result, bail};
 use futures::StreamExt;
+use libp2p::core::transport::ListenerId;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{Swarm, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, gossipsub, identify};
 use niketsu_core::communicator::{IncomingMessage, OutgoingMessage};
 use niketsu_core::room::RoomName;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+
+/// Upper bound on waiting for the listeners before dialing the relay.
+/// They normally report within milliseconds.
+const LISTENER_PATIENCE: Duration = Duration::from_secs(2);
 
 use super::auth::AuthEvent;
 use super::client::ClientCommunicationHandler;
@@ -55,11 +63,16 @@ impl ConnectingHandler {
     }
 
     pub(crate) async fn run(mut self) -> Result<Box<dyn CommunicationHandlerTrait>> {
-        self.swarm
-            .listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
-        self.swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
-        self.swarm.listen_on("/ip6/::/udp/0/quic-v1".parse()?)?;
-        self.swarm.listen_on("/ip6/::/tcp/0".parse()?)?;
+        let listeners = [
+            "/ip4/0.0.0.0/udp/0/quic-v1",
+            "/ip4/0.0.0.0/tcp/0",
+            "/ip6/::/udp/0/quic-v1",
+            "/ip6/::/tcp/0",
+        ]
+        .into_iter()
+        .map(|addr| Ok(self.swarm.listen_on(addr.parse()?)?))
+        .collect::<Result<HashSet<ListenerId>>>()?;
+        self.await_listeners(listeners).await;
 
         info!("Dialing relay");
         self.swarm
@@ -124,6 +137,38 @@ impl ConnectingHandler {
                 self.message_sender,
                 self.chunk_routes,
             )))
+        }
+    }
+
+    /// Waits until every listener has reported an address (or given up).
+    ///
+    /// A transport only dials from a listener's port once that listener has
+    /// reported its address; until then the dial goes out from a fresh
+    /// ephemeral port. The relay would then observe that port, and it is the
+    /// only address DCUtR can hole-punch to — nobody listens there, so every
+    /// punch fails and host and client never get the direct connection that
+    /// messaging needs.
+    async fn await_listeners(&mut self, mut pending: HashSet<ListenerId>) {
+        let reported = async {
+            while !pending.is_empty() {
+                match self.swarm.select_next_some().await {
+                    SwarmEvent::NewListenAddr { listener_id, .. }
+                    | SwarmEvent::ListenerClosed { listener_id, .. } => {
+                        pending.remove(&listener_id);
+                    }
+                    SwarmEvent::ListenerError { listener_id, error } => {
+                        warn!(?listener_id, %error, "Listener failed");
+                        pending.remove(&listener_id);
+                    }
+                    event => debug!(?event, "Event while waiting for listeners"),
+                }
+            }
+        };
+        if tokio::time::timeout(LISTENER_PATIENCE, reported)
+            .await
+            .is_err()
+        {
+            warn!("Not every listener reported an address; dialing anyway");
         }
     }
 

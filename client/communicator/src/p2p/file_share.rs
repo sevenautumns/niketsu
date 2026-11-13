@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use libp2p::kad::QueryId;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
-use libp2p::{Multiaddr, PeerId, kad};
+use libp2p::{PeerId, kad};
 use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
 use niketsu_core::communicator::{
     FileRequestMsg, FileResponseMsg, VideoProviderStoppedMsg, VideoShareMsg,
@@ -166,12 +166,13 @@ impl FileShareConsumer {
         // If the host is the provider we are already connected; otherwise
         // dial via the host's relay circuit so the host bridges to the peer.
         if p != base.host && !base.swarm.is_connected(&p) {
-            let relayed_peer = Multiaddr::empty()
-                .with(Protocol::P2p(base.host))
-                .with(Protocol::P2pCircuit)
-                .with(Protocol::P2p(p));
-            if let Err(err) = base.swarm.dial(relayed_peer) {
-                error!(?err, "Failed to dial file provider via host relay");
+            match base.host_circuit() {
+                Some(circuit) => {
+                    if let Err(err) = base.swarm.dial(circuit.with(Protocol::P2p(p))) {
+                        error!(?err, "Failed to dial file provider via host relay");
+                    }
+                }
+                None => error!("Host address unknown, cannot dial file provider via host relay"),
             }
         }
 

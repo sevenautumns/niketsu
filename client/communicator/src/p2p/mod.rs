@@ -10,6 +10,7 @@ use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
+use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
@@ -689,6 +690,9 @@ pub(crate) struct CommonCommunication {
     /// arms it (see [`arm_direct_deadline`]); the host leaves it `None` so the
     /// shared run loop never aborts for the host.
     direct_connection_deadline: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// The host's address on our direct connection to it. Only a client
+    /// sets it (see [`set_host_addr`]).
+    host_addr: Option<Multiaddr>,
 }
 
 impl CommonCommunication {
@@ -710,7 +714,32 @@ impl CommonCommunication {
             provide: chunk_routes.provide,
             chunk_reads: FuturesUnordered::new(),
             direct_connection_deadline: None,
+            host_addr: None,
         }
+    }
+
+    /// Remembers the host's address from a direct connection to it, so
+    /// [`host_circuit`] can name the host's relay.
+    pub fn set_host_addr(&mut self, addr: &Multiaddr) {
+        let mut addr = addr.clone();
+        if let Some(Protocol::P2p(_)) = addr.iter().last() {
+            addr.pop();
+        }
+        self.host_addr = Some(addr);
+    }
+
+    /// The host's relay circuit, `<host addr>/p2p/HOST/p2p-circuit`: where
+    /// clients reserve a slot and reach each other for file-share hole
+    /// punches. The relay transport rejects a circuit address without the
+    /// relay's address (`MissingRelayAddr`), even though it reuses the
+    /// existing connection to the host; hence `None` until we know it.
+    pub fn host_circuit(&self) -> Option<Multiaddr> {
+        Some(
+            self.host_addr
+                .clone()?
+                .with(Protocol::P2p(self.host))
+                .with(Protocol::P2pCircuit),
+        )
     }
 
     /// Arms the direct-connection deadline, after which the run loop aborts
