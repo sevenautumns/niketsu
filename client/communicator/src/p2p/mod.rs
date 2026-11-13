@@ -280,7 +280,10 @@ pub(crate) trait CommunicationHandlerTrait: Send {
     }
 }
 
-trait SwarmHandler {
+pub(super) trait SwarmHandler {
+    fn gossipsub(&mut self) -> &mut gossipsub::Behaviour;
+    fn kademlia(&mut self) -> &mut kad::Behaviour<MemoryStore>;
+    fn auth(&mut self) -> &mut auth::AuthBehaviour;
     fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) -> OutboundRequestId;
     fn send_file_request(&mut self, peer_id: &PeerId, msg: FileShareRequest) -> OutboundRequestId;
     fn send_message_response(
@@ -299,6 +302,18 @@ trait SwarmHandler {
 }
 
 impl SwarmHandler for Swarm<Behaviour> {
+    fn gossipsub(&mut self) -> &mut gossipsub::Behaviour {
+        &mut self.behaviour_mut().messaging.inner_mut().gossipsub
+    }
+
+    fn kademlia(&mut self) -> &mut kad::Behaviour<MemoryStore> {
+        &mut self.behaviour_mut().file_share.inner_mut().kademlia
+    }
+
+    fn auth(&mut self) -> &mut auth::AuthBehaviour {
+        &mut self.behaviour_mut().transport.auth
+    }
+
     fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) -> OutboundRequestId {
         // ignores outbound id
         let req_resp = &mut self.behaviour_mut().messaging.inner_mut().request_response;
@@ -344,8 +359,7 @@ impl SwarmHandler for Swarm<Behaviour> {
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()> {
         // ignores message id and insufficient peer error
 
-        let gossip = &mut self.behaviour_mut().messaging.inner_mut().gossipsub;
-        let res = gossip.publish(topic.clone(), Vec::<u8>::try_from(msg)?);
+        let res = self.gossipsub().publish(topic, Vec::<u8>::try_from(msg)?);
 
         match res {
             Err(PublishError::NoPeersSubscribedToTopic) => {
@@ -359,8 +373,7 @@ impl SwarmHandler for Swarm<Behaviour> {
 
     fn start_providing(&mut self, video: &Video) -> Result<()> {
         let filename = video.as_str().as_bytes().to_vec();
-        let kad = &mut self.behaviour_mut().file_share.inner_mut().kademlia;
-        let res = kad.start_providing(filename.clone().into());
+        let res = self.kademlia().start_providing(filename.clone().into());
 
         match res {
             Ok(id) => debug!(?filename, ?id, "Successfully started providing file"),
@@ -371,8 +384,7 @@ impl SwarmHandler for Swarm<Behaviour> {
 
     fn stop_providing(&mut self, video: &Video) {
         let filename = video.as_str().as_bytes().to_vec();
-        let kad = &mut self.behaviour_mut().file_share.inner_mut().kademlia;
-        kad.stop_providing(&filename.clone().into());
+        self.kademlia().stop_providing(&filename.clone().into());
         debug!(?filename, "Stopped providing file");
     }
 }

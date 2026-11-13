@@ -19,7 +19,8 @@ use super::auth::AuthEvent;
 use super::client::ClientCommunicationHandler;
 use super::host::HostCommunicationHandler;
 use super::{
-    Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandlerTrait, TransportBehaviourEvent,
+    Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandlerTrait, SwarmHandler,
+    TransportBehaviourEvent,
 };
 
 struct PeerInfo {
@@ -107,12 +108,7 @@ impl ConnectingHandler {
             }
         };
 
-        self.swarm
-            .behaviour_mut()
-            .messaging
-            .inner_mut()
-            .gossipsub
-            .subscribe(&self.topic)?;
+        self.swarm.gossipsub().subscribe(&self.topic)?;
 
         info!(%local_peer_id, "Connection setup complete");
 
@@ -183,11 +179,9 @@ impl ConnectingHandler {
                     }),
                 )) => {
                     debug!(%observed_addr, %peer_id, "Relay identified");
-                    self.swarm.behaviour_mut().transport.auth.initiate(
-                        peer_id,
-                        self.room.clone(),
-                        self.password.clone(),
-                    );
+                    self.swarm
+                        .auth()
+                        .initiate(peer_id, self.room.clone(), self.password.clone());
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Transport(
                     TransportBehaviourEvent::Auth(AuthEvent::Complete { relay, host }),

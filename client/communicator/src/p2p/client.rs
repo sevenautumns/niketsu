@@ -121,15 +121,8 @@ impl ClientCommunicationHandler {
         let host = self.handler.base.host;
         match event.result {
             Ok(_) => {
-                let gossip = &mut self
-                    .handler
-                    .base
-                    .swarm
-                    .behaviour_mut()
-                    .messaging
-                    .inner_mut()
-                    .gossipsub;
-                gossip.add_explicit_peer(&event.remote_peer_id);
+                let swarm = &mut self.handler.base.swarm;
+                swarm.gossipsub().add_explicit_peer(&event.remote_peer_id);
 
                 // The punched direct connection already triggered
                 // on_connection_established, which closed the rendezvous
@@ -164,14 +157,8 @@ impl ClientCommunicationHandler {
     fn on_mdns(&mut self, event: mdns::Event) {
         if let mdns::Event::Discovered(list) = event {
             for (peer_id, addr) in list {
-                self.handler
-                    .base
-                    .swarm
-                    .behaviour_mut()
-                    .file_share
-                    .inner_mut()
-                    .kademlia
-                    .add_address(&peer_id, addr);
+                let swarm = &mut self.handler.base.swarm;
+                swarm.kademlia().add_address(&peer_id, addr);
             }
         }
     }
@@ -215,22 +202,10 @@ impl ClientCommunicationHandler {
             .base
             .set_host_addr(endpoint.get_remote_address());
         self.reserve_host_circuit();
-        let gossip = &mut self
-            .handler
-            .base
-            .swarm
-            .behaviour_mut()
-            .messaging
-            .inner_mut()
-            .gossipsub;
-        gossip.add_explicit_peer(&peer_id);
-        self.handler
-            .base
-            .swarm
-            .behaviour_mut()
-            .file_share
-            .inner_mut()
-            .kademlia
+        let swarm = &mut self.handler.base.swarm;
+        swarm.gossipsub().add_explicit_peer(&peer_id);
+        swarm
+            .kademlia()
             .add_address(&peer_id, endpoint.get_remote_address().clone());
         self.handler.base.clear_direct_deadline();
         if let Err(error) = self
@@ -264,14 +239,8 @@ impl ClientCommunicationHandler {
         } else {
             // Gossipsub redials disconnected explicit peers forever; forget
             // departed file-share peers added by on_dcutr.
-            self.handler
-                .base
-                .swarm
-                .behaviour_mut()
-                .messaging
-                .inner_mut()
-                .gossipsub
-                .remove_explicit_peer(&peer_id);
+            let swarm = &mut self.handler.base.swarm;
+            swarm.gossipsub().remove_explicit_peer(&peer_id);
         }
     }
 

@@ -90,26 +90,9 @@ impl HostCommunicationHandler {
             bail!("Failed to dial mDNS node");
         } else {
             debug!(?peer_id, "Dialing mDNS node");
-
-            let kad = &mut self
-                .handler
-                .base
-                .swarm
-                .behaviour_mut()
-                .file_share
-                .inner_mut()
-                .kademlia;
-            kad.add_address(&peer_id, addr.clone());
-
-            let gossip = &mut self
-                .handler
-                .base
-                .swarm
-                .behaviour_mut()
-                .messaging
-                .inner_mut()
-                .gossipsub;
-            gossip.add_explicit_peer(&peer_id);
+            let swarm = &mut self.handler.base.swarm;
+            swarm.kademlia().add_address(&peer_id, addr.clone());
+            swarm.gossipsub().add_explicit_peer(&peer_id);
         }
         Ok(())
     }
@@ -200,24 +183,11 @@ impl HostCommunicationHandler {
         debug!(%peer_id, "Direct connection to client established");
         self.peers.insert(peer_id, PeerLink::Direct);
 
-        self.handler
-            .base
-            .swarm
-            .behaviour_mut()
-            .file_share
-            .inner_mut()
-            .kademlia
+        let swarm = &mut self.handler.base.swarm;
+        swarm
+            .kademlia()
             .add_address(&peer_id, endpoint.get_remote_address().clone());
-
-        let gossip = &mut self
-            .handler
-            .base
-            .swarm
-            .behaviour_mut()
-            .messaging
-            .inner_mut()
-            .gossipsub;
-        gossip.add_explicit_peer(&peer_id);
+        swarm.gossipsub().add_explicit_peer(&peer_id);
 
         let res = self.handler.forward(PeerConnectedMsg { peer: peer_id });
         log_err_msg!(res, "Failed to report connected peer to core");
@@ -245,14 +215,8 @@ impl HostCommunicationHandler {
         debug!(%peer_id, "User connection stopped");
         // Gossipsub redials disconnected explicit peers forever; forget
         // departed clients.
-        self.handler
-            .base
-            .swarm
-            .behaviour_mut()
-            .messaging
-            .inner_mut()
-            .gossipsub
-            .remove_explicit_peer(&peer_id);
+        let swarm = &mut self.handler.base.swarm;
+        swarm.gossipsub().remove_explicit_peer(&peer_id);
         if self.peers.remove(&peer_id).is_some() {
             let res = self.handler.forward(PeerDisconnectedMsg { peer: peer_id });
             log_err_msg!(res, "Failed to report disconnected peer to core");
@@ -262,18 +226,12 @@ impl HostCommunicationHandler {
     }
 
     fn on_core_handover(&mut self, request: HostHandoverRequest) -> Result<()> {
-        self.handler
-            .base
-            .swarm
-            .behaviour_mut()
-            .transport
-            .auth
-            .transfer(
-                self.relay_peer_id,
-                self.room.clone(),
-                self.password.clone(),
-                request.peer,
-            );
+        self.handler.base.swarm.auth().transfer(
+            self.relay_peer_id,
+            self.room.clone(),
+            self.password.clone(),
+            request.peer,
+        );
 
         let announce = HostHandoverMsg {
             new_host: request.new_host,

@@ -316,14 +316,8 @@ impl CommunicationHandler {
         }
         self.reset_requests_responses();
 
-        let kademlia = &mut self
-            .base
-            .swarm
-            .behaviour_mut()
-            .file_share
-            .inner_mut()
-            .kademlia;
-        let id = kademlia.get_providers(msg.video.as_str().as_bytes().to_vec().into());
+        let key = msg.video.as_str().as_bytes().to_vec().into();
+        let id = self.base.swarm.kademlia().get_providers(key);
 
         consumer.file_requests.insert(id, msg);
         self.file_share = Some(FileShare::Consumer(consumer));
