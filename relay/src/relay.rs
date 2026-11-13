@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use async_std::stream::StreamExt;
-use async_std::sync::RwLock;
 use bcrypt::{DEFAULT_COST, hash, verify};
+use futures::StreamExt;
 use libp2p::core::Multiaddr;
 use libp2p::core::multiaddr::Protocol;
 use libp2p::identity::Keypair;
@@ -62,10 +60,54 @@ impl PasswordHash {
 
 type RoomName = String;
 
+struct Room {
+    host: PeerId,
+    password: PasswordHash,
+}
+
+/// The open rooms and who hosts them. A peer hosts at most one room, and
+/// `hosts` is the reverse of `rooms`.
+#[derive(Default)]
+struct Rooms {
+    rooms: HashMap<RoomName, Room>,
+    hosts: HashMap<PeerId, RoomName>,
+}
+
+impl Rooms {
+    fn get(&self, name: &str) -> Option<&Room> {
+        self.rooms.get(name)
+    }
+
+    fn open(&mut self, name: RoomName, host: PeerId, password: PasswordHash) {
+        self.close_hosted_by(host);
+        self.hosts.insert(host, name.clone());
+        self.rooms.insert(name, Room { host, password });
+    }
+
+    /// Hands `name` from its host `from` over to `to`. False if `from` does
+    /// not host it.
+    fn transfer(&mut self, name: &str, from: PeerId, to: PeerId) -> bool {
+        if self.get(name).is_none_or(|room| room.host != from) {
+            return false;
+        }
+        let Some(Room { password, .. }) = self.rooms.remove(name) else {
+            return false;
+        };
+        self.hosts.remove(&from);
+        self.open(name.to_owned(), to, password);
+        true
+    }
+
+    fn close_hosted_by(&mut self, host: PeerId) {
+        if let Some(name) = self.hosts.remove(&host) {
+            self.rooms.remove(&name);
+        }
+    }
+}
+
 pub struct Relay {
     swarm: Swarm<Behaviour>,
-    rooms: Arc<RwLock<HashMap<RoomName, (PeerId, PasswordHash)>>>,
-    hosts: Arc<RwLock<HashMap<PeerId, RoomName>>>,
+    rooms: Rooms,
 }
 
 pub fn new(config: Config) -> Result<Relay> {
@@ -141,14 +183,9 @@ pub fn new(config: Config) -> Result<Relay> {
     swarm.listen_on(listen_addr_quic_ipv4)?;
     swarm.listen_on(listen_addr_quic_ipv6)?;
 
-    let rooms: Arc<RwLock<HashMap<String, (PeerId, PasswordHash)>>> =
-        Arc::new(RwLock::new(HashMap::new()));
-    let hosts: Arc<RwLock<HashMap<PeerId, String>>> = Arc::new(RwLock::new(HashMap::new()));
-
     Ok(Relay {
         swarm,
-        rooms,
-        hosts,
+        rooms: Rooms::default(),
     })
 }
 
@@ -167,15 +204,26 @@ impl Relay {
                     self.swarm.add_external_address(observed_addr.clone());
                     debug!("Added external node");
                 }
-                SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                    debug!(?cause, "Connection closed");
-                    self.close_node(peer_id).await;
+                // A host is gone with its last connection; a peer may hold
+                // several, e.g. over TCP and QUIC.
+                SwarmEvent::ConnectionClosed {
+                    peer_id,
+                    cause,
+                    num_established,
+                    ..
+                } => {
+                    debug!(%peer_id, ?cause, num_established, "Connection closed");
+                    if num_established == 0 {
+                        self.rooms.close_hosted_by(peer_id);
+                    }
                 }
                 SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                    if let Some(pid) = peer_id {
-                        self.close_node(pid).await;
+                    debug!(?peer_id, ?error, "Outgoing connection failed");
+                    if let Some(peer_id) = peer_id
+                        && !self.swarm.is_connected(&peer_id)
+                    {
+                        self.rooms.close_hosted_by(peer_id);
                     }
-                    debug!(?error, "Connection closed due to an error");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::InitRequestResponse(
                     request_response::Event::Message { peer, message, .. },
@@ -183,7 +231,7 @@ impl Relay {
                     request_response::Message::Request {
                         request, channel, ..
                     } => {
-                        self.handle_init_request(peer, request, channel).await;
+                        self.handle_init_request(peer, request, channel);
                     }
                     request_response::Message::Response { .. } => {
                         debug!("Received init response. This should not happen")
@@ -194,34 +242,18 @@ impl Relay {
         }
     }
 
-    async fn close_node(&mut self, peer_id: PeerId) {
-        let mut m = self.hosts.write().await;
-        let mut r = self.rooms.write().await;
-        if let Some(room) = m.get(&peer_id) {
-            r.remove(room);
-            m.remove(&peer_id);
-        }
-    }
-
-    async fn handle_init_request(
+    fn handle_init_request(
         &mut self,
         peer: PeerId,
         request: InitRequest,
         channel: ResponseChannel<InitResponse>,
     ) {
         debug!("Received request from client");
-        let mut r = self.rooms.write().await;
 
         if let Some(new_host) = request.transfer_to {
             // Only the current host of the room may transfer it.
             let mut status = ResponseStatus::Err;
-            if r.get(&request.room).is_some_and(|(pid, _)| *pid == peer)
-                && let Some((_, hash)) = r.remove(&request.room)
-            {
-                r.insert(request.room.clone(), (new_host, hash));
-                let mut m = self.hosts.write().await;
-                m.remove(&peer);
-                m.insert(new_host, request.room.clone());
+            if self.rooms.transfer(&request.room, peer, new_host) {
                 debug!(%peer, %new_host, room = %request.room, "Host transfer completed");
                 status = ResponseStatus::Ok;
             }
@@ -241,12 +273,12 @@ impl Relay {
 
         let mut status = ResponseStatus::Ok;
         let mut peer_id: Option<PeerId> = None;
-        if let Some((pid, req)) = r.get(request.room.as_str()) {
-            if req.verify(request.password) {
+        if let Some(room) = self.rooms.get(&request.room) {
+            if room.password.verify(request.password) {
                 // host is available and password is correct
-                if *pid != peer {
+                if room.host != peer {
                     debug!("Authentication successfull");
-                    peer_id = Some(*pid);
+                    peer_id = Some(room.host);
                 }
             } else {
                 debug!("Authentication failed");
@@ -255,14 +287,46 @@ impl Relay {
         } else {
             // else no error and query client will be host
             debug!("Creating new room");
-            let mut m = self.hosts.write().await;
-            m.insert(peer, request.room.clone());
-            r.insert(request.room.clone(), (peer, request.into()));
+            let name = request.room.clone();
+            self.rooms.open(name, peer, request.into());
         }
         self.swarm
             .behaviour_mut()
             .init_request_response
             .send_response(channel, InitResponse { status, peer_id })
             .unwrap_or_default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn password() -> PasswordHash {
+        PasswordHash(String::new())
+    }
+
+    #[test]
+    fn a_transferred_room_closes_with_its_new_host() {
+        let (alice, bob) = (PeerId::random(), PeerId::random());
+        let mut rooms = Rooms::default();
+        rooms.open("room".into(), alice, password());
+        assert!(!rooms.transfer("room", bob, alice));
+        assert!(rooms.transfer("room", alice, bob));
+        rooms.close_hosted_by(alice);
+        assert_eq!(rooms.get("room").map(|r| r.host), Some(bob));
+        rooms.close_hosted_by(bob);
+        assert!(rooms.get("room").is_none());
+    }
+
+    #[test]
+    fn a_host_opening_another_room_leaves_the_first() {
+        let alice = PeerId::random();
+        let mut rooms = Rooms::default();
+        rooms.open("first".into(), alice, password());
+        rooms.open("second".into(), alice, password());
+        assert!(rooms.get("first").is_none());
+        rooms.close_hosted_by(alice);
+        assert!(rooms.get("second").is_none());
     }
 }
