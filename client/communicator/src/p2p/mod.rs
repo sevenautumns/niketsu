@@ -64,9 +64,41 @@ enum LoopEvent {
     FetchChunk(ChunkRequest),
     /// The local video provider read a chunk for another peer.
     ChunkRead(ResponseChannel<FileShareResponseResult>, Option<Vec<u8>>),
-    /// The rendezvous with the host took too long; abort the loop so the
-    /// core reconnects.
-    Abort,
+    /// The rendezvous with the host took too long.
+    RendezvousExpired,
+}
+
+/// Why the event loop of a connection ended. The core reconnects after
+/// each of them and shows the reason to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stop {
+    /// The core dropped the connection.
+    Dropped,
+    /// No direct connection to the host came about.
+    HostUnreachable,
+    /// The last direct connection to the host closed.
+    HostLost,
+    /// The host lost the relay, and its room there with it.
+    RelayLost,
+    /// The relay moved the room to the new host.
+    HandedOver,
+    HandoverFailed,
+    /// The event loop's task panicked.
+    Crashed,
+}
+
+impl std::fmt::Display for Stop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Dropped => "Connection closed",
+            Self::HostUnreachable => "Could not establish a direct connection to the host",
+            Self::HostLost => "Lost the connection to the host",
+            Self::RelayLost => "Lost the connection to the relay",
+            Self::HandedOver => "Handed the room over",
+            Self::HandoverFailed => "The relay refused to hand the room over",
+            Self::Crashed => "The connection crashed",
+        })
+    }
 }
 
 /// Where the room's host is, seen from this peer.
@@ -190,8 +222,11 @@ pub(crate) trait CommunicationHandlerTrait: Send {
         );
     }
 
-    async fn run(&mut self) {
+    async fn run(&mut self) -> Stop {
         loop {
+            if let Some(stop) = self.handler_mut().base.stop {
+                return stop;
+            }
             let next = {
                 let handler = self.handler_mut();
                 let can_fetch = handler.can_fetch_chunk();
@@ -205,7 +240,7 @@ pub(crate) trait CommunicationHandlerTrait: Send {
                     Some((channel, bytes)) = base.chunk_reads.next() => {
                         LoopEvent::ChunkRead(channel, bytes)
                     }
-                    _ = base.host_link.rendezvous_expired() => LoopEvent::Abort,
+                    _ = base.host_link.rendezvous_expired() => LoopEvent::RendezvousExpired,
                 }
             };
             match next {
@@ -224,12 +259,12 @@ pub(crate) trait CommunicationHandlerTrait: Send {
                     log_err_msg!(res, "Failed to answer chunk request");
                 }
                 LoopEvent::Core(None) => {
-                    error!("Channel of core closed. Stopping p2p event loop");
-                    break;
+                    debug!("The core dropped the connection");
+                    return Stop::Dropped;
                 }
-                LoopEvent::Abort => {
-                    warn!("No direct connection to host within timeout. Stopping p2p event loop");
-                    break;
+                LoopEvent::RendezvousExpired => {
+                    warn!("No direct connection to host within timeout");
+                    return Stop::HostUnreachable;
                 }
             }
         }
@@ -422,7 +457,7 @@ impl SwarmHandler for Swarm<Behaviour> {
 pub(crate) struct P2PClient {
     sender: tokio::sync::mpsc::UnboundedSender<OutgoingMessage>,
     receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingMessage>,
-    _handler: tokio::task::JoinHandle<()>,
+    event_loop: tokio::task::JoinHandle<Stop>,
 }
 
 impl P2PClient {
@@ -568,14 +603,20 @@ impl P2PClient {
         let client = P2PClient {
             sender: core_sender,
             receiver: message_receiver,
-            _handler: spawn(async move { handler.run().await }),
+            event_loop: spawn(async move { handler.run().await }),
         };
 
         Ok(client)
     }
 
-    pub(crate) async fn next(&mut self) -> Option<IncomingMessage> {
-        self.receiver.recv().await
+    /// The next message of the room, or why there will be no more. Not to
+    /// be called again after that.
+    pub(crate) async fn next(&mut self) -> Result<IncomingMessage, Stop> {
+        match self.receiver.recv().await {
+            Some(msg) => Ok(msg),
+            // the event loop held the sender, so it has ended
+            None => Err((&mut self.event_loop).await.unwrap_or(Stop::Crashed)),
+        }
     }
 
     pub(crate) fn send(&self, msg: OutgoingMessage) -> Result<()> {
@@ -596,7 +637,7 @@ impl P2PClient {
         Self {
             sender,
             receiver,
-            _handler: spawn(async {}),
+            event_loop: spawn(async { Stop::HostLost }),
         }
     }
 }
@@ -622,6 +663,7 @@ impl CommunicationHandler {
             topic,
             host,
             host_link,
+            stop: None,
             core_receiver,
             message_sender,
             chunk_fetches: chunk_routes.fetch.serve(file_share::CHUNK_FETCHES),
@@ -725,6 +767,8 @@ pub(crate) struct CommonCommunication {
     topic: gossipsub::IdentTopic,
     host: PeerId,
     host_link: HostLink,
+    /// Set by a handler to end the run loop.
+    stop: Option<Stop>,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
     /// Chunk requests of the local video server.
@@ -735,6 +779,12 @@ pub(crate) struct CommonCommunication {
 }
 
 impl CommonCommunication {
+    /// Ends the run loop once the current event is handled. The first
+    /// reason given is the one reported.
+    pub fn stop(&mut self, why: Stop) {
+        self.stop.get_or_insert(why);
+    }
+
     /// The host's relay circuit, `<host addr>/p2p/HOST/p2p-circuit`: where
     /// clients reserve a slot and reach each other for file-share hole
     /// punches. The relay transport rejects a circuit address without the

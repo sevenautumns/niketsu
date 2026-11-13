@@ -61,12 +61,9 @@ pub struct Connected {
 
 impl Connected {
     async fn recv(&mut self) -> std::result::Result<IncomingMessage, Connection> {
-        if let Some(msg) = self.p2p.next().await {
-            return Ok(msg);
-        }
-        Err(Connection::Disconnected(Disconnected::now(Some(
-            anyhow::anyhow!("Received None message"),
-        ))))
+        self.p2p.next().await.map_err(|stop| {
+            Connection::Disconnected(Disconnected::now(Some(anyhow::anyhow!("{stop}"))))
+        })
     }
 
     /// A send fails once the connection's event loop has ended. The messages

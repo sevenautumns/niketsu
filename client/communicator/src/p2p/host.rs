@@ -19,7 +19,8 @@ use super::auth::AuthEvent;
 use super::links::{Closed, Links, Opened};
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandler, CommunicationHandlerTrait,
-    FileShareBehaviourEvent, HostLink, MessageResponse, SwarmHandler, TransportBehaviourEvent,
+    FileShareBehaviourEvent, HostLink, MessageResponse, Stop, SwarmHandler,
+    TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
 
@@ -164,7 +165,7 @@ impl HostCommunicationHandler {
             // every connection to the relay is a direct one
             if !self.handler.base.swarm.is_connected(&peer_id) {
                 error!(?cause, "Connection of host to relay server closed");
-                self.handler.base.core_receiver.close();
+                self.handler.base.stop(Stop::RelayLost);
             }
             return;
         }
@@ -199,9 +200,9 @@ impl HostCommunicationHandler {
         self.handler.broadcast(announce.into())?;
 
         // Both the transfer request and the broadcast are only queued in the
-        // behaviours at this point. Closing the core receiver now would let the
-        // run loop exit and drop the swarm before they are sent, so we keep the
-        // loop alive until the relay answers the transfer request (see on_auth).
+        // behaviours at this point. Stopping now would drop the swarm before
+        // they are sent, so the loop runs on until the relay answers the
+        // transfer request (see on_auth).
         self.handover_pending = true;
         Ok(())
     }
@@ -227,14 +228,18 @@ impl HostCommunicationHandler {
         if !self.handover_pending {
             return;
         }
-        match event {
-            AuthEvent::Complete { .. } => debug!("host handover acknowledged by relay"),
-            AuthEvent::Failed(error) => error!(%error, "host handover failed"),
-        }
-        // The relay answered, so the transfer request (and the handover
-        // broadcast queued before it) have left this node. Stop the host loop;
-        // the core reconnects and rejoins as a regular client.
-        self.handler.base.core_receiver.close();
+        // The swarm kept running for the round trip to the relay, which gave
+        // the handover broadcast time to leave this node as well. The room
+        // is announced as handed over either way, so the session ends; the
+        // core reconnects and takes the role the relay assigns.
+        let stop = match event {
+            AuthEvent::Complete { .. } => Stop::HandedOver,
+            AuthEvent::Failed(error) => {
+                error!(%error, "host handover failed");
+                Stop::HandoverFailed
+            }
+        };
+        self.handler.base.stop(stop);
     }
 }
 

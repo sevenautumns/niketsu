@@ -12,7 +12,8 @@ use tracing::{debug, info, warn};
 use super::links::{Closed, Links, Opened};
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandler, CommunicationHandlerTrait,
-    FileShareBehaviourEvent, HostLink, MessageResponse, SwarmHandler, TransportBehaviourEvent,
+    FileShareBehaviourEvent, HostLink, MessageResponse, Stop, SwarmHandler,
+    TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
 
@@ -89,8 +90,7 @@ impl ClientCommunicationHandler {
         // also dials on the LAN), and a file-share peer is not needed for
         // the room. Without the host there is no room, though.
         if peer == host && !self.links.is_linked(&host) {
-            warn!(%host, "No direct connection to host. Reconnecting");
-            self.handler.base.core_receiver.close();
+            self.handler.base.stop(Stop::HostUnreachable);
         }
     }
 
@@ -169,10 +169,13 @@ impl ClientCommunicationHandler {
     ) {
         let closed = self.links.closed(peer_id, connection_id);
         if peer_id == self.handler.base.host {
-            if matches!(closed, Closed::Unlinked | Closed::RendezvousLost) {
-                warn!(?cause, %peer_id, %connection_id, "Connection to host closed");
-                self.handler.base.core_receiver.close();
-            }
+            let stop = match closed {
+                Closed::Unlinked => Stop::HostLost,
+                Closed::RendezvousLost => Stop::HostUnreachable,
+                Closed::Unchanged => return,
+            };
+            warn!(?cause, %peer_id, %connection_id, "Connection to host closed");
+            self.handler.base.stop(stop);
         } else if closed == Closed::Unlinked {
             // Gossipsub redials disconnected explicit peers forever; forget
             // departed file-share peers.
@@ -190,7 +193,7 @@ impl ClientCommunicationHandler {
         let host = self.handler.base.host;
         if peer_id == Some(host) && !self.links.is_connected(&host) {
             warn!(%error, %host, %connection_id, "Failed to reach the host");
-            self.handler.base.core_receiver.close();
+            self.handler.base.stop(Stop::HostUnreachable);
         } else {
             debug!(%error, ?peer_id, %connection_id, "Outgoing connection error");
         }
