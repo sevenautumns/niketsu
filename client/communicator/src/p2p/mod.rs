@@ -30,6 +30,11 @@ use tracing::{debug, error, trace, warn};
 
 use crate::Node;
 use crate::messages::NiketsuMessage;
+use crate::timing::{
+    DIRECT_CONNECT_TIMEOUT, FILE_REQUEST_TIMEOUT, HOST_CIRCUIT_DURATION, IDLE_CONNECTION_TIMEOUT,
+    MESSAGE_REQUEST_TIMEOUT, PING_INTERVAL, PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT,
+    QUIC_IDLE_TIMEOUT,
+};
 
 mod auth;
 mod connecting;
@@ -45,12 +50,6 @@ mod links;
 mod order;
 
 use direct_only::DirectOnly;
-
-/// How long a client waits for a *direct* connection to the host (via DCUtR
-/// hole punching or a mDNS LAN dial) before giving up and reconnecting. The
-/// relay circuit only carries hole-punch coordination, so until this succeeds
-/// the client is not considered connected.
-pub(crate) const DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Result of one iteration of the shared event loop in
 /// [`CommunicationHandlerTrait::run`]. Short-lived stack value, consumed
@@ -466,8 +465,8 @@ impl P2PClient {
             chunk_routes,
         } = node;
         let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
-        quic_config.handshake_timeout = Duration::from_secs(10);
-        quic_config.max_idle_timeout = 5 * 1000;
+        quic_config.handshake_timeout = QUIC_HANDSHAKE_TIMEOUT;
+        quic_config.max_idle_timeout = QUIC_IDLE_TIMEOUT.as_millis() as u32;
 
         let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair.clone())
             .with_tokio()
@@ -491,17 +490,16 @@ impl P2PClient {
                 // `/p2p/HOST/p2p-circuit/p2p/PEER`) are only a hole-punch
                 // rendezvous: DirectOnly keeps messaging and file_share off
                 // relayed connections, so nothing but identify/DCUtR/ping ever
-                // flows here. File requests time out after 30 s, so any older
-                // circuit is dead weight; the duration cap only needs to stay
-                // above that punch budget. The byte cap guards against peers
-                // that don't play by DirectOnly's rules.
+                // flows here, for no longer than a file request waits for its
+                // punch (see HOST_CIRCUIT_DURATION). The byte cap guards
+                // against peers that don't play by DirectOnly's rules.
                 let relay_server_config = relay::Config {
                     max_reservations: 32,
                     max_reservations_per_peer: 1,
                     max_circuits: 64,
                     max_circuits_per_peer: 4,
                     reservation_duration: Duration::from_secs(3600),
-                    max_circuit_duration: Duration::from_secs(60),
+                    max_circuit_duration: HOST_CIRCUIT_DURATION,
                     max_circuit_bytes: 128 * 1024,
                     ..Default::default()
                 };
@@ -520,8 +518,8 @@ impl P2PClient {
                         dcutr: dcutr::Behaviour::new(key.public().to_peer_id()),
                         ping: ping::Behaviour::new(
                             ping::Config::new()
-                                .with_interval(Duration::from_secs(1))
-                                .with_timeout(Duration::from_secs(3)),
+                                .with_interval(PING_INTERVAL)
+                                .with_timeout(PING_TIMEOUT),
                         ),
                         auth: auth::AuthBehaviour::new(),
                     },
@@ -536,14 +534,14 @@ impl P2PClient {
                                 ProtocolSupport::Full,
                             )],
                             request_response::Config::default()
-                                .with_request_timeout(Duration::from_secs(5)),
+                                .with_request_timeout(MESSAGE_REQUEST_TIMEOUT),
                         ),
                     }),
                     file_share: DirectOnly::new(FileShareBehaviour {
                         request_response: request_response::cbor::Behaviour::new(
                             [(StreamProtocol::new("/fileshare/1"), ProtocolSupport::Full)],
                             request_response::Config::default()
-                                .with_request_timeout(Duration::from_secs(30)),
+                                .with_request_timeout(FILE_REQUEST_TIMEOUT),
                         ),
                         // Kademlia stays in its default auto mode: it answers
                         // queries (server mode) only once the swarm confirms an
@@ -569,7 +567,7 @@ impl P2PClient {
                     }),
                 })
             })?
-            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
+            .with_swarm_config(|c| c.with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT))
             .build();
 
         debug!(%relay_addr, "Attempting to connect to relay");

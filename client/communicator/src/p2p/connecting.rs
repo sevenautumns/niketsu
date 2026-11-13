@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use futures::StreamExt;
@@ -11,10 +10,6 @@ use niketsu_core::communicator::{IncomingMessage, OutgoingMessage};
 use niketsu_core::room::RoomName;
 use tracing::{debug, info, warn};
 
-/// Upper bound on waiting for the listeners before dialing the relay.
-/// They normally report within milliseconds.
-const LISTENER_PATIENCE: Duration = Duration::from_secs(2);
-
 use super::auth::AuthEvent;
 use super::client::ClientCommunicationHandler;
 use super::host::HostCommunicationHandler;
@@ -22,6 +17,7 @@ use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandlerTrait, SwarmHandler,
     TransportBehaviourEvent,
 };
+use crate::timing::LISTENER_PATIENCE;
 
 struct PeerInfo {
     relay: PeerId,

@@ -1,5 +1,4 @@
 use std::task::{Context, Poll};
-use std::time::Duration;
 
 use anyhow::anyhow;
 use libp2p::core::Endpoint;
@@ -15,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha256::digest;
 
 use super::StatusResponse;
+use crate::timing::AUTH_TIMEOUT;
 
 type Inner = request_response::cbor::Behaviour<InitRequest, InitResponse>;
 
@@ -63,7 +63,7 @@ impl AuthBehaviour {
                     // accept inbound ones.
                     ProtocolSupport::Outbound,
                 )],
-                request_response::Config::default().with_request_timeout(Duration::from_secs(10)),
+                request_response::Config::default().with_request_timeout(AUTH_TIMEOUT),
             ),
             relay: None,
         }

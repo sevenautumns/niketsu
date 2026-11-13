@@ -7,14 +7,13 @@ use libp2p::identity::Keypair;
 use niketsu_core::chunk::ChunkRoute;
 use niketsu_core::communicator::*;
 use p2p::{ChunkRoutes, P2PClient};
+use timing::{CONNECT_TIMEOUT, RECONNECT_INTERVAL};
 use tokio::task::JoinHandle;
 use tracing::error;
 
 pub mod messages;
 pub mod p2p;
-
-pub const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
-pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+mod timing;
 
 #[derive(Debug)]
 pub enum Connection {
