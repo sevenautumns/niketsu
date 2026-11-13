@@ -645,6 +645,8 @@ impl P2PClient {
 pub(crate) struct CommunicationHandler {
     base: CommonCommunication,
     file_share: Option<FileShare>,
+    /// Answers whether a broadcast or the host's greeting is older than
+    /// state already applied.
     newest: order::Newest,
 }
 

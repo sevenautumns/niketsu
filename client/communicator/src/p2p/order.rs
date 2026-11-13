@@ -57,12 +57,25 @@ impl Newest {
         *newest = sequence;
         false
     }
+
+    /// Whether the host's greeting `msg` is older than a broadcast of the
+    /// same state from anyone. The greeting travels as direct requests,
+    /// which a broadcast sent after it can overtake; once such a broadcast
+    /// arrived, the greeting is the older state.
+    pub(super) fn greeting_is_stale(&self, msg: &NiketsuMessage) -> bool {
+        let Some(state) = State::of(msg) else {
+            return false;
+        };
+        self.0.keys().any(|&(_, heard)| heard == state)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use libp2p::identity::Keypair;
-    use niketsu_core::communicator::{PauseMsg, StartMsg, UserMessageMsg, UserStatusListMsg};
+    use niketsu_core::communicator::{
+        PauseMsg, PlaylistMsg, StartMsg, UserMessageMsg, UserStatusListMsg,
+    };
 
     use super::*;
 
@@ -117,5 +130,23 @@ mod tests {
         assert!(!newest.is_stale(peer(), 1, &users()));
         assert!(!newest.is_stale(host, 1, &chat()));
         assert!(!newest.is_stale(host, 0, &chat()));
+    }
+
+    #[test]
+    fn a_greeting_is_stale_once_anyone_broadcast_the_same_state() {
+        let playlist = || -> NiketsuMessage {
+            PlaylistMsg {
+                actor: "host".into(),
+                playlist: Default::default(),
+            }
+            .into()
+        };
+        let mut newest = Newest::default();
+        assert!(!newest.greeting_is_stale(&playlist()));
+        assert!(!newest.is_stale(peer(), 3, &users()));
+        assert!(!newest.greeting_is_stale(&playlist()));
+        assert!(!newest.is_stale(peer(), 1, &playlist()));
+        assert!(newest.greeting_is_stale(&playlist()));
+        assert!(!newest.greeting_is_stale(&chat()));
     }
 }

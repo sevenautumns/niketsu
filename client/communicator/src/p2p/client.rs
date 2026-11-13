@@ -21,11 +21,6 @@ pub(crate) struct ClientCommunicationHandler {
     handler: CommunicationHandler,
     /// The host and the peers this client shares files with.
     links: Links,
-    /// Whether a playlist or a selection was broadcast to this peer. The
-    /// host's greeting travels as direct requests, which a broadcast sent
-    /// after it can overtake; the greeting is then the older state.
-    heard_playlist: bool,
-    heard_select: bool,
 }
 
 impl ClientCommunicationHandler {
@@ -51,8 +46,6 @@ impl ClientCommunicationHandler {
         Self {
             handler,
             links: Links::default(),
-            heard_playlist: false,
-            heard_select: false,
         }
     }
 
@@ -251,12 +244,7 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
         if peer_id != self.handler.base.host {
             return self.handler.respond_with_err(msg, channel);
         }
-        let overtaken = match msg {
-            NiketsuMessage::Playlist(_) => self.heard_playlist,
-            NiketsuMessage::Select(_) => self.heard_select,
-            _ => false,
-        };
-        if overtaken {
+        if self.handler.newest.greeting_is_stale(&msg) {
             debug!("Dropping the greeting's state, a broadcast was newer");
             return self.handler.acknowledge(channel);
         }
@@ -276,12 +264,7 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
                 bail!("Received video status from non-host peer: {source:?}")
             }
             Select(msg) => {
-                self.heard_select = true;
                 self.handler.reset_requests_responses();
-                self.handler.forward(msg)
-            }
-            Playlist(msg) => {
-                self.heard_playlist = true;
                 self.handler.forward(msg)
             }
             other => self.handler.forward(other),
