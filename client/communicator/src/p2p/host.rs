@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -29,8 +29,18 @@ pub(crate) struct HostCommunicationHandler {
     relay_peer_id: PeerId,
     password: String,
     room: RoomName,
-    /// The room's peers. The core hears of a peer while it is linked.
+    /// The connected peers. The core hears of the room's members among
+    /// them while they are linked.
     links: Links,
+    /// The peers that joined the room, which goes through the host's
+    /// circuit on the relay: the relay names the host only to peers that
+    /// know the room's password. Any peer on the local network can get a
+    /// direct connection to the host, e.g. one of another room that found
+    /// it via mDNS, and is none of the room's business. A member stays one,
+    /// as what it knows does not expire; in particular its circuit may
+    /// close before its direct connection shows up here. This keeps
+    /// bystanders out, not attackers: peer ids are no secret.
+    members: HashSet<PeerId>,
     /// Where mDNS found a peer on the local network.
     lan_addrs: HashMap<PeerId, Multiaddr>,
     handover_pending: bool,
@@ -67,6 +77,7 @@ impl HostCommunicationHandler {
             password,
             room,
             links: Links::default(),
+            members: HashSet::default(),
             lan_addrs: HashMap::default(),
             handover_pending: false,
         }
@@ -127,6 +138,10 @@ impl HostCommunicationHandler {
         if peer_id == self.relay_peer_id {
             return;
         }
+        let was_member = self.is_member(&peer_id);
+        if endpoint.is_relayed() {
+            self.members.insert(peer_id);
+        }
         let swarm = &mut self.handler.base.swarm;
         // A circuit is the client's to close: the client gives up on a host
         // whose circuit closes before the direct connection shows up there.
@@ -138,21 +153,40 @@ impl HostCommunicationHandler {
                 debug!(%peer_id, "Client connected via relay; awaiting direct connection");
                 self.dial_on_lan(peer_id);
             }
-            Opened::SpareCircuit => debug!(%peer_id, "Relay circuit beside a direct connection"),
+            Opened::SpareCircuit => {
+                debug!(%peer_id, "Relay circuit beside a direct connection");
+                if !was_member {
+                    self.welcome(peer_id);
+                }
+            }
             // A peer keeps its id when it reconnects, and the connections of
             // its previous session can outlive the start of the next one. So
             // any direct connection may be a peer starting over that waits
             // for the room's state, and each one is reported.
             Opened::Linked { .. } | Opened::AnotherDirect => {
-                info!(%peer_id, ?endpoint, "Direct connection to client established");
+                info!(%peer_id, ?endpoint, "Direct connection established");
                 swarm
                     .kademlia()
                     .add_address(&peer_id, endpoint.get_remote_address().clone());
-                swarm.gossipsub().add_explicit_peer(&peer_id);
-                let res = self.handler.forward(PeerConnectedMsg { peer: peer_id });
-                log_err_msg!(res, "Failed to report connected peer to core");
+                if was_member {
+                    self.welcome(peer_id);
+                } else {
+                    debug!(%peer_id, "Peer has not joined the room");
+                }
             }
         }
+    }
+
+    fn is_member(&self, peer_id: &PeerId) -> bool {
+        self.members.contains(peer_id)
+    }
+
+    /// Takes a linked member into the room.
+    fn welcome(&mut self, peer_id: PeerId) {
+        let swarm = &mut self.handler.base.swarm;
+        swarm.gossipsub().add_explicit_peer(&peer_id);
+        let res = self.handler.forward(PeerConnectedMsg { peer: peer_id });
+        log_err_msg!(res, "Failed to report connected peer to core");
     }
 
     fn on_connection_closed(
@@ -169,7 +203,9 @@ impl HostCommunicationHandler {
             }
             return;
         }
+        let was_member = self.is_member(&peer_id);
         match self.links.closed(peer_id, connection_id) {
+            Closed::Unlinked if !was_member => debug!(%peer_id, "Bystander disconnected"),
             Closed::Unlinked => {
                 debug!(%peer_id, ?cause, "Client disconnected");
                 // Gossipsub redials disconnected explicit peers forever;
@@ -291,6 +327,9 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
     ) -> Result<()> {
         debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
         use NiketsuMessage::*;
+        if !self.is_member(&peer_id) {
+            return self.handler.respond_with_err(msg, channel);
+        }
         match msg {
             Playlist(m) => self.handler.send_to_core(m, channel),
             Status(status) => {
