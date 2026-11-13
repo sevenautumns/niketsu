@@ -89,20 +89,68 @@ impl FileShareProvider {
     }
 }
 
-#[derive(Debug, Default)]
+/// The local video server plays a file another peer shares.
+#[derive(Debug)]
 pub struct FileShareConsumer {
-    file_requests: HashMap<QueryId, FileRequestMsg>,
+    /// The kademlia query for the file's providers.
+    query: QueryId,
+    /// The providers kademlia reported last. A new request for a file
+    /// starts out with them, as its query may come back empty.
+    providers: HashSet<PeerId>,
+    stage: Stage,
     chunk_requests: HashMap<OutboundRequestId, oneshot::Sender<Vec<u8>>>,
-    /// The in-flight file request, kept so a failure (typically a timeout
-    /// after a failed hole punch) is reported to the core instead of leaving
-    /// the consumer waiting forever.
-    file_request: Option<OutboundRequestId>,
-    current_request_provider: Option<PeerId>,
-    request_providers: Option<HashSet<PeerId>>,
-    is_requesting: bool,
+}
+
+#[derive(Debug)]
+enum Stage {
+    /// Waiting for kademlia to name a provider for the request.
+    Discovering(FileRequestMsg),
+    /// The file request went to `provider`. Kept as `request` so a failure
+    /// (typically a timeout after a failed hole punch) is reported to the
+    /// core instead of leaving the consumer waiting forever.
+    Requested {
+        provider: PeerId,
+        request: OutboundRequestId,
+    },
+    /// `provider` answered the file request.
+    Streaming { provider: PeerId },
 }
 
 impl FileShareConsumer {
+    fn new(query: QueryId, request: FileRequestMsg, providers: HashSet<PeerId>) -> Self {
+        Self {
+            query,
+            providers,
+            stage: Stage::Discovering(request),
+            chunk_requests: HashMap::default(),
+        }
+    }
+
+    /// Where chunks are fetched from, once the file was requested.
+    fn provider(&self) -> Option<PeerId> {
+        match self.stage {
+            Stage::Discovering(_) => None,
+            Stage::Requested { provider, .. } | Stage::Streaming { provider } => Some(provider),
+        }
+    }
+
+    fn is_file_request(&self, id: OutboundRequestId) -> bool {
+        matches!(self.stage, Stage::Requested { request, .. } if request == id)
+    }
+
+    /// Takes note that `id` was answered, and whether it was the file
+    /// request.
+    fn answered(&mut self, id: OutboundRequestId) -> bool {
+        let Stage::Requested { provider, request } = self.stage else {
+            return false;
+        };
+        if request != id {
+            return false;
+        }
+        self.stage = Stage::Streaming { provider };
+        true
+    }
+
     fn handle_kad_event(&mut self, event: kad::Event, base: &mut CommonCommunication) {
         let kad::Event::OutboundQueryProgressed { id, result, .. } = &event else {
             return debug!(?event, "Received non handled kademlia event");
@@ -112,45 +160,43 @@ impl FileShareConsumer {
             return debug!(?event, "Received non handled kademlia event");
         };
 
-        if let Ok(kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. }) = result {
-            debug!(?result, "Kademlia did not return new providers");
-            self.request_file(id, base);
-            return;
-        };
-
-        let Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) = result else {
-            debug!(?result, "No kademlia providers found");
-            let msg = "No providers found for the requested file".into();
-            let res = base.send_chat_message(arcstr::literal!("server"), msg);
-            return log_err_msg!(res, "Failed to send message to core");
-        };
-
-        self.request_providers = Some(providers.clone());
-        self.request_file(id, base);
-    }
-
-    fn request_file(&mut self, id: &QueryId, base: &mut CommonCommunication) {
-        debug!("Requesting file from providers");
-
-        if self.is_requesting {
-            debug!("File is already being shared. No need for further actions");
-            return;
+        if *id != self.query {
+            return debug!(?result, "Ignoring the providers of an earlier file request");
         }
 
-        let Some(request) = self.file_requests.get(id) else {
-            warn!("Found providers but no request?");
+        match result {
+            Ok(kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. }) => {
+                debug!(?result, "Kademlia did not return new providers");
+                self.request_file(base);
+            }
+            Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) => {
+                self.providers = providers.clone();
+                self.request_file(base);
+            }
+            Err(_) if !matches!(self.stage, Stage::Discovering(_)) => {
+                debug!(?result, "Kademlia query ended after the file was requested");
+            }
+            Err(_) => {
+                debug!(?result, "No kademlia providers found");
+                let msg = "No providers found for the requested file".into();
+                let res = base.send_chat_message(arcstr::literal!("server"), msg);
+                log_err_msg!(res, "Failed to send message to core");
+            }
+        }
+    }
+
+    fn request_file(&mut self, base: &mut CommonCommunication) {
+        let Stage::Discovering(request) = &self.stage else {
+            debug!("File is already being shared. No need for further actions");
             return;
         };
+        debug!("Requesting file from providers");
 
-        let provider = self.request_providers.as_ref().and_then(|providers| {
-            // The request uuid is a random v4, so this picks a fresh random
-            // provider per initiated file request: a retry after a failure
-            // is not stuck with the same (possibly unreachable) peer.
-            let index = request.uuid.as_u128() as usize % providers.len().max(1);
-            providers.iter().nth(index).copied()
-        });
-
-        let Some(p) = provider else {
+        // The request uuid is a random v4, so this picks a fresh random
+        // provider per initiated file request: a retry after a failure is
+        // not stuck with the same (possibly unreachable) peer.
+        let index = request.uuid.as_u128() as usize % self.providers.len().max(1);
+        let Some(provider) = self.providers.iter().nth(index).copied() else {
             debug!("No providers found for the requested file");
             let msg = "No providers found for the requested file".into();
             base.send_chat_message(arcstr::literal!("server"), msg).ok();
@@ -159,16 +205,14 @@ impl FileShareConsumer {
                 .ok();
             return;
         };
-
-        debug!("Provider found");
-        self.current_request_provider = Some(p);
+        debug!(%provider, "Provider found");
 
         // If the host is the provider we are already connected; otherwise
         // dial via the host's relay circuit so the host bridges to the peer.
-        if p != base.host && !base.swarm.is_connected(&p) {
+        if provider != base.host && !base.swarm.is_connected(&provider) {
             match base.host_circuit() {
                 Some(circuit) => {
-                    if let Err(err) = base.swarm.dial(circuit.with(Protocol::P2p(p))) {
+                    if let Err(err) = base.swarm.dial(circuit.with(Protocol::P2p(provider))) {
                         error!(?err, "Failed to dial file provider via host relay");
                     }
                 }
@@ -176,11 +220,10 @@ impl FileShareConsumer {
             }
         }
 
-        let request_id = base
+        let request = base
             .swarm
-            .send_file_request(&p, FileShareRequest::File(request.clone()));
-        self.file_request = Some(request_id);
-        self.is_requesting = true;
+            .send_file_request(&provider, FileShareRequest::File(request.clone()));
+        self.stage = Stage::Requested { provider, request };
     }
 }
 
@@ -226,7 +269,7 @@ impl CommunicationHandler {
                     self.base
                         .send_chat_message(arcstr::literal!("server"), msg)
                         .ok();
-                } else if consumer.file_request == Some(request_id) {
+                } else if consumer.is_file_request(request_id) {
                     // Typically a timeout because the hole punch to the
                     // provider never produced a direct connection. Playback of
                     // this share has not started at this point, so reporting
@@ -276,7 +319,7 @@ impl CommunicationHandler {
                 .ok();
             bail!("No active file share consumer");
         };
-        let Some(provider) = consumer.current_request_provider else {
+        let Some(provider) = consumer.provider() else {
             bail!("No provider available for chunk request")
         };
         let ChunkRequest {
@@ -310,16 +353,18 @@ impl CommunicationHandler {
     pub(super) fn fs_file_request(&mut self, msg: FileRequestMsg) -> Result<()> {
         debug!(?msg.video, "Requesting file");
 
-        let mut consumer = FileShareConsumer::default();
-        if let Some(FileShare::Consumer(c)) = &self.file_share {
-            consumer.request_providers = c.request_providers.clone();
-        }
+        let providers = match self.file_share.take() {
+            Some(FileShare::Consumer(c)) => c.providers,
+            other => {
+                self.file_share = other;
+                HashSet::default()
+            }
+        };
         self.reset_requests_responses();
 
         let key = msg.video.as_str().as_bytes().to_vec().into();
-        let id = self.base.swarm.kademlia().get_providers(key);
-
-        consumer.file_requests.insert(id, msg);
+        let query = self.base.swarm.kademlia().get_providers(key);
+        let consumer = FileShareConsumer::new(query, msg, providers);
         self.file_share = Some(FileShare::Consumer(consumer));
         Ok(())
     }
@@ -404,10 +449,7 @@ impl CommunicationHandler {
         let mut is_file_request = false;
         if let Some(FileShare::Consumer(consumer)) = &mut self.file_share {
             reply = consumer.chunk_requests.remove(&request_id);
-            is_file_request = consumer.file_request == Some(request_id);
-            if is_file_request {
-                consumer.file_request = None;
-            }
+            is_file_request = consumer.answered(request_id);
         }
         match resp {
             Ok(FileShareResponse::Chunk(ChunkBytes(bytes))) => {
