@@ -191,7 +191,6 @@ impl NetworkBehaviour for AuthBehaviour {
                                 StatusResponse::Err => {
                                     AuthEvent::Failed(anyhow!("Authentication failed"))
                                 }
-                                _ => AuthEvent::Failed(anyhow!("Unexpected response from relay")),
                             }
                         }
                         request_response::Event::OutboundFailure { error, .. } => {

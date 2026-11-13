@@ -178,19 +178,14 @@ pub(crate) struct Behaviour {
 pub(crate) struct MessageRequest(NiketsuMessage);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct MessageResponse(Response);
+pub(crate) struct MessageResponse(StatusResponse);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum Response {
-    Status(StatusResponse),
-    Message(NiketsuMessage),
-}
-
+/// Whether the receiver took a request. The relay answers auth requests
+/// with the same variant names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum StatusResponse {
     Ok,
     Err,
-    NotProvidingErr,
 }
 
 /// Common event loop and dispatch for the host and client roles. The
@@ -334,9 +329,7 @@ pub(crate) trait CommunicationHandlerTrait: Send {
                     log_err_msg!(res, "Failed to handle incoming message");
                 }
                 request_response::Message::Response { response, .. } => {
-                    debug!(?response, "Received response");
-                    let res = self.handler_mut().handle_swarm_response(response, peer);
-                    log_err_msg!(res, "Failed to handle incoming message");
+                    debug!(?response, %peer, "Received response");
                 }
             },
             other => self.on_msg_req_resp_other(other),
@@ -731,14 +724,14 @@ impl CommunicationHandler {
         msg: NiketsuMessage,
         channel: ResponseChannel<MessageResponse>,
     ) -> Result<()> {
-        let resp = MessageResponse(Response::Status(StatusResponse::Err));
+        let resp = MessageResponse(StatusResponse::Err);
         self.base.swarm.send_message_response(channel, resp)?;
         bail!("Received unexpected direct message: {msg:?}");
     }
 
     /// Answers a direct request that needs no further handling.
     pub fn acknowledge(&mut self, channel: ResponseChannel<MessageResponse>) -> Result<()> {
-        let resp = MessageResponse(Response::Status(StatusResponse::Ok));
+        let resp = MessageResponse(StatusResponse::Ok);
         self.base.swarm.send_message_response(channel, resp)
     }
 
@@ -749,18 +742,10 @@ impl CommunicationHandler {
         channel: ResponseChannel<MessageResponse>,
     ) -> Result<()> {
         let resp = match self.base.message_sender.send(msg.into()) {
-            Ok(_) => MessageResponse(Response::Status(StatusResponse::Ok)),
-            Err(_) => MessageResponse(Response::Status(StatusResponse::Err)),
+            Ok(_) => MessageResponse(StatusResponse::Ok),
+            Err(_) => MessageResponse(StatusResponse::Err),
         };
         self.base.swarm.send_message_response(channel, resp)
-    }
-
-    pub fn handle_swarm_response(&self, msg: MessageResponse, peer_id: PeerId) -> Result<()> {
-        debug!(message = ?msg, peer = ?peer_id, "Received response");
-        match msg.0 {
-            Response::Message(msg) => bail!("Did not expect response {msg:?}"),
-            Response::Status(_) => Ok(()),
-        }
     }
 }
 
