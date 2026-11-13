@@ -41,6 +41,7 @@ mod host_relay;
 mod client;
 mod file_share;
 mod host;
+mod links;
 mod order;
 
 use direct_only::DirectOnly;
@@ -48,8 +49,7 @@ use direct_only::DirectOnly;
 /// How long a client waits for a *direct* connection to the host (via DCUtR
 /// hole punching or a mDNS LAN dial) before giving up and reconnecting. The
 /// relay circuit only carries hole-punch coordination, so until this succeeds
-/// the client is not considered connected. Only the client arms this deadline;
-/// the host leaves it unset.
+/// the client is not considered connected.
 pub(crate) const DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Result of one iteration of the shared event loop in
@@ -64,18 +64,47 @@ enum LoopEvent {
     FetchChunk(ChunkRequest),
     /// The local video provider read a chunk for another peer.
     ChunkRead(ResponseChannel<FileShareResponseResult>, Option<Vec<u8>>),
-    /// The client's direct-connection deadline elapsed; abort the loop so the
+    /// The rendezvous with the host took too long; abort the loop so the
     /// core reconnects.
     Abort,
 }
 
-/// Awaits the deadline if one is armed, otherwise never resolves. Kept as a
-/// free function so it borrows only the deadline field, leaving the rest of
-/// `CommonCommunication` free to borrow in the same `select!`.
-async fn wait_deadline(deadline: &mut Option<Pin<Box<tokio::time::Sleep>>>) {
-    match deadline {
-        Some(sleep) => sleep.as_mut().await,
-        None => std::future::pending().await,
+/// Where the room's host is, seen from this peer.
+enum HostLink {
+    /// This peer hosts the room.
+    Local,
+    /// Reachable only through the relay circuit, the rendezvous for the hole
+    /// punch. The run loop gives up at `deadline`.
+    Rendezvous {
+        deadline: Pin<Box<tokio::time::Sleep>>,
+    },
+    /// Linked by a direct connection, on which the host has `addr`.
+    Direct { addr: Multiaddr },
+}
+
+impl HostLink {
+    fn rendezvous() -> Self {
+        Self::Rendezvous {
+            deadline: Box::pin(tokio::time::sleep(DIRECT_CONNECT_TIMEOUT)),
+        }
+    }
+
+    /// The host's address without a trailing `/p2p/…`, so
+    /// [`CommonCommunication::host_circuit`] can build on it.
+    fn direct(addr: &Multiaddr) -> Self {
+        let mut addr = addr.clone();
+        if let Some(Protocol::P2p(_)) = addr.iter().last() {
+            addr.pop();
+        }
+        Self::Direct { addr }
+    }
+
+    /// Resolves when the rendezvous took too long, otherwise never.
+    async fn rendezvous_expired(&mut self) {
+        match self {
+            Self::Rendezvous { deadline } => deadline.as_mut().await,
+            Self::Local | Self::Direct { .. } => std::future::pending().await,
+        }
     }
 }
 
@@ -176,7 +205,7 @@ pub(crate) trait CommunicationHandlerTrait: Send {
                     Some((channel, bytes)) = base.chunk_reads.next() => {
                         LoopEvent::ChunkRead(channel, bytes)
                     }
-                    _ = wait_deadline(&mut base.direct_connection_deadline) => LoopEvent::Abort,
+                    _ = base.host_link.rendezvous_expired() => LoopEvent::Abort,
                 }
             };
             match next {
@@ -579,22 +608,26 @@ pub(crate) struct CommunicationHandler {
 }
 
 impl CommunicationHandler {
-    pub fn new(
+    fn new(
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
         host: PeerId,
+        host_link: HostLink,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
         chunk_routes: ChunkRoutes,
     ) -> Self {
-        let base = CommonCommunication::new(
+        let base = CommonCommunication {
             swarm,
             topic,
             host,
+            host_link,
             core_receiver,
             message_sender,
-            chunk_routes,
-        );
+            chunk_fetches: chunk_routes.fetch.serve(file_share::CHUNK_FETCHES),
+            provide: chunk_routes.provide,
+            chunk_reads: FuturesUnordered::new(),
+        };
         Self {
             base,
             file_share: None,
@@ -691,6 +724,7 @@ pub(crate) struct CommonCommunication {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
     host: PeerId,
+    host_link: HostLink,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
     /// Chunk requests of the local video server.
@@ -698,72 +732,24 @@ pub(crate) struct CommonCommunication {
     /// Where chunk requests of other peers go to the local video provider.
     provide: ChunkRoute,
     chunk_reads: FuturesUnordered<ChunkRead>,
-    /// Deadline for getting a direct connection to the host. Only the client
-    /// arms it (see [`arm_direct_deadline`]); the host leaves it `None` so the
-    /// shared run loop never aborts for the host.
-    direct_connection_deadline: Option<Pin<Box<tokio::time::Sleep>>>,
-    /// The host's address on our direct connection to it. Only a client
-    /// sets it (see [`set_host_addr`]).
-    host_addr: Option<Multiaddr>,
 }
 
 impl CommonCommunication {
-    pub fn new(
-        swarm: Swarm<Behaviour>,
-        topic: gossipsub::IdentTopic,
-        host: PeerId,
-        core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
-        message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
-        chunk_routes: ChunkRoutes,
-    ) -> Self {
-        Self {
-            swarm,
-            topic,
-            host,
-            core_receiver,
-            message_sender,
-            chunk_fetches: chunk_routes.fetch.serve(file_share::CHUNK_FETCHES),
-            provide: chunk_routes.provide,
-            chunk_reads: FuturesUnordered::new(),
-            direct_connection_deadline: None,
-            host_addr: None,
-        }
-    }
-
-    /// Remembers the host's address from a direct connection to it, so
-    /// [`host_circuit`] can name the host's relay.
-    pub fn set_host_addr(&mut self, addr: &Multiaddr) {
-        let mut addr = addr.clone();
-        if let Some(Protocol::P2p(_)) = addr.iter().last() {
-            addr.pop();
-        }
-        self.host_addr = Some(addr);
-    }
-
     /// The host's relay circuit, `<host addr>/p2p/HOST/p2p-circuit`: where
     /// clients reserve a slot and reach each other for file-share hole
     /// punches. The relay transport rejects a circuit address without the
     /// relay's address (`MissingRelayAddr`), even though it reuses the
-    /// existing connection to the host; hence `None` until we know it.
+    /// existing connection to the host; hence only a client linked to the
+    /// host has one.
     pub fn host_circuit(&self) -> Option<Multiaddr> {
+        let HostLink::Direct { addr } = &self.host_link else {
+            return None;
+        };
         Some(
-            self.host_addr
-                .clone()?
+            addr.clone()
                 .with(Protocol::P2p(self.host))
                 .with(Protocol::P2pCircuit),
         )
-    }
-
-    /// Arms the direct-connection deadline, after which the run loop aborts
-    /// (and the core reconnects) unless a direct connection to the host is
-    /// established first.
-    pub fn arm_direct_deadline(&mut self, timeout: Duration) {
-        self.direct_connection_deadline = Some(Box::pin(tokio::time::sleep(timeout)));
-    }
-
-    /// Disarms the deadline once a direct connection to the host exists.
-    pub fn clear_direct_deadline(&mut self) {
-        self.direct_connection_deadline = None;
     }
 
     pub fn send_chat_message(&self, actor: ArcStr, message: String) -> Result<()> {

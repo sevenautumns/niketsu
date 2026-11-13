@@ -1,12 +1,11 @@
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use libp2p::core::ConnectedPoint;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::ResponseChannel;
-use libp2p::swarm::{ConnectionError, SwarmEvent};
+use libp2p::swarm::{ConnectionError, ConnectionId, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use niketsu_core::communicator::{
     ConnectedMsg, HostHandoverMsg, HostHandoverRequest, HostInstruction, IncomingMessage,
@@ -14,32 +13,25 @@ use niketsu_core::communicator::{
 };
 use niketsu_core::log_err_msg;
 use niketsu_core::room::RoomName;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use super::auth::AuthEvent;
+use super::links::{Closed, Links, Opened};
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandler, CommunicationHandlerTrait,
-    FileShareBehaviourEvent, MessageResponse, SwarmHandler, TransportBehaviourEvent,
+    FileShareBehaviourEvent, HostLink, MessageResponse, SwarmHandler, TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
-
-/// How a room peer is reachable from the host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PeerLink {
-    /// Only via the relay circuit, which carries hole-punch coordination
-    /// but no room messages (see DirectOnly).
-    Relayed,
-    /// Over a direct connection.
-    Direct,
-}
 
 pub(crate) struct HostCommunicationHandler {
     handler: CommunicationHandler,
     relay_peer_id: PeerId,
     password: String,
     room: RoomName,
-    peers: HashMap<PeerId, PeerLink>,
-    mdns_users: HashMap<PeerId, Multiaddr>,
+    /// The room's peers. The core hears of a peer while it is linked.
+    links: Links,
+    /// Where mDNS found a peer on the local network.
+    lan_addrs: HashMap<PeerId, Multiaddr>,
     handover_pending: bool,
 }
 
@@ -63,6 +55,7 @@ impl HostCommunicationHandler {
             swarm,
             topic,
             host,
+            HostLink::Local,
             core_receiver,
             message_sender,
             chunk_routes,
@@ -72,156 +65,123 @@ impl HostCommunicationHandler {
             relay_peer_id,
             password,
             room,
-            peers: HashMap::default(),
-            mdns_users: HashMap::default(),
+            links: Links::default(),
+            lan_addrs: HashMap::default(),
             handover_pending: false,
         }
     }
 
-    /// A peer that joined via the relay and still waits for a direct
-    /// connection, which a LAN dial can provide.
-    fn awaits_direct(&self, peer_id: &PeerId) -> bool {
-        self.peers.get(peer_id) == Some(&PeerLink::Relayed)
-    }
-
-    fn dial_peer(&mut self, peer_id: PeerId, addr: &Multiaddr) -> Result<()> {
-        if let Err(err) = self.handler.base.swarm.dial(addr.clone()) {
-            warn!(?peer_id, ?err, "Failed to dial mDNS node");
-            bail!("Failed to dial mDNS node");
-        } else {
-            debug!(?peer_id, "Dialing mDNS node");
-            let swarm = &mut self.handler.base.swarm;
-            swarm.kademlia().add_address(&peer_id, addr.clone());
-            swarm.gossipsub().add_explicit_peer(&peer_id);
+    /// Dials a peer that waits on its circuit for a direct connection, if
+    /// mDNS found it on the local network: no hole to punch there.
+    fn dial_on_lan(&mut self, peer_id: PeerId) {
+        if !self.links.awaits_direct(&peer_id) {
+            return;
         }
-        Ok(())
-    }
-
-    fn dial_on_new_connection(&mut self, peer_id: PeerId) -> Result<()> {
-        let Some(addr) = self.mdns_users.get(&peer_id).cloned() else {
-            debug!(?peer_id, "peer_id not in mdns users");
-            bail!("peer_id not in mDNS users. Not dialing");
+        let Some(addr) = self.lan_addrs.get(&peer_id) else {
+            return;
         };
-
-        // only works if host has established connection via relay beforehand
-        if !self.awaits_direct(&peer_id) {
-            debug!(?peer_id, "peer not waiting for a direct connection");
-            bail!("peer is not connected via relay only. Not dialing");
+        match self.handler.base.swarm.dial(addr.clone()) {
+            Ok(()) => debug!(%peer_id, %addr, "Dialing peer on the local network"),
+            Err(err) => warn!(%peer_id, %addr, ?err, "Failed to dial peer on the local network"),
         }
-
-        self.dial_peer(peer_id, &addr)
     }
 
     fn on_mdns(&mut self, event: mdns::Event) {
         match event {
             mdns::Event::Discovered(nodes) => {
-                // Fortunately, this discovers all local multiaddr, so we need to prioritize
-                // and try not to dial all of them ...
                 debug!(?nodes, "mDNS discovered some nodes");
-                let mut peer_map: BTreeMap<PeerId, Vec<Multiaddr>> = BTreeMap::new();
-
+                // mDNS reports every local address of a peer; one dial is
+                // enough.
+                let mut preferred: HashMap<PeerId, Multiaddr> = HashMap::new();
                 for (peer, addr) in nodes {
-                    peer_map.entry(peer).or_default().push(addr);
-                }
-
-                for addrs in peer_map.values_mut() {
-                    addrs.sort_by_key(|addr| {
-                        if addr.iter().any(|p| matches!(p, Protocol::Tcp(_))) {
-                            0
-                        } else if addr.iter().any(|p| matches!(p, Protocol::QuicV1)) {
-                            1
-                        } else {
-                            2
-                        }
-                    });
-                }
-
-                for (peer, addrs) in peer_map {
-                    for addr in addrs {
-                        debug!(?peer, ?addr, "Handling node and peer");
-                        self.mdns_users.insert(peer, addr);
-                        // If the peer has not joined the room yet, the dial
-                        // happens later from on_connection_established with
-                        // whatever is in mdns_users — so the map must keep the
-                        // preferred address, not the last candidate tried.
-                        if !self.awaits_direct(&peer) {
-                            break;
-                        }
-                        if self.dial_on_new_connection(peer).is_ok() {
-                            // The resulting direct connection is reported to
-                            // the core via on_connection_established.
-                            break;
+                    match preferred.get(&peer) {
+                        Some(known) if lan_rank(known) <= lan_rank(&addr) => {}
+                        _ => {
+                            preferred.insert(peer, addr);
                         }
                     }
                 }
+                for (peer, addr) in preferred {
+                    // A peer that has not dialed the host's circuit yet is
+                    // dialed from on_connection_established.
+                    self.lan_addrs.insert(peer, addr);
+                    self.dial_on_lan(peer);
+                }
             }
             mdns::Event::Expired(nodes) => {
-                for node in nodes {
-                    debug!(?node, "Nodes in mDNS expired");
-                    self.mdns_users.remove(&node.0);
+                for (peer, _) in nodes {
+                    debug!(%peer, "mDNS node expired");
+                    self.lan_addrs.remove(&peer);
                 }
             }
         }
     }
 
-    fn on_connection_established(&mut self, peer_id: PeerId, endpoint: ConnectedPoint) {
-        // The relay circuit is only a rendezvous for hole punching: messaging
-        // runs on a dummy handler there (see DirectOnly). Track the peer so the
-        // mDNS dialer can upgrade to a direct LAN connection, but do not report
-        // it to the core until a direct connection exists.
-        if endpoint.is_relayed() {
-            debug!(%peer_id, "Client connected via relay; awaiting direct connection");
-            if let Entry::Vacant(entry) = self.peers.entry(peer_id) {
-                entry.insert(PeerLink::Relayed);
-                if let Err(err) = self.dial_on_new_connection(peer_id) {
-                    debug!(?err);
-                }
-            }
+    fn on_connection_established(
+        &mut self,
+        peer_id: PeerId,
+        connection_id: ConnectionId,
+        endpoint: ConnectedPoint,
+    ) {
+        if peer_id == self.relay_peer_id {
             return;
         }
-
-        debug!(%peer_id, "Direct connection to client established");
-        self.peers.insert(peer_id, PeerLink::Direct);
-
         let swarm = &mut self.handler.base.swarm;
-        swarm
-            .kademlia()
-            .add_address(&peer_id, endpoint.get_remote_address().clone());
-        swarm.gossipsub().add_explicit_peer(&peer_id);
-
-        let res = self.handler.forward(PeerConnectedMsg { peer: peer_id });
-        log_err_msg!(res, "Failed to report connected peer to core");
+        // A circuit is the client's to close: the client gives up on a host
+        // whose circuit closes before the direct connection shows up there.
+        match self
+            .links
+            .opened(peer_id, connection_id, endpoint.is_relayed())
+        {
+            Opened::Rendezvous => {
+                debug!(%peer_id, "Client connected via relay; awaiting direct connection");
+                self.dial_on_lan(peer_id);
+            }
+            Opened::SpareCircuit => debug!(%peer_id, "Relay circuit beside a direct connection"),
+            // A peer keeps its id when it reconnects, and the connections of
+            // its previous session can outlive the start of the next one. So
+            // any direct connection may be a peer starting over that waits
+            // for the room's state, and each one is reported.
+            Opened::Linked { .. } | Opened::AnotherDirect => {
+                info!(%peer_id, ?endpoint, "Direct connection to client established");
+                swarm
+                    .kademlia()
+                    .add_address(&peer_id, endpoint.get_remote_address().clone());
+                swarm.gossipsub().add_explicit_peer(&peer_id);
+                let res = self.handler.forward(PeerConnectedMsg { peer: peer_id });
+                log_err_msg!(res, "Failed to report connected peer to core");
+            }
+        }
     }
 
     fn on_connection_closed(
         &mut self,
         peer_id: PeerId,
+        connection_id: ConnectionId,
         cause: Option<ConnectionError>,
-        endpoint: ConnectedPoint,
     ) {
-        if self.handler.base.swarm.is_connected(&peer_id) {
-            return;
-        }
         if peer_id == self.relay_peer_id {
-            error!(
-                ?endpoint,
-                ?cause,
-                "Connection of host to relay server closed"
-            );
-            self.handler.base.core_receiver.close();
+            // every connection to the relay is a direct one
+            if !self.handler.base.swarm.is_connected(&peer_id) {
+                error!(?cause, "Connection of host to relay server closed");
+                self.handler.base.core_receiver.close();
+            }
             return;
         }
-
-        debug!(%peer_id, "User connection stopped");
-        // Gossipsub redials disconnected explicit peers forever; forget
-        // departed clients.
-        let swarm = &mut self.handler.base.swarm;
-        swarm.gossipsub().remove_explicit_peer(&peer_id);
-        if self.peers.remove(&peer_id).is_some() {
-            let res = self.handler.forward(PeerDisconnectedMsg { peer: peer_id });
-            log_err_msg!(res, "Failed to report disconnected peer to core");
-        } else {
-            warn!(?peer_id, "Expected peer to be known");
+        match self.links.closed(peer_id, connection_id) {
+            Closed::Unlinked => {
+                debug!(%peer_id, ?cause, "Client disconnected");
+                // Gossipsub redials disconnected explicit peers forever;
+                // forget departed clients.
+                let swarm = &mut self.handler.base.swarm;
+                swarm.gossipsub().remove_explicit_peer(&peer_id);
+                let res = self.handler.forward(PeerDisconnectedMsg { peer: peer_id });
+                log_err_msg!(res, "Failed to report disconnected peer to core");
+                // a circuit it left open is a peer starting over
+                self.dial_on_lan(peer_id);
+            }
+            Closed::RendezvousLost => debug!(%peer_id, "Client left before a direct connection"),
+            Closed::Unchanged => {}
         }
     }
 
@@ -278,6 +238,17 @@ impl HostCommunicationHandler {
     }
 }
 
+/// Which of a peer's local addresses to dial first: TCP, then QUIC.
+fn lan_rank(addr: &Multiaddr) -> u8 {
+    if addr.iter().any(|p| matches!(p, Protocol::Tcp(_))) {
+        0
+    } else if addr.iter().any(|p| matches!(p, Protocol::QuicV1)) {
+        1
+    } else {
+        2
+    }
+}
+
 #[async_trait]
 impl CommunicationHandlerTrait for HostCommunicationHandler {
     fn handler_mut(&mut self) -> &mut CommunicationHandler {
@@ -292,14 +263,17 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
             SwarmEvent::Behaviour(Transport(T::Auth(e))) => self.on_auth(e),
             SwarmEvent::Behaviour(FileShare(F::Mdns(e))) => self.on_mdns(e),
             SwarmEvent::ConnectionEstablished {
-                peer_id, endpoint, ..
-            } => self.on_connection_established(peer_id, endpoint),
+                peer_id,
+                connection_id,
+                endpoint,
+                ..
+            } => self.on_connection_established(peer_id, connection_id, endpoint),
             SwarmEvent::ConnectionClosed {
                 peer_id,
-                endpoint,
+                connection_id,
                 cause,
                 ..
-            } => self.on_connection_closed(peer_id, cause, endpoint),
+            } => self.on_connection_closed(peer_id, connection_id, cause),
             other => debug!(event = ?other, "Received not captured event"),
         }
     }

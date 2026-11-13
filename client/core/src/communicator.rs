@@ -198,8 +198,9 @@ impl EventHandler for ConnectedMsg {
 }
 
 /// A peer reachable over a direct connection, so room messages can flow.
-/// The host greets it with the room state; this repeats for every new
-/// direct connection to the same peer.
+/// The host greets it with the room state. This repeats for every new
+/// direct connection to the same peer, as any of them can be the peer
+/// starting over after a reconnect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeerConnectedMsg {
     pub peer: PeerId,
@@ -212,7 +213,7 @@ impl EventHandler for PeerConnectedMsg {
     }
 }
 
-/// The last connection to a peer closed.
+/// The last direct connection to a peer closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeerDisconnectedMsg {
     pub peer: PeerId,

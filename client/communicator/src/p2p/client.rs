@@ -1,38 +1,25 @@
-use std::collections::HashMap;
-
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use libp2p::core::ConnectedPoint;
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
-use libp2p::{PeerId, dcutr, gossipsub, mdns, ping};
+use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, mdns, ping};
 use niketsu_core::communicator::{
     ClientRequest, ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
+use super::links::{Closed, Links, Opened};
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandler, CommunicationHandlerTrait,
-    DIRECT_CONNECT_TIMEOUT, FileShareBehaviourEvent, MessageResponse, SwarmHandler,
-    TransportBehaviourEvent,
+    FileShareBehaviourEvent, HostLink, MessageResponse, SwarmHandler, TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
 
 pub(crate) struct ClientCommunicationHandler {
     handler: CommunicationHandler,
-    /// Direct connection to the host, arriving either via DCUtR hole punch
-    /// or via the host's mDNS LAN dial. Round trips to the host are only
-    /// reported from this connection.
-    host_conn: Option<ConnectionId>,
-    /// Relayed (circuit) connections per peer: the rendezvous to the host and
-    /// the file-share rendezvous to provider peers. A circuit only carries
-    /// hole-punch coordination (see DirectOnly), so it is closed as soon as a
-    /// direct connection to the same peer exists.
-    relayed_conns: HashMap<PeerId, ConnectionId>,
-    /// Whether we already listen on the host's relay circuit. Guards against
-    /// creating a fresh relay-client listener (each one makes and renews its
-    /// own reservation) every time the host connection is re-established.
-    host_circuit_reserved: bool,
+    /// The host and the peers this client shares files with.
+    links: Links,
     /// Whether a playlist or a selection was broadcast to this peer. The
     /// host's greeting travels as direct requests, which a broadcast sent
     /// after it can overtake; the greeting is then the older state.
@@ -49,43 +36,39 @@ impl ClientCommunicationHandler {
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
         chunk_routes: ChunkRoutes,
     ) -> Self {
-        let mut handler = CommunicationHandler::new(
+        // A client starts out with nothing but the circuit to the host being
+        // dialed, and is connected once that led to a direct connection.
+        let handler = CommunicationHandler::new(
             swarm,
             topic,
             host,
+            HostLink::rendezvous(),
             core_receiver,
             message_sender,
             chunk_routes,
         );
-        // We reach the client handler connected only via the relay circuit. Give
-        // hole punching a bounded window to upgrade to a direct connection;
-        // otherwise the loop aborts and the core reconnects.
-        handler.base.arm_direct_deadline(DIRECT_CONNECT_TIMEOUT);
         Self {
             handler,
-            host_conn: None,
-            relayed_conns: HashMap::new(),
-            host_circuit_reserved: false,
+            links: Links::default(),
             heard_playlist: false,
             heard_select: false,
         }
     }
 
     fn on_ping(&mut self, event: ping::Event) {
-        debug!("Received ping!");
-        if event.peer != self.handler.base.host {
+        let host = self.handler.base.host;
+        if event.peer != host {
             return;
         }
 
         match event.result {
-            Ok(rtt) => {
-                if let Some(conn) = self.host_conn
-                    && event.connection == conn
-                    && let Err(error) = self.handler.forward(HostRoundTripMsg { rtt })
-                {
+            // a circuit's round trip includes the detour over the relay
+            Ok(rtt) if self.links.is_direct(&host, event.connection) => {
+                if let Err(error) = self.handler.forward(HostRoundTripMsg { rtt }) {
                     warn!(%error, "Failed to report round trip to core");
                 }
             }
+            Ok(_) => {}
             Err(error) => {
                 warn!(%error, "Ping to host failed, closing connection");
                 self.handler.base.swarm.close_connection(event.connection);
@@ -93,64 +76,21 @@ impl ClientCommunicationHandler {
         }
     }
 
-    /// Reserves a slot on the host's relay so other clients can reach us at
-    /// `/p2p/HOST/p2p-circuit/p2p/SELF` as the rendezvous for file-share hole
-    /// punches. Must be called from a one-shot spot after the direct host
-    /// connection exists: the relay client only makes reservations over
-    /// non-relayed connections, and every `listen_on` of the circuit spawns
-    /// another listener whose own reservation renewals count against the host
-    /// relay's per-peer rate limit.
-    fn reserve_host_circuit(&mut self) {
-        if self.host_circuit_reserved {
-            return;
-        }
-        let Some(host_circuit) = self.handler.base.host_circuit() else {
-            warn!("Host address unknown, cannot reserve slot on host relay");
-            return;
-        };
-        match self.handler.base.swarm.listen_on(host_circuit.clone()) {
-            Ok(_) => {
-                info!(%host_circuit, "Reserving slot on host relay");
-                self.host_circuit_reserved = true;
-            }
-            Err(err) => warn!(?err, %host_circuit, "Failed to listen on host relay circuit"),
-        }
-    }
-
     fn on_dcutr(&mut self, event: dcutr::Event) {
         let host = self.handler.base.host;
-        match event.result {
-            Ok(_) => {
-                let swarm = &mut self.handler.base.swarm;
-                swarm.gossipsub().add_explicit_peer(&event.remote_peer_id);
-
-                // The punched direct connection already triggered
-                // on_connection_established, which closed the rendezvous
-                // circuit and (for the host) cleared the deadline; this close
-                // is only a fallback for event-ordering surprises.
-                if let Some(conn) = self.relayed_conns.remove(&event.remote_peer_id) {
-                    self.handler.base.swarm.close_connection(conn);
-                }
-                if event.remote_peer_id != host {
-                    debug!(peer = %event.remote_peer_id, "Direct connection to non-host peer established");
-                    return;
-                }
-                self.handler.base.clear_direct_deadline();
-                info!("Established direct connection to host");
-            }
-            Err(error) => {
-                error!(
-                    %event.remote_peer_id, %error,
-                    "Direct connection (hole punching) failed"
-                );
-                // A failed punch to another client (file sharing) is not fatal;
-                // only a failed punch to the host means we can never become
-                // connected, so hard-fail and let the core reconnect.
-                if event.remote_peer_id == host {
-                    warn!(%host, "Hole punching to host failed. Reconnecting");
-                    self.handler.base.core_receiver.close();
-                }
-            }
+        let peer = event.remote_peer_id;
+        // A successful punch shows up as a direct connection, like any other
+        // way of getting one.
+        let Err(error) = event.result else {
+            return;
+        };
+        warn!(%peer, %error, "Hole punching failed");
+        // A punch is one of several ways to a direct connection (the host
+        // also dials on the LAN), and a file-share peer is not needed for
+        // the room. Without the host there is no room, though.
+        if peer == host && !self.links.is_linked(&host) {
+            warn!(%host, "No direct connection to host. Reconnecting");
+            self.handler.base.core_receiver.close();
         }
     }
 
@@ -169,52 +109,55 @@ impl ClientCommunicationHandler {
         connection_id: ConnectionId,
         endpoint: ConnectedPoint,
     ) {
-        // The relay circuit is only a rendezvous for hole punching: messaging
-        // runs on a dummy handler there (see DirectOnly), so we do not mesh
-        // gossipsub or report "connected" until a direct connection exists.
-        if endpoint.is_relayed() {
-            if peer_id == self.handler.base.host && self.host_conn.is_some() {
-                // The host's mDNS LAN dial won the race against our circuit
-                // dial; the rendezvous is already obsolete.
-                debug!(%peer_id, "Closing relay circuit, direct connection already exists");
-                self.handler.base.swarm.close_connection(connection_id);
-            } else {
-                self.relayed_conns.insert(peer_id, connection_id);
-            }
-            return;
-        }
-
-        // A direct connection makes the rendezvous circuit dead weight; close
-        // it instead of letting it idle until the relay's circuit caps kill it
-        // (and, worse, mask this peer's disconnect from is_connected checks).
-        if let Some(conn) = self.relayed_conns.remove(&peer_id) {
-            info!(%peer_id, "Direct connection established, closing relay circuit");
-            self.handler.base.swarm.close_connection(conn);
-        }
-
-        if peer_id != self.handler.base.host {
-            return;
-        }
-
-        info!(%connection_id, ?endpoint, "Direct connection to host established!");
-        self.host_conn = Some(connection_id);
-        self.handler
-            .base
-            .set_host_addr(endpoint.get_remote_address());
-        self.reserve_host_circuit();
         let swarm = &mut self.handler.base.swarm;
-        swarm.gossipsub().add_explicit_peer(&peer_id);
-        swarm
-            .kademlia()
-            .add_address(&peer_id, endpoint.get_remote_address().clone());
-        self.handler.base.clear_direct_deadline();
-        if let Err(error) = self
-            .handler
-            .base
-            .message_sender
-            .send(ConnectedMsg { is_host: false }.into())
+        match self
+            .links
+            .opened(peer_id, connection_id, endpoint.is_relayed())
         {
+            Opened::Rendezvous => debug!(%peer_id, "Relay circuit established"),
+            Opened::SpareCircuit => {
+                debug!(%peer_id, "Closing relay circuit, direct connection already exists");
+                swarm.close_connection(connection_id);
+            }
+            Opened::Linked { circuits } => {
+                info!(%peer_id, ?endpoint, "Direct connection established");
+                for circuit in circuits {
+                    swarm.close_connection(circuit);
+                }
+                swarm.gossipsub().add_explicit_peer(&peer_id);
+                if peer_id == self.handler.base.host {
+                    self.on_host_linked(endpoint.get_remote_address());
+                }
+            }
+            Opened::AnotherDirect => debug!(%peer_id, "Another direct connection established"),
+        }
+    }
+
+    /// The client is connected from here on.
+    fn on_host_linked(&mut self, addr: &Multiaddr) {
+        let base = &mut self.handler.base;
+        base.swarm.kademlia().add_address(&base.host, addr.clone());
+        base.host_link = HostLink::direct(addr);
+        self.reserve_host_circuit();
+        let connected = ConnectedMsg { is_host: false };
+        if let Err(error) = self.handler.forward(connected) {
             warn!(%error, "Failed to send connected message to core");
+        }
+    }
+
+    /// Reserves a slot on the host's relay so other clients can reach us at
+    /// `<host circuit>/p2p/SELF` as the rendezvous for file-share hole
+    /// punches. The relay client only makes reservations over non-relayed
+    /// connections, and every `listen_on` of the circuit spawns another
+    /// listener whose own reservation renewals count against the host
+    /// relay's per-peer rate limit; hence once, when the host gets linked.
+    fn reserve_host_circuit(&mut self) {
+        let Some(host_circuit) = self.handler.base.host_circuit() else {
+            return;
+        };
+        match self.handler.base.swarm.listen_on(host_circuit.clone()) {
+            Ok(_) => info!(%host_circuit, "Reserving slot on host relay"),
+            Err(err) => warn!(?err, %host_circuit, "Failed to listen on host relay circuit"),
         }
     }
 
@@ -224,21 +167,15 @@ impl ClientCommunicationHandler {
         cause: Option<ConnectionError>,
         connection_id: ConnectionId,
     ) {
-        if self.host_conn == Some(connection_id) {
-            self.host_conn = None;
-        }
-        if self.relayed_conns.get(&peer_id) == Some(&connection_id) {
-            self.relayed_conns.remove(&peer_id);
-        }
-        if self.handler.base.swarm.is_connected(&peer_id) {
-            return;
-        }
+        let closed = self.links.closed(peer_id, connection_id);
         if peer_id == self.handler.base.host {
-            warn!(?cause, ?peer_id, host = %self.handler.base.host, %connection_id, "Connection to host closed");
-            self.handler.base.core_receiver.close();
-        } else {
+            if matches!(closed, Closed::Unlinked | Closed::RendezvousLost) {
+                warn!(?cause, %peer_id, %connection_id, "Connection to host closed");
+                self.handler.base.core_receiver.close();
+            }
+        } else if closed == Closed::Unlinked {
             // Gossipsub redials disconnected explicit peers forever; forget
-            // departed file-share peers added by on_dcutr.
+            // departed file-share peers.
             let swarm = &mut self.handler.base.swarm;
             swarm.gossipsub().remove_explicit_peer(&peer_id);
         }
@@ -250,21 +187,12 @@ impl ClientCommunicationHandler {
         peer_id: Option<PeerId>,
         error: DialError,
     ) {
-        let Some(pid) = peer_id else {
-            warn!(%error, "Outgoing connection error with unknown peer");
-            return;
-        };
-
-        if let Some(conn) = self.host_conn
-            && connection_id != conn
-        {
-            warn!(%error, %connection_id, "Outgoing connection error with non-host. Ignoring");
-            return;
-        }
-
-        if pid == self.handler.base.host && !self.handler.base.swarm.is_connected(&pid) {
-            warn!(?error, ?peer_id, host = %self.handler.base.host, %connection_id, "Connection error to host");
+        let host = self.handler.base.host;
+        if peer_id == Some(host) && !self.links.is_connected(&host) {
+            warn!(%error, %host, %connection_id, "Failed to reach the host");
             self.handler.base.core_receiver.close();
+        } else {
+            debug!(%error, ?peer_id, %connection_id, "Outgoing connection error");
         }
     }
 
