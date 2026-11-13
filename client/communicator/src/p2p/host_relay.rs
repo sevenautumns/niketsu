@@ -1,144 +1,41 @@
-use std::task::{Context, Poll};
+//! The relay a room's host serves its clients, the rendezvous for hole
+//! punches between them. Only the host serves one: the swarm starts with it
+//! toggled off, and connection setup switches it on once this peer turns
+//! out to host the room.
+//!
+//! Connections established before that keep a handler that speaks no relay
+//! protocol, which is fine: they are the ones to the public relay, and
+//! [`relay::Behaviour`] takes the swarm events of connections it never
+//! served (as of libp2p-relay 0.21.1; re-check when upgrading). It learns
+//! the host's external addresses from the swarm events after it is
+//! switched on, and hands them out with each reservation, so it has to be
+//! switched on before the reservation on the public relay confirms the
+//! host's address.
 
-use either::Either;
-use libp2p::core::transport::PortUse;
-use libp2p::core::{Endpoint, Multiaddr};
-use libp2p::swarm::{
-    ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandlerInEvent, THandlerOutEvent,
-    ToSwarm, dummy,
-};
+use std::time::Duration;
+
+use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::{PeerId, relay};
 
-type Inner = relay::Behaviour;
+use crate::timing::HOST_CIRCUIT_DURATION;
 
-/// Relay server that only serves connections established after `enable()`.
-///
-/// Gating works by handing out a `dummy::ConnectionHandler` (which does not
-/// speak the relay protocols at all) instead of the real relay handler.
-/// `enable()` is called once this peer becomes the room host, before any
-/// client dials it, so all client connections get real handlers while
-/// non-host peers never serve relay traffic.
-///
-/// Unlike [`super::direct_only::DirectOnly`], no [`FromSwarm`] events are
-/// withheld from `inner` for dummy-handler connections: [`relay::Behaviour`]
-/// internally hands out dummy handlers itself (for relayed connections), so it
-/// is built to tolerate swarm events for connections it never serves — its
-/// `ConnectionClosed` handling is guarded map cleanup with no paired-event
-/// assertions (as of libp2p-relay 0.21.1; re-check when upgrading).
-pub(crate) struct GatedRelayBehaviour {
-    inner: Inner,
-    enabled: bool,
-}
-
-impl GatedRelayBehaviour {
-    pub(crate) fn new(local_peer_id: PeerId, config: relay::Config) -> Self {
-        Self {
-            inner: relay::Behaviour::new(local_peer_id, config),
-            enabled: false,
-        }
-    }
-
-    pub(crate) fn enable(&mut self) {
-        self.enabled = true;
-    }
-}
-
-impl NetworkBehaviour for GatedRelayBehaviour {
-    type ConnectionHandler =
-        Either<<Inner as NetworkBehaviour>::ConnectionHandler, dummy::ConnectionHandler>;
-    type ToSwarm = <Inner as NetworkBehaviour>::ToSwarm;
-
-    fn handle_pending_inbound_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        local_addr: &Multiaddr,
-        remote_addr: &Multiaddr,
-    ) -> Result<(), ConnectionDenied> {
-        if !self.enabled {
-            return Ok(());
-        }
-        self.inner
-            .handle_pending_inbound_connection(connection_id, local_addr, remote_addr)
-    }
-
-    fn handle_established_inbound_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        peer: PeerId,
-        local_addr: &Multiaddr,
-        remote_addr: &Multiaddr,
-    ) -> Result<Self::ConnectionHandler, ConnectionDenied> {
-        if !self.enabled {
-            return Ok(Either::Right(dummy::ConnectionHandler));
-        }
-        self.inner
-            .handle_established_inbound_connection(connection_id, peer, local_addr, remote_addr)
-            .map(Either::Left)
-    }
-
-    fn handle_pending_outbound_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        maybe_peer: Option<PeerId>,
-        addresses: &[Multiaddr],
-        effective_role: Endpoint,
-    ) -> Result<Vec<Multiaddr>, ConnectionDenied> {
-        if !self.enabled {
-            return Ok(Vec::new());
-        }
-        self.inner.handle_pending_outbound_connection(
-            connection_id,
-            maybe_peer,
-            addresses,
-            effective_role,
-        )
-    }
-
-    fn handle_established_outbound_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        peer: PeerId,
-        addr: &Multiaddr,
-        role_override: Endpoint,
-        port_use: PortUse,
-    ) -> Result<Self::ConnectionHandler, ConnectionDenied> {
-        if !self.enabled {
-            return Ok(Either::Right(dummy::ConnectionHandler));
-        }
-        self.inner
-            .handle_established_outbound_connection(
-                connection_id,
-                peer,
-                addr,
-                role_override,
-                port_use,
-            )
-            .map(Either::Left)
-    }
-
-    fn on_swarm_event(&mut self, event: FromSwarm) {
-        self.inner.on_swarm_event(event)
-    }
-
-    fn on_connection_handler_event(
-        &mut self,
-        peer_id: PeerId,
-        connection_id: ConnectionId,
-        event: THandlerOutEvent<Self>,
-    ) {
-        match event {
-            Either::Left(event) => {
-                self.inner
-                    .on_connection_handler_event(peer_id, connection_id, event)
-            }
-            Either::Right(infallible) => match infallible {},
-        }
-    }
-
-    fn poll(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
-        self.inner.poll(cx).map(|event| event.map_in(Either::Left))
-    }
+/// The host's relay, switched on.
+pub(super) fn serve(local_peer_id: PeerId) -> Toggle<relay::Behaviour> {
+    // The host's relay circuits (client↔client via
+    // `/p2p/HOST/p2p-circuit/p2p/PEER`) are only a hole-punch rendezvous:
+    // DirectOnly keeps messaging and file_share off relayed connections, so
+    // nothing but identify/DCUtR/ping ever flows here, for no longer than a
+    // file request waits for its punch (see HOST_CIRCUIT_DURATION). The byte
+    // cap guards against peers that don't play by DirectOnly's rules.
+    let config = relay::Config {
+        max_reservations: 32,
+        max_reservations_per_peer: 1,
+        max_circuits: 64,
+        max_circuits_per_peer: 4,
+        reservation_duration: Duration::from_secs(3600),
+        max_circuit_duration: HOST_CIRCUIT_DURATION,
+        max_circuit_bytes: 128 * 1024,
+        ..Default::default()
+    };
+    Some(relay::Behaviour::new(local_peer_id, config)).into()
 }

@@ -16,9 +16,8 @@ use tracing::debug;
 /// Wraps a [`NetworkBehaviour`] so its protocols only ever run over *direct*
 /// connections, never over relayed ones (`…/p2p-circuit/…`).
 ///
-/// Like [`super::host_relay::GatedRelayBehaviour`], gating works by handing out
-/// a [`dummy::ConnectionHandler`] (which speaks no protocols) instead of the
-/// real handler. The decision is made per connection at setup time, based purely
+/// Gating works by handing out a [`dummy::ConnectionHandler`] (which speaks
+/// no protocols) instead of the real handler. The decision is made per connection at setup time, based purely
 /// on whether the connection's address contains a [`Protocol::P2pCircuit`] — so
 /// the inner behaviour can never open a substream over a relay circuit. Relayed
 /// connections stay reserved for what hole punching needs (identify, DCUtR,

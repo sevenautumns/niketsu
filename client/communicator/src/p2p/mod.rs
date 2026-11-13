@@ -31,9 +31,8 @@ use tracing::{debug, error, trace, warn};
 use crate::Node;
 use crate::messages::NiketsuMessage;
 use crate::timing::{
-    DIRECT_CONNECT_TIMEOUT, FILE_REQUEST_TIMEOUT, HOST_CIRCUIT_DURATION, IDLE_CONNECTION_TIMEOUT,
-    MESSAGE_REQUEST_TIMEOUT, PING_INTERVAL, PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT,
-    QUIC_IDLE_TIMEOUT,
+    DIRECT_CONNECT_TIMEOUT, FILE_REQUEST_TIMEOUT, IDLE_CONNECTION_TIMEOUT, MESSAGE_REQUEST_TIMEOUT,
+    PING_INTERVAL, PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT, QUIC_IDLE_TIMEOUT,
 };
 
 mod auth;
@@ -140,11 +139,12 @@ impl HostLink {
 }
 
 /// Connection setup: relay, identify, hole-punching, keepalive, and room auth.
-/// `relay_server` is disabled by default and only enabled when this peer is the room host.
+/// `relay_server` is off until this peer turns out to host the room (see
+/// [`host_relay`]).
 #[derive(NetworkBehaviour)]
 pub(crate) struct TransportBehaviour {
     relay_client: relay::client::Behaviour,
-    relay_server: host_relay::GatedRelayBehaviour,
+    relay_server: Toggle<relay::Behaviour>,
     identify: identify::Behaviour,
     dcutr: dcutr::Behaviour,
     ping: ping::Behaviour,
@@ -486,31 +486,10 @@ impl P2PClient {
                     .build()
                     .map_err(anyhow::Error::from)?;
 
-                // The host's relay circuits (client↔client via
-                // `/p2p/HOST/p2p-circuit/p2p/PEER`) are only a hole-punch
-                // rendezvous: DirectOnly keeps messaging and file_share off
-                // relayed connections, so nothing but identify/DCUtR/ping ever
-                // flows here, for no longer than a file request waits for its
-                // punch (see HOST_CIRCUIT_DURATION). The byte cap guards
-                // against peers that don't play by DirectOnly's rules.
-                let relay_server_config = relay::Config {
-                    max_reservations: 32,
-                    max_reservations_per_peer: 1,
-                    max_circuits: 64,
-                    max_circuits_per_peer: 4,
-                    reservation_duration: Duration::from_secs(3600),
-                    max_circuit_duration: HOST_CIRCUIT_DURATION,
-                    max_circuit_bytes: 128 * 1024,
-                    ..Default::default()
-                };
-
                 Ok(Behaviour {
                     transport: TransportBehaviour {
                         relay_client: relay_behaviour,
-                        relay_server: host_relay::GatedRelayBehaviour::new(
-                            key.public().to_peer_id(),
-                            relay_server_config,
-                        ),
+                        relay_server: None.into(),
                         identify: identify::Behaviour::new(identify::Config::new(
                             "/niketsu-identify/1".to_string(),
                             key.public(),

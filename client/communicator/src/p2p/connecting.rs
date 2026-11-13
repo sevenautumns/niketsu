@@ -15,7 +15,7 @@ use super::client::ClientCommunicationHandler;
 use super::host::HostCommunicationHandler;
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandlerTrait, SwarmHandler,
-    TransportBehaviourEvent,
+    TransportBehaviourEvent, host_relay,
 };
 use crate::timing::LISTENER_PATIENCE;
 
@@ -99,7 +99,10 @@ impl ConnectingHandler {
                 self.swarm
                     .listen_on(relay_with_peer.with(Protocol::P2pCircuit))
                     .context("Failed to listen on relay circuit")?;
-                self.swarm.behaviour_mut().transport.relay_server.enable();
+                // before the reservation confirms the host's address, which
+                // the host relay hands out
+                self.swarm.behaviour_mut().transport.relay_server =
+                    host_relay::serve(local_peer_id);
                 local_peer_id
             }
         };
