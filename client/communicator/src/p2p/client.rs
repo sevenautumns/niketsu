@@ -143,13 +143,10 @@ impl ClientCommunicationHandler {
         }
     }
 
-    /// Reserves a slot on the host's relay so other clients can reach us at
-    /// `<host circuit>/p2p/SELF` as the rendezvous for file-share hole
-    /// punches. The relay client only makes reservations over non-relayed
-    /// connections, and every `listen_on` of the circuit spawns another
-    /// listener whose own reservation renewals count against the host
-    /// relay's per-peer rate limit; hence one at a time, starting when the
-    /// host gets linked (see [`Self::on_listener_closed`]).
+    /// Reserves a slot on the host's relay, where other clients reach us
+    /// for file-share hole punches. One reservation at a time: every
+    /// `listen_on` of the circuit spawns a listener whose renewals count
+    /// against the host relay's per-peer rate limit.
     fn reserve_host_circuit(&mut self) {
         let Some(host_circuit) = self.handler.base.host_circuit() else {
             return;

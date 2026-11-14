@@ -211,8 +211,8 @@ impl FileShareConsumer {
         };
         debug!(%provider, "Provider found");
 
-        // If the host is the provider we are already connected; otherwise
-        // dial via the host's relay circuit so the host bridges to the peer.
+        // A provider without a connection yet is dialed over the host's
+        // circuit, the rendezvous for the hole punch.
         if provider != base.host && !base.swarm.is_connected(&provider) {
             match base.host_circuit() {
                 Some(circuit) => {
@@ -335,7 +335,6 @@ impl CommunicationHandler {
     }
 
     pub(super) fn fs_fetch_chunk(&mut self, request: ChunkRequest) -> Result<()> {
-        // TODO handle issues with provider
         let Some(FileShare::Consumer(consumer)) = &mut self.file_share else {
             self.base
                 .message_sender

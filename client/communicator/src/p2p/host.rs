@@ -36,14 +36,11 @@ pub(crate) struct HostCommunicationHandler {
     /// The connected peers. The core hears of the room's members among
     /// them while they are linked.
     links: Links,
-    /// The peers that joined the room, which goes through the host's
-    /// circuit on the relay: the relay names the host only to peers that
-    /// know the room's password. Any peer on the local network can get a
-    /// direct connection to the host, e.g. one of another room that found
-    /// it via mDNS, and is none of the room's business. A member stays one,
-    /// as what it knows does not expire; in particular its circuit may
-    /// close before its direct connection shows up here. This keeps
-    /// bystanders out, not attackers: peer ids are no secret.
+    /// The peers that joined the room through the host's circuit on the
+    /// relay, which the relay names only to peers that know the room's
+    /// password. A direct connection alone makes no member: mDNS also
+    /// finds peers of other rooms. A member stays one, as its circuit may
+    /// close before its direct connection shows up here.
     members: HashSet<PeerId>,
     /// Where mDNS found a peer on the local network.
     lan_addrs: HashMap<PeerId, Multiaddr>,
@@ -274,10 +271,8 @@ impl HostCommunicationHandler {
         if !self.handover_pending {
             return;
         }
-        // The swarm kept running for the round trip to the relay, which gave
-        // the handover broadcast time to leave this node as well. The room
-        // is announced as handed over either way, so the session ends; the
-        // core reconnects and takes the role the relay assigns.
+        // The room is announced as handed over either way, so the session
+        // ends; the core reconnects and takes the role the relay assigns.
         let stop = match event {
             AuthEvent::Complete { .. } => Stop::HandedOver,
             AuthEvent::Failed(error) => {

@@ -371,13 +371,11 @@ impl SwarmHandler for Swarm<Behaviour> {
     }
 
     fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) -> OutboundRequestId {
-        // ignores outbound id
         let req_resp = &mut self.behaviour_mut().messaging.inner_mut().request_response;
         req_resp.send_request(peer_id, MessageRequest(msg))
     }
 
     fn send_file_request(&mut self, peer_id: &PeerId, msg: FileShareRequest) -> OutboundRequestId {
-        // ignores outbound id
         let req_resp = &mut self.behaviour_mut().file_share.inner_mut().request_response;
         req_resp.send_request(peer_id, msg)
     }
@@ -413,8 +411,6 @@ impl SwarmHandler for Swarm<Behaviour> {
     }
 
     fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()> {
-        // ignores message id and insufficient peer error
-
         let res = self.gossipsub().publish(topic, Vec::<u8>::try_from(msg)?);
 
         match res {
@@ -523,13 +519,10 @@ impl P2PClient {
                                 .with_request_timeout(FILE_REQUEST_TIMEOUT),
                         ),
                         // Kademlia stays in its default auto mode: it answers
-                        // queries (server mode) only once the swarm confirms an
-                        // external address, and the sole source of confirmation
-                        // here is an accepted relay reservation (the host
-                        // reserves on the relay server at startup, clients on
-                        // the host's circuit). Drop those reservations and
-                        // provider discovery silently dies because every node
-                        // stays a kad client.
+                        // queries only once the swarm confirms an external
+                        // address, which only an accepted relay reservation
+                        // does here. Without the reservations every node stays
+                        // a kad client and provider discovery silently dies.
                         kademlia: kad::Behaviour::new(
                             keypair.public().to_peer_id(),
                             MemoryStore::new(key.public().to_peer_id()),
