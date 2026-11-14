@@ -10,7 +10,7 @@ use niketsu_core::communicator::{
 };
 use tracing::{debug, info, warn};
 
-use super::links::{Closed, Links, Opened};
+use super::links::{Closed, Opened};
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, FileShareBehaviourEvent, HostLink, MessageResponse,
     Role, Session, Stop, SwarmExt, TransportBehaviourEvent,
@@ -19,8 +19,6 @@ use crate::messages::NiketsuMessage;
 
 pub(crate) struct ClientRole {
     session: Session,
-    /// The host and the peers this client shares files with.
-    links: Links,
     /// The listener on the host's circuit, which lives as long as the
     /// reservation on the host's relay does.
     host_reservation: Option<ListenerId>,
@@ -48,7 +46,6 @@ impl ClientRole {
         );
         Self {
             session,
-            links: Links::default(),
             host_reservation: None,
         }
     }
@@ -61,7 +58,7 @@ impl ClientRole {
 
         match event.result {
             // a circuit's round trip includes the detour over the relay
-            Ok(rtt) if self.links.is_direct(&host, event.connection) => {
+            Ok(rtt) if self.session.links.is_direct(&host, event.connection) => {
                 if let Err(error) = self.session.forward(HostRoundTripMsg { rtt }) {
                     warn!(%error, "Failed to report round trip to core");
                 }
@@ -86,7 +83,7 @@ impl ClientRole {
         // A punch is one of several ways to a direct connection (the host
         // also dials on the LAN), and a file-share peer is not needed for
         // the room. Without the host there is no room, though.
-        if peer == host && !self.links.is_linked(&host) {
+        if peer == host && !self.session.links.is_linked(&host) {
             self.session.net.stop(Stop::HostUnreachable);
         }
     }
@@ -97,36 +94,6 @@ impl ClientRole {
                 let swarm = &mut self.session.net.swarm;
                 swarm.kademlia().add_address(&peer_id, addr);
             }
-        }
-    }
-
-    fn on_connection_established(
-        &mut self,
-        peer_id: PeerId,
-        connection_id: ConnectionId,
-        endpoint: ConnectedPoint,
-    ) {
-        let swarm = &mut self.session.net.swarm;
-        match self
-            .links
-            .opened(peer_id, connection_id, endpoint.is_relayed())
-        {
-            Opened::Rendezvous => debug!(%peer_id, "Relay circuit established"),
-            Opened::SpareCircuit => {
-                debug!(%peer_id, "Closing relay circuit, direct connection already exists");
-                swarm.close_connection(connection_id);
-            }
-            Opened::Linked { circuits } => {
-                info!(%peer_id, ?endpoint, "Direct connection established");
-                for circuit in circuits {
-                    swarm.close_connection(circuit);
-                }
-                swarm.gossipsub().add_explicit_peer(&peer_id);
-                if peer_id == self.session.net.host {
-                    self.on_host_linked(endpoint.get_remote_address());
-                }
-            }
-            Opened::AnotherDirect => debug!(%peer_id, "Another direct connection established"),
         }
     }
 
@@ -170,36 +137,12 @@ impl ClientRole {
         self.host_reservation = None;
         let host = self.session.net.host;
         match reason {
-            Ok(()) if self.links.is_linked(&host) => {
+            Ok(()) if self.session.links.is_linked(&host) => {
                 info!("Reservation on host relay closed with its connection");
                 self.reserve_host_circuit();
             }
             Ok(()) => debug!("Reservation on host relay closed with the link to the host"),
             Err(error) => warn!(%error, "Host relay ended the reservation"),
-        }
-    }
-
-    fn on_connection_closed(
-        &mut self,
-        peer_id: PeerId,
-        cause: Option<ConnectionError>,
-        connection_id: ConnectionId,
-    ) {
-        let closed = self.links.closed(peer_id, connection_id);
-        if peer_id == self.session.net.host {
-            let stop = match closed {
-                Closed::Unlinked => Stop::HostLost,
-                Closed::RendezvousLost => Stop::HostUnreachable,
-                Closed::Unchanged => return,
-            };
-            warn!(?cause, %peer_id, %connection_id, "Connection to host closed");
-            self.session.net.stop(stop);
-        } else if closed == Closed::Unlinked {
-            // Gossipsub redials disconnected explicit peers forever; forget
-            // departed file-share peers.
-            let swarm = &mut self.session.net.swarm;
-            swarm.gossipsub().remove_explicit_peer(&peer_id);
-            self.session.fs_peer_unlinked(peer_id);
         }
     }
 
@@ -210,7 +153,7 @@ impl ClientRole {
         error: DialError,
     ) {
         let host = self.session.net.host;
-        if peer_id == Some(host) && !self.links.is_connected(&host) {
+        if peer_id == Some(host) && !self.session.links.is_connected(&host) {
             warn!(%error, %host, %connection_id, "Failed to reach the host");
             self.session.net.stop(Stop::HostUnreachable);
         } else {
@@ -231,6 +174,58 @@ impl Role for ClientRole {
         &mut self.session
     }
 
+    fn on_opened(
+        &mut self,
+        peer_id: PeerId,
+        connection_id: ConnectionId,
+        endpoint: ConnectedPoint,
+        opened: Opened,
+    ) {
+        let swarm = &mut self.session.net.swarm;
+        match opened {
+            Opened::Rendezvous => debug!(%peer_id, "Relay circuit established"),
+            Opened::SpareCircuit => {
+                debug!(%peer_id, "Closing relay circuit, direct connection already exists");
+                swarm.close_connection(connection_id);
+            }
+            Opened::Linked { circuits } => {
+                info!(%peer_id, ?endpoint, "Direct connection established");
+                for circuit in circuits {
+                    swarm.close_connection(circuit);
+                }
+                swarm.gossipsub().add_explicit_peer(&peer_id);
+                if peer_id == self.session.net.host {
+                    self.on_host_linked(endpoint.get_remote_address());
+                }
+            }
+            Opened::AnotherDirect => debug!(%peer_id, "Another direct connection established"),
+        }
+    }
+
+    fn on_closed(
+        &mut self,
+        peer_id: PeerId,
+        connection_id: ConnectionId,
+        cause: Option<ConnectionError>,
+        closed: Closed,
+    ) {
+        if peer_id == self.session.net.host {
+            let stop = match closed {
+                Closed::Unlinked => Stop::HostLost,
+                Closed::RendezvousLost => Stop::HostUnreachable,
+                Closed::Unchanged => return,
+            };
+            warn!(?cause, %peer_id, %connection_id, "Connection to host closed");
+            self.session.net.stop(stop);
+        } else if closed == Closed::Unlinked {
+            // Gossipsub redials disconnected explicit peers forever; forget
+            // departed file-share peers.
+            let swarm = &mut self.session.net.swarm;
+            swarm.gossipsub().remove_explicit_peer(&peer_id);
+            self.session.fs_peer_unlinked(peer_id);
+        }
+    }
+
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         use BehaviourEvent::*;
         use FileShareBehaviourEvent as F;
@@ -239,18 +234,6 @@ impl Role for ClientRole {
             SwarmEvent::Behaviour(Transport(T::Ping(e))) => self.on_ping(e),
             SwarmEvent::Behaviour(Transport(T::Dcutr(e))) => self.on_dcutr(e),
             SwarmEvent::Behaviour(FileShare(F::Mdns(e))) => self.on_mdns(e),
-            SwarmEvent::ConnectionEstablished {
-                peer_id,
-                connection_id,
-                endpoint,
-                ..
-            } => self.on_connection_established(peer_id, connection_id, endpoint),
-            SwarmEvent::ConnectionClosed {
-                peer_id,
-                cause,
-                connection_id,
-                ..
-            } => self.on_connection_closed(peer_id, cause, connection_id),
             SwarmEvent::OutgoingConnectionError {
                 connection_id,
                 peer_id,

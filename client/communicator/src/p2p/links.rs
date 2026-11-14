@@ -19,7 +19,7 @@ struct Link {
 
 /// What a new connection means for the link to its peer.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum Opened {
+pub(crate) enum Opened {
     /// A circuit to a peer that is not linked: a hole punch can start.
     Rendezvous,
     /// A circuit to a peer that is linked already.
@@ -33,7 +33,7 @@ pub(super) enum Opened {
 
 /// What a closed connection means for the link to its peer.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum Closed {
+pub(crate) enum Closed {
     /// The last direct connection: the peer is no longer linked.
     Unlinked,
     /// The last circuit to a peer that never got linked.

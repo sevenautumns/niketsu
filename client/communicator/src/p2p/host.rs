@@ -17,7 +17,7 @@ use niketsu_core::room::RoomName;
 use tracing::{debug, error, info, warn};
 
 use super::auth::AuthEvent;
-use super::links::{Closed, Links, Opened};
+use super::links::{Closed, Opened};
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, FileShareBehaviourEvent, HostLink, MessageResponse,
     Role, Session, Stop, SwarmExt, TransportBehaviourEvent,
@@ -32,9 +32,6 @@ pub(crate) struct HostRole {
     reservation: ListenerId,
     password: String,
     room: RoomName,
-    /// The connected peers. The core hears of the room's members among
-    /// them while they are linked.
-    links: Links,
     /// The peers that joined the room through the host's circuit on the
     /// relay, which the relay names only to peers that know the room's
     /// password. A direct connection alone makes no member: mDNS also
@@ -78,7 +75,6 @@ impl HostRole {
             reservation,
             password,
             room,
-            links: Links::default(),
             members: HashSet::default(),
             lan_addrs: HashMap::default(),
             handover_pending: false,
@@ -88,7 +84,7 @@ impl HostRole {
     /// Dials a peer that waits on its circuit for a direct connection, if
     /// mDNS found it on the local network: no hole to punch there.
     fn dial_on_lan(&mut self, peer_id: PeerId) {
-        if !self.links.awaits_direct(&peer_id) {
+        if !self.session.links.awaits_direct(&peer_id) {
             return;
         }
         let Some(addr) = self.lan_addrs.get(&peer_id) else {
@@ -117,7 +113,7 @@ impl HostRole {
                 }
                 for (peer, addr) in preferred {
                     // A peer that has not dialed the host's circuit yet is
-                    // dialed from on_connection_established.
+                    // dialed from on_opened.
                     self.lan_addrs.insert(peer, addr);
                     self.dial_on_lan(peer);
                 }
@@ -126,54 +122,6 @@ impl HostRole {
                 for (peer, _) in nodes {
                     debug!(%peer, "mDNS node expired");
                     self.lan_addrs.remove(&peer);
-                }
-            }
-        }
-    }
-
-    fn on_connection_established(
-        &mut self,
-        peer_id: PeerId,
-        connection_id: ConnectionId,
-        endpoint: ConnectedPoint,
-    ) {
-        if peer_id == self.relay_peer_id {
-            return;
-        }
-        let was_member = self.is_member(&peer_id);
-        if endpoint.is_relayed() {
-            self.members.insert(peer_id);
-        }
-        let swarm = &mut self.session.net.swarm;
-        // A circuit is the client's to close: the client gives up on a host
-        // whose circuit closes before the direct connection shows up there.
-        match self
-            .links
-            .opened(peer_id, connection_id, endpoint.is_relayed())
-        {
-            Opened::Rendezvous => {
-                debug!(%peer_id, "Client connected via relay; awaiting direct connection");
-                self.dial_on_lan(peer_id);
-            }
-            Opened::SpareCircuit => {
-                debug!(%peer_id, "Relay circuit beside a direct connection");
-                if !was_member {
-                    self.welcome(peer_id);
-                }
-            }
-            // A peer keeps its id when it reconnects, and the connections of
-            // its previous session can outlive the start of the next one. So
-            // any direct connection may be a peer starting over that waits
-            // for the room's state, and each one is reported.
-            Opened::Linked { .. } | Opened::AnotherDirect => {
-                info!(%peer_id, ?endpoint, "Direct connection established");
-                swarm
-                    .kademlia()
-                    .add_address(&peer_id, endpoint.get_remote_address().clone());
-                if was_member {
-                    self.welcome(peer_id);
-                } else {
-                    debug!(%peer_id, "Peer has not joined the room");
                 }
             }
         }
@@ -189,43 +137,6 @@ impl HostRole {
         swarm.gossipsub().add_explicit_peer(&peer_id);
         let res = self.session.forward(PeerConnectedMsg { peer: peer_id });
         log_err_msg!(res, "Failed to report connected peer to core");
-    }
-
-    fn on_connection_closed(
-        &mut self,
-        peer_id: PeerId,
-        connection_id: ConnectionId,
-        cause: Option<ConnectionError>,
-    ) {
-        if peer_id == self.relay_peer_id {
-            // every connection to the relay is a direct one
-            if !self.session.net.swarm.is_connected(&peer_id) {
-                error!(?cause, "Connection of host to relay server closed");
-                self.session.net.stop(Stop::RelayLost);
-            }
-            return;
-        }
-        let was_member = self.is_member(&peer_id);
-        let closed = self.links.closed(peer_id, connection_id);
-        if closed == Closed::Unlinked {
-            self.session.fs_peer_unlinked(peer_id);
-        }
-        match closed {
-            Closed::Unlinked if !was_member => debug!(%peer_id, "Bystander disconnected"),
-            Closed::Unlinked => {
-                debug!(%peer_id, ?cause, "Client disconnected");
-                // Gossipsub redials disconnected explicit peers forever;
-                // forget departed clients.
-                let swarm = &mut self.session.net.swarm;
-                swarm.gossipsub().remove_explicit_peer(&peer_id);
-                let res = self.session.forward(PeerDisconnectedMsg { peer: peer_id });
-                log_err_msg!(res, "Failed to report disconnected peer to core");
-                // a circuit it left open is a peer starting over
-                self.dial_on_lan(peer_id);
-            }
-            Closed::RendezvousLost => debug!(%peer_id, "Client left before a direct connection"),
-            Closed::Unchanged => {}
-        }
     }
 
     fn on_core_handover(&mut self, request: HostHandoverRequest) -> Result<()> {
@@ -298,6 +209,91 @@ impl Role for HostRole {
         &mut self.session
     }
 
+    fn on_opened(
+        &mut self,
+        peer_id: PeerId,
+        _connection_id: ConnectionId,
+        endpoint: ConnectedPoint,
+        opened: Opened,
+    ) {
+        if peer_id == self.relay_peer_id {
+            return;
+        }
+        let was_member = self.is_member(&peer_id);
+        if endpoint.is_relayed() {
+            self.members.insert(peer_id);
+        }
+        // A circuit is the client's to close: the client gives up on a host
+        // whose circuit closes before the direct connection shows up there.
+        match opened {
+            Opened::Rendezvous => {
+                debug!(%peer_id, "Client connected via relay; awaiting direct connection");
+                self.dial_on_lan(peer_id);
+            }
+            Opened::SpareCircuit => {
+                debug!(%peer_id, "Relay circuit beside a direct connection");
+                if !was_member {
+                    self.welcome(peer_id);
+                }
+            }
+            // A peer keeps its id when it reconnects, and the connections of
+            // its previous session can outlive the start of the next one. So
+            // any direct connection may be a peer starting over that waits
+            // for the room's state, and each one is reported.
+            Opened::Linked { .. } | Opened::AnotherDirect => {
+                info!(%peer_id, ?endpoint, "Direct connection established");
+                let swarm = &mut self.session.net.swarm;
+                swarm
+                    .kademlia()
+                    .add_address(&peer_id, endpoint.get_remote_address().clone());
+                if was_member {
+                    self.welcome(peer_id);
+                } else {
+                    debug!(%peer_id, "Peer has not joined the room");
+                }
+            }
+        }
+    }
+
+    fn on_closed(
+        &mut self,
+        peer_id: PeerId,
+        _connection_id: ConnectionId,
+        cause: Option<ConnectionError>,
+        closed: Closed,
+    ) {
+        if peer_id == self.relay_peer_id {
+            // The swarm is asked, as the connection to the relay is older
+            // than the session and its links. Every connection to the relay
+            // is a direct one.
+            if !self.session.net.swarm.is_connected(&peer_id) {
+                error!(?cause, "Connection of host to relay server closed");
+                self.session.net.stop(Stop::RelayLost);
+            }
+            return;
+        }
+        let was_member = self.is_member(&peer_id);
+        if closed == Closed::Unlinked {
+            self.session.fs_peer_unlinked(peer_id);
+        }
+        match closed {
+            Closed::Unlinked if !was_member => debug!(%peer_id, "Bystander disconnected"),
+            Closed::Unlinked => {
+                debug!(%peer_id, ?cause, "Client disconnected");
+                // Gossipsub redials disconnected explicit peers forever;
+                // forget departed clients.
+                let swarm = &mut self.session.net.swarm;
+                swarm.gossipsub().remove_explicit_peer(&peer_id);
+                let res = self.session.forward(PeerDisconnectedMsg { peer: peer_id });
+                log_err_msg!(res, "Failed to report disconnected peer to core");
+                // a circuit it left open is a peer starting over
+                self.dial_on_lan(peer_id);
+            }
+            Closed::RendezvousLost => debug!(%peer_id, "Client left before a direct connection"),
+            Closed::Unchanged => {}
+        }
+    }
+
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         use BehaviourEvent::*;
         use FileShareBehaviourEvent as F;
@@ -305,18 +301,6 @@ impl Role for HostRole {
         match event {
             SwarmEvent::Behaviour(Transport(T::Auth(e))) => self.on_auth(e),
             SwarmEvent::Behaviour(FileShare(F::Mdns(e))) => self.on_mdns(e),
-            SwarmEvent::ConnectionEstablished {
-                peer_id,
-                connection_id,
-                endpoint,
-                ..
-            } => self.on_connection_established(peer_id, connection_id, endpoint),
-            SwarmEvent::ConnectionClosed {
-                peer_id,
-                connection_id,
-                cause,
-                ..
-            } => self.on_connection_closed(peer_id, connection_id, cause),
             // Without the reservation nobody can join the room, also when
             // the connection to the relay is still up.
             SwarmEvent::ListenerClosed {

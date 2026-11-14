@@ -7,16 +7,18 @@ pub(crate) use file_share::ChunkRoutes;
 use file_share::{ChunkRead, FileShare, FileShareRequest, FileShareResponseResult};
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
+use libp2p::core::ConnectedPoint;
 use libp2p::gossipsub::PublishError;
 use libp2p::kad::store::MemoryStore;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::behaviour::toggle::Toggle;
-use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
+use libp2p::swarm::{ConnectionError, ConnectionId, NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
     Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, kad, mdns, noise, ping, relay,
     tcp, yamux,
 };
+use links::{Closed, Links, Opened};
 use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
 use niketsu_core::communicator::{IncomingMessage, OutgoingMessage, RoomMessage, UserMessageMsg};
 use niketsu_core::log_err_msg;
@@ -200,6 +202,24 @@ pub(crate) trait Role: Send {
         channel: ResponseChannel<MessageResponse>,
         peer_id: PeerId,
     ) -> Result<()>;
+    /// A connection to `peer` opened, and what that means for the link to
+    /// it.
+    fn on_opened(
+        &mut self,
+        peer: PeerId,
+        connection: ConnectionId,
+        endpoint: ConnectedPoint,
+        opened: Opened,
+    );
+    /// A connection to `peer` closed, and what that means for the link to
+    /// it.
+    fn on_closed(
+        &mut self,
+        peer: PeerId,
+        connection: ConnectionId,
+        cause: Option<ConnectionError>,
+        closed: Closed,
+    );
     /// Role-specific swarm events not covered by `dispatch_swarm_event`.
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>);
 
@@ -274,6 +294,25 @@ pub(crate) trait Role: Send {
                 self.session().fs_req_resp_event(e)
             }
             SwarmEvent::Behaviour(FileShare(F::Kademlia(e))) => self.session().fs_kad_event(e),
+            SwarmEvent::ConnectionEstablished {
+                peer_id,
+                connection_id,
+                endpoint,
+                ..
+            } => {
+                let links = &mut self.session().links;
+                let opened = links.opened(peer_id, connection_id, endpoint.is_relayed());
+                self.on_opened(peer_id, connection_id, endpoint, opened);
+            }
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                connection_id,
+                cause,
+                ..
+            } => {
+                let closed = self.session().links.closed(peer_id, connection_id);
+                self.on_closed(peer_id, connection_id, cause, closed);
+            }
             other => self.handle_swarm_event(other),
         }
     }
@@ -605,6 +644,9 @@ impl SessionHandle {
 /// What a peer keeps of its stay in the room, whichever role it has there.
 pub(crate) struct Session {
     net: Net,
+    /// The connections to every peer, kept by the shared dispatch. A role
+    /// hears what each one means for the link to its peer.
+    links: Links,
     file_share: Option<FileShare>,
     /// Answers whether a broadcast or the host's greeting is older than
     /// state already applied.
@@ -635,6 +677,7 @@ impl Session {
         };
         Self {
             net,
+            links: Links::default(),
             file_share: None,
             newest: order::Newest::default(),
         }
