@@ -26,6 +26,13 @@ pub(crate) const AUTH_TIMEOUT: Duration = CONNECT_TIMEOUT;
 /// succeeds the client is not considered connected.
 pub(crate) const DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The punch runs over a circuit of the public relay, which must not cut
+/// the circuit before the client gives up.
+#[cfg(test)]
+const _: () = assert!(
+    DIRECT_CONNECT_TIMEOUT.as_millis() < niketsu_relay::timing::CIRCUIT_DURATION.as_millis()
+);
+
 /// How long a file request may take. It is sent right away and waits for
 /// the hole punch to the provider, so this is the punch budget of a file
 /// share.

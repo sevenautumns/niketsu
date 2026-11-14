@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::time::Duration;
 
 use anyhow::Result;
 use bcrypt::{DEFAULT_COST, hash, verify};
@@ -13,6 +12,11 @@ use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, StreamProtocol, Swarm, identify, noise, ping, relay, tcp, yamux};
 use niketsu_protocol::{AUTH_PROTOCOL, AuthRequest, AuthResponse, AuthStatus};
 use tracing::debug;
+
+use crate::timing::{
+    CIRCUIT_DURATION, IDLE_CONNECTION_TIMEOUT, PING_INTERVAL, PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT,
+    QUIC_IDLE_TIMEOUT,
+};
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -92,8 +96,8 @@ impl Relay {
     /// A relay that listens on `port` on every interface, over TCP and QUIC.
     pub fn new(keypair: Keypair, port: u16) -> Result<Self> {
         let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
-        quic_config.handshake_timeout = Duration::from_secs(10);
-        quic_config.max_idle_timeout = 3 * 1000;
+        quic_config.handshake_timeout = QUIC_HANDSHAKE_TIMEOUT;
+        quic_config.max_idle_timeout = QUIC_IDLE_TIMEOUT.as_millis() as u32;
 
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
@@ -109,23 +113,22 @@ impl Relay {
                     // Circuits through the public relay are only a hole-punch
                     // rendezvous: the client keeps all niketsu protocols off
                     // relayed connections (see DirectOnly in the communicator), so
-                    // nothing but identify/DCUtR/ping ever flows here. Clients
-                    // abort a punch after 30 s, so any older circuit is dead
-                    // weight; the duration cap only needs to stay above that
-                    // client deadline. The byte cap guards against peers that
-                    // don't play by DirectOnly's rules.
+                    // nothing but identify/DCUtR/ping ever flows here, for no
+                    // longer than a client waits for its punch (see
+                    // CIRCUIT_DURATION). The byte cap guards against peers
+                    // that don't play by DirectOnly's rules.
                     relay::Config {
                         max_circuits: 128,
                         max_circuits_per_peer: 4,
-                        max_circuit_duration: Duration::from_secs(60),
+                        max_circuit_duration: CIRCUIT_DURATION,
                         max_circuit_bytes: 128 * 1024,
                         ..Default::default()
                     },
                 ),
                 ping: ping::Behaviour::new(
                     ping::Config::new()
-                        .with_timeout(Duration::from_secs(5))
-                        .with_interval(Duration::from_secs(2)),
+                        .with_interval(PING_INTERVAL)
+                        .with_timeout(PING_TIMEOUT),
                 ),
                 identify: identify::Behaviour::new(identify::Config::new(
                     "/identify/1".to_string(),
@@ -136,7 +139,7 @@ impl Relay {
                     request_response::Config::default(),
                 ),
             })?
-            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
+            .with_swarm_config(|c| c.with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT))
             .build();
 
         for ip in [
