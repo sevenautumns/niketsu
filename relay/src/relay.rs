@@ -7,7 +7,7 @@ use futures::StreamExt;
 use libp2p::core::Multiaddr;
 use libp2p::core::multiaddr::Protocol;
 use libp2p::identity::Keypair;
-use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
+use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, StreamProtocol, Swarm, identify, noise, ping, relay, tcp, yamux};
 use niketsu_protocol::{AUTH_PROTOCOL, AuthRequest, AuthResponse, AuthStatus};
@@ -28,15 +28,28 @@ struct Behaviour {
 
 struct PasswordHash(String);
 
-impl From<AuthRequest> for PasswordHash {
-    fn from(value: AuthRequest) -> Self {
-        PasswordHash(hash(value.password.clone(), DEFAULT_COST).unwrap_or(value.password))
+impl PasswordHash {
+    /// None for a digest bcrypt refuses to hash.
+    fn new(digest: &str) -> Option<Self> {
+        hash(digest, DEFAULT_COST).ok().map(Self)
+    }
+
+    fn verify(&self, digest: &str) -> bool {
+        verify(digest, &self.0).unwrap_or(false)
     }
 }
 
-impl PasswordHash {
-    fn verify(&self, password: String) -> bool {
-        verify(password, &self.0).unwrap_or(false)
+fn granted(host: Option<PeerId>) -> AuthResponse {
+    AuthResponse {
+        status: AuthStatus::Ok,
+        peer_id: host,
+    }
+}
+
+fn denied() -> AuthResponse {
+    AuthResponse {
+        status: AuthStatus::Err,
+        peer_id: None,
     }
 }
 
@@ -56,6 +69,43 @@ struct Rooms {
 }
 
 impl Rooms {
+    /// Answers `peer` asking for a room. The host of a room hands it over
+    /// by naming the next host. Everyone else joins the room with its
+    /// password and learns who hosts it, or opens it when nobody does.
+    fn answer(&mut self, peer: PeerId, request: AuthRequest) -> AuthResponse {
+        let AuthRequest {
+            room,
+            password,
+            transfer_to,
+        } = request;
+
+        if let Some(new_host) = transfer_to {
+            if !self.transfer(&room, peer, new_host) {
+                debug!(%peer, %room, "Refused to hand over a room the peer does not host");
+                return denied();
+            }
+            debug!(%peer, %new_host, %room, "Handed room over");
+            return granted(None);
+        }
+
+        let Some(open) = self.get(&room) else {
+            let Some(password) = PasswordHash::new(&password) else {
+                debug!(%peer, %room, "Refused to open room: unusable password digest");
+                return denied();
+            };
+            debug!(%peer, %room, "Opened room");
+            self.open(room, peer, password);
+            return granted(None);
+        };
+        if !open.password.verify(&password) {
+            debug!(%peer, %room, "Refused to join room: wrong password");
+            return denied();
+        }
+        debug!(%peer, %room, host = %open.host, "Joined room");
+        // A host asking for its own room is told of no other host.
+        granted(Some(open.host).filter(|host| *host != peer))
+    }
+
     fn get(&self, name: &str) -> Option<&Room> {
         self.rooms.get(name)
     }
@@ -168,8 +218,8 @@ impl Relay {
                     info: identify::Info { observed_addr, .. },
                     ..
                 })) => {
-                    self.swarm.add_external_address(observed_addr.clone());
-                    debug!("Added external node");
+                    debug!(%observed_addr, "Added external address");
+                    self.swarm.add_external_address(observed_addr);
                 }
                 // A host is gone with its last connection; a peer may hold
                 // several, e.g. over TCP and QUIC.
@@ -200,70 +250,19 @@ impl Relay {
                     request_response::Message::Request {
                         request, channel, ..
                     } => {
-                        self.handle_auth_request(peer, request, channel);
+                        let response = self.rooms.answer(peer, request);
+                        let auth = &mut self.swarm.behaviour_mut().auth;
+                        if auth.send_response(channel, response).is_err() {
+                            debug!(%peer, "Peer left before its auth request was answered");
+                        }
                     }
                     request_response::Message::Response { .. } => {
-                        debug!("Received auth response. This should not happen")
+                        debug!(%peer, "Ignored an auth response: the relay asks nothing");
                     }
                 },
                 _ => {}
             }
         }
-    }
-
-    fn handle_auth_request(
-        &mut self,
-        peer: PeerId,
-        request: AuthRequest,
-        channel: ResponseChannel<AuthResponse>,
-    ) {
-        debug!("Received request from client");
-
-        if let Some(new_host) = request.transfer_to {
-            // Only the current host of the room may transfer it.
-            let mut status = AuthStatus::Err;
-            if self.rooms.transfer(&request.room, peer, new_host) {
-                debug!(%peer, %new_host, room = %request.room, "Host transfer completed");
-                status = AuthStatus::Ok;
-            }
-            self.swarm
-                .behaviour_mut()
-                .auth
-                .send_response(
-                    channel,
-                    AuthResponse {
-                        status,
-                        peer_id: None,
-                    },
-                )
-                .unwrap_or_default();
-            return;
-        }
-
-        let mut status = AuthStatus::Ok;
-        let mut peer_id: Option<PeerId> = None;
-        if let Some(room) = self.rooms.get(&request.room) {
-            if room.password.verify(request.password) {
-                // host is available and password is correct
-                if room.host != peer {
-                    debug!("Authentication successfull");
-                    peer_id = Some(room.host);
-                }
-            } else {
-                debug!("Authentication failed");
-                status = AuthStatus::Err;
-            }
-        } else {
-            // else no error and query client will be host
-            debug!("Creating new room");
-            let name = request.room.clone();
-            self.rooms.open(name, peer, request.into());
-        }
-        self.swarm
-            .behaviour_mut()
-            .auth
-            .send_response(channel, AuthResponse { status, peer_id })
-            .unwrap_or_default();
     }
 }
 
@@ -273,6 +272,46 @@ mod tests {
 
     fn password() -> PasswordHash {
         PasswordHash(String::new())
+    }
+
+    fn ask(room: &str, password: &str, transfer_to: Option<PeerId>) -> AuthRequest {
+        AuthRequest {
+            room: room.into(),
+            password: password.into(),
+            transfer_to,
+        }
+    }
+
+    #[test]
+    fn a_room_names_its_host_to_those_with_its_password() {
+        let (alice, bob) = (PeerId::random(), PeerId::random());
+        let mut rooms = Rooms::default();
+        assert_eq!(
+            rooms.answer(alice, ask("room", "secret", None)),
+            granted(None)
+        );
+        assert_eq!(rooms.answer(bob, ask("room", "guess", None)), denied());
+        assert_eq!(
+            rooms.answer(bob, ask("room", "secret", None)),
+            granted(Some(alice))
+        );
+        assert_eq!(
+            rooms.answer(alice, ask("room", "secret", None)),
+            granted(None)
+        );
+    }
+
+    #[test]
+    fn only_its_host_hands_a_room_over() {
+        let (alice, bob) = (PeerId::random(), PeerId::random());
+        let mut rooms = Rooms::default();
+        rooms.open("room".into(), alice, password());
+        assert_eq!(rooms.answer(bob, ask("room", "", Some(bob))), denied());
+        assert_eq!(
+            rooms.answer(alice, ask("room", "", Some(bob))),
+            granted(None)
+        );
+        assert_eq!(rooms.get("room").map(|r| r.host), Some(bob));
     }
 
     #[test]
