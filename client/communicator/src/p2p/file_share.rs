@@ -18,8 +18,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::oneshot;
 use tracing::{debug, error, warn};
 
-use super::{CommonCommunication, CommunicationHandler};
-use crate::p2p::SwarmHandler;
+use super::{Net, Session, SwarmExt};
 
 /// Chunks of the local video server requested from the provider and not yet
 /// answered. The video server waits beyond that, so a slow provider slows it.
@@ -154,7 +153,7 @@ impl FileShareConsumer {
         true
     }
 
-    fn handle_kad_event(&mut self, event: kad::Event, base: &mut CommonCommunication) {
+    fn handle_kad_event(&mut self, event: kad::Event, net: &mut Net) {
         let kad::Event::OutboundQueryProgressed { id, result, .. } = &event else {
             return debug!(?event, "Received non handled kademlia event");
         };
@@ -170,23 +169,23 @@ impl FileShareConsumer {
         match result {
             Ok(kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. }) => {
                 debug!(?result, "Kademlia did not return new providers");
-                self.request_file(base);
+                self.request_file(net);
             }
             Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) => {
                 self.providers = providers.clone();
-                self.request_file(base);
+                self.request_file(net);
             }
             Err(_) if !matches!(self.stage, Stage::Discovering(_)) => {
                 debug!(?result, "Kademlia query ended after the file was requested");
             }
             Err(_) => {
                 debug!(?result, "No kademlia providers found");
-                base.tell_user("No providers found for the requested file");
+                net.tell_user("No providers found for the requested file");
             }
         }
     }
 
-    fn request_file(&mut self, base: &mut CommonCommunication) {
+    fn request_file(&mut self, net: &mut Net) {
         let Stage::Discovering(request) = &self.stage else {
             debug!("File is already being shared. No need for further actions");
             return;
@@ -199,18 +198,18 @@ impl FileShareConsumer {
         let index = request.uuid.as_u128() as usize % self.providers.len().max(1);
         let Some(provider) = self.providers.iter().nth(index).copied() else {
             debug!("No providers found for the requested file");
-            base.tell_user("No providers found for the requested file");
-            base.stream_stopped();
+            net.tell_user("No providers found for the requested file");
+            net.stream_stopped();
             return;
         };
         debug!(%provider, "Provider found");
 
         // A provider without a connection yet is dialed over the host's
         // circuit, the rendezvous for the hole punch.
-        if provider != base.host && !base.swarm.is_connected(&provider) {
-            match base.host_circuit() {
+        if provider != net.host && !net.swarm.is_connected(&provider) {
+            match net.host_circuit() {
                 Some(circuit) => {
-                    if let Err(err) = base.swarm.dial(circuit.with(Protocol::P2p(provider))) {
+                    if let Err(err) = net.swarm.dial(circuit.with(Protocol::P2p(provider))) {
                         error!(?err, "Failed to dial file provider via host relay");
                     }
                 }
@@ -218,14 +217,14 @@ impl FileShareConsumer {
             }
         }
 
-        let request = base
+        let request = net
             .swarm
             .send_file_request(&provider, FileShareRequest::File(request.clone()));
         self.stage = Stage::Requested { provider, request };
     }
 }
 
-impl CommonCommunication {
+impl Net {
     /// Tells the core that the stream its video server plays has ended.
     fn stream_stopped(&self) {
         self.message_sender
@@ -234,18 +233,18 @@ impl CommonCommunication {
     }
 }
 
-impl CommunicationHandler {
+impl Session {
     /// Ends the file share of this peer, whichever side of it this peer is
     /// on, without a word to the user.
     pub(super) fn fs_end(&mut self) {
         if let Some(FileShare::Provider(provider)) = self.file_share.take() {
-            self.base.swarm.stop_providing(provider.video());
+            self.net.swarm.stop_providing(provider.video());
         }
     }
 
     pub(super) fn fs_kad_event(&mut self, event: kad::Event) {
         if let Some(FileShare::Consumer(consumer)) = &mut self.file_share {
-            consumer.handle_kad_event(event, &mut self.base);
+            consumer.handle_kad_event(event, &mut self.net);
         }
     }
 
@@ -281,7 +280,7 @@ impl CommunicationHandler {
                 if consumer.chunk_requests.remove(&request_id).is_some() {
                     warn!(?error, "Chunk request failed. Cache will retry.");
                     if !std::mem::replace(&mut consumer.stalled, true) {
-                        self.base
+                        self.net
                             .tell_user("Chunk download timeout. Connection might be slow...");
                     }
                 } else if consumer.is_file_request(request_id) {
@@ -314,8 +313,8 @@ impl CommunicationHandler {
     /// chunk requests still pending go unanswered.
     fn fs_stop_consuming(&mut self, why: &str) {
         self.file_share.take();
-        self.base.tell_user(why);
-        self.base.stream_stopped();
+        self.net.tell_user(why);
+        self.net.stream_stopped();
     }
 
     pub(super) fn fs_video_share(&mut self, msg: VideoShareMsg) -> Result<()> {
@@ -323,7 +322,7 @@ impl CommunicationHandler {
         let Some(video) = msg.video else {
             return Ok(());
         };
-        self.base.swarm.start_providing(&video)?;
+        self.net.swarm.start_providing(&video)?;
         let provider = FileShareProvider::new(video);
         self.file_share = Some(FileShare::Provider(provider));
         Ok(())
@@ -340,7 +339,7 @@ impl CommunicationHandler {
 
     pub(super) fn fs_fetch_chunk(&mut self, request: ChunkRequest) -> Result<()> {
         let Some(FileShare::Consumer(consumer)) = &mut self.file_share else {
-            self.base.stream_stopped();
+            self.net.stream_stopped();
             bail!("No active file share consumer");
         };
         let Some(provider) = consumer.provider() else {
@@ -357,7 +356,7 @@ impl CommunicationHandler {
             start,
             len,
         };
-        let request_id = self.base.swarm.send_file_request(&provider, msg);
+        let request_id = self.net.swarm.send_file_request(&provider, msg);
         consumer.chunk_requests.insert(request_id, reply);
         Ok(())
     }
@@ -371,7 +370,7 @@ impl CommunicationHandler {
             Some(bytes) => Ok(FileShareResponse::Chunk(ChunkBytes(bytes))),
             None => Err(String::from("Not providing the requested file")),
         };
-        self.base.swarm.send_file_response(channel, response)
+        self.net.swarm.send_file_response(channel, response)
     }
 
     pub(super) fn fs_file_request(&mut self, msg: FileRequestMsg) -> Result<()> {
@@ -387,7 +386,7 @@ impl CommunicationHandler {
         self.fs_end();
 
         let key = msg.video.as_str().as_bytes().to_vec().into();
-        let query = self.base.swarm.kademlia().get_providers(key);
+        let query = self.net.swarm.kademlia().get_providers(key);
         let consumer = FileShareConsumer::new(query, msg, providers);
         self.file_share = Some(FileShare::Consumer(consumer));
         Ok(())
@@ -407,7 +406,7 @@ impl CommunicationHandler {
         } else {
             Ok(FileShareResponse::File(msg))
         };
-        self.base.swarm.send_file_response(channel, resp)
+        self.net.swarm.send_file_response(channel, resp)
     }
 
     /// Hands the request to the local video provider. When its queue is
@@ -427,14 +426,14 @@ impl CommunicationHandler {
             len,
             reply,
         };
-        let sent = match self.base.provide.sender() {
+        let sent = match self.net.provide.sender() {
             Some(sender) => sender.try_send(request),
             None => Err(TrySendError::Closed(request)),
         };
         match sent {
             Ok(()) => {
                 let read = async move { (channel, bytes.await.ok()) };
-                self.base.chunk_reads.push(read.boxed());
+                self.net.chunk_reads.push(read.boxed());
                 Ok(())
             }
             Err(TrySendError::Full(_)) => {
@@ -444,7 +443,7 @@ impl CommunicationHandler {
             Err(TrySendError::Closed(_)) => {
                 debug!("Got chunk request despite no active provider");
                 let resp = Err(String::from("Not providing any files"));
-                self.base.swarm.send_file_response(channel, resp)
+                self.net.swarm.send_file_response(channel, resp)
             }
         }
     }
@@ -457,10 +456,10 @@ impl CommunicationHandler {
         let Some(FileShare::Provider(provider)) = &mut self.file_share else {
             warn!(?msg, "Got file request despite no active provider");
             let resp = Err(String::from("Not providing any files"));
-            return self.base.swarm.send_file_response(channel, resp);
+            return self.net.swarm.send_file_response(channel, resp);
         };
         provider.pending_file_responses.insert(msg.uuid, channel);
-        self.base.message_sender.send(msg.into())?;
+        self.net.message_sender.send(msg.into())?;
         Ok(())
     }
 
@@ -487,7 +486,7 @@ impl CommunicationHandler {
                 Ok(())
             }
             Ok(FileShareResponse::File(msg)) => {
-                self.base.message_sender.send(msg.into())?;
+                self.net.message_sender.send(msg.into())?;
                 Ok(())
             }
             // the answer to a request of an earlier file share says nothing
@@ -498,7 +497,7 @@ impl CommunicationHandler {
             }
             Err(error) => {
                 self.file_share.take();
-                self.base.stream_stopped();
+                self.net.stream_stopped();
                 bail!("{error}");
             }
         }

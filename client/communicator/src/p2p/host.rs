@@ -19,14 +19,13 @@ use tracing::{debug, error, info, warn};
 use super::auth::AuthEvent;
 use super::links::{Closed, Links, Opened};
 use super::{
-    Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandler, CommunicationHandlerTrait,
-    FileShareBehaviourEvent, HostLink, MessageResponse, Stop, SwarmHandler,
-    TransportBehaviourEvent,
+    Behaviour, BehaviourEvent, ChunkRoutes, FileShareBehaviourEvent, HostLink, MessageResponse,
+    Role, Session, Stop, SwarmExt, TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
 
-pub(crate) struct HostCommunicationHandler {
-    handler: CommunicationHandler,
+pub(crate) struct HostRole {
+    session: Session,
     relay_peer_id: PeerId,
     /// The listener on the relay's circuit, which lives as long as the
     /// reservation there does. Peers join the room through it.
@@ -47,7 +46,7 @@ pub(crate) struct HostCommunicationHandler {
     handover_pending: bool,
 }
 
-impl HostCommunicationHandler {
+impl HostRole {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         swarm: Swarm<Behaviour>,
@@ -64,7 +63,7 @@ impl HostCommunicationHandler {
         message_sender
             .send(ConnectedMsg { is_host: true }.into())
             .ok();
-        let handler = CommunicationHandler::new(
+        let session = Session::new(
             swarm,
             topic,
             host,
@@ -74,7 +73,7 @@ impl HostCommunicationHandler {
             chunk_routes,
         );
         Self {
-            handler,
+            session,
             relay_peer_id,
             reservation,
             password,
@@ -95,7 +94,7 @@ impl HostCommunicationHandler {
         let Some(addr) = self.lan_addrs.get(&peer_id) else {
             return;
         };
-        match self.handler.base.swarm.dial(addr.clone()) {
+        match self.session.net.swarm.dial(addr.clone()) {
             Ok(()) => debug!(%peer_id, %addr, "Dialing peer on the local network"),
             Err(err) => warn!(%peer_id, %addr, ?err, "Failed to dial peer on the local network"),
         }
@@ -145,7 +144,7 @@ impl HostCommunicationHandler {
         if endpoint.is_relayed() {
             self.members.insert(peer_id);
         }
-        let swarm = &mut self.handler.base.swarm;
+        let swarm = &mut self.session.net.swarm;
         // A circuit is the client's to close: the client gives up on a host
         // whose circuit closes before the direct connection shows up there.
         match self
@@ -186,9 +185,9 @@ impl HostCommunicationHandler {
 
     /// Takes a linked member into the room.
     fn welcome(&mut self, peer_id: PeerId) {
-        let swarm = &mut self.handler.base.swarm;
+        let swarm = &mut self.session.net.swarm;
         swarm.gossipsub().add_explicit_peer(&peer_id);
-        let res = self.handler.forward(PeerConnectedMsg { peer: peer_id });
+        let res = self.session.forward(PeerConnectedMsg { peer: peer_id });
         log_err_msg!(res, "Failed to report connected peer to core");
     }
 
@@ -200,16 +199,16 @@ impl HostCommunicationHandler {
     ) {
         if peer_id == self.relay_peer_id {
             // every connection to the relay is a direct one
-            if !self.handler.base.swarm.is_connected(&peer_id) {
+            if !self.session.net.swarm.is_connected(&peer_id) {
                 error!(?cause, "Connection of host to relay server closed");
-                self.handler.base.stop(Stop::RelayLost);
+                self.session.net.stop(Stop::RelayLost);
             }
             return;
         }
         let was_member = self.is_member(&peer_id);
         let closed = self.links.closed(peer_id, connection_id);
         if closed == Closed::Unlinked {
-            self.handler.fs_peer_unlinked(peer_id);
+            self.session.fs_peer_unlinked(peer_id);
         }
         match closed {
             Closed::Unlinked if !was_member => debug!(%peer_id, "Bystander disconnected"),
@@ -217,9 +216,9 @@ impl HostCommunicationHandler {
                 debug!(%peer_id, ?cause, "Client disconnected");
                 // Gossipsub redials disconnected explicit peers forever;
                 // forget departed clients.
-                let swarm = &mut self.handler.base.swarm;
+                let swarm = &mut self.session.net.swarm;
                 swarm.gossipsub().remove_explicit_peer(&peer_id);
-                let res = self.handler.forward(PeerDisconnectedMsg { peer: peer_id });
+                let res = self.session.forward(PeerDisconnectedMsg { peer: peer_id });
                 log_err_msg!(res, "Failed to report disconnected peer to core");
                 // a circuit it left open is a peer starting over
                 self.dial_on_lan(peer_id);
@@ -230,7 +229,7 @@ impl HostCommunicationHandler {
     }
 
     fn on_core_handover(&mut self, request: HostHandoverRequest) -> Result<()> {
-        self.handler.base.swarm.auth().transfer(
+        self.session.net.swarm.auth().transfer(
             self.relay_peer_id,
             self.room.clone(),
             self.password.clone(),
@@ -240,7 +239,7 @@ impl HostCommunicationHandler {
         let announce = HostHandoverMsg {
             new_host: request.new_host,
         };
-        self.handler.broadcast(announce.into())?;
+        self.session.broadcast(announce.into())?;
 
         // Both the transfer request and the broadcast are only queued in the
         // behaviours at this point. Stopping now would drop the swarm before
@@ -253,14 +252,12 @@ impl HostCommunicationHandler {
     fn on_core_instruction(&mut self, instruction: HostInstruction) -> Result<()> {
         use HostInstruction::*;
         match instruction {
-            VideoStatus(m) => self.handler.broadcast(m.into()),
-            Playlist(m) => self.handler.broadcast(m.into()),
-            UserStatusList(m) => self.handler.broadcast(m.into()),
+            VideoStatus(m) => self.session.broadcast(m.into()),
+            Playlist(m) => self.session.broadcast(m.into()),
+            UserStatusList(m) => self.session.broadcast(m.into()),
             ToPeer(m) => {
-                self.handler
-                    .base
-                    .swarm
-                    .send_request(&m.peer, m.message.into());
+                let swarm = &mut self.session.net.swarm;
+                swarm.send_request(&m.peer, m.message.into());
                 Ok(())
             }
             HostHandover(m) => self.on_core_handover(m),
@@ -280,7 +277,7 @@ impl HostCommunicationHandler {
                 Stop::HandoverFailed
             }
         };
-        self.handler.base.stop(stop);
+        self.session.net.stop(stop);
     }
 }
 
@@ -296,9 +293,9 @@ fn lan_rank(addr: &Multiaddr) -> u8 {
 }
 
 #[async_trait]
-impl CommunicationHandlerTrait for HostCommunicationHandler {
-    fn handler_mut(&mut self) -> &mut CommunicationHandler {
-        &mut self.handler
+impl Role for HostRole {
+    fn session(&mut self) -> &mut Session {
+        &mut self.session
     }
 
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
@@ -328,7 +325,7 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
                 ..
             } if listener_id == self.reservation => {
                 error!(?reason, "Reservation of host on relay server closed");
-                self.handler.base.stop(Stop::RelayLost);
+                self.session.net.stop(Stop::RelayLost);
             }
             other => debug!(event = ?other, "Received not captured event"),
         }
@@ -343,18 +340,18 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
         debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
         use NiketsuMessage::*;
         if !self.is_member(&peer_id) {
-            return self.handler.respond_with_err(msg, channel);
+            return self.session.respond_with_err(msg, channel);
         }
         match msg {
-            Playlist(m) => self.handler.send_to_core(m, channel),
+            Playlist(m) => self.session.send_to_core(m, channel),
             Status(status) => {
                 let msg = PeerStatusMsg {
                     peer: peer_id,
                     status,
                 };
-                self.handler.send_to_core(msg, channel)
+                self.session.send_to_core(msg, channel)
             }
-            other => self.handler.respond_with_err(other, channel),
+            other => self.session.respond_with_err(other, channel),
         }
     }
 
@@ -367,22 +364,22 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
         use NiketsuMessage::*;
         match niketsu_msg {
             Select(m) => {
-                self.handler.fs_end();
-                self.handler.forward(m)
+                self.session.fs_end();
+                self.session.forward(m)
             }
             m @ (Pause(_) | Start(_) | PlaybackSpeed(_) | Seek(_) | UserMessage(_)) => {
-                self.handler.forward(m)
+                self.session.forward(m)
             }
             other => bail!("Host received unexpected broadcast message: {other:?}"),
         }
     }
 
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()> {
-        debug!(host = %self.handler.base.host, ?msg, "Handling core message");
+        debug!(host = %self.session.net.host, ?msg, "Handling core message");
         match msg {
-            OutgoingMessage::Room(m) => self.handler.route_room_message(m),
+            OutgoingMessage::Room(m) => self.session.route_room_message(m),
             OutgoingMessage::Host(m) => self.on_core_instruction(m),
-            OutgoingMessage::Client(m) => self.handler.drop_for_other_role(m),
+            OutgoingMessage::Client(m) => self.session.drop_for_other_role(m),
         }
     }
 }

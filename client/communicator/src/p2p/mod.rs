@@ -50,7 +50,7 @@ mod order;
 use direct_only::DirectOnly;
 
 /// Result of one iteration of the shared event loop in
-/// [`CommunicationHandlerTrait::run`]. Short-lived stack value, consumed
+/// [`Role::run`]. Short-lived stack value, consumed
 /// immediately each iteration; boxing the swarm event would add a heap
 /// allocation on the hottest path for no real benefit.
 #[allow(clippy::large_enum_variant)]
@@ -119,7 +119,7 @@ impl HostLink {
     }
 
     /// The host's address without a trailing `/p2p/…`, so
-    /// [`CommonCommunication::host_circuit`] can build on it.
+    /// [`Net::host_circuit`] can build on it.
     fn direct(addr: &Multiaddr) -> Self {
         let mut addr = addr.clone();
         if let Some(Protocol::P2p(_)) = addr.iter().last() {
@@ -185,13 +185,13 @@ pub(crate) enum StatusResponse {
     Err,
 }
 
-/// Common event loop and dispatch for the host and client roles. The
-/// provided methods handle everything both roles share (gossip broadcasts,
-/// direct messages, file sharing); implementors supply the role-specific
+/// The role a peer has in the room: its host or a client. The provided
+/// methods are the event loop and everything both roles share (gossip
+/// broadcasts, direct messages, file sharing); a role supplies its own
 /// message handling and the residual swarm events.
 #[async_trait]
-pub(crate) trait CommunicationHandlerTrait: Send {
-    fn handler_mut(&mut self) -> &mut CommunicationHandler;
+pub(crate) trait Role: Send {
+    fn session(&mut self) -> &mut Session;
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()>;
     fn handle_swarm_broadcast(&mut self, msg: NiketsuMessage, source: PeerId) -> Result<()>;
     fn handle_swarm_request(
@@ -216,23 +216,23 @@ pub(crate) trait CommunicationHandlerTrait: Send {
 
     async fn run(&mut self) -> Stop {
         loop {
-            if let Some(stop) = self.handler_mut().base.stop {
+            if let Some(stop) = self.session().net.stop {
                 return stop;
             }
             let next = {
-                let handler = self.handler_mut();
-                let can_fetch = handler.can_fetch_chunk();
-                let base = &mut handler.base;
+                let session = self.session();
+                let can_fetch = session.can_fetch_chunk();
+                let net = &mut session.net;
                 tokio::select! {
-                    event = base.swarm.select_next_some() => LoopEvent::Swarm(event),
-                    msg = base.core_receiver.recv() => LoopEvent::Core(msg),
-                    Some(request) = base.chunk_fetches.recv(), if can_fetch => {
+                    event = net.swarm.select_next_some() => LoopEvent::Swarm(event),
+                    msg = net.core_receiver.recv() => LoopEvent::Core(msg),
+                    Some(request) = net.chunk_fetches.recv(), if can_fetch => {
                         LoopEvent::FetchChunk(request)
                     }
-                    Some((channel, bytes)) = base.chunk_reads.next() => {
+                    Some((channel, bytes)) = net.chunk_reads.next() => {
                         LoopEvent::ChunkRead(channel, bytes)
                     }
-                    _ = base.host_link.rendezvous_expired() => LoopEvent::RendezvousExpired,
+                    _ = net.host_link.rendezvous_expired() => LoopEvent::RendezvousExpired,
                 }
             };
             match next {
@@ -243,11 +243,11 @@ pub(crate) trait CommunicationHandlerTrait: Send {
                     log_err_msg!(res, "Handling message caused error");
                 }
                 LoopEvent::FetchChunk(request) => {
-                    let res = self.handler_mut().fs_fetch_chunk(request);
+                    let res = self.session().fs_fetch_chunk(request);
                     log_err_msg!(res, "Failed to fetch chunk");
                 }
                 LoopEvent::ChunkRead(channel, bytes) => {
-                    let res = self.handler_mut().fs_chunk_read(channel, bytes);
+                    let res = self.session().fs_chunk_read(channel, bytes);
                     log_err_msg!(res, "Failed to answer chunk request");
                 }
                 LoopEvent::Core(None) => {
@@ -271,9 +271,9 @@ pub(crate) trait CommunicationHandlerTrait: Send {
             SwarmEvent::Behaviour(Messaging(M::Gossipsub(e))) => self.on_gossipsub(e),
             SwarmEvent::Behaviour(Messaging(M::RequestResponse(e))) => self.on_msg_req_resp(e),
             SwarmEvent::Behaviour(FileShare(F::RequestResponse(e))) => {
-                self.handler_mut().fs_req_resp_event(e)
+                self.session().fs_req_resp_event(e)
             }
-            SwarmEvent::Behaviour(FileShare(F::Kademlia(e))) => self.handler_mut().fs_kad_event(e),
+            SwarmEvent::Behaviour(FileShare(F::Kademlia(e))) => self.session().fs_kad_event(e),
             other => self.handle_swarm_event(other),
         }
     }
@@ -299,7 +299,7 @@ pub(crate) trait CommunicationHandlerTrait: Send {
                     Ok(msg) => msg,
                     Err(error) => return error!(%error, "Failed to read broadcast message"),
                 };
-                if self.handler_mut().newest.is_stale(source, sequence, &msg) {
+                if self.session().newest.is_stale(source, sequence, &msg) {
                     return debug!(?msg, %source, "Dropping a broadcast that a newer one replaced");
                 }
                 let res = self.handle_swarm_broadcast(msg, source);
@@ -332,7 +332,8 @@ pub(crate) trait CommunicationHandlerTrait: Send {
     }
 }
 
-pub(super) trait SwarmHandler {
+/// Shorthands for what the session asks of its swarm's behaviours.
+pub(super) trait SwarmExt {
     fn gossipsub(&mut self) -> &mut gossipsub::Behaviour;
     fn kademlia(&mut self) -> &mut kad::Behaviour<MemoryStore>;
     fn auth(&mut self) -> &mut auth::AuthBehaviour;
@@ -353,7 +354,7 @@ pub(super) trait SwarmHandler {
     fn stop_providing(&mut self, video: &Video);
 }
 
-impl SwarmHandler for Swarm<Behaviour> {
+impl SwarmExt for Swarm<Behaviour> {
     fn gossipsub(&mut self) -> &mut gossipsub::Behaviour {
         &mut self.behaviour_mut().messaging.inner_mut().gossipsub
     }
@@ -546,7 +547,7 @@ impl P2PClient {
         let (core_sender, core_receiver) = tokio::sync::mpsc::unbounded_channel();
         let (message_sender, message_receiver) = tokio::sync::mpsc::unbounded_channel();
 
-        let mut handler = connecting::ConnectingHandler::new(
+        let mut role = connecting::Setup::new(
             swarm,
             relay_addr,
             room,
@@ -562,7 +563,7 @@ impl P2PClient {
         let client = P2PClient {
             sender: core_sender,
             receiver: message_receiver,
-            event_loop: spawn(async move { handler.run().await }),
+            event_loop: spawn(async move { role.run().await }),
         };
 
         Ok(client)
@@ -601,15 +602,16 @@ impl P2PClient {
     }
 }
 
-pub(crate) struct CommunicationHandler {
-    base: CommonCommunication,
+/// What a peer keeps of its stay in the room, whichever role it has there.
+pub(crate) struct Session {
+    net: Net,
     file_share: Option<FileShare>,
     /// Answers whether a broadcast or the host's greeting is older than
     /// state already applied.
     newest: order::Newest,
 }
 
-impl CommunicationHandler {
+impl Session {
     fn new(
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
@@ -619,7 +621,7 @@ impl CommunicationHandler {
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
         chunk_routes: ChunkRoutes,
     ) -> Self {
-        let base = CommonCommunication {
+        let net = Net {
             swarm,
             topic,
             host,
@@ -632,7 +634,7 @@ impl CommunicationHandler {
             chunk_reads: FuturesUnordered::new(),
         };
         Self {
-            base,
+            net,
             file_share: None,
             newest: order::Newest::default(),
         }
@@ -658,7 +660,7 @@ impl CommunicationHandler {
         }
     }
 
-    /// A message of the other role's group reaches a handler only when the
+    /// A message of the other role's group reaches a role only when the
     /// core still acts on a role this connection does not have, e.g. while
     /// the core has not yet seen the `ConnectedMsg` of a reconnect. It has no
     /// meaning here.
@@ -668,13 +670,13 @@ impl CommunicationHandler {
     }
 
     pub fn broadcast(&mut self, msg: NiketsuMessage) -> Result<()> {
-        let topic = self.base.topic.clone();
-        self.base.swarm.try_broadcast(topic, msg)
+        let topic = self.net.topic.clone();
+        self.net.swarm.try_broadcast(topic, msg)
     }
 
     /// Hands a room message from the network to the core.
     pub fn forward(&mut self, msg: impl Into<IncomingMessage>) -> Result<()> {
-        self.base.message_sender.send(msg.into())?;
+        self.net.message_sender.send(msg.into())?;
         Ok(())
     }
 
@@ -684,14 +686,14 @@ impl CommunicationHandler {
         channel: ResponseChannel<MessageResponse>,
     ) -> Result<()> {
         let resp = MessageResponse(StatusResponse::Err);
-        self.base.swarm.send_message_response(channel, resp)?;
+        self.net.swarm.send_message_response(channel, resp)?;
         bail!("Received unexpected direct message: {msg:?}");
     }
 
     /// Answers a direct request that needs no further handling.
     pub fn acknowledge(&mut self, channel: ResponseChannel<MessageResponse>) -> Result<()> {
         let resp = MessageResponse(StatusResponse::Ok);
-        self.base.swarm.send_message_response(channel, resp)
+        self.net.swarm.send_message_response(channel, resp)
     }
 
     /// Hands a direct request to the core and acknowledges it.
@@ -700,20 +702,23 @@ impl CommunicationHandler {
         msg: impl Into<IncomingMessage>,
         channel: ResponseChannel<MessageResponse>,
     ) -> Result<()> {
-        let resp = match self.base.message_sender.send(msg.into()) {
+        let resp = match self.net.message_sender.send(msg.into()) {
             Ok(_) => MessageResponse(StatusResponse::Ok),
             Err(_) => MessageResponse(StatusResponse::Err),
         };
-        self.base.swarm.send_message_response(channel, resp)
+        self.net.swarm.send_message_response(channel, resp)
     }
 }
 
-pub(crate) struct CommonCommunication {
+/// The session's ends of everything it talks through: the swarm, the
+/// channels to the core and the chunk routes. Apart from the rest of the
+/// session, so the file share can use it while the session holds the share.
+pub(crate) struct Net {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
     host: PeerId,
     host_link: HostLink,
-    /// Set by a handler to end the run loop.
+    /// Set to end the run loop.
     stop: Option<Stop>,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
@@ -724,7 +729,7 @@ pub(crate) struct CommonCommunication {
     chunk_reads: FuturesUnordered<ChunkRead>,
 }
 
-impl CommonCommunication {
+impl Net {
     /// Ends the run loop once the current event is handled. The first
     /// reason given is the one reported.
     pub fn stop(&mut self, why: Stop) {

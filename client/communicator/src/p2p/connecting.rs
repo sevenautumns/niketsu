@@ -11,11 +11,10 @@ use niketsu_core::room::RoomName;
 use tracing::{debug, info, warn};
 
 use super::auth::AuthEvent;
-use super::client::ClientCommunicationHandler;
-use super::host::HostCommunicationHandler;
+use super::client::ClientRole;
+use super::host::HostRole;
 use super::{
-    Behaviour, BehaviourEvent, ChunkRoutes, CommunicationHandlerTrait, SwarmHandler,
-    TransportBehaviourEvent, host_relay,
+    Behaviour, BehaviourEvent, ChunkRoutes, Role, SwarmExt, TransportBehaviourEvent, host_relay,
 };
 use crate::timing::LISTENER_PATIENCE;
 
@@ -24,7 +23,9 @@ struct PeerInfo {
     host: Option<PeerId>,
 }
 
-pub(crate) struct ConnectingHandler {
+/// Takes a fresh swarm into the room: listens, authenticates with the
+/// relay, and learns from it which role this peer has there.
+pub(crate) struct Setup {
     swarm: Swarm<Behaviour>,
     relay_addr: Multiaddr,
     room: RoomName,
@@ -35,7 +36,7 @@ pub(crate) struct ConnectingHandler {
     chunk_routes: ChunkRoutes,
 }
 
-impl ConnectingHandler {
+impl Setup {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         swarm: Swarm<Behaviour>,
@@ -59,7 +60,7 @@ impl ConnectingHandler {
         }
     }
 
-    pub(crate) async fn run(mut self) -> Result<Box<dyn CommunicationHandlerTrait>> {
+    pub(crate) async fn run(mut self) -> Result<Box<dyn Role>> {
         let listeners = [
             "/ip4/0.0.0.0/udp/0/quic-v1",
             "/ip4/0.0.0.0/tcp/0",
@@ -87,14 +88,14 @@ impl ConnectingHandler {
 
         self.swarm.gossipsub().subscribe(&self.topic)?;
 
-        let handler: Box<dyn CommunicationHandlerTrait> = match peer_info.host {
+        let role: Box<dyn Role> = match peer_info.host {
             Some(host_peer_id) => {
                 info!(%host_peer_id, "Dialing host via relay circuit");
                 let peer_addr = relay_with_peer
                     .with(Protocol::P2pCircuit)
                     .with(Protocol::P2p(host_peer_id));
                 self.swarm.dial(peer_addr)?;
-                Box::new(ClientCommunicationHandler::new(
+                Box::new(ClientRole::new(
                     self.swarm,
                     self.topic,
                     host_peer_id,
@@ -113,7 +114,7 @@ impl ConnectingHandler {
                 // the host relay hands out
                 self.swarm.behaviour_mut().transport.relay_server =
                     host_relay::serve(local_peer_id);
-                Box::new(HostCommunicationHandler::new(
+                Box::new(HostRole::new(
                     self.swarm,
                     self.topic,
                     local_peer_id,
@@ -129,7 +130,7 @@ impl ConnectingHandler {
         };
 
         info!(%local_peer_id, "Connection setup complete");
-        Ok(handler)
+        Ok(role)
     }
 
     /// Waits until every listener has reported an address (or given up).

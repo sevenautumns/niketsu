@@ -147,7 +147,7 @@ async fn wait_for<B: NetworkBehaviour, T>(
 }
 
 /// What the client's handling of a closed reservation builds on (see
-/// `ClientCommunicationHandler::on_listener_closed`): a reservation lives on
+/// `ClientRole::on_listener_closed`): a reservation lives on
 /// the oldest direct connection to the relay, its listener closes without
 /// an error when that connection does, and the relay then accepts a
 /// reservation over a connection that remains.
