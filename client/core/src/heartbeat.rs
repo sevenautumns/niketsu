@@ -41,7 +41,6 @@ impl EventHandler for Heartbeat {
         // us as an event)
         let speed = model.player.host_speed();
         let paused = model.player.is_paused().unwrap_or(true);
-        let cache = model.player.cache_available();
         let file_loaded = model.player.video_loaded();
         model.sync.observe_local_position(position);
         // only the host's clock is the room's reference
@@ -56,7 +55,6 @@ impl EventHandler for Heartbeat {
                 speed,
                 paused,
                 file_loaded,
-                cache,
             }
             .into(),
         );
@@ -107,21 +105,18 @@ mod tests {
         let speed = 1.5;
         let paused = true;
         let config = Config::default();
-        let cache = true;
         let message = OutgoingMessage::from(VideoStatusMsg {
             video: Some(video.clone()),
             position,
             speed,
             paused,
             file_loaded: true,
-            cache,
         });
 
         player.expect_playing_video().return_const::<Video>(video);
         player.expect_get_position().return_const(position);
         player.expect_set_speed().return_const(());
         player.expect_is_paused().return_const(paused);
-        player.expect_cache_available().return_const(cache);
         player.expect_video_loaded().return_const(true);
         communicator
             .expect_send()
@@ -175,7 +170,6 @@ mod tests {
             .expect_get_position()
             .return_const(Some(Duration::from_secs(3)));
         player.expect_is_paused().return_const(true);
-        player.expect_cache_available().return_const(false);
         player.expect_video_loaded().return_const(false);
 
         let mut core = CoreBuilder::builder()

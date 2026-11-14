@@ -36,13 +36,11 @@ pub enum MpvProperty {
     Pause,
     Speed,
     Filename,
-    Duration,
     KeepOpen,
     CachePause,
     ForceWindow,
     Idle,
     EofReached,
-    DemuxerCacheDuration,
     Config,
     InputDefaultBindings,
     InputVoKeyboard,
@@ -76,8 +74,6 @@ impl MpvProperty {
             MpvProperty::InputMediaKeys => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::CachePause => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Speed => mpv_format::MPV_FORMAT_DOUBLE,
-            MpvProperty::DemuxerCacheDuration => mpv_format::MPV_FORMAT_DOUBLE,
-            MpvProperty::Duration => mpv_format::MPV_FORMAT_DOUBLE,
             MpvProperty::PausedForCache => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::CachePauseWait => mpv_format::MPV_FORMAT_DOUBLE,
         }
@@ -321,22 +317,6 @@ impl Mpv {
         self.status.file_load_status = FileLoadStatus::Loading;
         log_err!(res)
     }
-
-    fn get_duration(&mut self) -> Option<Duration> {
-        self.status.file.as_ref()?;
-
-        self.get_property_f64(MpvProperty::Duration)
-            .ok()
-            .map(Duration::from_secs_f64)
-    }
-
-    fn get_cache(&mut self) -> Option<Duration> {
-        self.status.file.as_ref()?;
-
-        self.get_property_f64(MpvProperty::DemuxerCacheDuration)
-            .ok()
-            .map(Duration::from_secs_f64)
-    }
 }
 
 #[async_trait]
@@ -368,11 +348,6 @@ impl MediaPlayerTrait for Mpv {
         log_err!(res)
     }
 
-    fn get_speed(&self) -> f64 {
-        let speed = self.get_property_f64(MpvProperty::Speed);
-        log_err!(speed, 1.0)
-    }
-
     fn set_position(&mut self, pos: Duration) {
         if self.status.seeking {
             debug!(?pos, "already seeking, ignoring set_position");
@@ -401,25 +376,6 @@ impl MediaPlayerTrait for Mpv {
         self.get_property_f64(MpvProperty::PlaybackTime)
             .ok()
             .map(Duration::from_secs_f64)
-    }
-
-    fn cache_available(&mut self) -> bool {
-        if self.status.file.as_ref().is_none() {
-            return false;
-        };
-        let Some(cache) = self.get_cache() else {
-            return false;
-        };
-        if cache >= CACHE_THRESHOLD {
-            return true;
-        }
-        let Some(duration) = self.get_duration() else {
-            return false;
-        };
-        let Some(position) = self.get_position() else {
-            return false;
-        };
-        duration <= position + cache + Duration::from_secs(1)
     }
 
     fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore) {

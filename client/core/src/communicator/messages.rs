@@ -76,7 +76,6 @@ pub struct VideoStatusMsg {
     pub speed: f64,
     pub paused: bool,
     pub file_loaded: bool,
-    pub cache: bool,
 }
 
 impl PartialEq for VideoStatusMsg {
@@ -172,7 +171,7 @@ pub type UserStatusMsg = UserStatus;
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FileRequestMsg {
-    // TODO check if we need the uuid
+    /// Pairs the provider's answer with this request.
     pub uuid: uuid::Uuid,
     pub actor: ArcStr,
     pub video: Video,

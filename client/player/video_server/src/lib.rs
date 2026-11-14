@@ -52,10 +52,6 @@ impl VideoServerTrait for VideoServer {
         self.server = Some(handle);
     }
 
-    fn addr(&self) -> Option<SocketAddr> {
-        self.server.as_ref().and_then(|h| h.addr)
-    }
-
     async fn event(&mut self) -> VideoServerEvent {
         let Some(handle) = self.server.as_mut() else {
             std::future::pending().await
@@ -170,7 +166,6 @@ impl VideoCache {
 struct TcpServerHandle {
     _running: Receiver<()>,
     addr_rx: Receiver<SocketAddr>,
-    addr: Option<SocketAddr>,
     file_name: ArcStr,
 }
 
@@ -179,7 +174,6 @@ impl TcpServerHandle {
         let Some(addr) = self.addr_rx.recv().await else {
             return std::future::pending().await;
         };
-        self.addr = Some(addr);
         ServerOnline {
             file_name: self.file_name.clone(),
             addr,
@@ -230,7 +224,6 @@ impl TcpServer {
         TcpServerHandle {
             _running: self.running,
             addr_rx,
-            addr: None,
             file_name: self.file_name,
         }
     }

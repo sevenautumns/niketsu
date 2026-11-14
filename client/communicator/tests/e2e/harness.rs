@@ -227,10 +227,6 @@ impl MediaPlayerTrait for FakePlayer {
         self.lock().speed = speed;
     }
 
-    fn get_speed(&self) -> f64 {
-        self.lock().speed
-    }
-
     fn set_position(&mut self, pos: Duration) {
         self.lock().position = pos;
     }
@@ -238,10 +234,6 @@ impl MediaPlayerTrait for FakePlayer {
     fn get_position(&mut self) -> Option<Duration> {
         let state = self.lock();
         state.video.as_ref().map(|_| state.position)
-    }
-
-    fn cache_available(&mut self) -> bool {
-        false
     }
 
     fn load_video(&mut self, load: Video, pos: Duration, _db: &FileStore) {

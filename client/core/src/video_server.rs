@@ -15,7 +15,6 @@ use crate::{CoreModel, EventHandler, FilePathSearch, MediaPlayerTrait};
 pub trait VideoServerTrait: std::fmt::Debug + Send {
     fn stop_server(&mut self);
     fn start_server(&mut self, file_name: ArcStr, file_size: u64);
-    fn addr(&self) -> Option<SocketAddr>;
     async fn event(&mut self) -> VideoServerEvent;
 }
 

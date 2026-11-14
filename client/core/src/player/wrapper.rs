@@ -93,20 +93,12 @@ impl MediaPlayerTrait for MediaPlayerWrapper {
         self.player.set_speed(speed)
     }
 
-    fn get_speed(&self) -> f64 {
-        self.player.get_speed()
-    }
-
     fn set_position(&mut self, pos: Duration) {
         self.player.set_position(pos)
     }
 
     fn get_position(&mut self) -> Option<Duration> {
         self.player.get_position()
-    }
-
-    fn cache_available(&mut self) -> bool {
-        self.player.cache_available()
     }
 
     fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore) {

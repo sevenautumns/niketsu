@@ -19,10 +19,8 @@ pub trait MediaPlayerTrait: std::fmt::Debug + Send {
     fn pause(&mut self);
     fn is_paused(&self) -> Option<bool>;
     fn set_speed(&mut self, speed: f64);
-    fn get_speed(&self) -> f64;
     fn set_position(&mut self, pos: Duration);
     fn get_position(&mut self) -> Option<Duration>;
-    fn cache_available(&mut self) -> bool;
     // TODO separate FileStore from MediaPlayer
     // for this we need to move the file_loaded out of the player
     fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore);
