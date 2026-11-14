@@ -142,7 +142,6 @@ outgoing_from! {
 pub enum IncomingMessage {
     VideoStatus(VideoStatusMsg),
     Connected(ConnectedMsg),
-    ConnectionError(ConnectionErrorMsg),
     UserStatusList(UserStatusListMsg),
     Start(StartMsg),
     Pause(PauseMsg),
@@ -281,29 +280,6 @@ impl From<DirectMessage> for IncomingMessage {
             DirectMessage::Select(msg) => msg.into(),
             DirectMessage::UserStatus(msg) => msg.into(),
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ConnectionErrorMsg(pub String);
-
-impl From<ConnectionErrorMsg> for PlayerMessage {
-    fn from(error: ConnectionErrorMsg) -> Self {
-        PlayerMessageInner {
-            message: format!("Connection Error: {}", error.0),
-            source: MessageSource::Internal,
-            level: MessageLevel::Error,
-            timestamp: Local::now(),
-        }
-        .into()
-    }
-}
-
-impl EventHandler for ConnectionErrorMsg {
-    fn handle(self, model: &mut CoreModel) {
-        trace!("server connection established");
-        //TODO?
-        model.ui.player_message(PlayerMessage::from(self));
     }
 }
 
