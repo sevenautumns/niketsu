@@ -10,16 +10,16 @@ use libp2p::swarm::{
 };
 use libp2p::{Multiaddr, PeerId, StreamProtocol};
 use niketsu_core::room::RoomName;
-use niketsu_protocol::{AUTH_PROTOCOL, AuthStatus, InitRequest, InitResponse};
+use niketsu_protocol::{AUTH_PROTOCOL, AuthRequest, AuthResponse, AuthStatus};
 use sha256::digest;
 
 use crate::timing::AUTH_TIMEOUT;
 
-type Inner = request_response::cbor::Behaviour<InitRequest, InitResponse>;
+type Inner = request_response::cbor::Behaviour<AuthRequest, AuthResponse>;
 
 /// The relay only ever sees a digest of the room's password.
-fn request(room: RoomName, password: String, transfer_to: Option<PeerId>) -> InitRequest {
-    InitRequest {
+fn request(room: RoomName, password: String, transfer_to: Option<PeerId>) -> AuthRequest {
+    AuthRequest {
         room: room.to_string(),
         password: digest(password),
         transfer_to,

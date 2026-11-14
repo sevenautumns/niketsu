@@ -11,7 +11,7 @@ use libp2p::identity::Keypair;
 use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, StreamProtocol, Swarm, identify, noise, ping, relay, tcp, yamux};
-use niketsu_protocol::{AUTH_PROTOCOL, AuthStatus, InitRequest, InitResponse};
+use niketsu_protocol::{AUTH_PROTOCOL, AuthRequest, AuthResponse, AuthStatus};
 use tracing::debug;
 
 use crate::config::Config;
@@ -21,13 +21,13 @@ struct Behaviour {
     relay: relay::Behaviour,
     ping: ping::Behaviour,
     identify: identify::Behaviour,
-    init_request_response: request_response::cbor::Behaviour<InitRequest, InitResponse>,
+    auth: request_response::cbor::Behaviour<AuthRequest, AuthResponse>,
 }
 
 struct PasswordHash(String);
 
-impl From<InitRequest> for PasswordHash {
-    fn from(value: InitRequest) -> Self {
+impl From<AuthRequest> for PasswordHash {
+    fn from(value: AuthRequest) -> Self {
         PasswordHash(hash(value.password.clone(), DEFAULT_COST).unwrap_or(value.password))
     }
 }
@@ -132,7 +132,7 @@ pub fn new(config: Config) -> Result<Relay> {
                 "/identify/1".to_string(),
                 key.public(),
             )),
-            init_request_response: request_response::cbor::Behaviour::new(
+            auth: request_response::cbor::Behaviour::new(
                 [(StreamProtocol::new(AUTH_PROTOCOL), ProtocolSupport::Full)],
                 request_response::Config::default(),
             ),
@@ -202,16 +202,18 @@ impl Relay {
                         self.rooms.close_hosted_by(peer_id);
                     }
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::InitRequestResponse(
-                    request_response::Event::Message { peer, message, .. },
-                )) => match message {
+                SwarmEvent::Behaviour(BehaviourEvent::Auth(request_response::Event::Message {
+                    peer,
+                    message,
+                    ..
+                })) => match message {
                     request_response::Message::Request {
                         request, channel, ..
                     } => {
-                        self.handle_init_request(peer, request, channel);
+                        self.handle_auth_request(peer, request, channel);
                     }
                     request_response::Message::Response { .. } => {
-                        debug!("Received init response. This should not happen")
+                        debug!("Received auth response. This should not happen")
                     }
                 },
                 _ => {}
@@ -219,11 +221,11 @@ impl Relay {
         }
     }
 
-    fn handle_init_request(
+    fn handle_auth_request(
         &mut self,
         peer: PeerId,
-        request: InitRequest,
-        channel: ResponseChannel<InitResponse>,
+        request: AuthRequest,
+        channel: ResponseChannel<AuthResponse>,
     ) {
         debug!("Received request from client");
 
@@ -236,10 +238,10 @@ impl Relay {
             }
             self.swarm
                 .behaviour_mut()
-                .init_request_response
+                .auth
                 .send_response(
                     channel,
-                    InitResponse {
+                    AuthResponse {
                         status,
                         peer_id: None,
                     },
@@ -269,8 +271,8 @@ impl Relay {
         }
         self.swarm
             .behaviour_mut()
-            .init_request_response
-            .send_response(channel, InitResponse { status, peer_id })
+            .auth
+            .send_response(channel, AuthResponse { status, peer_id })
             .unwrap_or_default();
     }
 }

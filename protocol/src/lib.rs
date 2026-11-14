@@ -10,7 +10,7 @@ pub const AUTH_PROTOCOL: &str = "/authorisation/1";
 /// A peer asks for a room: to join it, to open it if nobody hosts it, or,
 /// as its host, to hand it over.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InitRequest {
+pub struct AuthRequest {
     pub room: String,
     /// A digest of the room's password, never the password itself.
     pub password: String,
@@ -20,7 +20,7 @@ pub struct InitRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InitResponse {
+pub struct AuthResponse {
     pub status: AuthStatus,
     /// The room's host, unless the asking peer hosts the room itself.
     pub peer_id: Option<PeerId>,
