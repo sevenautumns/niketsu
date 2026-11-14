@@ -1,4 +1,3 @@
-use anyhow::Context;
 use niketsu_core::communicator::*;
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +19,9 @@ pub(super) enum NiketsuMessage {
     /// A client's own status, for the host.
     Status(UserStatusMsg),
     ForcedRename(ForcedRenameMsg),
+    /// A client asks the host to take it into the room. Only the
+    /// communicator sees it.
+    Join,
 }
 
 /// A status means nothing to the core as it is: it needs the peer it is
@@ -39,27 +41,10 @@ impl TryFrom<NiketsuMessage> for IncomingMessage {
             NiketsuMessage::UserMessage(m) => m.into(),
             NiketsuMessage::Playlist(m) => m.into(),
             NiketsuMessage::ForcedRename(m) => m.into(),
-            m @ NiketsuMessage::Status(_) => {
+            m @ (NiketsuMessage::Status(_) | NiketsuMessage::Join) => {
                 anyhow::bail!("Received a message out of place: {m:?}")
             }
         })
-    }
-}
-
-impl TryFrom<NiketsuMessage> for Vec<u8> {
-    type Error = anyhow::Error;
-
-    fn try_from(value: NiketsuMessage) -> anyhow::Result<Vec<u8>> {
-        serde_json::to_vec(&value).context("serde json from_vec failed")
-    }
-}
-
-impl TryFrom<Vec<u8>> for NiketsuMessage {
-    type Error = anyhow::Error;
-
-    fn try_from(value: Vec<u8>) -> anyhow::Result<NiketsuMessage> {
-        let msg = std::str::from_utf8(&value).context("from utf8 failed")?;
-        serde_json::from_str::<NiketsuMessage>(msg).context("serde json from_str failed")
     }
 }
 
@@ -105,8 +90,8 @@ mod tests {
     use super::*;
 
     fn roundtrip(msg: NiketsuMessage) -> NiketsuMessage {
-        let bytes: Vec<u8> = msg.try_into().unwrap();
-        bytes.try_into().unwrap()
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        serde_json::from_slice(&bytes).unwrap()
     }
 
     #[test]
@@ -124,6 +109,7 @@ mod tests {
             NiketsuMessage::ForcedRename(ForcedRenameMsg {
                 name: "bob_2".into(),
             }),
+            NiketsuMessage::Join,
         ];
         for msg in messages {
             assert_eq!(roundtrip(msg.clone()), msg);
@@ -135,8 +121,7 @@ mod tests {
         let msg = NiketsuMessage::Pause(PauseMsg {
             actor: "alice".into(),
         });
-        let bytes: Vec<u8> = msg.try_into().unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "pause");
         assert_eq!(json["actor"], "alice");
     }

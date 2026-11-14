@@ -47,10 +47,12 @@ mod client;
 mod file_share;
 mod host;
 mod links;
+mod member;
 mod order;
 
 pub(crate) use auth::AuthDenied;
 use direct_only::DirectOnly;
+use member::{Membership, Tagged};
 
 /// Result of one iteration of the shared event loop in
 /// [`Role::run`]. Short-lived stack value, consumed
@@ -158,7 +160,8 @@ pub(crate) struct MessagingBehaviour {
 /// P2P file sharing: provider discovery (kademlia + mDNS) and chunk transfer.
 #[derive(NetworkBehaviour)]
 pub(crate) struct FileShareBehaviour {
-    request_response: request_response::cbor::Behaviour<FileShareRequest, FileShareResponseResult>,
+    request_response:
+        request_response::cbor::Behaviour<Tagged<FileShareRequest>, FileShareResponseResult>,
     kademlia: kad::Behaviour<MemoryStore>,
     mdns: Toggle<mdns::tokio::Behaviour>,
 }
@@ -170,8 +173,7 @@ pub(crate) struct Behaviour {
     file_share: DirectOnly<FileShareBehaviour>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct MessageRequest(NiketsuMessage);
+pub(crate) type MessageRequest = Tagged<NiketsuMessage>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MessageResponse(StatusResponse);
@@ -218,6 +220,16 @@ pub(crate) trait Role: Send {
     );
     /// Role-specific swarm events not covered by `dispatch_swarm_event`.
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>);
+
+    /// The answer to a direct request this peer sent.
+    fn on_msg_response(
+        &mut self,
+        peer: PeerId,
+        _request_id: OutboundRequestId,
+        response: MessageResponse,
+    ) {
+        debug!(?response, %peer, "Received response");
+    }
 
     /// Request-response events other than `Message` (role-specific logging).
     fn on_msg_req_resp_other(
@@ -330,10 +342,13 @@ pub(crate) trait Role: Send {
                     warn!(%message_id, "Dropping gossipsub message without signed source");
                     return;
                 };
-                let msg = match NiketsuMessage::try_from(message.data) {
-                    Ok(msg) => msg,
+                let Tagged { tag, msg } = match serde_json::from_slice(&message.data) {
+                    Ok(tagged) => tagged,
                     Err(error) => return error!(%error, "Failed to read broadcast message"),
                 };
+                if !self.session().net.membership.admits(&source, &tag) {
+                    return warn!(%source, "Dropping a broadcast of a peer outside the room");
+                }
                 if self.session().newest.is_stale(source, sequence, &msg) {
                     return debug!(?msg, %source, "Dropping a broadcast that a newer one replaced");
                 }
@@ -353,14 +368,18 @@ pub(crate) trait Role: Send {
                 request_response::Message::Request {
                     request, channel, ..
                 } => {
-                    let req = request.0;
-                    trace!(?req, "Received request");
-                    let res = self.handle_swarm_request(req, channel, peer);
+                    let Tagged { tag, msg } = request;
+                    trace!(?msg, "Received request");
+                    let res = match self.session().net.membership.admits(&peer, &tag) {
+                        true => self.handle_swarm_request(msg, channel, peer),
+                        false => self.session().respond_with_err(msg, channel),
+                    };
                     log_err_msg!(res, "Failed to handle incoming message");
                 }
-                request_response::Message::Response { response, .. } => {
-                    debug!(?response, %peer, "Received response");
-                }
+                request_response::Message::Response {
+                    request_id,
+                    response,
+                } => self.on_msg_response(peer, request_id, response),
             },
             other => self.on_msg_req_resp_other(other),
         }
@@ -372,8 +391,6 @@ pub(super) trait SwarmExt {
     fn gossipsub(&mut self) -> &mut gossipsub::Behaviour;
     fn kademlia(&mut self) -> &mut kad::Behaviour<MemoryStore>;
     fn auth(&mut self) -> &mut auth::AuthBehaviour;
-    fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) -> OutboundRequestId;
-    fn send_file_request(&mut self, peer_id: &PeerId, msg: FileShareRequest) -> OutboundRequestId;
     fn send_message_response(
         &mut self,
         channel: ResponseChannel<MessageResponse>,
@@ -384,7 +401,11 @@ pub(super) trait SwarmExt {
         channel: ResponseChannel<FileShareResponseResult>,
         msg: FileShareResponseResult,
     ) -> Result<()>;
-    fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()>;
+    fn try_broadcast(
+        &mut self,
+        topic: gossipsub::IdentTopic,
+        msg: Tagged<NiketsuMessage>,
+    ) -> Result<()>;
     fn start_providing(&mut self, video: &Video) -> Result<()>;
     fn stop_providing(&mut self, video: &Video);
 }
@@ -402,16 +423,6 @@ impl SwarmExt for Swarm<Behaviour> {
         &mut self.behaviour_mut().transport.auth
     }
 
-    fn send_request(&mut self, peer_id: &PeerId, msg: NiketsuMessage) -> OutboundRequestId {
-        let req_resp = &mut self.behaviour_mut().messaging.inner_mut().request_response;
-        req_resp.send_request(peer_id, MessageRequest(msg))
-    }
-
-    fn send_file_request(&mut self, peer_id: &PeerId, msg: FileShareRequest) -> OutboundRequestId {
-        let req_resp = &mut self.behaviour_mut().file_share.inner_mut().request_response;
-        req_resp.send_request(peer_id, msg)
-    }
-
     fn send_message_response(
         &mut self,
         channel: ResponseChannel<MessageResponse>,
@@ -442,8 +453,12 @@ impl SwarmExt for Swarm<Behaviour> {
         Ok(())
     }
 
-    fn try_broadcast(&mut self, topic: gossipsub::IdentTopic, msg: NiketsuMessage) -> Result<()> {
-        let res = self.gossipsub().publish(topic, Vec::<u8>::try_from(msg)?);
+    fn try_broadcast(
+        &mut self,
+        topic: gossipsub::IdentTopic,
+        msg: Tagged<NiketsuMessage>,
+    ) -> Result<()> {
+        let res = self.gossipsub().publish(topic, serde_json::to_vec(&msg)?);
 
         match res {
             Err(PublishError::NoPeersSubscribedToTopic) => {
@@ -650,9 +665,11 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
+        membership: Membership,
         host: PeerId,
         host_link: HostLink,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
@@ -662,6 +679,7 @@ impl Session {
         let net = Net {
             swarm,
             topic,
+            membership,
             host,
             host_link,
             stop: None,
@@ -711,6 +729,7 @@ impl Session {
 
     pub fn broadcast(&mut self, msg: NiketsuMessage) -> Result<()> {
         let topic = self.net.topic.clone();
+        let msg = self.net.membership.tag(msg);
         self.net.swarm.try_broadcast(topic, msg)
     }
 
@@ -756,6 +775,8 @@ impl Session {
 pub(crate) struct Net {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
+    /// Tags what this peer sends and checks what other peers send.
+    membership: Membership,
     host: PeerId,
     host_link: HostLink,
     /// Set to end the run loop.
@@ -774,6 +795,18 @@ impl Net {
     /// reason given is the one reported.
     pub fn stop(&mut self, why: Stop) {
         self.stop.get_or_insert(why);
+    }
+
+    pub fn send_request(&mut self, peer: &PeerId, msg: NiketsuMessage) -> OutboundRequestId {
+        let msg = self.membership.tag(msg);
+        let messaging = self.swarm.behaviour_mut().messaging.inner_mut();
+        messaging.request_response.send_request(peer, msg)
+    }
+
+    pub fn send_file_request(&mut self, peer: &PeerId, msg: FileShareRequest) -> OutboundRequestId {
+        let msg = self.membership.tag(msg);
+        let file_share = self.swarm.behaviour_mut().file_share.inner_mut();
+        file_share.request_response.send_request(peer, msg)
     }
 
     /// The host's relay circuit, `<host addr>/p2p/HOST/p2p-circuit`: where

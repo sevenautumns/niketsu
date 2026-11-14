@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -16,6 +16,7 @@ use niketsu_core::log_err_msg;
 use tracing::{debug, error, info, warn};
 
 use super::links::{Closed, Opened};
+use super::member::Membership;
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, FileShareBehaviourEvent, HostLink, MessageResponse,
     Role, Session, Stop, SwarmExt,
@@ -26,14 +27,8 @@ pub(crate) struct HostRole {
     session: Session,
     relay_peer_id: PeerId,
     /// The listener on the relay's circuit, which lives as long as the
-    /// reservation there does. Peers join the room through it.
+    /// reservation there does. Peers reach the host through it.
     reservation: ListenerId,
-    /// The peers that joined the room through the host's circuit on the
-    /// relay, which the relay names only to peers that know the room's
-    /// password. A direct connection alone makes no member: mDNS also
-    /// finds peers of other rooms. A member stays one, as its circuit may
-    /// close before its direct connection shows up here.
-    members: HashSet<PeerId>,
     /// Where mDNS found a peer on the local network.
     lan_addrs: HashMap<PeerId, Multiaddr>,
 }
@@ -43,6 +38,7 @@ impl HostRole {
     pub(crate) fn new(
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
+        membership: Membership,
         host: PeerId,
         relay_peer_id: PeerId,
         reservation: ListenerId,
@@ -56,6 +52,7 @@ impl HostRole {
         let session = Session::new(
             swarm,
             topic,
+            membership,
             host,
             HostLink::Local,
             core_receiver,
@@ -66,7 +63,6 @@ impl HostRole {
             session,
             relay_peer_id,
             reservation,
-            members: HashSet::default(),
             lan_addrs: HashMap::default(),
         }
     }
@@ -117,11 +113,9 @@ impl HostRole {
         }
     }
 
-    fn is_member(&self, peer_id: &PeerId) -> bool {
-        self.members.contains(peer_id)
-    }
-
-    /// Takes a linked member into the room.
+    /// Takes a peer that asked to join into the room. A peer joins again
+    /// with each session, also while connections of its previous one are
+    /// open, and is greeted each time.
     fn welcome(&mut self, peer_id: PeerId) {
         let swarm = &mut self.session.net.swarm;
         swarm.gossipsub().add_explicit_peer(&peer_id);
@@ -136,8 +130,7 @@ impl HostRole {
             Playlist(m) => self.session.broadcast(m.into()),
             UserStatusList(m) => self.session.broadcast(m.into()),
             ToPeer(m) => {
-                let swarm = &mut self.session.net.swarm;
-                swarm.send_request(&m.peer, m.message.into());
+                self.session.net.send_request(&m.peer, m.message.into());
                 Ok(())
             }
         }
@@ -171,38 +164,21 @@ impl Role for HostRole {
         if peer_id == self.relay_peer_id {
             return;
         }
-        let was_member = self.is_member(&peer_id);
-        if endpoint.is_relayed() {
-            self.members.insert(peer_id);
-        }
         // A circuit is the client's to close: the client gives up on a host
         // whose circuit closes before the direct connection shows up there.
+        // A connection makes no member; a peer joins with a request.
         match opened {
             Opened::Rendezvous => {
                 debug!(%peer_id, "Client connected via relay; awaiting direct connection");
                 self.dial_on_lan(peer_id);
             }
-            Opened::SpareCircuit => {
-                debug!(%peer_id, "Relay circuit beside a direct connection");
-                if !was_member {
-                    self.welcome(peer_id);
-                }
-            }
-            // A peer keeps its id when it reconnects, and the connections of
-            // its previous session can outlive the start of the next one. So
-            // any direct connection may be a peer starting over that waits
-            // for the room's state, and each one is reported.
+            Opened::SpareCircuit => debug!(%peer_id, "Relay circuit beside a direct connection"),
             Opened::Linked { .. } | Opened::AnotherDirect => {
                 info!(%peer_id, ?endpoint, "Direct connection established");
                 let swarm = &mut self.session.net.swarm;
                 swarm
                     .kademlia()
                     .add_address(&peer_id, endpoint.get_remote_address().clone());
-                if was_member {
-                    self.welcome(peer_id);
-                } else {
-                    debug!(%peer_id, "Peer has not joined the room");
-                }
             }
         }
     }
@@ -224,14 +200,12 @@ impl Role for HostRole {
             }
             return;
         }
-        let was_member = self.is_member(&peer_id);
-        if closed == Closed::Unlinked {
-            self.session.fs_peer_unlinked(peer_id);
-        }
         match closed {
-            Closed::Unlinked if !was_member => debug!(%peer_id, "Bystander disconnected"),
+            // the core forgets a peer that joined, and ignores one that never
+            // did
             Closed::Unlinked => {
-                debug!(%peer_id, ?cause, "Client disconnected");
+                debug!(%peer_id, ?cause, "Peer disconnected");
+                self.session.fs_peer_unlinked(peer_id);
                 // Gossipsub redials disconnected explicit peers forever;
                 // forget departed clients.
                 let swarm = &mut self.session.net.swarm;
@@ -273,10 +247,11 @@ impl Role for HostRole {
     ) -> Result<()> {
         debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
         use NiketsuMessage::*;
-        if !self.is_member(&peer_id) {
-            return self.session.respond_with_err(msg, channel);
-        }
         match msg {
+            Join => {
+                self.welcome(peer_id);
+                self.session.acknowledge(channel)
+            }
             Playlist(m) => self.session.send_to_core(m, channel),
             Status(status) => {
                 let msg = PeerStatusMsg {

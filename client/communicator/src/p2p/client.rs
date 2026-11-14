@@ -2,18 +2,20 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use libp2p::core::ConnectedPoint;
 use libp2p::core::transport::ListenerId;
-use libp2p::request_response::{self, ResponseChannel};
+use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, mdns, ping};
 use niketsu_core::communicator::{
     ClientRequest, ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
 };
+use niketsu_core::log_err_msg;
 use tracing::{debug, info, warn};
 
 use super::links::{Closed, Opened};
+use super::member::Membership;
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, FileShareBehaviourEvent, HostLink, MessageResponse,
-    Role, Session, Stop, SwarmExt, TransportBehaviourEvent,
+    Role, Session, StatusResponse, Stop, SwarmExt, TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
 
@@ -22,22 +24,27 @@ pub(crate) struct ClientRole {
     /// The listener on the host's circuit, which lives as long as the
     /// reservation on the host's relay does.
     host_reservation: Option<ListenerId>,
+    /// The request to join the room, until the host answers it.
+    join: Option<OutboundRequestId>,
 }
 
 impl ClientRole {
     pub(crate) fn new(
         swarm: Swarm<Behaviour>,
         topic: gossipsub::IdentTopic,
+        membership: Membership,
         host: PeerId,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
         chunk_routes: ChunkRoutes,
     ) -> Self {
         // A client starts out with nothing but the circuit to the host being
-        // dialed, and is connected once that led to a direct connection.
+        // dialed, and is connected once that led to a direct connection and
+        // the host took it into the room.
         let session = Session::new(
             swarm,
             topic,
+            membership,
             host,
             HostLink::rendezvous(),
             core_receiver,
@@ -47,6 +54,7 @@ impl ClientRole {
         Self {
             session,
             host_reservation: None,
+            join: None,
         }
     }
 
@@ -97,16 +105,14 @@ impl ClientRole {
         }
     }
 
-    /// The client is connected from here on.
+    /// Asks the host to take this peer into the room.
     fn on_host_linked(&mut self, addr: &Multiaddr) {
         let net = &mut self.session.net;
         net.swarm.kademlia().add_address(&net.host, addr.clone());
         net.host_link = HostLink::direct(addr);
+        let host = net.host;
+        self.join = Some(net.send_request(&host, NiketsuMessage::Join));
         self.reserve_host_circuit();
-        let connected = ConnectedMsg { is_host: false };
-        if let Err(error) = self.session.forward(connected) {
-            warn!(%error, "Failed to send connected message to core");
-        }
     }
 
     /// Reserves a slot on the host's relay, where other clients reach us
@@ -163,7 +169,7 @@ impl ClientRole {
 
     fn send_to_host(&mut self, msg: NiketsuMessage) -> Result<()> {
         let host = self.session.net.host;
-        self.session.net.swarm.send_request(&host, msg);
+        self.session.net.send_request(&host, msg);
         Ok(())
     }
 }
@@ -292,14 +298,48 @@ impl Role for ClientRole {
         }
     }
 
+    fn on_msg_response(
+        &mut self,
+        peer: PeerId,
+        request_id: OutboundRequestId,
+        response: MessageResponse,
+    ) {
+        debug!(?response, %peer, "Received response");
+        if self.join != Some(request_id) {
+            return;
+        }
+        self.join = None;
+        match response.0 {
+            // The client is connected from here on. The core learns of it
+            // only now, so its first requests reach a host that took this
+            // peer in.
+            StatusResponse::Ok => {
+                let res = self.session.forward(ConnectedMsg { is_host: false });
+                log_err_msg!(res, "Failed to send connected message to core");
+            }
+            StatusResponse::Err => {
+                warn!(%peer, "The host refused to take this peer into the room");
+                self.session.net.stop(Stop::HostUnreachable);
+            }
+        }
+    }
+
     fn on_msg_req_resp_other(
         &mut self,
         event: request_response::Event<super::MessageRequest, MessageResponse>,
     ) {
         match event {
-            request_response::Event::OutboundFailure { peer, error, .. } => {
+            request_response::Event::OutboundFailure {
+                peer,
+                request_id,
+                error,
+                ..
+            } => {
                 let host = self.session.net.host;
-                if peer == host {
+                if self.join == Some(request_id) {
+                    warn!(%error, %host, "Failed to join the room");
+                    self.session.net.stop(Stop::HostUnreachable);
+                } else if peer == host {
                     warn!(%error, %peer, %host, "Outbound failure for request response");
                 }
             }

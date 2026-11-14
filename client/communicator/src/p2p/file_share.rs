@@ -18,6 +18,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::oneshot;
 use tracing::{debug, error, warn};
 
+use super::member::Tagged;
 use super::{Net, Session, SwarmExt};
 
 /// Chunks of the local video server requested from the provider and not yet
@@ -47,9 +48,11 @@ pub(crate) enum FileShareRequest {
 
 pub(crate) type FileShareResponseResult = std::result::Result<FileShareResponse, String>;
 
+/// The answer to a file request carries the provider's member tag; the
+/// chunks that follow come from the same peer.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum FileShareResponse {
-    File(FileResponseMsg),
+    File(Tagged<FileResponseMsg>),
     Chunk(ChunkBytes),
 }
 
@@ -219,9 +222,7 @@ impl FileShareConsumer {
             }
         }
 
-        let request = net
-            .swarm
-            .send_file_request(&provider, FileShareRequest::File(request.clone()));
+        let request = net.send_file_request(&provider, FileShareRequest::File(request.clone()));
         self.stage = Stage::Requested { provider, request };
     }
 }
@@ -252,13 +253,22 @@ impl Session {
 
     pub(super) fn fs_req_resp_event(
         &mut self,
-        event: request_response::Event<FileShareRequest, FileShareResponseResult>,
+        event: request_response::Event<Tagged<FileShareRequest>, FileShareResponseResult>,
     ) {
         match event {
-            request_response::Event::Message { message, .. } => match message {
+            request_response::Event::Message { peer, message, .. } => match message {
+                request_response::Message::Request {
+                    request: Tagged { tag, .. },
+                    channel,
+                    ..
+                } if !self.net.membership.admits(&peer, &tag) => {
+                    warn!(%peer, "Refusing a file share request of a peer outside the room");
+                    let resp = Err(String::from("Not a member of the room"));
+                    self.net.swarm.send_file_response(channel, resp).ok();
+                }
                 request_response::Message::Request {
                     request, channel, ..
-                } => match request {
+                } => match request.msg {
                     FileShareRequest::File(msg) => {
                         self.fs_swarm_file_request(msg, channel).ok();
                     }
@@ -270,7 +280,7 @@ impl Session {
                     request_id,
                     response,
                 } => {
-                    self.fs_swarm_response(request_id, response).ok();
+                    self.fs_swarm_response(peer, request_id, response).ok();
                 }
             },
             request_response::Event::OutboundFailure {
@@ -358,7 +368,7 @@ impl Session {
             start,
             len,
         };
-        let request_id = self.net.swarm.send_file_request(&provider, msg);
+        let request_id = self.net.send_file_request(&provider, msg);
         consumer.chunk_requests.insert(request_id, reply);
         Ok(())
     }
@@ -396,7 +406,9 @@ impl Session {
 
     pub(super) fn fs_file_response(&mut self, msg: FileResponseMsg) -> Result<()> {
         debug!(?msg, "Responding to file request ...");
-        self.fs_answer_file_request(msg.uuid, Ok(FileShareResponse::File(msg)))
+        let uuid = msg.uuid;
+        let answer = FileShareResponse::File(self.net.membership.tag(msg));
+        self.fs_answer_file_request(uuid, Ok(answer))
     }
 
     /// The requester's communicator shows the reason to its user.
@@ -475,6 +487,7 @@ impl Session {
 
     fn fs_swarm_response(
         &mut self,
+        peer: PeerId,
         request_id: OutboundRequestId,
         resp: FileShareResponseResult,
     ) -> Result<()> {
@@ -495,7 +508,16 @@ impl Session {
                 }
                 Ok(())
             }
-            Ok(FileShareResponse::File(msg)) => {
+            Ok(FileShareResponse::File(Tagged { tag, .. }))
+                if !self.net.membership.admits(&peer, &tag) =>
+            {
+                warn!(%peer, "A peer outside the room answered the file request");
+                if is_file_request {
+                    self.fs_stop_consuming("Requesting the file from the provider failed");
+                }
+                Ok(())
+            }
+            Ok(FileShareResponse::File(Tagged { msg, .. })) => {
                 self.net.message_sender.send(msg.into())?;
                 Ok(())
             }

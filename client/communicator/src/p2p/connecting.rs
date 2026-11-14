@@ -13,6 +13,7 @@ use tracing::{debug, info, warn};
 use super::auth::{AuthDenied, AuthEvent};
 use super::client::ClientRole;
 use super::host::HostRole;
+use super::member::Membership;
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, Role, SwarmExt, TransportBehaviourEvent, host_relay,
 };
@@ -87,6 +88,7 @@ impl Setup {
             .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
         self.swarm.gossipsub().subscribe(&self.topic)?;
+        let membership = Membership::new(self.room, self.password, &local_peer_id);
 
         let role: Box<dyn Role> = match peer_info.host {
             Some(host_peer_id) => {
@@ -98,6 +100,7 @@ impl Setup {
                 Box::new(ClientRole::new(
                     self.swarm,
                     self.topic,
+                    membership,
                     host_peer_id,
                     self.core_receiver,
                     self.message_sender,
@@ -117,6 +120,7 @@ impl Setup {
                 Box::new(HostRole::new(
                     self.swarm,
                     self.topic,
+                    membership,
                     local_peer_id,
                     peer_info.relay,
                     reservation,
