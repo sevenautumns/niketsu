@@ -4203,6 +4203,7 @@ dependencies = [
  "futures",
  "libp2p",
  "niketsu-core",
+ "niketsu-protocol",
  "niketsu-relay",
  "niketsu-video-server",
  "serde",
@@ -4296,6 +4297,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "niketsu-protocol"
+version = "0.1.0"
+dependencies = [
+ "libp2p",
+ "serde",
+]
+
+[[package]]
 name = "niketsu-ratatui"
 version = "0.1.0"
 dependencies = [
@@ -4335,6 +4344,7 @@ dependencies = [
  "directories",
  "futures",
  "libp2p",
+ "niketsu-protocol",
  "once_cell",
  "serde",
  "serde_with",

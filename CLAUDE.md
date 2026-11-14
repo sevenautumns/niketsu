@@ -47,6 +47,7 @@ client/player/video_server/   niketsu-video-server: HTTP server that feeds mpv f
 client/ui/iced/               niketsu-iced (feature-gated GUI)
 client/ui/ratatui/            niketsu-ratatui (feature-gated TUI)
 relay/                        niketsu-relay (libp2p relay + room/auth server)
+protocol/                     niketsu-protocol: the auth wire types client and relay share
 book/                         mdbook user docs
 ```
 

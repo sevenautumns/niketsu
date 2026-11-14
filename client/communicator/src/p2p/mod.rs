@@ -179,8 +179,7 @@ pub(crate) struct MessageRequest(NiketsuMessage);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MessageResponse(StatusResponse);
 
-/// Whether the receiver took a request. The relay answers auth requests
-/// with the same variant names.
+/// Whether the receiver took a request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum StatusResponse {
     Ok,

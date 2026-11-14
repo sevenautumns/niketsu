@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/build-relay.yml'
       - 'relay/**'
+      - 'protocol/**'
       - 'flake.*'
       - 'go.*'
   push:

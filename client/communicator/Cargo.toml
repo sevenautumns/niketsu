@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 niketsu-core.path = "../core"
+niketsu-protocol.path = "../../protocol"
 anyhow.workspace = true
 arcstr.workspace = true
 tracing.workspace = true

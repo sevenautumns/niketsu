@@ -1,0 +1,13 @@
+[package]
+name = "niketsu-protocol"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[package.metadata.release]
+release = false
+
+[dependencies]
+serde.workspace = true
+libp2p = { workspace = true, features = [ "serde" ] }

@@ -11,7 +11,7 @@ use libp2p::identity::Keypair;
 use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, StreamProtocol, Swarm, identify, noise, ping, relay, tcp, yamux};
-use serde::{Deserialize, Serialize};
+use niketsu_protocol::{AUTH_PROTOCOL, AuthStatus, InitRequest, InitResponse};
 use tracing::debug;
 
 use crate::config::Config;
@@ -22,26 +22,6 @@ struct Behaviour {
     ping: ping::Behaviour,
     identify: identify::Behaviour,
     init_request_response: request_response::cbor::Behaviour<InitRequest, InitResponse>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct InitRequest {
-    room: String,
-    password: String,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    transfer_to: Option<PeerId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum ResponseStatus {
-    Ok,
-    Err,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InitResponse {
-    status: ResponseStatus,
-    peer_id: Option<PeerId>, // peer id of room if found
 }
 
 struct PasswordHash(String);
@@ -153,10 +133,7 @@ pub fn new(config: Config) -> Result<Relay> {
                 key.public(),
             )),
             init_request_response: request_response::cbor::Behaviour::new(
-                [(
-                    StreamProtocol::new("/authorisation/1"),
-                    ProtocolSupport::Full,
-                )],
+                [(StreamProtocol::new(AUTH_PROTOCOL), ProtocolSupport::Full)],
                 request_response::Config::default(),
             ),
         })?
@@ -252,10 +229,10 @@ impl Relay {
 
         if let Some(new_host) = request.transfer_to {
             // Only the current host of the room may transfer it.
-            let mut status = ResponseStatus::Err;
+            let mut status = AuthStatus::Err;
             if self.rooms.transfer(&request.room, peer, new_host) {
                 debug!(%peer, %new_host, room = %request.room, "Host transfer completed");
-                status = ResponseStatus::Ok;
+                status = AuthStatus::Ok;
             }
             self.swarm
                 .behaviour_mut()
@@ -271,7 +248,7 @@ impl Relay {
             return;
         }
 
-        let mut status = ResponseStatus::Ok;
+        let mut status = AuthStatus::Ok;
         let mut peer_id: Option<PeerId> = None;
         if let Some(room) = self.rooms.get(&request.room) {
             if room.password.verify(request.password) {
@@ -282,7 +259,7 @@ impl Relay {
                 }
             } else {
                 debug!("Authentication failed");
-                status = ResponseStatus::Err;
+                status = AuthStatus::Err;
             }
         } else {
             // else no error and query client will be host

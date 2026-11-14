@@ -10,36 +10,20 @@ use libp2p::swarm::{
 };
 use libp2p::{Multiaddr, PeerId, StreamProtocol};
 use niketsu_core::room::RoomName;
-use serde::{Deserialize, Serialize};
+use niketsu_protocol::{AUTH_PROTOCOL, AuthStatus, InitRequest, InitResponse};
 use sha256::digest;
 
-use super::StatusResponse;
 use crate::timing::AUTH_TIMEOUT;
 
 type Inner = request_response::cbor::Behaviour<InitRequest, InitResponse>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InitRequest {
-    room: RoomName,
-    password: String,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    transfer_to: Option<PeerId>,
-}
-
-impl InitRequest {
-    fn new(room: RoomName, password: String) -> Self {
-        Self {
-            room,
-            password: digest(password),
-            transfer_to: None,
-        }
+/// The relay only ever sees a digest of the room's password.
+fn request(room: RoomName, password: String, transfer_to: Option<PeerId>) -> InitRequest {
+    InitRequest {
+        room: room.to_string(),
+        password: digest(password),
+        transfer_to,
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InitResponse {
-    status: StatusResponse,
-    peer_id: Option<PeerId>,
 }
 
 #[derive(Debug)]
@@ -58,7 +42,7 @@ impl AuthBehaviour {
         Self {
             inner: request_response::cbor::Behaviour::new(
                 [(
-                    StreamProtocol::new("/authorisation/1"),
+                    StreamProtocol::new(AUTH_PROTOCOL),
                     // Only the relay serves auth requests; clients never
                     // accept inbound ones.
                     ProtocolSupport::Outbound,
@@ -71,7 +55,7 @@ impl AuthBehaviour {
 
     pub(crate) fn initiate(&mut self, relay: PeerId, room: RoomName, password: String) {
         self.inner
-            .send_request(&relay, InitRequest::new(room, password));
+            .send_request(&relay, request(room, password, None));
         self.relay = Some(relay);
     }
 
@@ -82,14 +66,8 @@ impl AuthBehaviour {
         password: String,
         new_host: PeerId,
     ) {
-        self.inner.send_request(
-            &relay,
-            InitRequest {
-                room,
-                password: digest(password),
-                transfer_to: Some(new_host),
-            },
-        );
+        self.inner
+            .send_request(&relay, request(room, password, Some(new_host)));
         self.relay = Some(relay);
     }
 }
@@ -184,11 +162,11 @@ impl NetworkBehaviour for AuthBehaviour {
                         } => {
                             let Some(relay) = self.relay else { continue };
                             match response.status {
-                                StatusResponse::Ok => AuthEvent::Complete {
+                                AuthStatus::Ok => AuthEvent::Complete {
                                     relay,
                                     host: response.peer_id,
                                 },
-                                StatusResponse::Err => {
+                                AuthStatus::Err => {
                                     AuthEvent::Failed(anyhow!("Authentication failed"))
                                 }
                             }
