@@ -7,9 +7,9 @@ use arcstr::ArcStr;
 use async_trait::async_trait;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::communicator::{
-    ClientRequest, CommunicatorTrait, ConnectedMsg, EndpointInfo, HostInstruction,
-    HostRoundTripMsg, IncomingMessage, NoticeMsg, OutgoingMessage, PeerConnectedMsg,
-    PeerDisconnectedMsg, PeerId, PeerStatusMsg, RoomMessage, VideoProviderStoppedMsg,
+    CommunicatorTrait, ConnectedMsg, EndpointInfo, HostInstruction, HostRoundTripMsg,
+    IncomingMessage, IntentMsg, NoticeMsg, OutgoingMessage, PeerConnectedMsg, PeerDisconnectedMsg,
+    PeerId, PeerIntentMsg, RoomMessage, RoomStateMsg, VideoProviderStoppedMsg,
 };
 use niketsu_core::config::Config;
 use niketsu_core::file_database::{
@@ -39,6 +39,10 @@ pub struct PlayerState {
     /// When true, `load_video` leaves `file_loaded` false until the test
     /// flips it — simulates mpv still opening the file.
     pub load_lag: bool,
+    /// When true, `set_position` only notes the target and the position
+    /// stays until [`PlayerHandle::land_seek`] — simulates mpv seeking.
+    pub seek_lag: bool,
+    seek_target: Option<Duration>,
 }
 
 impl Default for PlayerState {
@@ -50,6 +54,8 @@ impl Default for PlayerState {
             paused: true,
             file_loaded: false,
             load_lag: false,
+            seek_lag: false,
+            seek_target: None,
         }
     }
 }
@@ -64,6 +70,14 @@ impl PlayerHandle {
 
     pub fn set(&self, f: impl FnOnce(&mut PlayerState)) {
         f(&mut self.0.lock().unwrap())
+    }
+
+    /// The player arrives where it was told to seek while `seek_lag` held
+    /// it back.
+    pub fn land_seek(&self) {
+        let mut state = self.0.lock().unwrap();
+        let target = state.seek_target.take().expect("no seek in flight");
+        state.position = target;
     }
 }
 
@@ -101,7 +115,11 @@ impl MediaPlayerTrait for FakePlayer {
     }
 
     fn set_position(&mut self, pos: Duration) {
-        self.lock().position = pos;
+        let mut state = self.lock();
+        match state.seek_lag {
+            true => state.seek_target = Some(pos),
+            false => state.position = pos,
+        }
     }
 
     fn get_position(&mut self) -> Option<Duration> {
@@ -459,6 +477,11 @@ impl Peer {
         self.model.playlist.get_playlist()
     }
 
+    /// Everything this peer sent since the last pump is lost on the way.
+    pub fn lose_messages(&mut self) {
+        self.drain();
+    }
+
     fn drain(&mut self) -> Vec<OutgoingMessage> {
         std::mem::take(&mut self.outbox.lock().unwrap())
     }
@@ -520,7 +543,7 @@ impl Room {
         self.peers.push(peer);
         if index == 0 {
             self.host = index;
-            self.deliver(index, ConnectedMsg { is_host: true }.into());
+            self.deliver(index, ConnectedMsg { is_host: true });
         } else {
             self.connect_client(index);
         }
@@ -531,12 +554,8 @@ impl Room {
     /// communicator reports the peer, the client's reports the connection.
     fn connect_client(&mut self, index: usize) {
         let peer = self.peers[index].id;
-        self.deliver(self.host, PeerConnectedMsg { peer }.into());
-        self.deliver(index, ConnectedMsg { is_host: false }.into());
-    }
-
-    fn deliver(&mut self, to: usize, msg: IncomingMessage) {
-        msg.handle(&mut self.peers[to].model)
+        self.deliver(self.host, PeerConnectedMsg { peer });
+        self.deliver(index, ConnectedMsg { is_host: false });
     }
 
     fn index_of(&self, id: &PeerId) -> Option<usize> {
@@ -550,7 +569,7 @@ impl Room {
     pub fn rehost(&mut self, target: usize) {
         assert!(self.peers[target].online, "an offline peer hosts no room");
         self.host = target;
-        self.deliver(target, ConnectedMsg { is_host: true }.into());
+        self.deliver(target, ConnectedMsg { is_host: true });
         for index in 0..self.peers.len() {
             if index != target && self.peers[index].online {
                 self.connect_client(index);
@@ -564,12 +583,12 @@ impl Room {
         self.peers[index].online = false;
         self.peers[index].drain();
         let peer = self.peers[index].id;
-        self.deliver(self.host, PeerDisconnectedMsg { peer }.into());
+        self.deliver(self.host, PeerDisconnectedMsg { peer });
     }
 
     /// A ping to the host answered after `rtt`.
     pub fn round_trip(&mut self, index: usize, rtt: Duration) {
-        self.deliver(index, HostRoundTripMsg { rtt }.into());
+        self.deliver(index, HostRoundTripMsg { rtt });
     }
 
     /// Every peer's pacemaker ticks once, clients first so the host's
@@ -582,6 +601,23 @@ impl Room {
         }
         let host = self.host;
         self.peers[host].heartbeat();
+    }
+
+    /// The host's pacemaker ticks, and the network holds the state it
+    /// publishes back: the test delivers it, late, with [`Room::deliver`].
+    pub fn held_heartbeat(&mut self) -> RoomStateMsg {
+        let host = self.host;
+        assert!(self.peers[host].drain().is_empty(), "pump before holding");
+        self.peers[host].heartbeat();
+        match self.peers[host].drain().as_slice() {
+            [OutgoingMessage::Host(HostInstruction::RoomState(state))] => state.clone(),
+            other => panic!("a heartbeat publishes one state, not {other:?}"),
+        }
+    }
+
+    /// A message reaches `to` the moment the test says so.
+    pub fn deliver(&mut self, to: usize, msg: impl Into<IncomingMessage>) {
+        msg.into().handle(&mut self.peers[to].model)
     }
 
     pub fn peer(&mut self, index: usize) -> &mut Peer {
@@ -626,10 +662,9 @@ impl Room {
     }
 
     /// The transport rules of `client/communicator`:
-    /// - gossip reaches every other peer; a VideoStatus is only accepted
-    ///   when its signed source is the host
-    /// - a client's playlist and status are requests to the host; the
-    ///   host's playlist and user list are gossip
+    /// - gossip reaches every other peer; the room state and the action
+    ///   lines are only accepted when their signed source is the host
+    /// - a client's intent is a request to the host
     /// - `ToPeer` is a direct request to exactly that peer
     /// - file requests travel directly between requester and the provider
     ///   announced via VideoShareChange (kademlia + direct request-response
@@ -660,9 +695,8 @@ impl Room {
                 .collect()
         };
         match msg {
-            HostInstruction::VideoStatus(m) => others(m.into()),
-            HostInstruction::Playlist(m) => others(m.into()),
-            HostInstruction::UserStatusList(m) => others(m.into()),
+            HostInstruction::RoomState(m) => others(m.into()),
+            HostInstruction::Action(m) => others(m.into()),
             HostInstruction::ToPeer(m) => match self.index_of(&m.peer) {
                 Some(to) => vec![(to, m.message.into())],
                 None => vec![],
@@ -671,14 +705,9 @@ impl Room {
     }
 
     /// A client's requests go directly to the host.
-    fn route_request(&mut self, from: usize, msg: ClientRequest) -> Vec<(usize, IncomingMessage)> {
-        match msg {
-            ClientRequest::Playlist(m) => vec![(self.host, m.into())],
-            ClientRequest::UserStatus(status) => {
-                let peer = self.peers[from].id;
-                vec![(self.host, PeerStatusMsg { peer, status }.into())]
-            }
-        }
+    fn route_request(&mut self, from: usize, intent: IntentMsg) -> Vec<(usize, IncomingMessage)> {
+        let peer = self.peers[from].id;
+        vec![(self.host, PeerIntentMsg { peer, intent }.into())]
     }
 
     fn route_room(&mut self, from: usize, msg: RoomMessage) -> Vec<(usize, IncomingMessage)> {
@@ -689,11 +718,6 @@ impl Room {
                 .collect()
         };
         match msg {
-            RoomMessage::Start(m) => others(m.into()),
-            RoomMessage::Pause(m) => others(m.into()),
-            RoomMessage::PlaybackSpeed(m) => others(m.into()),
-            RoomMessage::Seek(m) => others(m.into()),
-            RoomMessage::Select(m) => others(m.into()),
             RoomMessage::UserMessage(m) => others(m.into()),
             RoomMessage::VideoShareChange(m) => match m.video {
                 Some(_) => {

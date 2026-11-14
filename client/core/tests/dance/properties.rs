@@ -192,9 +192,9 @@ proptest! {
     /// the host on paused/playing, and no video server keeps running when
     /// no provider is announced.
     ///
-    /// The marker assertion guards the select_playing fix: keeping a stale
-    /// marker on an out-of-playlist Select made present peers disagree with
-    /// later joiners, who only get the last Select replayed.
+    /// The marker assertion guards select_playing: keeping a stale marker
+    /// for a video outside the playlist makes present peers disagree with
+    /// later joiners, who derive it from the room's state.
     #[test]
     fn any_dance_converges(actions in prop::collection::vec(action(), 1..40)) {
         let rt = tokio::runtime::Builder::new_current_thread()

@@ -6,7 +6,7 @@ use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, mdns, ping};
 use niketsu_core::communicator::{
-    ClientRequest, ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
+    ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
 };
 use niketsu_core::log_err_msg;
 use tracing::{debug, info, warn};
@@ -264,15 +264,10 @@ impl Role for ClientRole {
         if peer_id != self.session.net.host {
             return self.session.respond_with_err(msg, channel);
         }
-        if self.session.newest.greeting_is_stale(&msg) {
-            debug!("Dropping the greeting's state, a broadcast was newer");
-            return self.session.acknowledge(channel);
-        }
         // what the host addresses to a single peer, see `DirectMessage`
         use NiketsuMessage::*;
         match msg {
-            Playlist(m) => self.session.send_to_core(m, channel),
-            Select(m) => self.session.send_to_core(m, channel),
+            RoomState(m) => self.session.send_to_core(m, channel),
             ForcedRename(m) => self.session.send_to_core(m, channel),
             other => self.session.respond_with_err(other, channel),
         }
@@ -286,13 +281,9 @@ impl Role for ClientRole {
         debug!(message = ?niketsu_msg, %source, "Received broadcast");
         use NiketsuMessage::*;
         match niketsu_msg {
-            // only the host's clock is a reference for the room
-            VideoStatus(_) if source != self.session.net.host => {
-                bail!("Received video status from non-host peer: {source:?}")
-            }
-            Select(msg) => {
-                self.session.fs_end();
-                self.session.forward(msg)
+            // only the host speaks for the room
+            RoomState(_) | Action(_) if source != self.session.net.host => {
+                bail!("Received the room's state from non-host peer: {source:?}")
             }
             other => self.session.forward(IncomingMessage::try_from(other)?),
         }
@@ -354,8 +345,7 @@ impl Role for ClientRole {
         debug!(?msg, host = %self.session.net.host, peer = %self.session.net.swarm.local_peer_id(), "Handling core message");
         match msg {
             OutgoingMessage::Room(m) => self.session.route_room_message(m),
-            OutgoingMessage::Client(ClientRequest::Playlist(m)) => self.send_to_host(m.into()),
-            OutgoingMessage::Client(ClientRequest::UserStatus(m)) => self.send_to_host(m.into()),
+            OutgoingMessage::Client(m) => self.send_to_host(m.into()),
             OutgoingMessage::Host(m) => self.session.drop_for_other_role(m),
         }
     }

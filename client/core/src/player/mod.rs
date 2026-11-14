@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use tracing::{trace, warn};
 
-use super::communicator::{PauseMsg, PlaybackSpeedMsg, SeekMsg, SelectMsg, StartMsg};
+use super::communicator::Intent;
 use super::playlist::Video;
 use super::{CoreModel, EventHandler};
 use crate::FilePathSearch;
@@ -50,18 +50,13 @@ pub struct PlayerPause;
 impl EventHandler for PlayerPause {
     fn handle(self, model: &mut CoreModel) {
         trace!("player pause");
+        model.request(Intent::Pause);
         model.ready = false;
         model.ui.user_update(crate::ui::UserChange {
             name: model.config.username.clone(),
             ready: false,
         });
         model.publish_status();
-        model.communicator.send(
-            PauseMsg {
-                actor: model.config.username.clone(),
-            }
-            .into(),
-        )
     }
 }
 
@@ -71,34 +66,25 @@ pub struct PlayerStart;
 impl EventHandler for PlayerStart {
     fn handle(self, model: &mut CoreModel) {
         trace!("player start");
+        model.request(Intent::Start);
         model.ready = true;
         model.ui.user_update(crate::ui::UserChange {
             name: model.config.username.clone(),
             ready: true,
         });
         model.publish_status();
-        model.communicator.send(
-            StartMsg {
-                actor: model.config.username.clone(),
-            }
-            .into(),
-        )
     }
 }
 
+/// The player waits for its cache to fill, and the room with it. The user
+/// stays as ready as before.
 #[derive(Debug, Clone)]
 pub struct PlayerCachePause;
 
 impl EventHandler for PlayerCachePause {
     fn handle(self, model: &mut CoreModel) {
         trace!("player cache pause");
-        model.publish_status();
-        model.communicator.send(
-            PauseMsg {
-                actor: model.config.username.clone(),
-            }
-            .into(),
-        )
+        model.request(Intent::Pause);
     }
 }
 
@@ -119,21 +105,8 @@ impl EventHandler for PlayerPositionChange {
         let Some(video) = model.player.playing_video() else {
             return;
         };
-        // keep the seeker's own marker in sync with what SeekMsg receivers
-        // derive from this message, or the room's markers diverge
-        model.playlist.select_playing(&video);
-        model.save_playlist();
-        let actor = model.config.username.clone();
         let position = self.pos;
-
-        model.communicator.send(
-            SeekMsg {
-                actor,
-                video,
-                position,
-            }
-            .into(),
-        );
+        model.request(Intent::Seek { video, position });
     }
 }
 
@@ -151,14 +124,7 @@ impl PlayerSpeedChange {
 impl EventHandler for PlayerSpeedChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("player speed change");
-        let speed = self.speed;
-        // adopt the new speed as our own reference too, or the next host
-        // heartbeat reconciles us right back to the old one
-        model.player.sync_host_speed(speed);
-        let actor = model.config.username.clone();
-        model
-            .communicator
-            .send(PlaybackSpeedMsg { actor, speed }.into());
+        model.request(Intent::Speed(self.speed));
     }
 }
 
@@ -180,15 +146,9 @@ impl EventHandler for PlayerFileEnd {
             return;
         }
 
-        let video = model.playlist.advance_to_next();
-        model.select_video(video.as_ref(), Duration::ZERO);
-        let actor = model.config.username.clone();
-        let position = model.player.get_position().unwrap_or_default();
-        model.publish_select(SelectMsg {
-            actor,
-            video,
-            position,
-        });
+        let video = model.playlist.next_video();
+        let position = Duration::ZERO;
+        model.request(Intent::Select { video, position });
     }
 }
 

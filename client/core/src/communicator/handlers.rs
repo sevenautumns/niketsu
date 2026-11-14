@@ -1,12 +1,10 @@
 //! What the core does with each message the communicator hands it.
 
 use arcstr::ArcStr;
-use tracing::{debug, trace};
+use tracing::trace;
 
 use super::OutgoingMessage;
 use super::messages::*;
-use crate::player::MediaPlayerTrait;
-use crate::room::UserList;
 use crate::sync::ClientSync;
 use crate::ui::PlayerMessage;
 use crate::{CoreModel, EventHandler};
@@ -20,7 +18,8 @@ impl EventHandler for ConnectedMsg {
             model.host = None;
         }
         model.joined_room = Some(model.config.room.clone());
-        // round trips of an earlier connection say nothing about this one
+        // round trips and states of an earlier connection say nothing about
+        // this one: a new host counts its versions anew
         model.sync = ClientSync::default();
         model.publish_status();
         model.ui.is_host(self.is_host);
@@ -42,10 +41,10 @@ impl EventHandler for PeerDisconnectedMsg {
     }
 }
 
-impl EventHandler for PeerStatusMsg {
+impl EventHandler for PeerIntentMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!(peer = %self.peer, status = ?self.status, "peer status");
-        model.peer_status(self.peer, self.status);
+        trace!(peer = %self.peer, intent = ?self.intent, "peer intent");
+        model.handle_intent(Some(self.peer), self.intent);
     }
 }
 
@@ -56,111 +55,17 @@ impl EventHandler for HostRoundTripMsg {
     }
 }
 
-impl EventHandler for VideoStatusMsg {
+impl EventHandler for RoomStateMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!("received video status for reconciliation");
-
-        if model.sync.is_seeking() {
-            debug!("can not determine client position during seek");
-            return;
-        }
-
-        // PlaybackSpeed only announces a change, so the heartbeat is the only
-        // place the room's speed is repeated: a peer that joined a session
-        // already running at another speed learns it here, and would otherwise
-        // keep playing at its own speed and drift out of sync every few
-        // seconds. The speed is independent of what is loaded, so it is
-        // adopted even while the host has no video.
-        model.player.set_speed(self.speed);
-
-        let (Some(pos), Some(video)) = (self.position, self.video) else {
-            trace!("video status sent without position or video: unloading video");
-            // Only the player stops. What is selected, marked in the
-            // playlist and shared changes with a Select, which the host
-            // sends once; this repeats twice a second.
-            model.player.unload_video();
-            return;
-        };
-
-        // The host's clock says nothing about another video than its own.
-        let other_video = model.player.playing_video().as_ref() != Some(&video);
-        if model.sync.host_plays_other_video(other_video) {
-            debug!(?video, "following the host to the video it plays");
-            model.select_video(Some(&video), pos);
-            let notice = NoticeMsg::new(format!("Following the host to {}", video.as_str()));
-            model.ui.player_message(notice.into());
-        }
-        if other_video {
-            return;
-        }
-
-        // The host is only a valid play/position reference once it has the file
-        // loaded. While it is still loading it reports a stale paused=false and
-        // a frozen position from the previous video — following either would
-        // start our (possibly faster-loaded) copy and then yank it back every
-        // heartbeat. Hold paused and wait until the host is actually playing.
-        if !self.file_loaded {
-            model.player.pause();
-            return;
-        }
-
-        if let Some(paused) = model.player.is_paused() {
-            match (paused, self.paused) {
-                (true, false) => model.player.start(),
-                (false, true) => model.player.pause(),
-                _ => {}
-            }
-        }
-
-        let pos = model.sync.host_position(pos, self.paused);
-        model.player.reconcile(pos)
+        trace!(order = ?self.order(), "received room state");
+        model.follow_room(self);
     }
 }
 
-impl EventHandler for UserStatusListMsg {
+impl EventHandler for ActionMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!("received user status list");
-        model.ui.user_list(UserList::from(self));
-    }
-}
-
-impl EventHandler for StartMsg {
-    fn handle(self, model: &mut CoreModel) {
-        trace!("received start");
-        model.player.start();
-        model.ui.player_message(PlayerMessage::from(self))
-    }
-}
-
-impl EventHandler for PauseMsg {
-    fn handle(self, model: &mut CoreModel) {
-        trace!("received pause");
-        model.player.pause();
-        model.ui.player_message(PlayerMessage::from(self))
-    }
-}
-
-impl EventHandler for PlaybackSpeedMsg {
-    fn handle(self, model: &mut CoreModel) {
-        trace!("received speed change");
-        model.player.set_speed(self.speed);
-        model.ui.player_message(PlayerMessage::from(self))
-    }
-}
-
-impl EventHandler for SeekMsg {
-    fn handle(self, model: &mut CoreModel) {
-        trace!(seek = ?self, "received");
-        model.sync.seek_started();
-        model.receive_seek(&self);
-        model.ui.player_message(PlayerMessage::from(self));
-    }
-}
-
-impl EventHandler for SelectMsg {
-    fn handle(self, model: &mut CoreModel) {
-        trace!(select = ?self, "received");
-        model.receive_select(self);
+        trace!(action = ?self.0, "received");
+        model.show_action(&self.0);
     }
 }
 
@@ -175,13 +80,6 @@ impl EventHandler for NoticeMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(notice = ?self, "received");
         model.ui.player_message(PlayerMessage::from(self))
-    }
-}
-
-impl EventHandler for PlaylistMsg {
-    fn handle(self, model: &mut CoreModel) {
-        trace!("received playlist");
-        model.receive_playlist(self);
     }
 }
 

@@ -11,7 +11,7 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tracing::{Level, trace};
 
-use super::communicator::{PlaylistMsg, SelectMsg, UserMessageMsg};
+use super::communicator::{Intent, UserMessageMsg};
 use super::player::MediaPlayerTrait;
 use super::playlist::Video;
 use super::user::UserStatus;
@@ -63,11 +63,7 @@ pub struct PlaylistChange {
 impl EventHandler for PlaylistChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("playlist change message");
-        let actor = model.config.username.clone();
-        let playlist = self.playlist.clone();
-
-        model.replace_playlist(self.playlist);
-        model.publish_playlist(PlaylistMsg { actor, playlist })
+        model.request(Intent::Playlist(self.playlist));
     }
 }
 
@@ -79,14 +75,9 @@ pub struct VideoChange {
 impl EventHandler for VideoChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video change message");
-        let actor = model.config.username.clone();
-        let position = Duration::ZERO;
-        model.select_video(Some(&self.video), position);
-
-        model.publish_select(SelectMsg {
-            actor,
+        model.request(Intent::Select {
             video: Some(self.video),
-            position,
+            position: Duration::ZERO,
         });
     }
 }
@@ -622,7 +613,7 @@ mod tests {
 
     use super::*;
     use crate::builder::CoreBuilder;
-    use crate::communicator::{EndpointInfo, MockCommunicatorTrait, OutgoingMessage};
+    use crate::communicator::{EndpointInfo, IntentMsg, MockCommunicatorTrait, OutgoingMessage};
     use crate::config::Config;
     use crate::file_database::MockFileDatabaseTrait;
     use crate::player::MockMediaPlayerTrait;
@@ -700,9 +691,12 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(UserStatus {
-            ready,
-            name: user_new.clone(),
+        let message = OutgoingMessage::from(IntentMsg {
+            actor: user_new.clone(),
+            intent: Intent::Status(UserStatus {
+                ready,
+                name: user_new.clone(),
+            }),
         });
 
         communicator

@@ -14,23 +14,16 @@ impl PlaylistHandler {
         self.playlist.playlist.get(self.playing?).cloned()
     }
 
-    pub fn advance_to_next(&mut self) -> Option<Video> {
-        if let Some(playing) = self.playing.as_mut() {
-            *playing += 1
-        }
-        let video = self.get_current_video();
-        // past the end the marker must clear, not dangle: a later, longer
-        // playlist would resurrect a dangling index as a phantom selection
-        if video.is_none() {
-            self.playing = None;
-        }
-        video
+    /// The video after the one playing. Selecting it moves the marker, so
+    /// the marker stays where the playing video is on every peer.
+    pub fn next_video(&self) -> Option<Video> {
+        self.playlist.playlist.get(self.playing? + 1).cloned()
     }
 
     /// Clears the marker when the video is not in the playlist, so every
-    /// peer — including later joiners, who only get the last Select
-    /// replayed — agrees on "nothing selected" instead of some peers
-    /// keeping a stale marker.
+    /// peer — including later joiners, who only get the room's state —
+    /// agrees on "nothing selected" instead of some peers keeping a stale
+    /// marker.
     pub fn select_playing(&mut self, video: &Video) {
         self.playing = self.playlist.find(video);
     }
@@ -57,11 +50,11 @@ mod tests {
 
     #[test]
     fn test_initial_state() {
-        let mut handler = PlaylistHandler::default();
+        let handler = PlaylistHandler::default();
         // Ensure no video is playing initially.
         assert_eq!(handler.get_current_video(), None);
-        // Ensure advancing to the next video when no video is playing returns None.
-        assert_eq!(handler.advance_to_next(), None);
+        // Ensure there is no next video when no video is playing.
+        assert_eq!(handler.next_video(), None);
     }
 
     #[test]
@@ -77,10 +70,9 @@ mod tests {
         // Select the first video to play and verify it's playing.
         handler.select_playing(&video1);
         assert_eq!(handler.get_current_video(), Some(video1.clone()));
-        // Advance to the next video and ensure it's Video 2.
-        assert_eq!(handler.advance_to_next(), Some(video2.clone()));
-        // Verify the current video is Video 2.
-        assert_eq!(handler.get_current_video(), Some(video2.clone()));
+        // The next video is Video 2, and Video 1 stays marked.
+        assert_eq!(handler.next_video(), Some(video2.clone()));
+        assert_eq!(handler.get_current_video(), Some(video1.clone()));
     }
 
     #[test]
@@ -95,16 +87,12 @@ mod tests {
     }
 
     #[test]
-    fn test_advance_past_end_clears_marker_for_good() {
+    fn test_no_next_video_past_the_end() {
         let mut handler = PlaylistHandler::default();
         handler.replace(Playlist::from_iter(["Video 1"]));
         handler.select_playing(&Video::from("Video 1"));
 
-        assert_eq!(handler.advance_to_next(), None);
-
-        // a longer playlist must not resurrect the expired marker
-        handler.replace(Playlist::from_iter(["Video 2", "Video 3"]));
-        assert_eq!(handler.get_current_video(), None);
+        assert_eq!(handler.next_video(), None);
     }
 
     #[test]

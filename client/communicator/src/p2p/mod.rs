@@ -48,7 +48,6 @@ mod file_share;
 mod host;
 mod links;
 mod member;
-mod order;
 
 pub(crate) use auth::AuthDenied;
 use direct_only::DirectOnly;
@@ -337,8 +336,7 @@ pub(crate) trait Role: Send {
                 );
                 // propagation_source is only the last hop in the gossip mesh;
                 // the signed source identifies the actual author.
-                let (Some(source), Some(sequence)) = (message.source, message.sequence_number)
-                else {
+                let Some(source) = message.source else {
                     warn!(%message_id, "Dropping gossipsub message without signed source");
                     return;
                 };
@@ -348,9 +346,6 @@ pub(crate) trait Role: Send {
                 };
                 if !self.session().net.membership.admits(&source, &tag) {
                     return warn!(%source, "Dropping a broadcast of a peer outside the room");
-                }
-                if self.session().newest.is_stale(source, sequence, &msg) {
-                    return debug!(?msg, %source, "Dropping a broadcast that a newer one replaced");
                 }
                 let res = self.handle_swarm_broadcast(msg, source);
                 log_err_msg!(res, "Failed to handle broadcast message");
@@ -659,9 +654,6 @@ pub(crate) struct Session {
     /// hears what each one means for the link to its peer.
     links: Links,
     file_share: Option<FileShare>,
-    /// Answers whether a broadcast or the host's greeting is older than
-    /// state already applied.
-    newest: order::Newest,
 }
 
 impl Session {
@@ -693,24 +685,16 @@ impl Session {
             net,
             links: Links::default(),
             file_share: None,
-            newest: order::Newest::default(),
         }
     }
 
-    /// Routing shared by both roles: room-wide gossip and file sharing.
+    /// Routing shared by both roles: room-wide gossip and file sharing. A
+    /// new selection ends the share of the old video with the
+    /// `VideoShareChange` the core sends for every selection.
     pub fn route_room_message(&mut self, msg: RoomMessage) -> Result<()> {
         use RoomMessage::*;
         match msg {
-            Start(msg) => self.broadcast(msg.into()),
-            Pause(msg) => self.broadcast(msg.into()),
-            PlaybackSpeed(msg) => self.broadcast(msg.into()),
-            Seek(msg) => self.broadcast(msg.into()),
             UserMessage(msg) => self.broadcast(msg.into()),
-            Select(msg) => {
-                // a new selection ends whatever file share ran for the old one
-                self.fs_end();
-                self.broadcast(msg.into())
-            }
             FileRequest(msg) => self.fs_file_request(msg),
             FileResponse(msg) => self.fs_file_response(msg),
             FileDecline(msg) => self.fs_file_decline(msg),

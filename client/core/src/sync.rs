@@ -1,13 +1,22 @@
-//! Client-side inputs for following the host's clock: how far the host's
-//! reported position lags behind by the time it arrives, and whether a seek
-//! is still settling.
+//! Judging the room's state as it reaches a client: which state is newer,
+//! when this client's own intents are still on their way, and how far the
+//! host's clock lags behind by the time it arrives. On the host's side, the
+//! position it reports while its own player is still jumping.
 
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use crate::communicator::RoomStateMsg;
+
 /// Number of round-trip samples the delay estimate is taken over. The
 /// communicator pings the host once a second, so this covers the last ten.
 const DELAY_WINDOW: usize = 10;
+
+/// How many newer states a client ignores while an intent of its own is
+/// pending. The host publishes with every heartbeat, so this bounds how
+/// long an intent the host never handled keeps the client apart from the
+/// room.
+const PENDING_STATES: u8 = 4;
 
 /// Round-trip samples to the host, of which the estimate is the *minimum*:
 /// congestion and scheduling only ever add to a round-trip time, so the
@@ -40,65 +49,90 @@ impl HostDelay {
     }
 }
 
-/// What a client needs to judge the host's heartbeats.
+/// Intents this client sent that the host has not answered yet. The local
+/// player already did what they ask, and a state the host published before
+/// handling them would undo it.
+#[derive(Debug, Clone, Copy)]
+struct Pending {
+    /// The first version that can include every one of them: the host
+    /// bumps the version once for each intent it handles.
+    until: u64,
+    /// Newer states still to ignore before giving up on them.
+    states: u8,
+}
+
+/// What a client needs to judge the host's room states. Belongs to one
+/// connection: a new host counts its versions anew.
 #[derive(Debug, Default, Clone)]
 pub struct ClientSync {
     pub delay: HostDelay,
-    /// Set when a seek arrives from the room. Until the local player has
-    /// actually moved, its position says nothing about where the seek
-    /// landed, and a host heartbeat sent before the host applied the seek
-    /// would drag us back; host heartbeats are ignored meanwhile.
-    seeking: bool,
-    /// The local position seen by the last heartbeat that observed a change.
-    last_position: Option<Duration>,
-    /// Host heartbeats in a row that named another video than the one
-    /// playing here.
-    other_video_beats: u8,
+    /// The counters of the state applied last.
+    applied: Option<Counters>,
+    pending: Option<Pending>,
 }
 
-/// How many host heartbeats in a row have to name another video before a
-/// client follows the host to it. A selection and the heartbeats around it
-/// cross on the way: the host's next heartbeat or two still name the old
-/// video after a client selected a new one, and following those would load
-/// the old video again only to drop it a moment later. A video the host
-/// names this often is not such a crossing: this client missed the
-/// selection or lost a race, and nothing but the heartbeat will tell it.
-const FOLLOW_HOST_VIDEO_AFTER: u8 = 3;
+#[derive(Debug, Clone, Copy)]
+struct Counters {
+    version: u64,
+    beat: u64,
+    jumps: u64,
+}
+
+impl From<&RoomStateMsg> for Counters {
+    fn from(state: &RoomStateMsg) -> Self {
+        Self {
+            version: state.version,
+            beat: state.beat,
+            jumps: state.jumps,
+        }
+    }
+}
+
+/// How an admitted state differs from the one applied before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Admitted {
+    /// The position jumped, so it is to be taken exactly.
+    pub jumped: bool,
+    /// A new version, not only a heartbeat: what is not repeated with
+    /// every heartbeat, like the user list, may have changed.
+    pub changed: bool,
+}
 
 impl ClientSync {
-    pub fn seek_started(&mut self) {
-        self.seeking = true;
+    /// Notes an intent sent to the host while the state applied here is
+    /// the latest known.
+    pub fn intent_sent(&mut self) {
+        let applied = self.applied.map_or(0, |applied| applied.version);
+        let sent_before = self.pending.map_or(applied, |p| p.until.max(applied));
+        self.pending = Some(Pending {
+            until: sent_before + 1,
+            states: PENDING_STATES,
+        });
     }
 
-    pub fn is_seeking(&self) -> bool {
-        self.seeking
-    }
-
-    /// Fed with the local position on every heartbeat. A changed position
-    /// means the player is running again after a seek; without any position
-    /// there is no seek left to settle, and waiting for one to change would
-    /// shut the host out for good.
-    pub fn observe_local_position(&mut self, position: Option<Duration>) {
-        if position.is_none() || position != self.last_position {
-            self.seeking = false;
-            self.last_position = position;
+    /// Whether `state` is to be applied, and how it differs from the state
+    /// applied before. A state no newer than the applied one is dropped; so
+    /// is one that predates the pending intents, until they expire.
+    pub fn admit(&mut self, state: &RoomStateMsg) -> Option<Admitted> {
+        if let Some(applied) = self.applied
+            && state.order() <= (applied.version, applied.beat)
+        {
+            return None;
         }
-    }
-
-    /// Fed with whether a host heartbeat named another video than the one
-    /// playing here. True once it is time to follow the host to its video,
-    /// see [`FOLLOW_HOST_VIDEO_AFTER`].
-    pub fn host_plays_other_video(&mut self, other: bool) -> bool {
-        if !other {
-            self.other_video_beats = 0;
-            return false;
+        if let Some(pending) = &mut self.pending
+            && state.version < pending.until
+            && pending.states > 0
+        {
+            pending.states -= 1;
+            return None;
         }
-        self.other_video_beats += 1;
-        if self.other_video_beats < FOLLOW_HOST_VIDEO_AFTER {
-            return false;
-        }
-        self.other_video_beats = 0;
-        true
+        self.pending = None;
+        let admitted = Admitted {
+            jumped: self.applied.is_none_or(|a| a.jumps != state.jumps),
+            changed: self.applied.is_none_or(|a| a.version != state.version),
+        };
+        self.applied = Some(state.into());
+        Some(admitted)
     }
 
     /// The host's reported position, shifted by how long it was underway.
@@ -112,9 +146,40 @@ impl ClientSync {
     }
 }
 
+/// A jump of the host's player to `target`. Until the player has moved, its
+/// position says nothing about where the jump lands, and the room is told
+/// the target instead.
+#[derive(Debug, Clone, Copy)]
+pub struct Jump {
+    target: Duration,
+    /// What the player reported right after it was told to jump.
+    before: Option<Duration>,
+}
+
+impl Jump {
+    pub fn new(target: Duration, before: Option<Duration>) -> Self {
+        Self { target, before }
+    }
+
+    /// The position to tell the room while the player reports `reported`,
+    /// or `None` once the player has moved and its own position counts. A
+    /// player without any position has nothing left to land.
+    pub fn position(&self, reported: Option<Duration>) -> Option<Duration> {
+        (reported.is_some() && reported == self.before).then_some(self.target)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn state(version: u64, beat: u64) -> RoomStateMsg {
+        RoomStateMsg {
+            version,
+            beat,
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn no_samples_means_no_correction() {
@@ -172,45 +237,77 @@ mod tests {
     }
 
     #[test]
-    fn seek_gate_opens_once_the_local_position_moves() {
+    fn only_a_newer_state_is_applied() {
         let mut sync = ClientSync::default();
-        sync.observe_local_position(Some(Duration::from_secs(5)));
-
-        sync.seek_started();
-        assert!(sync.is_seeking());
-
-        // the player has not moved yet
-        sync.observe_local_position(Some(Duration::from_secs(5)));
-        assert!(sync.is_seeking());
-
-        sync.observe_local_position(Some(Duration::from_secs(60)));
-        assert!(!sync.is_seeking());
+        assert!(sync.admit(&state(3, 7)).is_some());
+        assert!(sync.admit(&state(3, 7)).is_none(), "the same state again");
+        assert!(sync.admit(&state(3, 6)).is_none(), "an older heartbeat");
+        assert!(sync.admit(&state(2, 9)).is_none(), "an older version");
+        assert!(sync.admit(&state(3, 8)).is_some());
+        assert!(sync.admit(&state(4, 8)).is_some());
     }
 
     #[test]
-    fn the_host_is_followed_to_a_video_it_keeps_naming() {
+    fn a_state_from_before_the_hosts_answer_is_ignored() {
         let mut sync = ClientSync::default();
-        assert!(!sync.host_plays_other_video(true));
-        assert!(!sync.host_plays_other_video(true));
-        assert!(sync.host_plays_other_video(true));
+        sync.admit(&state(3, 7));
+        sync.intent_sent();
+
+        assert!(sync.admit(&state(3, 8)).is_none());
+        assert!(sync.admit(&state(4, 9)).is_some(), "the host answered");
+        assert!(sync.admit(&state(4, 10)).is_some());
     }
 
     #[test]
-    fn a_heartbeat_that_crossed_a_selection_is_not_followed() {
+    fn every_pending_intent_has_to_be_answered() {
         let mut sync = ClientSync::default();
-        assert!(!sync.host_plays_other_video(true));
-        assert!(!sync.host_plays_other_video(true));
-        // the host caught up with the selection
-        assert!(!sync.host_plays_other_video(false));
-        assert!(!sync.host_plays_other_video(true));
+        sync.admit(&state(3, 7));
+        sync.intent_sent();
+        sync.intent_sent();
+
+        assert!(
+            sync.admit(&state(4, 7)).is_none(),
+            "only the first answered"
+        );
+        assert!(sync.admit(&state(5, 7)).is_some());
     }
 
     #[test]
-    fn seek_gate_opens_when_nothing_is_loaded() {
+    fn an_unanswered_intent_expires() {
         let mut sync = ClientSync::default();
-        sync.seek_started();
+        sync.admit(&state(3, 0));
+        sync.intent_sent();
 
-        sync.observe_local_position(None);
-        assert!(!sync.is_seeking(), "an empty player has no seek to settle");
+        for beat in 1..=u64::from(PENDING_STATES) {
+            assert!(sync.admit(&state(3, beat)).is_none());
+        }
+        assert!(sync.admit(&state(3, 9)).is_some(), "the intent was lost");
+        assert!(sync.admit(&state(3, 10)).is_some());
+    }
+
+    #[test]
+    fn a_jump_or_a_new_version_is_reported() {
+        let mut sync = ClientSync::default();
+        let first = sync.admit(&state(1, 0)).unwrap();
+        assert!(first.jumped && first.changed, "nothing applied yet");
+
+        let beat = sync.admit(&state(1, 1)).unwrap();
+        assert!(!beat.jumped && !beat.changed);
+
+        let mut seek = state(2, 1);
+        seek.jumps = 1;
+        let seek = sync.admit(&seek).unwrap();
+        assert!(seek.jumped && seek.changed);
+    }
+
+    #[test]
+    fn a_jump_reports_its_target_until_the_player_moves() {
+        let jump = Jump::new(Duration::from_secs(300), Some(Duration::from_secs(10)));
+        assert_eq!(
+            jump.position(Some(Duration::from_secs(10))),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(jump.position(Some(Duration::from_secs(300))), None);
+        assert_eq!(jump.position(None), None, "an empty player lands nothing");
     }
 }

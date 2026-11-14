@@ -1,9 +1,9 @@
 //! The room as this core takes part in it. The host keeps the authoritative
 //! [`HostRoom`] and decides everything the room agrees on: who is in it,
-//! what a peer joining later is greeted with, forced renames, when playback
-//! starts, which video follows a removed one, and what a fresh room starts
-//! from. A client forwards its own changes to the host and follows what the
-//! room sends it.
+//! forced renames, when playback starts, which video follows a removed one,
+//! and what a fresh room starts from. Every user, the host's own included,
+//! asks for a change with an [`Intent`]; the host applies it to its own
+//! player and publishes the room's state, which a client follows.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -12,15 +12,16 @@ use arcstr::ArcStr;
 use multiaddr::PeerId;
 use tracing::{debug, warn};
 
+use crate::CoreModel;
 pub(crate) use crate::UserStatusListMsg;
 use crate::communicator::{
-    ClientRequest, DirectMessage, ForcedRenameMsg, HostInstruction, OutgoingMessage, PlaylistMsg,
-    SeekMsg, SelectMsg, StartMsg, ToPeerMsg,
+    ActionMsg, DirectMessage, ForcedRenameMsg, Intent, IntentMsg, OutgoingMessage, RoomStateMsg,
+    ToPeerMsg,
 };
 use crate::player::MediaPlayerTrait;
-use crate::ui::PlayerMessage;
+use crate::playlist::{Playlist, Video};
+use crate::sync::Jump;
 pub(crate) use crate::user::UserStatus;
-use crate::{CoreModel, EventHandler};
 
 mod users;
 
@@ -69,49 +70,35 @@ impl From<UserStatusListMsg> for UserList {
     }
 }
 
-/// The authoritative room state the host keeps and replays to peers that
-/// join later: the playlist, the current selection (whose position follows
-/// the host's own heartbeats), and who is in the room.
+/// What the host keeps of the room beside its own playlist and player: who
+/// is in it, and the counters that order its states.
 #[derive(Debug, Clone)]
 pub struct HostRoom {
     pub users: RoomUsers,
-    pub playlist: PlaylistMsg,
-    pub select: SelectMsg,
+    version: u64,
+    beat: u64,
+    jumps: u64,
+    /// The last jump of the host's player, while it has not landed.
+    jump: Option<Jump>,
 }
 
 impl HostRoom {
-    pub fn new(room: RoomName, playlist: PlaylistMsg, select: SelectMsg) -> Self {
+    pub fn new(room: RoomName) -> Self {
         Self {
             users: RoomUsers::new(room),
-            playlist,
-            select,
+            version: 0,
+            beat: 0,
+            jumps: 0,
+            jump: None,
         }
     }
 
-    /// The name a peer goes by in the room, for messages the host issues on
-    /// the peer's behalf. A peer that has not told its name yet has none, so
-    /// the host acts in its own.
-    pub fn actor_of(&self, peer: &PeerId) -> ArcStr {
-        match self.users.peer_status(peer) {
-            Some(Some(status)) => status.name.clone(),
-            Some(None) | None => HOST_ACTOR,
-        }
-    }
-
-    /// Admits a directly connected peer and returns what greets it: the
-    /// room's playlist and selection for the peer, and the user list for the
-    /// room. A peer connecting again is greeted again.
-    pub fn greet(&mut self, peer: PeerId) -> [OutgoingMessage; 3] {
+    /// Admits a directly connected peer. A peer connecting again keeps its
+    /// place.
+    pub fn admit(&mut self, peer: PeerId) {
         if !self.users.contains(&peer) {
             self.users.add_connected(peer);
         }
-        let users = self.users.status_list().clone();
-        debug!(?users, %peer, "greeting peer with the room state");
-        [
-            ToPeerMsg::new(peer, DirectMessage::Playlist(self.playlist.clone())).into(),
-            ToPeerMsg::new(peer, DirectMessage::Select(self.select.clone())).into(),
-            users.into(),
-        ]
     }
 
     /// Applies a peer's own status. Returns the forced rename to send back
@@ -122,31 +109,23 @@ impl HostRoom {
         Some(ToPeerMsg::new(peer, DirectMessage::Rename(rename)).into())
     }
 
-    /// Takes `msg` as the room's playlist. Returns the selection the room
-    /// moves on to when the playlist lost the selected video.
-    pub fn adopt_playlist(&mut self, msg: PlaylistMsg) -> Option<SelectMsg> {
-        let next = select_next(&self.playlist, &self.select, &msg);
-        self.playlist = msg;
-        if let Some(select) = &next {
-            self.select = select.clone();
+    /// The host's player was told to jump to `target`, and reported
+    /// `before` right after.
+    pub fn jumped(&mut self, target: Duration, before: Option<Duration>) {
+        self.jumps += 1;
+        self.jump = Some(Jump::new(target, before));
+    }
+
+    /// The room's position while the host's player reports `reported`.
+    pub fn position(&mut self, reported: Option<Duration>) -> Duration {
+        if let Some(target) = self.jump.and_then(|jump| jump.position(reported)) {
+            return target;
         }
-        next
-    }
-
-    pub fn adopt_select(&mut self, msg: SelectMsg) {
-        self.select = msg;
-    }
-
-    /// Playback starts for the whole room once every user, the host
-    /// included, is ready.
-    pub fn start_if_all_ready(&self, actor: ArcStr) -> Option<StartMsg> {
-        self.users.all_ready().then_some(StartMsg { actor })
+        self.jump = None;
+        reported.unwrap_or_default()
     }
 }
 
-/// How this core takes part in the room. For its own changes a client sends
-/// a request to the host, while the host adopts the change into the room
-/// directly; everything a host decides on the room's behalf is here too.
 impl CoreModel {
     pub fn is_host(&self) -> bool {
         self.host.is_some()
@@ -158,50 +137,28 @@ impl CoreModel {
     /// saved playlist.
     pub(crate) fn become_host(&mut self) {
         let room = self.config.room.clone();
-        let select = if self.joined_room.as_ref() == Some(&room) {
-            SelectMsg {
-                actor: HOST_ACTOR,
-                position: self.player.get_position().unwrap_or_default(),
-                video: self.player.playing_video(),
-            }
-        } else {
+        if self.joined_room.as_ref() != Some(&room) {
             let saved = (self.saved_playlist)(&room).unwrap_or_default();
-            let select = SelectMsg {
-                actor: HOST_ACTOR,
-                position: Duration::ZERO,
-                video: saved.get_current_video(),
-            };
-            self.apply_playlist(PlaylistMsg {
-                actor: HOST_ACTOR,
-                playlist: saved.get_playlist(),
-            });
-            self.apply_select(select.clone());
-            select
-        };
-        let playlist = PlaylistMsg {
-            actor: HOST_ACTOR,
-            playlist: self.playlist.get_playlist(),
-        };
-        self.host = Some(HostRoom::new(room, playlist, select));
+            self.show_playlist(saved.get_playlist());
+            self.select_video(saved.get_current_video().as_ref(), Duration::ZERO);
+        }
+        self.host = Some(HostRoom::new(room));
     }
 
-    /// The host greets a peer that is reachable over a direct connection.
+    /// The host greets a peer that is reachable over a direct connection
+    /// with the room's state.
     pub(crate) fn greet_peer(&mut self, peer: PeerId) {
         let Some(host) = &mut self.host else {
             debug!(%peer, "ignoring peer connection as a client");
             return;
         };
-        // The selection's position follows the heartbeats and lags behind a
-        // seek since the last one. A peer greeted with it would start there
-        // and, that far behind, have the room wait for it.
-        if self.player.playing_video() == host.select.video
-            && let Some(position) = self.player.get_position()
-        {
-            host.select.position = position;
-        }
-        for msg in host.greet(peer) {
-            self.communicator.send(msg);
-        }
+        host.admit(peer);
+        let Some(state) = self.room_state() else {
+            return;
+        };
+        debug!(%peer, ?state, "greeting peer with the room state");
+        let greeting = ToPeerMsg::new(peer, DirectMessage::RoomState(state));
+        self.communicator.send(greeting.into());
     }
 
     /// The host drops a peer whose last connection closed.
@@ -210,185 +167,268 @@ impl CoreModel {
             return;
         };
         if host.users.remove(&peer) {
-            self.publish_user_list();
+            self.publish_change();
         } else {
             debug!(%peer, "disconnected peer was not in the room");
         }
     }
 
-    /// The host applies a peer's own status.
-    pub(crate) fn peer_status(&mut self, peer: PeerId, status: UserStatus) {
-        let Some(host) = &mut self.host else {
-            warn!(%peer, "received a peer status without being the host");
+    /// Asks the room for what this core's user did, which the local player
+    /// or UI already shows. The host handles it like a peer's intent.
+    pub fn request(&mut self, intent: Intent) {
+        let msg = IntentMsg {
+            actor: self.config.username.clone(),
+            intent,
+        };
+        if self.is_host() {
+            return self.handle_intent(None, msg);
+        }
+        self.apply_intent(&msg.intent);
+        self.sync.intent_sent();
+        self.communicator.send(msg.into());
+    }
+
+    /// Announces our own status.
+    pub fn publish_status(&mut self) {
+        self.request(Intent::Status(self.config.status(self.ready)));
+    }
+
+    /// The host handles what a user asks of the room, a peer's intent or,
+    /// without `peer`, its own user's, and publishes the outcome.
+    pub(crate) fn handle_intent(&mut self, peer: Option<PeerId>, msg: IntentMsg) {
+        if !self.is_host() {
+            warn!(?msg, "received an intent without being the host");
             return;
+        }
+        let playlist = self.playlist.get_playlist();
+        let video = self.player.playing_video();
+        self.apply_intent(&msg.intent);
+        self.tell(msg.clone());
+        let IntentMsg { actor, intent } = msg;
+        let mut start = false;
+        match intent {
+            Intent::Seek { position, .. } | Intent::Select { position, .. } => {
+                self.host_jumped(position)
+            }
+            Intent::Playlist(new) => self.select_next(&playlist, video.as_ref(), &new),
+            Intent::Status(status) => {
+                self.host_status(peer, status);
+                start = true;
+            }
+            Intent::Pause | Intent::Start | Intent::Speed(_) => {}
+        }
+        // a new video starts paused, so a ready room starts it
+        if start || self.player.playing_video() != video {
+            self.start_if_all_ready(actor);
+        }
+        self.publish_change();
+    }
+
+    /// Brings the local player and playlist in line with what `intent` asks
+    /// of the room.
+    fn apply_intent(&mut self, intent: &Intent) {
+        match intent {
+            Intent::Pause => self.player.pause(),
+            Intent::Start => self.player.start(),
+            Intent::Speed(speed) => self.player.set_speed(*speed),
+            Intent::Seek { video, position } => self.jump(Some(video), *position),
+            Intent::Select { video, position } => self.jump(video.as_ref(), *position),
+            Intent::Playlist(playlist) => self.show_playlist(playlist.clone()),
+            Intent::Status(_) => {}
+        }
+    }
+
+    /// Moves the player to `position` in `video`, which it loads unless it
+    /// plays it already.
+    fn jump(&mut self, video: Option<&Video>, position: Duration) {
+        if self.player.playing_video().as_ref() != video {
+            return self.select_video(video, position);
+        }
+        if self.player.get_position().is_some_and(|p| p != position) {
+            self.player.set_position(position);
+        }
+    }
+
+    fn show_playlist(&mut self, playlist: Playlist) {
+        self.replace_playlist(playlist.clone());
+        self.ui.playlist(playlist);
+    }
+
+    /// The host's player jumped to `target` for the room.
+    fn host_jumped(&mut self, target: Duration) {
+        let before = self.player.get_position();
+        if let Some(host) = &mut self.host {
+            host.jumped(target, before);
+        }
+    }
+
+    /// If the playlist lost the video playing, the host moves the room on
+    /// to the one that took its place.
+    fn select_next(&mut self, old: &Playlist, video: Option<&Video>, new: &Playlist) {
+        let Some(next) = select_next(old, video, new) else {
+            return;
+        };
+        self.jump(Some(&next), Duration::ZERO);
+        self.host_jumped(Duration::ZERO);
+        self.tell(IntentMsg {
+            actor: HOST_ACTOR,
+            intent: Intent::Select {
+                video: Some(next),
+                position: Duration::ZERO,
+            },
+        });
+    }
+
+    fn host_status(&mut self, peer: Option<PeerId>, status: UserStatus) {
+        let Some(host) = &mut self.host else {
+            return;
+        };
+        let Some(peer) = peer else {
+            return host.users.update_local(status);
         };
         if let Some(rename) = host.peer_status(peer, status) {
             self.communicator.send(rename);
         }
-        let actor = host.actor_of(&peer);
-        self.start_if_all_ready(actor);
-        self.publish_user_list();
     }
 
-    /// Shows a playlist that arrived from the room (or was restored).
-    pub(crate) fn apply_playlist(&mut self, msg: PlaylistMsg) {
-        self.replace_playlist(msg.playlist.clone());
-        self.ui.playlist(msg.playlist.clone());
-        self.ui.player_message(PlayerMessage::from(msg));
-    }
-
-    /// Plays a selection that arrived from the room (or was restored).
-    pub(crate) fn apply_select(&mut self, msg: SelectMsg) {
-        self.select_video(msg.video.as_ref(), msg.position);
-        self.ui.player_message(PlayerMessage::from(msg));
-    }
-
-    /// A playlist from the room: a client follows it; the host also adopts a
-    /// client's edit and passes it on, since it reaches the room only
-    /// through the host.
-    pub(crate) fn receive_playlist(&mut self, msg: PlaylistMsg) {
-        self.apply_playlist(msg.clone());
-        if self.is_host() {
-            self.communicator
-                .send(HostInstruction::Playlist(msg.clone()).into());
-            self.host_adopt_playlist(msg);
-        }
-    }
-
-    /// A selection from the room, which the host also adopts.
-    pub(crate) fn receive_select(&mut self, msg: SelectMsg) {
-        self.apply_select(msg.clone());
-        self.host_adopt_select(msg);
-    }
-
-    /// A seek from the room. Within the running video it only moves the
-    /// player. Into another video it is a selection of that video, which
-    /// the host also adopts, so a peer joining later is greeted with the
-    /// video the room plays. Whether playback starts stays with the seek's
-    /// sender: the host does not start the room over it.
-    pub(crate) fn receive_seek(&mut self, msg: &SeekMsg) {
-        if self.player.playing_video().as_ref() == Some(&msg.video) {
-            self.playlist.select_playing(&msg.video);
-            self.save_playlist();
-            self.player.set_position(msg.position);
-            return;
-        }
-        self.select_video(Some(&msg.video), msg.position);
-        if let Some(host) = &mut self.host {
-            host.adopt_select(SelectMsg {
-                actor: msg.actor.clone(),
-                position: msg.position,
-                video: Some(msg.video.clone()),
-            });
-        }
-    }
-
-    /// Announces our own status: a client tells the host, the host updates
-    /// the room directly.
-    pub fn publish_status(&mut self) {
-        let status = self.config.status(self.ready);
-        let Some(host) = &mut self.host else {
-            self.communicator
-                .send(ClientRequest::UserStatus(status).into());
-            return;
-        };
-        let actor = status.name.clone();
-        host.users.update_local(status);
-        self.start_if_all_ready(actor);
-        self.publish_user_list();
-    }
-
-    /// Our own playlist edit, already applied locally.
-    pub fn publish_playlist(&mut self, msg: PlaylistMsg) {
-        if !self.is_host() {
-            self.communicator.send(ClientRequest::Playlist(msg).into());
-            return;
-        }
-        self.host_adopt_playlist(msg.clone());
-        self.communicator
-            .send(HostInstruction::Playlist(msg).into());
-    }
-
-    /// Our own selection, already applied locally.
-    pub fn publish_select(&mut self, msg: SelectMsg) {
-        self.communicator.send(msg.clone().into());
-        self.host_adopt_select(msg);
-    }
-
-    /// The host takes `msg` as the room's playlist. If the playlist lost the
-    /// selected video, the host moves the room on to the one that took its
-    /// place.
-    fn host_adopt_playlist(&mut self, msg: PlaylistMsg) {
-        let Some(host) = &mut self.host else {
-            return;
-        };
-        let actor = msg.actor.clone();
-        let next = host.adopt_playlist(msg);
-        let Some(select) = next else {
-            return;
-        };
-        self.apply_select(select.clone());
-        self.communicator.send(select.into());
-        self.start_if_all_ready(actor);
-    }
-
-    fn host_adopt_select(&mut self, msg: SelectMsg) {
-        let Some(host) = &mut self.host else {
-            return;
-        };
-        let actor = msg.actor.clone();
-        host.adopt_select(msg);
-        self.start_if_all_ready(actor);
-    }
-
+    /// Playback starts for the whole room once every user, the host
+    /// included, is ready.
     fn start_if_all_ready(&mut self, actor: ArcStr) {
-        let Some(start) = self
-            .host
-            .as_ref()
-            .and_then(|host| host.start_if_all_ready(actor))
-        else {
+        if !self.host.as_ref().is_some_and(|h| h.users.all_ready()) {
             return;
-        };
+        }
         debug!("All users are ready. Starting playback for the room");
-        self.communicator.send(start.clone().into());
-        start.handle(self);
+        self.player.start();
+        self.tell(IntentMsg {
+            actor,
+            intent: Intent::Start,
+        });
     }
 
-    /// The host shows the room's user list and sends it to the room.
-    fn publish_user_list(&mut self) {
-        let Some(host) = &self.host else {
+    /// The host tells the room's chat what it did for `msg`.
+    fn tell(&mut self, msg: IntentMsg) {
+        if msg.chat_line().is_none() {
+            return;
+        }
+        self.show_action(&msg);
+        self.communicator.send(ActionMsg(msg).into());
+    }
+
+    /// A line in the chat for what the host did. Its own actor knows.
+    pub(crate) fn show_action(&mut self, msg: &IntentMsg) {
+        if msg.actor == self.config.username {
+            return;
+        }
+        if let Some(line) = msg.chat_line() {
+            self.ui.player_message(line);
+        }
+    }
+
+    /// The host publishes the room after a change.
+    fn publish_change(&mut self) {
+        let Some(host) = &mut self.host else {
             return;
         };
-        let list = host.users.status_list().clone();
-        self.ui.user_list(UserList::from(list.clone()));
-        self.communicator.send(list.into());
+        host.version += 1;
+        let users = host.users.status_list().clone();
+        self.ui.user_list(UserList::from(users));
+        self.publish_room();
+    }
+
+    /// The host's heartbeat refreshes the room's clock.
+    pub(crate) fn publish_beat(&mut self) {
+        let Some(host) = &mut self.host else {
+            return;
+        };
+        host.beat += 1;
+        self.publish_room();
+    }
+
+    fn publish_room(&mut self) {
+        if let Some(state) = self.room_state() {
+            self.communicator.send(state.into());
+        }
+    }
+
+    /// The room as the host has it: its own playlist and player, and who is
+    /// in the room.
+    fn room_state(&mut self) -> Option<RoomStateMsg> {
+        let reported = self.player.get_position();
+        let host = self.host.as_mut()?;
+        Some(RoomStateMsg {
+            version: host.version,
+            beat: host.beat,
+            jumps: host.jumps,
+            playlist: self.playlist.get_playlist(),
+            video: self.player.playing_video(),
+            position: host.position(reported),
+            paused: self.player.is_paused().unwrap_or(true),
+            speed: self.player.host_speed(),
+            file_loaded: self.player.video_loaded(),
+            users: host.users.status_list().clone(),
+        })
+    }
+
+    /// A client brings itself in line with the room's state.
+    pub(crate) fn follow_room(&mut self, state: RoomStateMsg) {
+        if self.is_host() {
+            return warn!("ignoring a room state as the host");
+        }
+        let Some(admitted) = self.sync.admit(&state) else {
+            return debug!(order = ?state.order(), "ignoring a room state");
+        };
+        if state.playlist != self.playlist.get_playlist() {
+            self.show_playlist(state.playlist);
+        }
+        self.player.set_speed(state.speed);
+        let position = self.sync.host_position(state.position, state.paused);
+        if admitted.jumped || self.player.playing_video() != state.video {
+            self.jump(state.video.as_ref(), position);
+        }
+        if admitted.changed {
+            self.ui.user_list(UserList::from(state.users));
+        }
+        // While the host is still loading it reports the play state and
+        // position of the previous video. Following either would start our
+        // copy and yank it back with every state.
+        if !state.file_loaded {
+            return self.player.pause();
+        }
+        match (self.player.is_paused(), state.paused) {
+            (Some(true), false) => self.player.start(),
+            (Some(false), true) => self.player.pause(),
+            _ => {}
+        }
+        if !admitted.jumped {
+            self.player.reconcile(position);
+        }
     }
 }
 
-/// When the playlist shrank and the currently selected video was removed,
-/// picks the video that took its place by walking the common prefix of the
-/// old and new playlist.
+/// When the playlist shrank and the video playing was removed, picks the
+/// video that took its place by walking the common prefix of the old and
+/// new playlist.
 pub fn select_next(
-    current_playlist: &PlaylistMsg,
-    current_select: &SelectMsg,
-    new_playlist: &PlaylistMsg,
-) -> Option<SelectMsg> {
-    if new_playlist.playlist.len() >= current_playlist.playlist.len() {
+    current_playlist: &Playlist,
+    current_video: Option<&Video>,
+    new_playlist: &Playlist,
+) -> Option<Video> {
+    if new_playlist.len() >= current_playlist.len() {
         return None;
     }
 
     let mut new_position = 0;
-    let max_len = new_playlist.playlist.len();
-    if let Some(current_video) = current_select.video.clone() {
-        for old_video in current_playlist.playlist.iter() {
-            if let Some(new_video) = new_playlist.playlist.get(new_position) {
+    let max_len = new_playlist.len();
+    if let Some(current_video) = current_video {
+        for old_video in current_playlist.iter() {
+            if let Some(new_video) = new_playlist.get(new_position) {
                 debug!(?current_video, ?new_video, "Current video and old");
-                if *new_video == current_video {
+                if new_video == current_video {
                     // No need to select if current video is still in playlist
                     return None;
                 }
 
-                if *old_video == current_video {
+                if old_video == current_video {
                     break;
                 }
 
@@ -404,19 +444,13 @@ pub fn select_next(
         }
     }
 
-    let new_select = new_playlist.playlist.get(new_position)?;
-    Some(SelectMsg {
-        actor: HOST_ACTOR,
-        position: Duration::ZERO,
-        video: Some(new_select.clone()),
-    })
+    new_playlist.get(new_position).cloned()
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::playlist::Video;
 
     #[test]
     fn test_len() {
@@ -470,23 +504,12 @@ mod tests {
         assert!(user_list.iter().any(|user| user.name == "User1"));
     }
 
-    fn playlist_msg(videos: &[&str]) -> PlaylistMsg {
-        PlaylistMsg {
-            actor: arcstr::literal!("test"),
-            playlist: videos.iter().copied().collect(),
-        }
+    fn playlist(videos: &[&str]) -> Playlist {
+        videos.iter().copied().collect()
     }
 
-    fn select_msg(video: Option<&str>) -> SelectMsg {
-        SelectMsg {
-            actor: arcstr::literal!("test"),
-            position: Duration::ZERO,
-            video: video.map(Video::from),
-        }
-    }
-
-    fn selected(result: Option<SelectMsg>) -> Option<String> {
-        result.and_then(|s| s.video).map(|v| v.as_str().to_string())
+    fn selected(result: Option<Video>) -> Option<String> {
+        result.map(|v| v.as_str().to_string())
     }
 
     fn peer(n: u8) -> PeerId {
@@ -494,92 +517,94 @@ mod tests {
     }
 
     #[test]
-    fn greeting_admits_the_peer_once_and_replays_the_room() {
-        let mut room = HostRoom::new("room".into(), playlist_msg(&["a"]), select_msg(Some("a")));
+    fn admitting_a_peer_again_keeps_its_place() {
+        let mut room = HostRoom::new("room".into());
         let bob = peer(2);
 
-        let greeting = room.greet(bob);
-        room.greet(bob);
+        room.admit(bob);
+        room.peer_status(
+            bob,
+            UserStatus {
+                name: "bob".into(),
+                ready: true,
+            },
+        );
+        room.admit(bob);
 
-        assert!(room.users.is_connected_user(&bob));
-        assert_eq!(
-            greeting[0],
-            ToPeerMsg::new(bob, DirectMessage::Playlist(playlist_msg(&["a"]))).into()
-        );
-        assert_eq!(
-            greeting[1],
-            ToPeerMsg::new(bob, DirectMessage::Select(select_msg(Some("a")))).into()
-        );
+        assert!(!room.users.is_connected_user(&bob), "bob's status stays");
+        assert_eq!(room.users.status_list().users.len(), 1);
     }
 
     #[test]
-    fn adopting_a_playlist_without_the_selected_video_moves_on() {
-        let mut room = HostRoom::new(
-            "room".into(),
-            playlist_msg(&["a", "b", "c"]),
-            select_msg(Some("b")),
+    fn the_room_is_told_a_jumps_target_until_the_player_moved() {
+        let mut room = HostRoom::new("room".into());
+        let (before, target) = (Duration::from_secs(10), Duration::from_secs(300));
+
+        room.jumped(target, Some(before));
+        assert_eq!(room.position(Some(before)), target);
+
+        let moved = Duration::from_secs(301);
+        assert_eq!(room.position(Some(moved)), moved);
+        assert_eq!(
+            room.position(Some(before)),
+            before,
+            "a landed jump is not told again"
         );
-
-        let next = room.adopt_playlist(playlist_msg(&["a", "c"]));
-
-        assert_eq!(selected(next), Some("c".into()));
-        assert_eq!(room.select.video, Some(Video::from("c")));
-        assert_eq!(room.playlist, playlist_msg(&["a", "c"]));
     }
 
     #[test]
     fn select_next_ignores_grown_or_equal_playlist() {
-        let old = playlist_msg(&["a", "b"]);
-        let select = select_msg(Some("a"));
+        let old = playlist(&["a", "b"]);
+        let a = Video::from("a");
 
-        assert!(select_next(&old, &select, &playlist_msg(&["a", "b"])).is_none());
-        assert!(select_next(&old, &select, &playlist_msg(&["a", "b", "c"])).is_none());
+        assert!(select_next(&old, Some(&a), &playlist(&["a", "b"])).is_none());
+        assert!(select_next(&old, Some(&a), &playlist(&["a", "b", "c"])).is_none());
     }
 
     #[test]
     fn select_next_keeps_current_video_if_still_present() {
-        let old = playlist_msg(&["a", "b", "c"]);
-        let select = select_msg(Some("b"));
+        let old = playlist(&["a", "b", "c"]);
+        let b = Video::from("b");
 
-        assert!(select_next(&old, &select, &playlist_msg(&["a", "b"])).is_none());
+        assert!(select_next(&old, Some(&b), &playlist(&["a", "b"])).is_none());
     }
 
     #[test]
     fn select_next_picks_successor_when_current_removed_in_middle() {
-        let old = playlist_msg(&["a", "b", "c"]);
-        let select = select_msg(Some("b"));
+        let old = playlist(&["a", "b", "c"]);
+        let b = Video::from("b");
 
-        let result = select_next(&old, &select, &playlist_msg(&["a", "c"]));
+        let result = select_next(&old, Some(&b), &playlist(&["a", "c"]));
 
         assert_eq!(selected(result), Some("c".into()));
     }
 
     #[test]
     fn select_next_picks_new_first_when_current_removed_at_start() {
-        let old = playlist_msg(&["a", "b", "c"]);
-        let select = select_msg(Some("a"));
+        let old = playlist(&["a", "b", "c"]);
+        let a = Video::from("a");
 
-        let result = select_next(&old, &select, &playlist_msg(&["b", "c"]));
+        let result = select_next(&old, Some(&a), &playlist(&["b", "c"]));
 
         assert_eq!(selected(result), Some("b".into()));
     }
 
     #[test]
     fn select_next_picks_last_when_current_removed_at_end() {
-        let old = playlist_msg(&["a", "b", "c"]);
-        let select = select_msg(Some("c"));
+        let old = playlist(&["a", "b", "c"]);
+        let c = Video::from("c");
 
-        let result = select_next(&old, &select, &playlist_msg(&["a", "b"]));
+        let result = select_next(&old, Some(&c), &playlist(&["a", "b"]));
 
         assert_eq!(selected(result), Some("b".into()));
     }
 
     #[test]
     fn select_next_returns_none_for_emptied_playlist() {
-        let old = playlist_msg(&["a"]);
-        let select = select_msg(Some("a"));
+        let old = playlist(&["a"]);
+        let a = Video::from("a");
 
-        assert!(select_next(&old, &select, &playlist_msg(&[])).is_none());
+        assert!(select_next(&old, Some(&a), &playlist(&[])).is_none());
     }
 
     // Documents current behavior: with nothing selected, any shrink of the
@@ -587,10 +612,9 @@ mod tests {
     // open question; see select_next.
     #[test]
     fn select_next_without_selection_picks_first_video() {
-        let old = playlist_msg(&["a", "b", "c"]);
-        let select = select_msg(None);
+        let old = playlist(&["a", "b", "c"]);
 
-        let result = select_next(&old, &select, &playlist_msg(&["a", "b"]));
+        let result = select_next(&old, None, &playlist(&["a", "b"]));
 
         assert_eq!(selected(result), Some("a".into()));
     }

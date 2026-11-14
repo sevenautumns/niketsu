@@ -24,49 +24,24 @@ impl From<ConnectedMsg> for PlayerMessage {
     }
 }
 
-impl From<StartMsg> for PlayerMessage {
-    fn from(value: StartMsg) -> Self {
-        let actor = value.actor;
-        let message = format!("{actor} started playback");
-        action(actor, message)
-    }
-}
-
-impl From<PauseMsg> for PlayerMessage {
-    fn from(value: PauseMsg) -> Self {
-        let actor = value.actor;
-        let message = format!("{actor} paused playback");
-        action(actor, message)
-    }
-}
-
-impl From<PlaybackSpeedMsg> for PlayerMessage {
-    fn from(value: PlaybackSpeedMsg) -> Self {
-        let actor = value.actor;
-        let speed = value.speed;
-        let message = format!("{actor} changed playback speed to {speed}");
-        action(actor, message)
-    }
-}
-
-impl From<SeekMsg> for PlayerMessage {
-    fn from(value: SeekMsg) -> Self {
-        let actor = value.actor;
-        let position = value.position;
-        let message = format!("{actor} seeked to {position:?}");
-        action(actor, message)
-    }
-}
-
-impl From<SelectMsg> for PlayerMessage {
-    fn from(value: SelectMsg) -> Self {
-        let actor = value.actor;
-        let message = if let Some(video) = value.video {
-            format!("{actor} selected {}", video.as_str())
-        } else {
-            format!("{actor} unselected video")
+impl IntentMsg {
+    /// The line telling the room what the host did for this intent. A
+    /// user's status gets none, the user list shows it.
+    pub(crate) fn chat_line(&self) -> Option<PlayerMessage> {
+        let actor = &self.actor;
+        let message = match &self.intent {
+            Intent::Pause => format!("{actor} paused playback"),
+            Intent::Start => format!("{actor} started playback"),
+            Intent::Speed(speed) => format!("{actor} changed playback speed to {speed}"),
+            Intent::Seek { position, .. } => format!("{actor} seeked to {position:?}"),
+            Intent::Select {
+                video: Some(video), ..
+            } => format!("{actor} selected {}", video.as_str()),
+            Intent::Select { video: None, .. } => format!("{actor} unselected video"),
+            Intent::Playlist(_) => format!("{actor} changed playlist"),
+            Intent::Status(_) => return None,
         };
-        action(actor, message)
+        Some(action(actor.clone(), message))
     }
 }
 
@@ -83,14 +58,6 @@ impl From<UserMessageMsg> for PlayerMessage {
 impl From<NoticeMsg> for PlayerMessage {
     fn from(value: NoticeMsg) -> Self {
         PlayerMessage::new(value.message, MessageSource::Room, MessageLevel::Normal)
-    }
-}
-
-impl From<PlaylistMsg> for PlayerMessage {
-    fn from(value: PlaylistMsg) -> Self {
-        let actor = value.actor;
-        let message = format!("{actor} changed playlist");
-        action(actor, message)
     }
 }
 

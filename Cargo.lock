@@ -4180,7 +4180,6 @@ dependencies = [
  "multiaddr",
  "num-traits",
  "once_cell",
- "ordered-float 5.3.0",
  "proptest",
  "rayon",
  "serde",

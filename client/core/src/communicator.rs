@@ -41,21 +41,17 @@ pub struct EndpointInfo {
 /// holds is a runtime fact (the relay assigns it on connect, and a message
 /// can still be queued while the role changes), so a message of the other
 /// role's group can still reach a handler; it is dropped there.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OutgoingMessage {
     Room(RoomMessage),
     Host(HostInstruction),
-    Client(ClientRequest),
+    /// What only a client sends: a request to the host.
+    Client(IntentMsg),
 }
 
 /// Sent the same way whichever role this core holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoomMessage {
-    Start(StartMsg),
-    Pause(PauseMsg),
-    PlaybackSpeed(PlaybackSpeedMsg),
-    Seek(SeekMsg),
-    Select(SelectMsg),
     UserMessage(UserMessageMsg),
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
@@ -64,25 +60,14 @@ pub enum RoomMessage {
 }
 
 /// What only the host sends.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum HostInstruction {
-    /// The host's clock, the room's reference.
-    VideoStatus(VideoStatusMsg),
-    /// The room's playlist, sent to the room.
-    Playlist(PlaylistMsg),
-    /// The host's view of who is in the room, sent to the room.
-    UserStatusList(UserStatusListMsg),
+    /// Everything the room agrees on, sent to the room.
+    RoomState(RoomStateMsg),
+    /// What the host did on a user's behalf, sent to the room's chat.
+    Action(ActionMsg),
     /// A message for exactly one peer rather than the room.
     ToPeer(ToPeerMsg),
-}
-
-/// What only a client sends, each a request to the host.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ClientRequest {
-    /// An edit of the room's playlist, for the host to adopt.
-    Playlist(PlaylistMsg),
-    /// The client's own status.
-    UserStatus(UserStatusMsg),
 }
 
 impl From<RoomMessage> for OutgoingMessage {
@@ -97,15 +82,14 @@ impl From<HostInstruction> for OutgoingMessage {
     }
 }
 
-impl From<ClientRequest> for OutgoingMessage {
-    fn from(value: ClientRequest) -> Self {
+impl From<IntentMsg> for OutgoingMessage {
+    fn from(value: IntentMsg) -> Self {
         Self::Client(value)
     }
 }
 
 /// `From<$msg> for OutgoingMessage` for messages whose sending role follows
-/// from their type. A playlist is sent by both roles with different meaning,
-/// so it is wrapped explicitly.
+/// from their type.
 macro_rules! outgoing_from {
     ($($msg:ty => $outer:ident($group:ident::$variant:ident)),* $(,)?) => {
         $(impl From<$msg> for OutgoingMessage {
@@ -117,20 +101,14 @@ macro_rules! outgoing_from {
 }
 
 outgoing_from! {
-    StartMsg => Room(RoomMessage::Start),
-    PauseMsg => Room(RoomMessage::Pause),
-    PlaybackSpeedMsg => Room(RoomMessage::PlaybackSpeed),
-    SeekMsg => Room(RoomMessage::Seek),
-    SelectMsg => Room(RoomMessage::Select),
     UserMessageMsg => Room(RoomMessage::UserMessage),
     FileRequestMsg => Room(RoomMessage::FileRequest),
     FileResponseMsg => Room(RoomMessage::FileResponse),
     FileDeclineMsg => Room(RoomMessage::FileDecline),
     VideoShareMsg => Room(RoomMessage::VideoShareChange),
-    VideoStatusMsg => Host(HostInstruction::VideoStatus),
-    UserStatusListMsg => Host(HostInstruction::UserStatusList),
+    RoomStateMsg => Host(HostInstruction::RoomState),
+    ActionMsg => Host(HostInstruction::Action),
     ToPeerMsg => Host(HostInstruction::ToPeer),
-    UserStatusMsg => Client(ClientRequest::UserStatus),
 }
 
 /// What the communicator hands the core. Each message is an event of the
@@ -138,32 +116,25 @@ outgoing_from! {
 #[enum_dispatch(EventHandler)]
 #[derive(Clone, Debug)]
 pub enum IncomingMessage {
-    VideoStatus(VideoStatusMsg),
+    RoomState(RoomStateMsg),
+    Action(ActionMsg),
     Connected(ConnectedMsg),
-    UserStatusList(UserStatusListMsg),
-    Start(StartMsg),
-    Pause(PauseMsg),
-    PlaybackSpeed(PlaybackSpeedMsg),
-    Seek(SeekMsg),
-    Select(SelectMsg),
     UserMessage(UserMessageMsg),
     Notice(NoticeMsg),
-    Playlist(PlaylistMsg),
     ForcedRename(ForcedRenameMsg),
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
     VideoProviderStopped(VideoProviderStoppedMsg),
     PeerConnected(PeerConnectedMsg),
     PeerDisconnected(PeerDisconnectedMsg),
-    PeerStatus(PeerStatusMsg),
+    PeerIntent(PeerIntentMsg),
     HostRoundTrip(HostRoundTripMsg),
 }
 
 impl From<DirectMessage> for IncomingMessage {
     fn from(value: DirectMessage) -> Self {
         match value {
-            DirectMessage::Playlist(msg) => msg.into(),
-            DirectMessage::Select(msg) => msg.into(),
+            DirectMessage::RoomState(msg) => msg.into(),
             DirectMessage::Rename(msg) => msg.into(),
         }
     }

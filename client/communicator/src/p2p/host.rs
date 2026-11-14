@@ -10,7 +10,7 @@ use libp2p::swarm::{ConnectionError, ConnectionId, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use niketsu_core::communicator::{
     ConnectedMsg, HostInstruction, IncomingMessage, OutgoingMessage, PeerConnectedMsg,
-    PeerDisconnectedMsg, PeerStatusMsg,
+    PeerDisconnectedMsg, PeerIntentMsg,
 };
 use niketsu_core::log_err_msg;
 use tracing::{debug, error, info, warn};
@@ -126,9 +126,8 @@ impl HostRole {
     fn on_core_instruction(&mut self, instruction: HostInstruction) -> Result<()> {
         use HostInstruction::*;
         match instruction {
-            VideoStatus(m) => self.session.broadcast(m.into()),
-            Playlist(m) => self.session.broadcast(m.into()),
-            UserStatusList(m) => self.session.broadcast(m.into()),
+            RoomState(m) => self.session.broadcast(m.into()),
+            Action(m) => self.session.broadcast(m.into()),
             ToPeer(m) => {
                 self.session.net.send_request(&m.peer, m.message.into());
                 Ok(())
@@ -252,11 +251,10 @@ impl Role for HostRole {
                 self.welcome(peer_id);
                 self.session.acknowledge(channel)
             }
-            Playlist(m) => self.session.send_to_core(m, channel),
-            Status(status) => {
-                let msg = PeerStatusMsg {
+            Intent(intent) => {
+                let msg = PeerIntentMsg {
                     peer: peer_id,
-                    status,
+                    intent,
                 };
                 self.session.send_to_core(msg, channel)
             }
@@ -270,15 +268,8 @@ impl Role for HostRole {
         source: PeerId,
     ) -> Result<()> {
         debug!(message = ?niketsu_msg, %source, "Handling broadcast message from swarm");
-        use NiketsuMessage::*;
         match niketsu_msg {
-            Select(m) => {
-                self.session.fs_end();
-                self.session.forward(m)
-            }
-            m @ (Pause(_) | Start(_) | PlaybackSpeed(_) | Seek(_) | UserMessage(_)) => {
-                self.session.forward(IncomingMessage::try_from(m)?)
-            }
+            NiketsuMessage::UserMessage(m) => self.session.forward(m),
             other => bail!("Host received unexpected broadcast message: {other:?}"),
         }
     }

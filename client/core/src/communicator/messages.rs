@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use arcstr::ArcStr;
 use multiaddr::PeerId;
-use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 
 use crate::playlist::{Playlist, Video};
@@ -33,11 +32,11 @@ pub struct PeerDisconnectedMsg {
     pub peer: PeerId,
 }
 
-/// A peer's own status, as sent to the host.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PeerStatusMsg {
+/// What a peer asked the host for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PeerIntentMsg {
     pub peer: PeerId,
-    pub status: UserStatus,
+    pub intent: IntentMsg,
 }
 
 /// One measured round trip to the host.
@@ -47,14 +46,14 @@ pub struct HostRoundTripMsg {
 }
 
 /// What the host can address to a single peer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DirectMessage {
-    Playlist(PlaylistMsg),
-    Select(SelectMsg),
+    /// The greeting of a peer that joined.
+    RoomState(RoomStateMsg),
     Rename(ForcedRenameMsg),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ToPeerMsg {
     pub peer: PeerId,
     pub message: DirectMessage,
@@ -66,83 +65,79 @@ impl ToPeerMsg {
     }
 }
 
-#[derive(Default, Debug, Clone, Deserialize, Serialize)]
+/// Everything the room agrees on, as the host publishes it.
+///
+/// States are ordered by `(version, beat)`: the host bumps `version` with
+/// every change of the room and every intent it handles, and `beat` with
+/// every heartbeat, which only refreshes `position`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VideoStatusMsg {
+pub struct RoomStateMsg {
+    pub version: u64,
+    pub beat: u64,
+    /// Bumped whenever the position jumps, by a seek or a selection. A
+    /// follower sets such a position exactly; any other only has to be
+    /// within the tolerance.
+    pub jumps: u64,
+    pub playlist: Playlist,
     pub video: Option<Video>,
     #[serde(with = "serde_millis")]
-    pub position: Option<Duration>,
-    pub speed: f64,
+    pub position: Duration,
     pub paused: bool,
+    pub speed: f64,
+    /// Whether the host's player has the video loaded. Until then its
+    /// position and play state are not the room's.
     pub file_loaded: bool,
+    pub users: UserStatusListMsg,
 }
 
-impl PartialEq for VideoStatusMsg {
-    fn eq(&self, other: &Self) -> bool {
-        let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(other.speed);
-        speed_self.eq(&speed_other)
-            && self.video.eq(&other.video)
-            && self.position.eq(&other.position)
-            && self.paused.eq(&other.paused)
+impl RoomStateMsg {
+    pub fn order(&self) -> (u64, u64) {
+        (self.version, self.beat)
     }
 }
 
-impl Eq for VideoStatusMsg {}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UserStatusListMsg {
     pub room_name: RoomName,
     pub users: BTreeSet<UserStatus>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+/// What a user wants of the room. The host decides and publishes the
+/// outcome in its room state.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StartMsg {
-    pub actor: ArcStr,
+pub enum Intent {
+    Pause,
+    Start,
+    Speed(f64),
+    Seek {
+        video: Video,
+        #[serde(with = "serde_millis")]
+        position: Duration,
+    },
+    Select {
+        video: Option<Video>,
+        #[serde(with = "serde_millis")]
+        position: Duration,
+    },
+    Playlist(Playlist),
+    /// The user's own name and readiness.
+    Status(UserStatus),
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PauseMsg {
+pub struct IntentMsg {
     pub actor: ArcStr,
+    pub intent: Intent,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlaybackSpeedMsg {
-    pub actor: ArcStr,
-    pub speed: f64,
-}
-
-impl PartialEq for PlaybackSpeedMsg {
-    fn eq(&self, other: &Self) -> bool {
-        let speed_self = OrderedFloat(self.speed);
-        let speed_other = OrderedFloat(other.speed);
-        speed_self.eq(&speed_other) && self.actor.eq(&other.actor)
-    }
-}
-
-impl Eq for PlaybackSpeedMsg {}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct SeekMsg {
-    pub actor: ArcStr,
-    pub video: Video,
-    #[serde(with = "serde_millis")]
-    pub position: Duration,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct SelectMsg {
-    pub actor: ArcStr,
-    #[serde(with = "serde_millis")]
-    pub position: Duration,
-    pub video: Option<Video>,
-}
+/// What the host did on a user's behalf, for the chat only. The room state
+/// carries the outcome.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ActionMsg(pub IntentMsg);
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -165,17 +160,6 @@ impl NoticeMsg {
         }
     }
 }
-
-#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct PlaylistMsg {
-    pub actor: ArcStr,
-    #[serde(flatten)]
-    pub playlist: Playlist,
-}
-
-/// A user's own status, as the user announces it.
-pub type UserStatusMsg = UserStatus;
 
 /// The host renames a peer whose name another user of the room goes by.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
