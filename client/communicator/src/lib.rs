@@ -200,6 +200,7 @@ mod test {
     async fn messages_of_an_ended_connection_survive_a_failed_send() {
         let handover = HostHandoverMsg {
             new_host: "bob".into(),
+            becomes_host: true,
         };
         let mut communicator = P2PCommunicator::new(ChunkRoute::default(), ChunkRoute::default());
         communicator.endpoint = Some(EndpointInfo {

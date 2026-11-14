@@ -288,6 +288,10 @@ impl Role for ClientRole {
                 self.session.fs_end();
                 self.session.forward(msg)
             }
+            HostHandover(msg) => {
+                let local = *self.session.net.swarm.local_peer_id();
+                self.session.forward(msg.seen_by(&local))
+            }
             other => self.session.forward(IncomingMessage::try_from(other)?),
         }
     }

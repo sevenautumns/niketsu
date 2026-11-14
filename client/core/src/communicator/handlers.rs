@@ -242,7 +242,7 @@ impl EventHandler for FileResponseMsg {
 
 impl EventHandler for HostHandoverMsg {
     fn handle(self, model: &mut CoreModel) {
-        let becomes_host = self.new_host == model.config.username;
+        let becomes_host = self.becomes_host;
         model.ui.player_message(PlayerMessage::from(self));
         if becomes_host {
             model.communicator.connect(EndpointInfo {

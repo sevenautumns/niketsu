@@ -9,8 +9,8 @@ use libp2p::request_response::ResponseChannel;
 use libp2p::swarm::{ConnectionError, ConnectionId, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use niketsu_core::communicator::{
-    ConnectedMsg, HostHandoverMsg, HostHandoverRequest, HostInstruction, IncomingMessage,
-    OutgoingMessage, PeerConnectedMsg, PeerDisconnectedMsg, PeerStatusMsg,
+    ConnectedMsg, HostHandoverRequest, HostInstruction, IncomingMessage, OutgoingMessage,
+    PeerConnectedMsg, PeerDisconnectedMsg, PeerStatusMsg,
 };
 use niketsu_core::log_err_msg;
 use niketsu_core::room::RoomName;
@@ -22,7 +22,7 @@ use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, FileShareBehaviourEvent, HostLink, MessageResponse,
     Role, Session, Stop, SwarmExt, TransportBehaviourEvent,
 };
-use crate::messages::NiketsuMessage;
+use crate::messages::{Handover, NiketsuMessage};
 
 pub(crate) struct HostRole {
     session: Session,
@@ -147,7 +147,8 @@ impl HostRole {
             request.peer,
         );
 
-        let announce = HostHandoverMsg {
+        let announce = Handover {
+            peer: request.peer,
             new_host: request.new_host,
         };
         self.session.broadcast(announce.into())?;

@@ -659,8 +659,16 @@ impl Room {
                     return vec![];
                 };
                 self.host = target;
-                let new_host = m.new_host;
-                let mut deliveries = others(HostHandoverMsg { new_host }.into());
+                let mut deliveries: Vec<_> = (0..self.peers.len())
+                    .filter(|to| *to != from && self.peers[*to].online)
+                    .map(|to| {
+                        let handover = HostHandoverMsg {
+                            new_host: m.new_host.clone(),
+                            becomes_host: to == target,
+                        };
+                        (to, handover.into())
+                    })
+                    .collect();
                 deliveries.push((target, ConnectedMsg { is_host: true }.into()));
                 for i in 0..self.peers.len() {
                     if i == target || !self.peers[i].online {

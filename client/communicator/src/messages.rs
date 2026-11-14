@@ -1,4 +1,5 @@
 use anyhow::Context;
+use arcstr::ArcStr;
 use niketsu_core::communicator::*;
 use serde::{Deserialize, Serialize};
 
@@ -20,11 +21,30 @@ pub(super) enum NiketsuMessage {
     /// A client's own status, for the host.
     Status(UserStatusMsg),
     ForcedRename(ForcedRenameMsg),
-    HostHandover(HostHandoverMsg),
+    HostHandover(Handover),
 }
 
-/// A status means nothing to the core without the peer it is of, so the
-/// host hands it over as a `PeerStatusMsg` and nobody else takes one.
+/// The host hands the room over to `peer`, which goes by `new_host`.
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Handover {
+    pub peer: PeerId,
+    pub new_host: ArcStr,
+}
+
+impl Handover {
+    /// The handover as `local` sees it.
+    pub(super) fn seen_by(self, local: &PeerId) -> HostHandoverMsg {
+        HostHandoverMsg {
+            becomes_host: self.peer == *local,
+            new_host: self.new_host,
+        }
+    }
+}
+
+/// Some messages mean nothing to the core as they are. A status needs the
+/// peer it is of, so the host hands it over as a `PeerStatusMsg`; a
+/// handover needs the peer that reads it, see [`Handover::seen_by`].
 impl TryFrom<NiketsuMessage> for IncomingMessage {
     type Error = anyhow::Error;
 
@@ -40,8 +60,9 @@ impl TryFrom<NiketsuMessage> for IncomingMessage {
             NiketsuMessage::UserMessage(m) => m.into(),
             NiketsuMessage::Playlist(m) => m.into(),
             NiketsuMessage::ForcedRename(m) => m.into(),
-            NiketsuMessage::HostHandover(m) => m.into(),
-            NiketsuMessage::Status(m) => anyhow::bail!("Received a status out of place: {m:?}"),
+            m @ (NiketsuMessage::Status(_) | NiketsuMessage::HostHandover(_)) => {
+                anyhow::bail!("Received a message out of place: {m:?}")
+            }
         })
     }
 }
@@ -86,7 +107,7 @@ wire_from! {
     PlaylistMsg => Playlist,
     UserStatusMsg => Status,
     ForcedRenameMsg => ForcedRename,
-    HostHandoverMsg => HostHandover,
+    Handover => HostHandover,
 }
 
 impl From<DirectMessage> for NiketsuMessage {
@@ -125,7 +146,8 @@ mod tests {
             NiketsuMessage::ForcedRename(ForcedRenameMsg {
                 name: "bob_2".into(),
             }),
-            NiketsuMessage::HostHandover(HostHandoverMsg {
+            NiketsuMessage::HostHandover(Handover {
+                peer: PeerId::random(),
                 new_host: "bob".into(),
             }),
         ];
