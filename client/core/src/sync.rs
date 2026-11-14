@@ -51,7 +51,19 @@ pub struct ClientSync {
     seeking: bool,
     /// The local position seen by the last heartbeat that observed a change.
     last_position: Option<Duration>,
+    /// Host heartbeats in a row that named another video than the one
+    /// playing here.
+    other_video_beats: u8,
 }
+
+/// How many host heartbeats in a row have to name another video before a
+/// client follows the host to it. A selection and the heartbeats around it
+/// cross on the way: the host's next heartbeat or two still name the old
+/// video after a client selected a new one, and following those would load
+/// the old video again only to drop it a moment later. A video the host
+/// names this often is not such a crossing: this client missed the
+/// selection or lost a race, and nothing but the heartbeat will tell it.
+const FOLLOW_HOST_VIDEO_AFTER: u8 = 3;
 
 impl ClientSync {
     pub fn seek_started(&mut self) {
@@ -71,6 +83,22 @@ impl ClientSync {
             self.seeking = false;
             self.last_position = position;
         }
+    }
+
+    /// Fed with whether a host heartbeat named another video than the one
+    /// playing here. True once it is time to follow the host to its video,
+    /// see [`FOLLOW_HOST_VIDEO_AFTER`].
+    pub fn host_plays_other_video(&mut self, other: bool) -> bool {
+        if !other {
+            self.other_video_beats = 0;
+            return false;
+        }
+        self.other_video_beats += 1;
+        if self.other_video_beats < FOLLOW_HOST_VIDEO_AFTER {
+            return false;
+        }
+        self.other_video_beats = 0;
+        true
     }
 
     /// The host's reported position, shifted by how long it was underway.
@@ -157,6 +185,24 @@ mod tests {
 
         sync.observe_local_position(Some(Duration::from_secs(60)));
         assert!(!sync.is_seeking());
+    }
+
+    #[test]
+    fn the_host_is_followed_to_a_video_it_keeps_naming() {
+        let mut sync = ClientSync::default();
+        assert!(!sync.host_plays_other_video(true));
+        assert!(!sync.host_plays_other_video(true));
+        assert!(sync.host_plays_other_video(true));
+    }
+
+    #[test]
+    fn a_heartbeat_that_crossed_a_selection_is_not_followed() {
+        let mut sync = ClientSync::default();
+        assert!(!sync.host_plays_other_video(true));
+        assert!(!sync.host_plays_other_video(true));
+        // the host caught up with the selection
+        assert!(!sync.host_plays_other_video(false));
+        assert!(!sync.host_plays_other_video(true));
     }
 
     #[test]

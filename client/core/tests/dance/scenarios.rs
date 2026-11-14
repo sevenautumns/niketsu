@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use niketsu_core::communicator::SeekMsg;
+use niketsu_core::communicator::{SeekMsg, SelectMsg};
 use niketsu_core::player::{
     PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart,
 };
@@ -1167,6 +1167,57 @@ async fn a_client_cannot_hand_over_the_room() {
     assert_eq!(room.host_index(), alice);
     assert!(room.peer(alice).ui.state().is_host);
     assert!(!room.peer(charlie).ui.state().is_host);
+}
+
+/// A client that ended up on another video than the host — it lost a race
+/// between a selection and a seek — is brought back by the host's
+/// heartbeats, once they named the host's video often enough not to be
+/// heartbeats that merely crossed a selection.
+#[tokio::test]
+async fn a_client_on_another_video_follows_the_host_after_a_few_heartbeats() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1", "ep2"]);
+    let bob = room.join("bob", &["ep1", "ep2"]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1", "ep2"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep2"),
+    });
+    room.pump();
+
+    // bob alone takes a selection of ep1, as if it had crossed alice's
+    room.peer(bob).act(SelectMsg {
+        actor: "charlie".into(),
+        position: Duration::ZERO,
+        video: Some(Video::from("ep1")),
+    });
+    room.pump();
+    room.peer(alice)
+        .player
+        .set(|player| player.position = Duration::from_secs(40));
+
+    for _ in 0..2 {
+        room.heartbeat();
+        room.pump();
+    }
+    assert_eq!(
+        room.peer(bob).player.state().video,
+        Some(Video::from("ep1")),
+        "a heartbeat or two may just have crossed a selection"
+    );
+
+    room.heartbeat();
+    room.pump();
+    let player = room.peer(bob).player.state();
+    assert_eq!(player.video, Some(Video::from("ep2")));
+    assert_eq!(player.position, Duration::from_secs(40));
+    assert_eq!(
+        room.peer(bob).model.playlist.get_current_video(),
+        Some(Video::from("ep2"))
+    );
 }
 
 /// A seek can name another video than the one the host plays, when it

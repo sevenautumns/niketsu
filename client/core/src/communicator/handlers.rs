@@ -73,7 +73,7 @@ impl EventHandler for VideoStatusMsg {
         // adopted even while the host has no video.
         model.player.set_speed(self.speed);
 
-        let (Some(pos), Some(_)) = (self.position, self.video) else {
+        let (Some(pos), Some(video)) = (self.position, self.video) else {
             trace!("video status sent without position or video: unloading video");
             // Only the player stops. What is selected, marked in the
             // playlist and shared changes with a Select, which the host
@@ -81,6 +81,18 @@ impl EventHandler for VideoStatusMsg {
             model.player.unload_video();
             return;
         };
+
+        // The host's clock says nothing about another video than its own.
+        let other_video = model.player.playing_video().as_ref() != Some(&video);
+        if model.sync.host_plays_other_video(other_video) {
+            debug!(?video, "following the host to the video it plays");
+            model.select_video(Some(&video), pos);
+            let notice = NoticeMsg::new(format!("Following the host to {}", video.as_str()));
+            model.ui.player_message(notice.into());
+        }
+        if other_video {
+            return;
+        }
 
         // The host is only a valid play/position reference once it has the file
         // loaded. While it is still loading it reports a stale paused=false and
@@ -92,7 +104,6 @@ impl EventHandler for VideoStatusMsg {
             return;
         }
 
-        //TODO check if current video is not the same as host?
         if let Some(paused) = model.player.is_paused() {
             match (paused, self.paused) {
                 (true, false) => model.player.start(),
