@@ -290,6 +290,8 @@ pub struct UiState {
     pub is_host: Option<bool>,
     pub video_share: bool,
     pub users: UserList,
+    /// The lines of the chat, oldest first.
+    pub messages: Vec<String>,
 }
 
 impl UiState {
@@ -358,7 +360,11 @@ impl UserInterfaceTrait for FakeUi {
     }
 
     fn user_update(&mut self, _user: UserChange) {}
-    fn player_message(&mut self, _msg: PlayerMessage) {}
+
+    fn player_message(&mut self, msg: PlayerMessage) {
+        self.lock().messages.push(msg.message.clone());
+    }
+
     fn username_change(&mut self, _username: ArcStr) {}
     fn abort(&mut self) {}
 

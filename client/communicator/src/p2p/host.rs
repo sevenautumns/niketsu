@@ -204,7 +204,11 @@ impl HostCommunicationHandler {
             return;
         }
         let was_member = self.is_member(&peer_id);
-        match self.links.closed(peer_id, connection_id) {
+        let closed = self.links.closed(peer_id, connection_id);
+        if closed == Closed::Unlinked {
+            self.handler.fs_peer_unlinked(peer_id);
+        }
+        match closed {
             Closed::Unlinked if !was_member => debug!(%peer_id, "Bystander disconnected"),
             Closed::Unlinked => {
                 debug!(%peer_id, ?cause, "Client disconnected");

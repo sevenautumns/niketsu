@@ -99,6 +99,9 @@ pub struct FileShareConsumer {
     providers: HashSet<PeerId>,
     stage: Stage,
     chunk_requests: HashMap<OutboundRequestId, oneshot::Sender<Vec<u8>>>,
+    /// A chunk request failed and none has succeeded since. The user hears
+    /// of a stall once, however many chunks fail in it.
+    stalled: bool,
 }
 
 #[derive(Debug)]
@@ -123,6 +126,7 @@ impl FileShareConsumer {
             providers,
             stage: Stage::Discovering(request),
             chunk_requests: HashMap::default(),
+            stalled: false,
         }
     }
 
@@ -265,29 +269,49 @@ impl CommunicationHandler {
                 };
                 if consumer.chunk_requests.remove(&request_id).is_some() {
                     warn!(?error, "Chunk request failed. Cache will retry.");
-                    let msg = "Chunk download timeout. Connection might be slow...".to_string();
-                    self.base
-                        .send_chat_message(arcstr::literal!("server"), msg)
-                        .ok();
+                    if !std::mem::replace(&mut consumer.stalled, true) {
+                        let msg = "Chunk download timeout. Connection might be slow...".to_string();
+                        self.base
+                            .send_chat_message(arcstr::literal!("server"), msg)
+                            .ok();
+                    }
                 } else if consumer.is_file_request(request_id) {
                     // Typically a timeout because the hole punch to the
                     // provider never produced a direct connection. Playback of
                     // this share has not started at this point, so reporting
                     // the stop cannot cut a running video short.
                     warn!(?error, "File request failed");
-                    self.file_share.take();
-                    let msg = "Requesting the file from the provider failed".to_string();
-                    self.base
-                        .send_chat_message(arcstr::literal!("server"), msg)
-                        .ok();
-                    self.base
-                        .message_sender
-                        .send(VideoProviderStoppedMsg.into())
-                        .ok();
+                    self.fs_stop_consuming("Requesting the file from the provider failed");
                 }
             }
             _ => {}
         }
+    }
+
+    /// Ends the file share this peer consumes if `peer` provided it: with
+    /// the link to the provider gone, no chunk request can be answered.
+    pub(super) fn fs_peer_unlinked(&mut self, peer: PeerId) {
+        let Some(FileShare::Consumer(consumer)) = &self.file_share else {
+            return;
+        };
+        if consumer.provider() != Some(peer) {
+            return;
+        }
+        warn!(%peer, "The provider of the file disconnected");
+        self.fs_stop_consuming("The provider of the file disconnected");
+    }
+
+    /// Ends the file share this peer consumes and tells the user `why`. The
+    /// chunk requests still pending go unanswered.
+    fn fs_stop_consuming(&mut self, why: &str) {
+        self.file_share.take();
+        self.base
+            .send_chat_message(arcstr::literal!("server"), why.to_string())
+            .ok();
+        self.base
+            .message_sender
+            .send(VideoProviderStoppedMsg.into())
+            .ok();
     }
 
     pub(super) fn fs_video_share(&mut self, msg: VideoShareMsg) -> Result<()> {
@@ -450,6 +474,9 @@ impl CommunicationHandler {
         if let Some(FileShare::Consumer(consumer)) = &mut self.file_share {
             reply = consumer.chunk_requests.remove(&request_id);
             is_file_request = consumer.answered(request_id);
+            if reply.is_some() && resp.is_ok() {
+                consumer.stalled = false;
+            }
         }
         match resp {
             Ok(FileShareResponse::Chunk(ChunkBytes(bytes))) => {

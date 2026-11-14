@@ -174,6 +174,7 @@ impl ClientCommunicationHandler {
             // departed file-share peers.
             let swarm = &mut self.handler.base.swarm;
             swarm.gossipsub().remove_explicit_peer(&peer_id);
+            self.handler.fs_peer_unlinked(peer_id);
         }
     }
 
