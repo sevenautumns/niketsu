@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::fs::DirEntry;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -26,8 +26,17 @@ impl FileDatabaseUpdater {
         paths: impl Iterator<Item = PathBuf>,
         progress: Arc<UpdateProgressTracker>,
     ) -> Vec<FileEntry> {
+        Self::update_all_with(paths, progress, MAX_CONCURRENT_CRAWLER).await
+    }
+
+    /// Crawls `paths` with at most `crawlers` directories read at once.
+    async fn update_all_with(
+        paths: impl Iterator<Item = PathBuf>,
+        progress: Arc<UpdateProgressTracker>,
+        crawlers: usize,
+    ) -> Vec<FileEntry> {
         let mut updater = JoinSet::default();
-        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_CRAWLER));
+        let semaphore = Arc::new(Semaphore::new(crawlers));
         for path in paths {
             updater.spawn(
                 Self::new(path.to_path_buf(), progress.clone(), semaphore.clone()).complete(),
@@ -74,8 +83,17 @@ impl FileDatabaseUpdater {
         Ok(self.paths)
     }
 
+    /// Holds a permit only while reading this directory. Its crawler waits
+    /// for the subdirectories' crawlers afterwards, and holding the permit
+    /// through that would let the parents of a deep tree take every permit
+    /// while their children wait for one.
     async fn crawl_dir(&mut self) -> Result<()> {
-        let permit = self.semaphore.clone().acquire_owned();
+        let permit = self
+            .semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .context("the crawler semaphore closed")?;
         let mut read_dir = tokio::fs::read_dir(&self.path).await?;
         while let Ok(Some(entry)) = read_dir.next_entry().await {
             self.handle_entry(entry).await;
@@ -119,5 +137,102 @@ impl FileDatabaseUpdater {
                 Ok(Ok(paths)) => self.paths.extend(paths),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::path::Path;
+    use std::time::Duration;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    /// Writes an empty file at `path` below `root`, with its directories.
+    fn touch(root: &Path, path: &Path) -> PathBuf {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+        file
+    }
+
+    async fn crawl(root: &Path, crawlers: usize) -> BTreeSet<PathBuf> {
+        let progress = Arc::new(UpdateProgressTracker::default());
+        FileDatabaseUpdater::update_all_with([root.to_path_buf()].into_iter(), progress, crawlers)
+            .await
+            .into_iter()
+            .map(|entry| entry.path().to_path_buf())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn finds_every_file_of_a_nested_tree() {
+        let root = TempDir::new().unwrap();
+        let files: BTreeSet<_> = ["top.mkv", "a/one.mkv", "a/b/two.mkv", "a/b/c/three.mkv"]
+            .into_iter()
+            .chain(["d/four.mkv", "d/e/five.mkv"])
+            .map(|path| touch(root.path(), Path::new(path)))
+            .collect();
+        std::fs::create_dir_all(root.path().join("empty/dir")).unwrap();
+
+        assert_eq!(crawl(root.path(), MAX_CONCURRENT_CRAWLER).await, files);
+    }
+
+    /// A tree deeper and wider than there are crawlers completes: a crawler
+    /// waiting for its subdirectories holds no permit.
+    #[tokio::test]
+    async fn a_tree_beyond_the_crawler_limit_completes() {
+        let root = TempDir::new().unwrap();
+        let mut files = BTreeSet::new();
+        let mut deep = PathBuf::new();
+        for depth in 0..MAX_CONCURRENT_CRAWLER + 20 {
+            deep.push("d");
+            files.insert(touch(root.path(), &deep.join(format!("{depth}.mkv"))));
+        }
+        for width in 0..MAX_CONCURRENT_CRAWLER + 20 {
+            files.insert(touch(
+                root.path(),
+                &Path::new(&format!("w{width}")).join("f.mkv"),
+            ));
+        }
+
+        let crawled = tokio::time::timeout(
+            Duration::from_secs(30),
+            crawl(root.path(), MAX_CONCURRENT_CRAWLER),
+        )
+        .await
+        .expect("the crawl deadlocked");
+        assert_eq!(crawled, files);
+    }
+
+    #[tokio::test]
+    async fn a_single_crawler_reads_a_whole_tree() {
+        let root = TempDir::new().unwrap();
+        let files: BTreeSet<_> = [
+            "a/b/c/one.mkv",
+            "a/b/two.mkv",
+            "x/y/three.mkv",
+            "x/four.mkv",
+        ]
+        .into_iter()
+        .map(|path| touch(root.path(), Path::new(path)))
+        .collect();
+
+        let crawled = tokio::time::timeout(Duration::from_secs(10), crawl(root.path(), 1))
+            .await
+            .expect("the crawl deadlocked");
+        assert_eq!(crawled, files);
+    }
+
+    /// Reading a directory waits for a permit.
+    #[tokio::test]
+    async fn without_a_permit_nothing_is_read() {
+        let root = TempDir::new().unwrap();
+        touch(root.path(), Path::new("one.mkv"));
+
+        let crawled = tokio::time::timeout(Duration::from_millis(200), crawl(root.path(), 0)).await;
+        assert!(crawled.is_err(), "a directory was read without a permit");
     }
 }
