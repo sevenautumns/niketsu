@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use niketsu_core::communicator::SeekMsg;
 use niketsu_core::player::{
     PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart,
 };
@@ -1166,4 +1167,41 @@ async fn a_client_cannot_hand_over_the_room() {
     assert_eq!(room.host_index(), alice);
     assert!(room.peer(alice).ui.state().is_host);
     assert!(!room.peer(charlie).ui.state().is_host);
+}
+
+/// A seek can name another video than the one the host plays, when it
+/// crossed a selection on the way. The host follows it like every peer,
+/// and greets a peer joining afterwards with the video the room plays.
+#[tokio::test]
+async fn a_seek_into_another_video_is_what_a_late_joiner_is_greeted_with() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1", "ep2"]);
+    room.pump();
+
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1", "ep2"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+
+    room.peer(alice).act(SeekMsg {
+        actor: "bob".into(),
+        video: Video::from("ep2"),
+        position: Duration::from_secs(300),
+    });
+    room.pump();
+    assert_eq!(
+        room.peer(alice).player.state().video,
+        Some(Video::from("ep2"))
+    );
+
+    let charlie = room.join("charlie", &["ep1", "ep2"]);
+    room.pump();
+    assert_eq!(
+        room.peer(charlie).player.state().video,
+        Some(Video::from("ep2")),
+        "a late joiner must load the video the host plays"
+    );
 }

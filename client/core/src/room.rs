@@ -15,7 +15,7 @@ use tracing::{debug, warn};
 pub(crate) use crate::UserStatusListMsg;
 use crate::communicator::{
     ClientRequest, DirectMessage, ForcedRenameMsg, HostInstruction, OutgoingMessage, PlaylistMsg,
-    SelectMsg, StartMsg, ToPeerMsg,
+    SeekMsg, SelectMsg, StartMsg, ToPeerMsg,
 };
 use crate::player::MediaPlayerTrait;
 use crate::ui::PlayerMessage;
@@ -263,6 +263,28 @@ impl CoreModel {
     pub(crate) fn receive_select(&mut self, msg: SelectMsg) {
         self.apply_select(msg.clone());
         self.host_adopt_select(msg);
+    }
+
+    /// A seek from the room. Within the running video it only moves the
+    /// player. Into another video it is a selection of that video, which
+    /// the host also adopts, so a peer joining later is greeted with the
+    /// video the room plays. Whether playback starts stays with the seek's
+    /// sender: the host does not start the room over it.
+    pub(crate) fn receive_seek(&mut self, msg: &SeekMsg) {
+        if self.player.playing_video().as_ref() == Some(&msg.video) {
+            self.playlist.select_playing(&msg.video);
+            self.save_playlist();
+            self.player.set_position(msg.position);
+            return;
+        }
+        self.select_video(Some(&msg.video), msg.position);
+        if let Some(host) = &mut self.host {
+            host.adopt_select(SelectMsg {
+                actor: msg.actor.clone(),
+                position: msg.position,
+                video: Some(msg.video.clone()),
+            });
+        }
     }
 
     /// Announces our own status: a client tells the host, the host updates

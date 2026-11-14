@@ -6,7 +6,6 @@ use tracing::{debug, trace};
 use super::messages::*;
 use super::{EndpointInfo, OutgoingMessage};
 use crate::player::MediaPlayerTrait;
-use crate::playlist::Video;
 use crate::room::UserList;
 use crate::sync::ClientSync;
 use crate::ui::PlayerMessage;
@@ -76,6 +75,9 @@ impl EventHandler for VideoStatusMsg {
 
         let (Some(pos), Some(_)) = (self.position, self.video) else {
             trace!("video status sent without position or video: unloading video");
+            // Only the player stops. What is selected, marked in the
+            // playlist and shared changes with a Select, which the host
+            // sends once; this repeats twice a second.
             model.player.unload_video();
             return;
         };
@@ -139,23 +141,7 @@ impl EventHandler for SeekMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(seek = ?self, "received");
         model.sync.seek_started();
-        let playlist_video = Video::from(self.video.as_str());
-        model.playlist.select_playing(&playlist_video);
-        model.save_playlist();
-        if model
-            .player
-            .playing_video()
-            .is_some_and(|v| playlist_video.eq(&v))
-        {
-            model.player.set_position(self.position);
-        } else {
-            model.player.load_video(
-                playlist_video.clone(),
-                self.position,
-                model.database.all_files(),
-            );
-            model.ui.video_change(Some(playlist_video));
-        }
+        model.receive_seek(&self);
         model.ui.player_message(PlayerMessage::from(self));
     }
 }
