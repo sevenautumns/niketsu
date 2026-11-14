@@ -18,11 +18,10 @@ use crate::timing::AUTH_TIMEOUT;
 type Inner = request_response::cbor::Behaviour<AuthRequest, AuthResponse>;
 
 /// The relay only ever sees a digest of the room's password.
-fn request(room: RoomName, password: String, transfer_to: Option<PeerId>) -> AuthRequest {
+fn request(room: RoomName, password: String) -> AuthRequest {
     AuthRequest {
         room: room.to_string(),
         password: digest(password),
-        transfer_to,
     }
 }
 
@@ -54,20 +53,7 @@ impl AuthBehaviour {
     }
 
     pub(crate) fn initiate(&mut self, relay: PeerId, room: RoomName, password: String) {
-        self.inner
-            .send_request(&relay, request(room, password, None));
-        self.relay = Some(relay);
-    }
-
-    pub(crate) fn transfer(
-        &mut self,
-        relay: PeerId,
-        room: RoomName,
-        password: String,
-        new_host: PeerId,
-    ) {
-        self.inner
-            .send_request(&relay, request(room, password, Some(new_host)));
+        self.inner.send_request(&relay, request(room, password));
         self.relay = Some(relay);
     }
 }

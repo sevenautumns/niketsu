@@ -39,14 +39,6 @@ pub struct UserList {
 }
 
 impl UserList {
-    pub fn get(&self, index: usize) -> Option<UserStatus> {
-        self.list.iter().nth(index).cloned()
-    }
-
-    pub fn contains_user(&self, user: &String) -> bool {
-        self.list.iter().any(|status| status.name == *user)
-    }
-
     pub fn iter(&'_ self) -> std::collections::btree_set::Iter<'_, UserStatus> {
         self.list.iter()
     }
@@ -65,10 +57,6 @@ impl UserList {
 
     pub fn insert(&mut self, user: UserStatus) -> bool {
         self.list.insert(user)
-    }
-
-    pub fn replace(&mut self, user: UserStatus) -> Option<UserStatus> {
-        self.list.replace(user)
     }
 }
 
@@ -165,9 +153,9 @@ impl CoreModel {
     }
 
     /// Takes over the room. A core that already followed this room keeps
-    /// what it has — playlist, running video and position — so a handover
-    /// or a lost host does not interrupt playback. Otherwise the room starts
-    /// from its saved playlist.
+    /// what it has — playlist, running video and position — so a lost host
+    /// does not interrupt playback. Otherwise the room starts from its
+    /// saved playlist.
     pub(crate) fn become_host(&mut self) {
         let room = self.config.room.clone();
         let select = if self.joined_room.as_ref() == Some(&room) {
@@ -458,7 +446,6 @@ mod tests {
     #[test]
     fn test_from_niketsu_user_status() {
         let mut btreeset = BTreeSet::new();
-        let user_name = "User1".to_string();
 
         btreeset.insert(UserStatus {
             name: arcstr::literal!("User1"),
@@ -472,7 +459,7 @@ mod tests {
         .into();
 
         // Ensure the RoomList contains the converted data.
-        assert!(user_list.contains_user(&user_name));
+        assert!(user_list.iter().any(|user| user.name == "User1"));
     }
 
     fn playlist_msg(videos: &[&str]) -> PlaylistMsg {

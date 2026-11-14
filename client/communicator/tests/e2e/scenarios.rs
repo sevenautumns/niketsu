@@ -97,39 +97,6 @@ async fn late_joiner_catches_up_with_the_host() {
     .await;
 }
 
-/// A handover moves the room at the relay: the chosen peer comes back as
-/// the host, the old host as its client, and the room keeps working.
-#[tokio::test(flavor = "multi_thread")]
-async fn handover_swaps_the_roles() {
-    let relay = Relay::start();
-    let alice = Peer::join(&relay, "alice", &["ep1"]).hosting().await;
-    let bob = Peer::join(&relay, "bob", &["ep1"]);
-    eventually("alice sees bob", || {
-        alice.ui.state().user_names() == ["alice", "bob"]
-    })
-    .await;
-
-    alice.ui.act(ui::HostHandover {
-        new_host: "bob".into(),
-    });
-    eventually("bob hosts and alice is its client", || {
-        bob.ui.state().is_host == Some(true) && alice.ui.state().is_host == Some(false)
-    })
-    .await;
-    for (name, peer) in [("alice", &alice), ("bob", &bob)] {
-        eventually(&format!("{name} sees both users again"), || {
-            peer.ui.state().user_names() == ["alice", "bob"]
-        })
-        .await;
-    }
-
-    select(&bob, &["ep1"], "ep1");
-    eventually("alice loads the new host's selection", || {
-        alice.player.state().video == Some(Video::from("ep1"))
-    })
-    .await;
-}
-
 /// A peer without the file plays it from the peer that shares it: what its
 /// video server hands the player is the shared file, byte for byte.
 #[tokio::test(flavor = "multi_thread")]

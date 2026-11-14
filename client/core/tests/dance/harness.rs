@@ -7,7 +7,7 @@ use arcstr::ArcStr;
 use async_trait::async_trait;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::communicator::{
-    ClientRequest, CommunicatorTrait, ConnectedMsg, EndpointInfo, HostHandoverMsg, HostInstruction,
+    ClientRequest, CommunicatorTrait, ConnectedMsg, EndpointInfo, HostInstruction,
     HostRoundTripMsg, IncomingMessage, NoticeMsg, OutgoingMessage, PeerConnectedMsg,
     PeerDisconnectedMsg, PeerId, PeerStatusMsg, RoomMessage, VideoProviderStoppedMsg,
 };
@@ -543,9 +543,24 @@ impl Room {
         self.peers.iter().position(|p| p.id == *id && p.online)
     }
 
+    /// The host loses the room at the relay, and the room there closes
+    /// with it. Everyone connects again; `target` is the first to arrive
+    /// and hosts the room, the others — the old host included — are its
+    /// clients.
+    pub fn rehost(&mut self, target: usize) {
+        assert!(self.peers[target].online, "an offline peer hosts no room");
+        self.host = target;
+        self.deliver(target, ConnectedMsg { is_host: true }.into());
+        for index in 0..self.peers.len() {
+            if index != target && self.peers[index].online {
+                self.connect_client(index);
+            }
+        }
+    }
+
     /// The peer's connections close; the host's communicator reports it.
     pub fn leave(&mut self, index: usize) {
-        assert_ne!(index, self.host, "the dance has no host loss");
+        assert_ne!(index, self.host, "a host does not leave, see `rehost`");
         self.peers[index].online = false;
         self.peers[index].drain();
         let peer = self.peers[index].id;
@@ -619,8 +634,6 @@ impl Room {
     /// - file requests travel directly between requester and the provider
     ///   announced via VideoShareChange (kademlia + direct request-response
     ///   in the real network)
-    /// - a host handover moves the room at the relay: the target comes
-    ///   back as the host and everyone else reconnects to it as a client
     fn route(&mut self, from: usize, msg: OutgoingMessage) -> Vec<(usize, IncomingMessage)> {
         // like the role handlers, a peer's messages of the other role's
         // group go nowhere
@@ -654,32 +667,6 @@ impl Room {
                 Some(to) => vec![(to, m.message.into())],
                 None => vec![],
             },
-            HostInstruction::HostHandover(m) => {
-                let Some(target) = self.index_of(&m.peer) else {
-                    return vec![];
-                };
-                self.host = target;
-                let mut deliveries: Vec<_> = (0..self.peers.len())
-                    .filter(|to| *to != from && self.peers[*to].online)
-                    .map(|to| {
-                        let handover = HostHandoverMsg {
-                            new_host: m.new_host.clone(),
-                            becomes_host: to == target,
-                        };
-                        (to, handover.into())
-                    })
-                    .collect();
-                deliveries.push((target, ConnectedMsg { is_host: true }.into()));
-                for i in 0..self.peers.len() {
-                    if i == target || !self.peers[i].online {
-                        continue;
-                    }
-                    let peer = self.peers[i].id;
-                    deliveries.push((target, PeerConnectedMsg { peer }.into()));
-                    deliveries.push((i, ConnectedMsg { is_host: false }.into()));
-                }
-                deliveries
-            }
         }
     }
 

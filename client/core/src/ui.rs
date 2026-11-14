@@ -9,9 +9,9 @@ use chrono::{DateTime, Local};
 use enum_dispatch::enum_dispatch;
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
-use tracing::{Level, trace, warn};
+use tracing::{Level, trace};
 
-use super::communicator::{HostHandoverRequest, PlaylistMsg, SelectMsg, UserMessageMsg};
+use super::communicator::{PlaylistMsg, SelectMsg, UserMessageMsg};
 use super::player::MediaPlayerTrait;
 use super::playlist::Video;
 use super::user::UserStatus;
@@ -53,7 +53,6 @@ pub enum UserInterfaceEvent {
     FileShareChange,
     SettingsChange,
     FileRequest,
-    HostHandover,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,36 +324,6 @@ impl EventHandler for FileRequest {
                 actor,
                 video: current_video,
             }))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostHandover {
-    pub new_host: ArcStr,
-}
-
-impl EventHandler for HostHandover {
-    fn handle(self, model: &mut CoreModel) {
-        trace!("host handover initiated by ui");
-        let Some(host) = &model.host else {
-            warn!("only the host can hand the room over");
-            return;
-        };
-        let Some(peer) = host.users.find_by_name(&self.new_host) else {
-            warn!(new_host = %self.new_host, "handover target not found in user list");
-            model.ui.player_message(PlayerMessage::error(format!(
-                "Cannot hand over to {}: not in the room",
-                self.new_host
-            )));
-            return;
-        };
-        model.communicator.send(
-            HostHandoverRequest {
-                peer,
-                new_host: self.new_host,
-            }
-            .into(),
-        );
     }
 }
 
@@ -638,15 +607,6 @@ impl UiModel {
         let res = self
             .events
             .send(UserInterfaceEvent::FileRequest(FileRequest {}))
-            .map_err(anyhow::Error::from);
-        crate::log_err!(res)
-    }
-
-    pub fn host_handover(&self, new_host: ArcStr) {
-        trace!("host handover to {new_host}");
-        let res = self
-            .events
-            .send(UserInterfaceEvent::HostHandover(HostHandover { new_host }))
             .map_err(anyhow::Error::from);
         crate::log_err!(res)
     }

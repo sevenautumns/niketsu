@@ -125,13 +125,3 @@ impl From<FileResponseMsg> for PlayerMessage {
         )
     }
 }
-
-impl From<HostHandoverMsg> for PlayerMessage {
-    fn from(value: HostHandoverMsg) -> Self {
-        PlayerMessage::new(
-            format!("{} is now the host", value.new_host),
-            MessageSource::Internal,
-            MessageLevel::Success,
-        )
-    }
-}

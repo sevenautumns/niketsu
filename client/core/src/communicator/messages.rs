@@ -222,24 +222,6 @@ impl VideoShareMsg {
     }
 }
 
-/// The host handed the room over to the user `new_host`. If that is this
-/// peer, it `becomes_host` by connecting again: the relay then names it
-/// the room's host.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostHandoverMsg {
-    pub new_host: ArcStr,
-    pub becomes_host: bool,
-}
-
-/// The host hands the room over to `peer`, which goes by `new_host`. The
-/// communicator asks the relay to transfer the room and announces the new
-/// host to the room.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostHandoverRequest {
-    pub peer: PeerId,
-    pub new_host: ArcStr,
-}
-
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoProviderStoppedMsg;

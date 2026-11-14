@@ -77,13 +77,6 @@ impl UsersWidgetState {
         self.set_active(true);
     }
 
-    pub fn get_current_user(&self) -> Option<UserStatus> {
-        match self.list_state.selected() {
-            Some(index) => self.user_list.get(index),
-            None => None,
-        }
-    }
-
     pub fn set_active(&mut self, active: bool) {
         self.active = active;
     }

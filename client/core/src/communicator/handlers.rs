@@ -240,16 +240,6 @@ impl EventHandler for FileResponseMsg {
     }
 }
 
-impl EventHandler for HostHandoverMsg {
-    fn handle(self, model: &mut CoreModel) {
-        let becomes_host = self.becomes_host;
-        model.ui.player_message(PlayerMessage::from(self));
-        if becomes_host {
-            model.connect();
-        }
-    }
-}
-
 impl EventHandler for VideoProviderStoppedMsg {
     fn handle(self, model: &mut CoreModel) {
         model.video_server.stop_server();

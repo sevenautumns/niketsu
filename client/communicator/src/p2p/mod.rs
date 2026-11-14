@@ -79,9 +79,6 @@ pub(crate) enum Stop {
     HostLost,
     /// The host lost the relay, and its room there with it.
     RelayLost,
-    /// The relay moved the room to the new host.
-    HandedOver,
-    HandoverFailed,
     /// The event loop's task panicked.
     Crashed,
 }
@@ -93,8 +90,6 @@ impl std::fmt::Display for Stop {
             Self::HostUnreachable => "Could not establish a direct connection to the host",
             Self::HostLost => "Lost the connection to the host",
             Self::RelayLost => "Lost the connection to the relay",
-            Self::HandedOver => "Handed the room over",
-            Self::HandoverFailed => "The relay refused to hand the room over",
             Self::Crashed => "The connection crashed",
         })
     }

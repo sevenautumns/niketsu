@@ -74,7 +74,6 @@ pub enum HostInstruction {
     UserStatusList(UserStatusListMsg),
     /// A message for exactly one peer rather than the room.
     ToPeer(ToPeerMsg),
-    HostHandover(HostHandoverRequest),
 }
 
 /// What only a client sends, each a request to the host.
@@ -131,7 +130,6 @@ outgoing_from! {
     VideoStatusMsg => Host(HostInstruction::VideoStatus),
     UserStatusListMsg => Host(HostInstruction::UserStatusList),
     ToPeerMsg => Host(HostInstruction::ToPeer),
-    HostHandoverRequest => Host(HostInstruction::HostHandover),
     UserStatusMsg => Client(ClientRequest::UserStatus),
 }
 
@@ -155,7 +153,6 @@ pub enum IncomingMessage {
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
     VideoProviderStopped(VideoProviderStoppedMsg),
-    HostHandover(HostHandoverMsg),
     PeerConnected(PeerConnectedMsg),
     PeerDisconnected(PeerDisconnectedMsg),
     PeerStatus(PeerStatusMsg),

@@ -28,8 +28,6 @@ use crate::widget::file_search::message::{Close as CloseFileSearch, FileSearchWi
 use crate::widget::file_search::{self, FileSearchWidgetState};
 use crate::widget::playlist::message::{CloseContext, PlaylistWidgetMessage};
 use crate::widget::settings::message::{Abort, SettingsWidgetMessage};
-use crate::widget::user_actions::message::{Close as CloseUserActions, UserActionsWidgetMessage};
-use crate::widget::user_actions::{self, UserActionsWidgetState};
 use crate::widget::{modal, settings};
 
 #[derive(Debug)]
@@ -41,7 +39,6 @@ pub struct ViewModel {
     pub chat_widget_state: ChatWidgetState,
     pub database_widget_state: DatabaseWidgetState,
     pub file_search_widget_state: FileSearchWidgetState,
-    pub user_actions_widget_state: UserActionsWidgetState,
     pub panes: pane_grid::State<PaneKind>,
 }
 
@@ -65,7 +62,6 @@ impl ViewModel {
             chat_widget_state: Default::default(),
             database_widget_state: Default::default(),
             file_search_widget_state: Default::default(),
-            user_actions_widget_state: Default::default(),
             panes,
         }
     }
@@ -82,11 +78,6 @@ impl ViewModel {
                 Some((
                     file_search::view(&self.file_search_widget_state),
                     FileSearchWidgetMessage::from(CloseFileSearch).into(),
-                ))
-            } else if self.user_actions_widget_state.is_active() {
-                Some((
-                    user_actions::view(&self.user_actions_widget_state),
-                    UserActionsWidgetMessage::from(CloseUserActions).into(),
                 ))
             } else if self.playlist_widget_state.context_active() {
                 Some((

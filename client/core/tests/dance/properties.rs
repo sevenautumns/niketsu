@@ -36,7 +36,7 @@ enum Action {
     FileRequest { peer: usize },
     FileEnd { peer: usize },
     Heartbeat,
-    Handover { target: usize },
+    Rehost { target: usize },
     Join,
 }
 
@@ -54,7 +54,7 @@ fn action() -> impl Strategy<Value = Action> {
         (0..8usize).prop_map(|peer| Action::FileRequest { peer }),
         (0..8usize).prop_map(|peer| Action::FileEnd { peer }),
         Just(Action::Heartbeat),
-        (0..8usize).prop_map(|target| Action::Handover { target }),
+        (0..8usize).prop_map(|target| Action::Rehost { target }),
         Just(Action::Join),
     ]
 }
@@ -130,12 +130,10 @@ fn apply(room: &mut Room, action: Action) {
             }
         }
         Action::Heartbeat => room.heartbeat(),
-        Action::Handover { target } => {
+        Action::Rehost { target } => {
             let target = target % room.peers.len();
-            let host = room.host_index();
-            if target != host {
-                let new_host = room.peer(target).name();
-                room.peer(host).act(ui::HostHandover { new_host });
+            if target != room.host_index() {
+                room.rehost(target);
             }
         }
         Action::Join => {
@@ -186,8 +184,8 @@ fn assert_room_converged(room: &mut Room) {
 }
 
 proptest! {
-    /// After ANY sequence of user actions — including host handovers and
-    /// peers joining mid-session — the room goes quiescent (pump panics on
+    /// After ANY sequence of user actions — including the room moving to
+    /// another host and peers joining mid-session — the room goes quiescent (pump panics on
     /// a message storm) and every peer agrees on the playlist, the loaded
     /// video, the video and playlist shown in the UI, and the playlist
     /// marker. After a few quiet heartbeats everyone also agrees with

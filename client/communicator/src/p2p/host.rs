@@ -9,20 +9,18 @@ use libp2p::request_response::ResponseChannel;
 use libp2p::swarm::{ConnectionError, ConnectionId, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use niketsu_core::communicator::{
-    ConnectedMsg, HostHandoverRequest, HostInstruction, IncomingMessage, OutgoingMessage,
-    PeerConnectedMsg, PeerDisconnectedMsg, PeerStatusMsg,
+    ConnectedMsg, HostInstruction, IncomingMessage, OutgoingMessage, PeerConnectedMsg,
+    PeerDisconnectedMsg, PeerStatusMsg,
 };
 use niketsu_core::log_err_msg;
-use niketsu_core::room::RoomName;
 use tracing::{debug, error, info, warn};
 
-use super::auth::AuthEvent;
 use super::links::{Closed, Opened};
 use super::{
     Behaviour, BehaviourEvent, ChunkRoutes, FileShareBehaviourEvent, HostLink, MessageResponse,
-    Role, Session, Stop, SwarmExt, TransportBehaviourEvent,
+    Role, Session, Stop, SwarmExt,
 };
-use crate::messages::{Handover, NiketsuMessage};
+use crate::messages::NiketsuMessage;
 
 pub(crate) struct HostRole {
     session: Session,
@@ -30,8 +28,6 @@ pub(crate) struct HostRole {
     /// The listener on the relay's circuit, which lives as long as the
     /// reservation there does. Peers join the room through it.
     reservation: ListenerId,
-    password: String,
-    room: RoomName,
     /// The peers that joined the room through the host's circuit on the
     /// relay, which the relay names only to peers that know the room's
     /// password. A direct connection alone makes no member: mDNS also
@@ -40,7 +36,6 @@ pub(crate) struct HostRole {
     members: HashSet<PeerId>,
     /// Where mDNS found a peer on the local network.
     lan_addrs: HashMap<PeerId, Multiaddr>,
-    handover_pending: bool,
 }
 
 impl HostRole {
@@ -51,10 +46,8 @@ impl HostRole {
         host: PeerId,
         relay_peer_id: PeerId,
         reservation: ListenerId,
-        password: String,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
-        room: RoomName,
         chunk_routes: ChunkRoutes,
     ) -> Self {
         message_sender
@@ -73,11 +66,8 @@ impl HostRole {
             session,
             relay_peer_id,
             reservation,
-            password,
-            room,
             members: HashSet::default(),
             lan_addrs: HashMap::default(),
-            handover_pending: false,
         }
     }
 
@@ -139,28 +129,6 @@ impl HostRole {
         log_err_msg!(res, "Failed to report connected peer to core");
     }
 
-    fn on_core_handover(&mut self, request: HostHandoverRequest) -> Result<()> {
-        self.session.net.swarm.auth().transfer(
-            self.relay_peer_id,
-            self.room.clone(),
-            self.password.clone(),
-            request.peer,
-        );
-
-        let announce = Handover {
-            peer: request.peer,
-            new_host: request.new_host,
-        };
-        self.session.broadcast(announce.into())?;
-
-        // Both the transfer request and the broadcast are only queued in the
-        // behaviours at this point. Stopping now would drop the swarm before
-        // they are sent, so the loop runs on until the relay answers the
-        // transfer request (see on_auth).
-        self.handover_pending = true;
-        Ok(())
-    }
-
     fn on_core_instruction(&mut self, instruction: HostInstruction) -> Result<()> {
         use HostInstruction::*;
         match instruction {
@@ -172,24 +140,7 @@ impl HostRole {
                 swarm.send_request(&m.peer, m.message.into());
                 Ok(())
             }
-            HostHandover(m) => self.on_core_handover(m),
         }
-    }
-
-    fn on_auth(&mut self, event: AuthEvent) {
-        if !self.handover_pending {
-            return;
-        }
-        // The room is announced as handed over either way, so the session
-        // ends; the core reconnects and takes the role the relay assigns.
-        let stop = match event {
-            AuthEvent::Complete { .. } => Stop::HandedOver,
-            AuthEvent::Failed(error) => {
-                error!(%error, "host handover failed");
-                Stop::HandoverFailed
-            }
-        };
-        self.session.net.stop(stop);
     }
 }
 
@@ -298,9 +249,7 @@ impl Role for HostRole {
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         use BehaviourEvent::*;
         use FileShareBehaviourEvent as F;
-        use TransportBehaviourEvent as T;
         match event {
-            SwarmEvent::Behaviour(Transport(T::Auth(e))) => self.on_auth(e),
             SwarmEvent::Behaviour(FileShare(F::Mdns(e))) => self.on_mdns(e),
             // Without the reservation nobody can join the room, also when
             // the connection to the relay is still up.

@@ -69,24 +69,10 @@ struct Rooms {
 }
 
 impl Rooms {
-    /// Answers `peer` asking for a room. The host of a room hands it over
-    /// by naming the next host. Everyone else joins the room with its
+    /// Answers `peer` asking for a room: it joins the room with its
     /// password and learns who hosts it, or opens it when nobody does.
     fn answer(&mut self, peer: PeerId, request: AuthRequest) -> AuthResponse {
-        let AuthRequest {
-            room,
-            password,
-            transfer_to,
-        } = request;
-
-        if let Some(new_host) = transfer_to {
-            if !self.transfer(&room, peer, new_host) {
-                debug!(%peer, %room, "Refused to hand over a room the peer does not host");
-                return denied();
-            }
-            debug!(%peer, %new_host, %room, "Handed room over");
-            return granted(None);
-        }
+        let AuthRequest { room, password } = request;
 
         let Some(open) = self.get(&room) else {
             let Some(password) = PasswordHash::new(&password) else {
@@ -114,20 +100,6 @@ impl Rooms {
         self.close_hosted_by(host);
         self.hosts.insert(host, name.clone());
         self.rooms.insert(name, Room { host, password });
-    }
-
-    /// Hands `name` from its host `from` over to `to`. False if `from` does
-    /// not host it.
-    fn transfer(&mut self, name: &str, from: PeerId, to: PeerId) -> bool {
-        if self.get(name).is_none_or(|room| room.host != from) {
-            return false;
-        }
-        let Some(Room { password, .. }) = self.rooms.remove(name) else {
-            return false;
-        };
-        self.hosts.remove(&from);
-        self.open(name.to_owned(), to, password);
-        true
     }
 
     fn close_hosted_by(&mut self, host: PeerId) {
@@ -274,11 +246,10 @@ mod tests {
         PasswordHash(String::new())
     }
 
-    fn ask(room: &str, password: &str, transfer_to: Option<PeerId>) -> AuthRequest {
+    fn ask(room: &str, password: &str) -> AuthRequest {
         AuthRequest {
             room: room.into(),
             password: password.into(),
-            transfer_to,
         }
     }
 
@@ -286,45 +257,13 @@ mod tests {
     fn a_room_names_its_host_to_those_with_its_password() {
         let (alice, bob) = (PeerId::random(), PeerId::random());
         let mut rooms = Rooms::default();
+        assert_eq!(rooms.answer(alice, ask("room", "secret")), granted(None));
+        assert_eq!(rooms.answer(bob, ask("room", "guess")), denied());
         assert_eq!(
-            rooms.answer(alice, ask("room", "secret", None)),
-            granted(None)
-        );
-        assert_eq!(rooms.answer(bob, ask("room", "guess", None)), denied());
-        assert_eq!(
-            rooms.answer(bob, ask("room", "secret", None)),
+            rooms.answer(bob, ask("room", "secret")),
             granted(Some(alice))
         );
-        assert_eq!(
-            rooms.answer(alice, ask("room", "secret", None)),
-            granted(None)
-        );
-    }
-
-    #[test]
-    fn only_its_host_hands_a_room_over() {
-        let (alice, bob) = (PeerId::random(), PeerId::random());
-        let mut rooms = Rooms::default();
-        rooms.open("room".into(), alice, password());
-        assert_eq!(rooms.answer(bob, ask("room", "", Some(bob))), denied());
-        assert_eq!(
-            rooms.answer(alice, ask("room", "", Some(bob))),
-            granted(None)
-        );
-        assert_eq!(rooms.get("room").map(|r| r.host), Some(bob));
-    }
-
-    #[test]
-    fn a_transferred_room_closes_with_its_new_host() {
-        let (alice, bob) = (PeerId::random(), PeerId::random());
-        let mut rooms = Rooms::default();
-        rooms.open("room".into(), alice, password());
-        assert!(!rooms.transfer("room", bob, alice));
-        assert!(rooms.transfer("room", alice, bob));
-        rooms.close_hosted_by(alice);
-        assert_eq!(rooms.get("room").map(|r| r.host), Some(bob));
-        rooms.close_hosted_by(bob);
-        assert!(rooms.get("room").is_none());
+        assert_eq!(rooms.answer(alice, ask("room", "secret")), granted(None));
     }
 
     #[test]

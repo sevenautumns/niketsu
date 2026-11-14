@@ -263,10 +263,10 @@ async fn file_end_advances_the_playlist_everywhere() {
     }
 }
 
-/// After a host handover, the new host's clock is the position authority
-/// and the old host's heartbeats move nobody.
+/// When the room moves to another host, the new host's clock is the
+/// position authority and the old host's heartbeats move nobody.
 #[tokio::test]
-async fn host_handover_moves_the_position_authority() {
+async fn a_new_host_is_the_position_authority() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
     let bob = room.join("bob", &["ep1"]);
@@ -280,8 +280,7 @@ async fn host_handover_moves_the_position_authority() {
     });
     room.pump();
 
-    let new_host = room.peer(bob).name();
-    room.peer(alice).act(ui::HostHandover { new_host });
+    room.rehost(bob);
     room.pump();
 
     assert_eq!(room.host_index(), bob);
@@ -302,7 +301,7 @@ async fn host_handover_moves_the_position_authority() {
     assert_eq!(
         room.peer(alice).player.state().position,
         Duration::from_secs(100),
-        "after handover, clients must follow the new host's clock"
+        "clients must follow the new host's clock"
     );
 
     // ...and the old host's heartbeats have no authority anymore
@@ -1048,12 +1047,12 @@ async fn clients_compensate_the_host_position_for_the_network_delay() {
     );
 }
 
-/// A handover keeps the room's state: the new host does not restart the
-/// running video, and everyone who reconnects to it — the old host
-/// included — is greeted with the playlist, the video at the new host's
-/// position, and the full user list.
+/// A room moving to another host keeps its state: the new host does not
+/// restart the running video, and everyone who reconnects to it — the old
+/// host included — is greeted with the playlist, the video at the new
+/// host's position, and the full user list.
 #[tokio::test]
-async fn a_handover_keeps_the_room_running() {
+async fn a_new_host_keeps_the_room_running() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1", "ep2"]);
     let bob = room.join("bob", &["ep1", "ep2"]);
@@ -1074,8 +1073,7 @@ async fn a_handover_keeps_the_room_running() {
         });
     }
 
-    let new_host = room.peer(bob).name();
-    room.peer(alice).act(ui::HostHandover { new_host });
+    room.rehost(bob);
     room.pump();
 
     assert_eq!(room.host_index(), bob);
@@ -1138,8 +1136,7 @@ async fn a_new_host_of_the_same_room_ignores_the_saved_playlist() {
     });
     room.pump();
 
-    let new_host = room.peer(bob).name();
-    room.peer(alice).act(ui::HostHandover { new_host });
+    room.rehost(bob);
     room.pump();
 
     assert_eq!(room.host_index(), bob);
@@ -1148,25 +1145,6 @@ async fn a_new_host_of_the_same_room_ignores_the_saved_playlist() {
         assert_eq!(peer.playlist(), Playlist::from_iter(["ep3"]));
         assert_eq!(peer.player.state().video, Some(Video::from("ep3")));
     }
-}
-
-/// Only the host can hand the room over; a client asking for it sends
-/// nothing, and nobody reconnects.
-#[tokio::test]
-async fn a_client_cannot_hand_over_the_room() {
-    let mut room = Room::new();
-    let alice = room.join("alice", &[]);
-    let bob = room.join("bob", &[]);
-    let charlie = room.join("charlie", &[]);
-    room.pump();
-
-    let new_host = room.peer(charlie).name();
-    room.peer(bob).act(ui::HostHandover { new_host });
-    room.pump();
-
-    assert_eq!(room.host_index(), alice);
-    assert!(room.peer(alice).ui.state().is_host);
-    assert!(!room.peer(charlie).ui.state().is_host);
 }
 
 /// A client that ended up on another video than the host — it lost a race

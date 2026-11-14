@@ -120,10 +120,8 @@ impl Setup {
                     local_peer_id,
                     peer_info.relay,
                     reservation,
-                    self.password,
                     self.core_receiver,
                     self.message_sender,
-                    self.room,
                     self.chunk_routes,
                 ))
             }

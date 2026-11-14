@@ -80,15 +80,6 @@ impl RoomUsers {
         self.status_list.users.iter().all(|u| u.ready)
     }
 
-    /// Finds the remote peer currently using `name`. The host's own slot is
-    /// never returned: it cannot be the target of anything sent to a peer.
-    pub fn find_by_name(&self, name: &str) -> Option<PeerId> {
-        self.peers
-            .iter()
-            .find(|(_, s)| s.as_ref().is_some_and(|u| u.name == name))
-            .map(|(peer, _)| *peer)
-    }
-
     /// Removes the peer from the user map and the status list.
     /// Returns false if the peer was not known at all.
     pub fn remove(&mut self, peer: &PeerId) -> bool {
@@ -205,6 +196,12 @@ mod tests {
             .collect()
     }
 
+    /// The name `peer` goes by in the room.
+    fn name_of(room: &RoomUsers, peer: PeerId) -> Option<&str> {
+        let status = room.peer_status(&peer)?.as_ref()?;
+        Some(status.name.as_str())
+    }
+
     fn synergy() -> String {
         "synergy".into()
     }
@@ -240,8 +237,8 @@ mod tests {
         assert_eq!(forced.name, "alice_synergy");
         assert_eq!(room.status_list().users.len(), 2);
         // the original user is untouched
-        assert_eq!(room.find_by_name("alice"), Some(alice));
-        assert_eq!(room.find_by_name("alice_synergy"), Some(intruder));
+        assert_eq!(name_of(&room, alice), Some("alice"));
+        assert_eq!(name_of(&room, intruder), Some("alice_synergy"));
     }
 
     #[test]
@@ -272,8 +269,8 @@ mod tests {
 
         let forced = forced.expect("the host's name is taken too");
         assert_eq!(forced.name, "alice_synergy");
-        assert_eq!(room.status_list().users.len(), 2);
-        assert_eq!(room.find_by_name("alice"), None, "the host is no peer");
+        assert_eq!(names(&room), vec!["alice", "alice_synergy"]);
+        assert_eq!(name_of(&room, intruder), Some("alice_synergy"));
     }
 
     #[test]
@@ -365,7 +362,7 @@ mod tests {
 
         assert!(forced.is_none());
         assert_eq!(names(&room), vec!["alicia"]);
-        assert_eq!(room.find_by_name("alicia"), Some(alice));
+        assert_eq!(name_of(&room, alice), Some("alicia"));
     }
 
     #[test]
@@ -383,10 +380,9 @@ mod tests {
         let forced = forced.expect("collision must force a rename");
         assert_eq!(forced.name, "alice_synergy");
         // alice keeps her entry, bob's old name is gone, no ghost entries
-        assert_eq!(room.status_list().users.len(), 2);
-        assert_eq!(room.find_by_name("alice"), Some(alice));
-        assert_eq!(room.find_by_name("bob"), None);
-        assert_eq!(room.find_by_name("alice_synergy"), Some(bob));
+        assert_eq!(names(&room), vec!["alice", "alice_synergy"]);
+        assert_eq!(name_of(&room, alice), Some("alice"));
+        assert_eq!(name_of(&room, bob), Some("alice_synergy"));
     }
 
     #[test]

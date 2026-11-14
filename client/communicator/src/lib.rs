@@ -194,13 +194,13 @@ impl CommunicatorTrait for P2PCommunicator {
 mod test {
     use super::*;
 
-    /// The room's last words to a peer can be the ones that matter most: a
-    /// handover is announced right before the old host closes the room.
+    /// What the room said before the connection ended still reaches the
+    /// core, also when the core finds the connection ended by sending.
     #[tokio::test]
     async fn messages_of_an_ended_connection_survive_a_failed_send() {
-        let handover = HostHandoverMsg {
-            new_host: "bob".into(),
-            becomes_host: true,
+        let last_words = UserMessageMsg {
+            actor: "bob".into(),
+            message: "bye".into(),
         };
         let mut communicator = P2PCommunicator::new(ChunkRoute::default(), ChunkRoute::default());
         communicator.endpoint = Some(EndpointInfo {
@@ -209,14 +209,14 @@ mod test {
             password: String::new(),
         });
         communicator.connection = Connection::Connected(Connected {
-            session: SessionHandle::ended_with(vec![handover.clone().into()]),
+            session: SessionHandle::ended_with(vec![last_words.clone().into()]),
         });
 
         communicator.send(VideoShareMsg { video: None }.into());
 
-        let IncomingMessage::HostHandover(received) = communicator.receive().await else {
-            panic!("the handover was dropped with the connection");
+        let IncomingMessage::UserMessage(received) = communicator.receive().await else {
+            panic!("the message was dropped with the connection");
         };
-        assert_eq!(received, handover);
+        assert_eq!(received, last_words);
     }
 }
