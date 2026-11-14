@@ -1,35 +1,35 @@
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result};
+use libp2p::identity::Keypair;
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 use tracing::{debug, warn};
 
 use crate::cli::PROJECT_DIRS;
 
-#[serde_as]
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(default)]
 pub struct Config {
-    #[serde(default)]
+    /// The relay's identity in its protobuf encoding.
     pub keypair: Option<Vec<u8>>,
-    #[serde(default = "default_port")]
     pub port: u16,
 }
 
-fn default_port() -> u16 {
-    7766
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            keypair: None,
+            port: 7766,
+        }
+    }
 }
 
 impl Config {
     fn file_path() -> Result<PathBuf> {
-        let path = PROJECT_DIRS.as_ref().map(|p| p.config_dir().to_path_buf());
-        match path {
-            Some(mut path) => {
-                path.push("config.toml");
-                Ok(path)
-            }
-            None => bail!("Could not determine config dir"),
-        }
+        let dirs = PROJECT_DIRS
+            .as_ref()
+            .context("Could not determine config dir")?;
+        Ok(dirs.config_dir().join("config.toml"))
     }
 
     pub fn load() -> Result<Self> {
@@ -42,10 +42,7 @@ impl Config {
     pub fn load_or_default() -> Self {
         Self::load().unwrap_or_else(|error| {
             warn!(%error, "no config loaded");
-            Config {
-                keypair: None,
-                port: default_port(),
-            }
+            Self::default()
         })
     }
 
@@ -56,5 +53,16 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
         Ok(std::fs::write(path, toml::to_string(self)?)?)
+    }
+
+    /// The relay's identity. A config without one gets a new one, so a
+    /// saved config keeps the relay's peer id the same across restarts.
+    pub fn identity(&mut self) -> Result<Keypair> {
+        if let Some(encoded) = &self.keypair {
+            return Ok(Keypair::from_protobuf_encoding(encoded)?);
+        }
+        let keypair = Keypair::generate_ed25519();
+        self.keypair = Some(keypair.to_protobuf_encoding()?);
+        Ok(keypair)
     }
 }

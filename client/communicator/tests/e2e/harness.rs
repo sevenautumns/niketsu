@@ -103,7 +103,7 @@ pub struct Relay {
 impl Relay {
     pub fn start() -> Self {
         log_to_stderr();
-        let keypair = Keypair::generate_ed25519().to_protobuf_encoding().unwrap();
+        let keypair = Keypair::generate_ed25519();
         // The relay takes one port number for all its listeners, so ask the
         // system for a free one first. Free for one listener is not free for
         // all of them, and scenarios run in parallel, hence the retries.
@@ -114,11 +114,8 @@ impl Relay {
                     .local_addr()
                     .ok()?
                     .port();
-                let config = niketsu_relay::config::Config {
-                    keypair: Some(keypair.clone()),
-                    port,
-                };
-                Some((port, niketsu_relay::relay::new(config).ok()?))
+                let relay = niketsu_relay::relay::Relay::new(keypair.clone(), port).ok()?;
+                Some((port, relay))
             })
             .expect("relay failed to start");
         let task = tokio::spawn(async move { relay.run().await });

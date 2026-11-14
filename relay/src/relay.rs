@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -13,8 +13,6 @@ use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, StreamProtocol, Swarm, identify, noise, ping, relay, tcp, yamux};
 use niketsu_protocol::{AUTH_PROTOCOL, AuthRequest, AuthResponse, AuthStatus};
 use tracing::debug;
-
-use crate::config::Config;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -90,83 +88,72 @@ pub struct Relay {
     rooms: Rooms,
 }
 
-pub fn new(config: Config) -> Result<Relay> {
-    let keypair = Keypair::from_protobuf_encoding(config.keypair.unwrap().as_slice())?;
-    let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
-    quic_config.handshake_timeout = Duration::from_secs(10);
-    quic_config.max_idle_timeout = 3 * 1000;
-
-    let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
-        .with_tokio()
-        .with_tcp(
-            tcp::Config::default(),
-            noise::Config::new,
-            yamux::Config::default,
-        )?
-        .with_quic_config(|_| quic_config)
-        .with_behaviour(|key| Behaviour {
-            relay: relay::Behaviour::new(
-                key.public().to_peer_id(),
-                // Circuits through the public relay are only a hole-punch
-                // rendezvous: the client keeps all niketsu protocols off
-                // relayed connections (see DirectOnly in the communicator), so
-                // nothing but identify/DCUtR/ping ever flows here. Clients
-                // abort a punch after 30 s, so any older circuit is dead
-                // weight; the duration cap only needs to stay above that
-                // client deadline. The byte cap guards against peers that
-                // don't play by DirectOnly's rules.
-                relay::Config {
-                    max_circuits: 128,
-                    max_circuits_per_peer: 4,
-                    max_circuit_duration: Duration::from_secs(60),
-                    max_circuit_bytes: 128 * 1024,
-                    ..Default::default()
-                },
-            ),
-            ping: ping::Behaviour::new(
-                ping::Config::new()
-                    .with_timeout(Duration::from_secs(5))
-                    .with_interval(Duration::from_secs(2)),
-            ),
-            identify: identify::Behaviour::new(identify::Config::new(
-                "/identify/1".to_string(),
-                key.public(),
-            )),
-            auth: request_response::cbor::Behaviour::new(
-                [(StreamProtocol::new(AUTH_PROTOCOL), ProtocolSupport::Full)],
-                request_response::Config::default(),
-            ),
-        })?
-        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
-        .build();
-
-    let listen_addr_tcp_ipv4 = Multiaddr::empty()
-        .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
-        .with(Protocol::Tcp(config.port));
-    let listen_addr_tcp_ipv6 = Multiaddr::empty()
-        .with(Protocol::from(Ipv6Addr::UNSPECIFIED))
-        .with(Protocol::Tcp(config.port));
-    swarm.listen_on(listen_addr_tcp_ipv4)?;
-    swarm.listen_on(listen_addr_tcp_ipv6)?;
-
-    let listen_addr_quic_ipv4 = Multiaddr::empty()
-        .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
-        .with(Protocol::Udp(config.port))
-        .with(Protocol::QuicV1);
-    let listen_addr_quic_ipv6 = Multiaddr::empty()
-        .with(Protocol::from(Ipv6Addr::UNSPECIFIED))
-        .with(Protocol::Udp(config.port))
-        .with(Protocol::QuicV1);
-    swarm.listen_on(listen_addr_quic_ipv4)?;
-    swarm.listen_on(listen_addr_quic_ipv6)?;
-
-    Ok(Relay {
-        swarm,
-        rooms: Rooms::default(),
-    })
-}
-
 impl Relay {
+    /// A relay that listens on `port` on every interface, over TCP and QUIC.
+    pub fn new(keypair: Keypair, port: u16) -> Result<Self> {
+        let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
+        quic_config.handshake_timeout = Duration::from_secs(10);
+        quic_config.max_idle_timeout = 3 * 1000;
+
+        let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
+            .with_tokio()
+            .with_tcp(
+                tcp::Config::default(),
+                noise::Config::new,
+                yamux::Config::default,
+            )?
+            .with_quic_config(|_| quic_config)
+            .with_behaviour(|key| Behaviour {
+                relay: relay::Behaviour::new(
+                    key.public().to_peer_id(),
+                    // Circuits through the public relay are only a hole-punch
+                    // rendezvous: the client keeps all niketsu protocols off
+                    // relayed connections (see DirectOnly in the communicator), so
+                    // nothing but identify/DCUtR/ping ever flows here. Clients
+                    // abort a punch after 30 s, so any older circuit is dead
+                    // weight; the duration cap only needs to stay above that
+                    // client deadline. The byte cap guards against peers that
+                    // don't play by DirectOnly's rules.
+                    relay::Config {
+                        max_circuits: 128,
+                        max_circuits_per_peer: 4,
+                        max_circuit_duration: Duration::from_secs(60),
+                        max_circuit_bytes: 128 * 1024,
+                        ..Default::default()
+                    },
+                ),
+                ping: ping::Behaviour::new(
+                    ping::Config::new()
+                        .with_timeout(Duration::from_secs(5))
+                        .with_interval(Duration::from_secs(2)),
+                ),
+                identify: identify::Behaviour::new(identify::Config::new(
+                    "/identify/1".to_string(),
+                    key.public(),
+                )),
+                auth: request_response::cbor::Behaviour::new(
+                    [(StreamProtocol::new(AUTH_PROTOCOL), ProtocolSupport::Full)],
+                    request_response::Config::default(),
+                ),
+            })?
+            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
+            .build();
+
+        for ip in [
+            IpAddr::from(Ipv4Addr::UNSPECIFIED),
+            IpAddr::from(Ipv6Addr::UNSPECIFIED),
+        ] {
+            let ip = Multiaddr::from(ip);
+            swarm.listen_on(ip.clone().with(Protocol::Tcp(port)))?;
+            swarm.listen_on(ip.with(Protocol::Udp(port)).with(Protocol::QuicV1))?;
+        }
+
+        Ok(Self {
+            swarm,
+            rooms: Rooms::default(),
+        })
+    }
+
     pub fn peer_id(&self) -> &PeerId {
         self.swarm.local_peer_id()
     }
