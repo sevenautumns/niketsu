@@ -53,8 +53,10 @@ pub(crate) enum FileShareResponse {
     Chunk(ChunkBytes),
 }
 
+/// Goes on the wire as one CBOR byte string; as a sequence of integers a
+/// chunk would take about twice its size.
 #[derive(Serialize, Deserialize)]
-pub(crate) struct ChunkBytes(Vec<u8>);
+pub(crate) struct ChunkBytes(#[serde(with = "serde_bytes")] Vec<u8>);
 
 impl std::fmt::Debug for ChunkBytes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -509,5 +511,34 @@ impl Session {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use niketsu_core::chunk::CHUNK_SIZE;
+
+    use super::*;
+
+    /// A chunk takes its own size on the wire and a few bytes of framing.
+    #[test]
+    fn a_chunk_is_encoded_as_its_bytes() {
+        let bytes: Vec<u8> = (0..CHUNK_SIZE).map(|i| i as u8).collect();
+        let response: FileShareResponseResult =
+            Ok(FileShareResponse::Chunk(ChunkBytes(bytes.clone())));
+
+        let encoded = cbor4ii::serde::to_vec(Vec::new(), &response).unwrap();
+        assert!(
+            encoded.len() <= bytes.len() + 32,
+            "{} bytes on the wire for a chunk of {}",
+            encoded.len(),
+            bytes.len()
+        );
+
+        let decoded: FileShareResponseResult = cbor4ii::serde::from_slice(&encoded).unwrap();
+        let Ok(FileShareResponse::Chunk(ChunkBytes(received))) = decoded else {
+            panic!("the chunk came back as something else");
+        };
+        assert_eq!(received, bytes);
     }
 }
