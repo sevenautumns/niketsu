@@ -97,6 +97,11 @@ impl CoreModel {
         self.save_playlist();
     }
 
+    /// Connects to the configured room, leaving the one connected to.
+    pub fn connect(&mut self) {
+        self.communicator.connect(self.config.endpoint());
+    }
+
     /// Stop providing the current file and announce it to the room and UI.
     pub fn stop_sharing(&mut self) {
         self.communicator.send(VideoShareMsg { video: None }.into());
@@ -150,22 +155,10 @@ impl Core {
     pub async fn run(mut self) {
         info!("starting core");
         if self.model.config.auto_connect {
-            info!("autoconnect to server");
-            self.auto_connect().await;
+            info!("connecting to the configured room");
+            self.model.connect();
         }
         self.run_loop().await;
-    }
-
-    pub async fn auto_connect(&mut self) {
-        let addr = self.model.config.addr();
-        let room = self.model.config.room.clone();
-        let password = self.model.config.password.clone();
-        let endpoint = EndpointInfo {
-            room: room.clone(),
-            password,
-            addr,
-        };
-        self.model.communicator.connect(endpoint);
     }
 
     pub async fn run_loop(mut self) {

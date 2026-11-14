@@ -7,14 +7,11 @@ use arcstr::ArcStr;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use enum_dispatch::enum_dispatch;
-use multiaddr::Multiaddr;
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tracing::{Level, trace, warn};
 
-use super::communicator::{
-    EndpointInfo, HostHandoverRequest, PlaylistMsg, SelectMsg, UserMessageMsg,
-};
+use super::communicator::{HostHandoverRequest, PlaylistMsg, SelectMsg, UserMessageMsg};
 use super::player::MediaPlayerTrait;
 use super::playlist::Video;
 use super::user::UserStatus;
@@ -101,24 +98,12 @@ pub struct RoomChange {
     pub room: RoomName,
 }
 
-impl RoomChange {
-    fn into_endpoint(self, addr: Multiaddr) -> EndpointInfo {
-        EndpointInfo {
-            room: self.room,
-            password: self.password,
-            addr,
-        }
-    }
-}
-
 impl EventHandler for RoomChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("room change message");
-        model.config.room.clone_from(&self.room);
-        model.config.password.clone_from(&self.password);
-        model
-            .communicator
-            .connect(self.into_endpoint(model.config.addr()));
+        model.config.room = self.room;
+        model.config.password = self.password;
+        model.connect();
     }
 }
 
@@ -402,11 +387,7 @@ impl EventHandler for SettingsChange {
             // we only need to trigger reconnects if a connection
             // was previously established
             if model.communicator.has_endpoint() {
-                model.communicator.connect(EndpointInfo {
-                    addr: model.config.addr(),
-                    room: model.config.room.clone(),
-                    password: model.config.password.clone(),
-                });
+                model.connect();
             }
         }
 
@@ -689,12 +670,12 @@ mod tests {
     use std::borrow::Cow;
 
     use mockall::predicate::eq;
-    use multiaddr::Protocol;
+    use multiaddr::{Multiaddr, Protocol};
     use tokio::sync::Notify;
 
     use super::*;
     use crate::builder::CoreBuilder;
-    use crate::communicator::{MockCommunicatorTrait, OutgoingMessage};
+    use crate::communicator::{EndpointInfo, MockCommunicatorTrait, OutgoingMessage};
     use crate::config::Config;
     use crate::file_database::MockFileDatabaseTrait;
     use crate::player::MockMediaPlayerTrait;

@@ -3,8 +3,8 @@
 use arcstr::ArcStr;
 use tracing::{debug, trace};
 
+use super::OutgoingMessage;
 use super::messages::*;
-use super::{EndpointInfo, OutgoingMessage};
 use crate::player::MediaPlayerTrait;
 use crate::room::UserList;
 use crate::sync::ClientSync;
@@ -245,11 +245,7 @@ impl EventHandler for HostHandoverMsg {
         let becomes_host = self.becomes_host;
         model.ui.player_message(PlayerMessage::from(self));
         if becomes_host {
-            model.communicator.connect(EndpointInfo {
-                addr: model.config.addr(),
-                room: model.config.room.clone(),
-                password: model.config.password.clone(),
-            });
+            model.connect();
         }
     }
 }

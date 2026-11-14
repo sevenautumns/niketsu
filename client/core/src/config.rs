@@ -8,6 +8,7 @@ use serde_with::serde_as;
 use tracing::{debug, warn};
 
 use crate::PROJECT_DIRS;
+use crate::communicator::EndpointInfo;
 use crate::room::RoomName;
 use crate::user::UserStatus;
 
@@ -97,6 +98,15 @@ impl Config {
                 .with(Protocol::Dns(self.relay.as_str().into()))
                 .with(Protocol::Udp(self.port))
                 .with(Protocol::QuicV1)
+        }
+    }
+
+    /// Where the configured room is reached.
+    pub fn endpoint(&self) -> EndpointInfo {
+        EndpointInfo {
+            addr: self.addr(),
+            room: self.room.clone(),
+            password: self.password.clone(),
         }
     }
 
