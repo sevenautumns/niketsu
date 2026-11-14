@@ -191,6 +191,14 @@ impl CoreModel {
             debug!(%peer, "ignoring peer connection as a client");
             return;
         };
+        // The selection's position follows the heartbeats and lags behind a
+        // seek since the last one. A peer greeted with it would start there
+        // and, that far behind, have the room wait for it.
+        if self.player.playing_video() == host.select.video
+            && let Some(position) = self.player.get_position()
+        {
+            host.select.position = position;
+        }
         for msg in host.greet(peer) {
             self.communicator.send(msg);
         }

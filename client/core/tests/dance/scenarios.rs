@@ -365,6 +365,35 @@ async fn late_joiner_gets_playlist_selection_and_position() {
     assert!(!room.peer(charlie).player.state().paused);
 }
 
+/// A peer joining right after the host seeks starts at the seek, though no
+/// heartbeat has carried it yet.
+#[tokio::test]
+async fn late_joiner_right_after_a_seek_starts_there() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    room.pump();
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+
+    room.peer(alice).player.set(|player| {
+        player.position = Duration::from_secs(600);
+    });
+
+    let charlie = room.join("charlie", &["ep1"]);
+    room.pump();
+
+    assert_eq!(
+        room.peer(charlie).player.state().position,
+        Duration::from_secs(600),
+        "joiner must start where the host is, not at its last heartbeat"
+    );
+}
+
 /// A peer joining a session that already runs at another speed adopts it
 /// from the host's heartbeat: the speed change itself was announced long
 /// before the joiner existed.
