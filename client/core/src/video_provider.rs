@@ -9,11 +9,10 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::mpsc::{self, Receiver};
 use tracing::{trace, warn};
 
-use crate::chunk::{ChunkRequest, ChunkRoute};
+use crate::chunk::{CHUNK_SIZE, ChunkRequest, ChunkRoute};
 use crate::ui::{MessageLevel, MessageSource, PlayerMessageInner};
 use crate::{CoreModel, EventHandler, FileEntry, VideoShareMsg};
 
-const CHUNK_SIZE: usize = 512_000;
 /// Chunk requests waiting for the shared file to be read. The communicator
 /// turns away requests beyond that.
 const QUEUED_REQUESTS: usize = 16;
@@ -183,7 +182,7 @@ impl FileServer {
         len: u64,
         reader: &mut BufReader<File>,
     ) -> std::io::Result<Vec<u8>> {
-        let len = CHUNK_SIZE.min(len as usize);
+        let len = CHUNK_SIZE.min(len) as usize;
         let mut bytes = vec![0; len];
         reader.seek(SeekFrom::Start(start)).await?;
         let read = reader.read_exact(&mut bytes).await;

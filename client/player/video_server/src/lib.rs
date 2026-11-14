@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use arcstr::ArcStr;
 use async_trait::async_trait;
 use moka::future::Cache;
-use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
+use niketsu_core::chunk::{CHUNK_SIZE, ChunkRequest, ChunkRoute};
 use niketsu_core::video_server::{ServerOnline, VideoServerEvent, VideoServerTrait};
 use nom::{IResult, Parser};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
@@ -15,7 +15,6 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{Notify, oneshot};
 use tracing::{debug, trace, warn};
 
-const CHUNK_SIZE: u64 = 512_000;
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RETRY: usize = 3;
 const CACHE_ENTRIES: u64 = 100;

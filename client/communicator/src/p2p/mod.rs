@@ -1,5 +1,4 @@
 use std::pin::Pin;
-use std::time::Duration;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -32,8 +31,9 @@ use tracing::{debug, error, trace, warn};
 use crate::Node;
 use crate::messages::NiketsuMessage;
 use crate::timing::{
-    DIRECT_CONNECT_TIMEOUT, FILE_REQUEST_TIMEOUT, IDLE_CONNECTION_TIMEOUT, MESSAGE_REQUEST_TIMEOUT,
-    PING_INTERVAL, PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT, QUIC_IDLE_TIMEOUT,
+    DIRECT_CONNECT_TIMEOUT, FILE_REQUEST_TIMEOUT, GOSSIP_DUPLICATE_MEMORY,
+    GOSSIP_HEARTBEAT_INTERVAL, IDLE_CONNECTION_TIMEOUT, MESSAGE_REQUEST_TIMEOUT, PING_INTERVAL,
+    PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT, QUIC_IDLE_TIMEOUT,
 };
 
 mod auth;
@@ -514,8 +514,8 @@ impl SessionHandle {
             .with_relay_client(noise::Config::new, yamux::Config::default)?
             .with_behaviour(|key, relay_behaviour| {
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
-                    .heartbeat_interval(Duration::from_secs(10))
-                    .duplicate_cache_time(Duration::from_secs(60))
+                    .heartbeat_interval(GOSSIP_HEARTBEAT_INTERVAL)
+                    .duplicate_cache_time(GOSSIP_DUPLICATE_MEMORY)
                     .validation_mode(gossipsub::ValidationMode::Strict)
                     .build()
                     .map_err(anyhow::Error::from)?;

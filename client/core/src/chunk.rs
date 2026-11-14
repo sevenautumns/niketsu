@@ -10,6 +10,11 @@ use arc_swap::ArcSwapOption;
 use arcstr::ArcStr;
 use tokio::sync::{mpsc, oneshot};
 
+/// The most bytes one chunk carries. The video server asks for no more and
+/// the video provider reads no more, so a chunk fits a response on the wire
+/// whichever side is asked.
+pub const CHUNK_SIZE: u64 = 512_000;
+
 /// A byte range of a shared video. The bytes are sent on `reply`; dropping
 /// `reply` means the range cannot be served.
 #[derive(Debug)]

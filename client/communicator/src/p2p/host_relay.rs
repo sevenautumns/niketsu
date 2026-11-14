@@ -12,12 +12,10 @@
 //! switched on before the reservation on the public relay confirms the
 //! host's address.
 
-use std::time::Duration;
-
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::{PeerId, relay};
 
-use crate::timing::HOST_CIRCUIT_DURATION;
+use crate::timing::{HOST_CIRCUIT_DURATION, HOST_RESERVATION_DURATION};
 
 /// The host's relay, switched on.
 pub(super) fn serve(local_peer_id: PeerId) -> Toggle<relay::Behaviour> {
@@ -32,7 +30,7 @@ pub(super) fn serve(local_peer_id: PeerId) -> Toggle<relay::Behaviour> {
         max_reservations_per_peer: 1,
         max_circuits: 64,
         max_circuits_per_peer: 4,
-        reservation_duration: Duration::from_secs(3600),
+        reservation_duration: HOST_RESERVATION_DURATION,
         max_circuit_duration: HOST_CIRCUIT_DURATION,
         max_circuit_bytes: 128 * 1024,
         ..Default::default()
