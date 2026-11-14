@@ -56,70 +56,29 @@ impl TryFrom<Vec<u8>> for NiketsuMessage {
     }
 }
 
-impl From<VideoStatusMsg> for NiketsuMessage {
-    fn from(value: VideoStatusMsg) -> Self {
-        Self::VideoStatus(value)
-    }
+/// `From<$msg> for NiketsuMessage`, one variant per message.
+macro_rules! wire_from {
+    ($($msg:ty => $variant:ident),* $(,)?) => {
+        $(impl From<$msg> for NiketsuMessage {
+            fn from(value: $msg) -> Self {
+                Self::$variant(value)
+            }
+        })*
+    };
 }
 
-impl From<UserStatusListMsg> for NiketsuMessage {
-    fn from(value: UserStatusListMsg) -> Self {
-        Self::StatusList(value)
-    }
-}
-
-impl From<PauseMsg> for NiketsuMessage {
-    fn from(value: PauseMsg) -> Self {
-        Self::Pause(value)
-    }
-}
-
-impl From<StartMsg> for NiketsuMessage {
-    fn from(value: StartMsg) -> Self {
-        Self::Start(value)
-    }
-}
-
-impl From<PlaybackSpeedMsg> for NiketsuMessage {
-    fn from(value: PlaybackSpeedMsg) -> Self {
-        Self::PlaybackSpeed(value)
-    }
-}
-
-impl From<SeekMsg> for NiketsuMessage {
-    fn from(value: SeekMsg) -> Self {
-        Self::Seek(value)
-    }
-}
-
-impl From<SelectMsg> for NiketsuMessage {
-    fn from(value: SelectMsg) -> Self {
-        Self::Select(value)
-    }
-}
-
-impl From<UserMessageMsg> for NiketsuMessage {
-    fn from(value: UserMessageMsg) -> Self {
-        Self::UserMessage(value)
-    }
-}
-
-impl From<PlaylistMsg> for NiketsuMessage {
-    fn from(value: PlaylistMsg) -> Self {
-        Self::Playlist(value)
-    }
-}
-
-impl From<UserStatusMsg> for NiketsuMessage {
-    fn from(value: UserStatusMsg) -> Self {
-        Self::Status(value)
-    }
-}
-
-impl From<HostHandoverMsg> for NiketsuMessage {
-    fn from(value: HostHandoverMsg) -> Self {
-        Self::HostHandover(value)
-    }
+wire_from! {
+    VideoStatusMsg => VideoStatus,
+    UserStatusListMsg => StatusList,
+    PauseMsg => Pause,
+    StartMsg => Start,
+    PlaybackSpeedMsg => PlaybackSpeed,
+    SeekMsg => Seek,
+    SelectMsg => Select,
+    UserMessageMsg => UserMessage,
+    PlaylistMsg => Playlist,
+    UserStatusMsg => Status,
+    HostHandoverMsg => HostHandover,
 }
 
 impl From<DirectMessage> for NiketsuMessage {
