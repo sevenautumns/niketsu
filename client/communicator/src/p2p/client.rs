@@ -296,7 +296,7 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
                 bail!("Received video status from non-host peer: {source:?}")
             }
             Select(msg) => {
-                self.handler.reset_requests_responses();
+                self.handler.fs_end();
                 self.handler.forward(msg)
             }
             other => self.handler.forward(other),

@@ -367,7 +367,7 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
         use NiketsuMessage::*;
         match niketsu_msg {
             Select(m) => {
-                self.handler.reset_requests_responses();
+                self.handler.fs_end();
                 self.handler.forward(m)
             }
             m @ (Pause(_) | Start(_) | PlaybackSpeed(_) | Seek(_) | UserMessage(_)) => {

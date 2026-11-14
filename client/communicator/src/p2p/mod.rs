@@ -2,7 +2,6 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use arcstr::ArcStr;
 use async_trait::async_trait;
 pub(crate) use file_share::ChunkRoutes;
 use file_share::{ChunkRead, FileShare, FileShareRequest, FileShareResponseResult};
@@ -272,11 +271,9 @@ pub(crate) trait CommunicationHandlerTrait: Send {
             SwarmEvent::Behaviour(Messaging(M::Gossipsub(e))) => self.on_gossipsub(e),
             SwarmEvent::Behaviour(Messaging(M::RequestResponse(e))) => self.on_msg_req_resp(e),
             SwarmEvent::Behaviour(FileShare(F::RequestResponse(e))) => {
-                self.handler_mut().handle_file_share_req_resp_event(e)
+                self.handler_mut().fs_req_resp_event(e)
             }
-            SwarmEvent::Behaviour(FileShare(F::Kademlia(e))) => {
-                self.handler_mut().handle_file_share_kad_event(e)
-            }
+            SwarmEvent::Behaviour(FileShare(F::Kademlia(e))) => self.handler_mut().fs_kad_event(e),
             other => self.handle_swarm_event(other),
         }
     }
@@ -641,13 +638,6 @@ impl CommunicationHandler {
         }
     }
 
-    fn reset_requests_responses(&mut self) {
-        if let Some(FileShare::Provider(provider)) = &self.file_share {
-            self.base.swarm.stop_providing(provider.video());
-        }
-        self.file_share.take();
-    }
-
     /// Routing shared by both roles: room-wide gossip and file sharing.
     pub fn route_room_message(&mut self, msg: RoomMessage) -> Result<()> {
         use RoomMessage::*;
@@ -659,7 +649,7 @@ impl CommunicationHandler {
             UserMessage(msg) => self.broadcast(msg.into()),
             Select(msg) => {
                 // a new selection ends whatever file share ran for the old one
-                self.reset_requests_responses();
+                self.fs_end();
                 self.broadcast(msg.into())
             }
             FileRequest(msg) => self.fs_file_request(msg),
@@ -758,9 +748,13 @@ impl CommonCommunication {
         )
     }
 
-    pub fn send_chat_message(&self, actor: ArcStr, message: String) -> Result<()> {
-        let msg = UserMessageMsg { actor, message };
-        self.message_sender.send(msg.into())?;
-        Ok(())
+    /// Shows the user a line in the chat that no peer wrote.
+    pub fn tell_user(&self, message: &str) {
+        let msg = UserMessageMsg {
+            actor: arcstr::literal!("server"),
+            message: message.to_string(),
+        };
+        let res = self.message_sender.send(msg.into());
+        log_err_msg!(res, "Failed to send message to core");
     }
 }

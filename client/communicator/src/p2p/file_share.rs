@@ -12,7 +12,6 @@ use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
 use niketsu_core::communicator::{
     FileRequestMsg, FileResponseMsg, VideoProviderStoppedMsg, VideoShareMsg,
 };
-use niketsu_core::log_err_msg;
 use niketsu_core::playlist::Video;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::error::TrySendError;
@@ -182,9 +181,7 @@ impl FileShareConsumer {
             }
             Err(_) => {
                 debug!(?result, "No kademlia providers found");
-                let msg = "No providers found for the requested file".into();
-                let res = base.send_chat_message(arcstr::literal!("server"), msg);
-                log_err_msg!(res, "Failed to send message to core");
+                base.tell_user("No providers found for the requested file");
             }
         }
     }
@@ -202,11 +199,8 @@ impl FileShareConsumer {
         let index = request.uuid.as_u128() as usize % self.providers.len().max(1);
         let Some(provider) = self.providers.iter().nth(index).copied() else {
             debug!("No providers found for the requested file");
-            let msg = "No providers found for the requested file".into();
-            base.send_chat_message(arcstr::literal!("server"), msg).ok();
-            base.message_sender
-                .send(VideoProviderStoppedMsg.into())
-                .ok();
+            base.tell_user("No providers found for the requested file");
+            base.stream_stopped();
             return;
         };
         debug!(%provider, "Provider found");
@@ -231,14 +225,31 @@ impl FileShareConsumer {
     }
 }
 
+impl CommonCommunication {
+    /// Tells the core that the stream its video server plays has ended.
+    fn stream_stopped(&self) {
+        self.message_sender
+            .send(VideoProviderStoppedMsg.into())
+            .ok();
+    }
+}
+
 impl CommunicationHandler {
-    pub(super) fn handle_file_share_kad_event(&mut self, event: kad::Event) {
+    /// Ends the file share of this peer, whichever side of it this peer is
+    /// on, without a word to the user.
+    pub(super) fn fs_end(&mut self) {
+        if let Some(FileShare::Provider(provider)) = self.file_share.take() {
+            self.base.swarm.stop_providing(provider.video());
+        }
+    }
+
+    pub(super) fn fs_kad_event(&mut self, event: kad::Event) {
         if let Some(FileShare::Consumer(consumer)) = &mut self.file_share {
             consumer.handle_kad_event(event, &mut self.base);
         }
     }
 
-    pub(super) fn handle_file_share_req_resp_event(
+    pub(super) fn fs_req_resp_event(
         &mut self,
         event: request_response::Event<FileShareRequest, FileShareResponseResult>,
     ) {
@@ -270,10 +281,8 @@ impl CommunicationHandler {
                 if consumer.chunk_requests.remove(&request_id).is_some() {
                     warn!(?error, "Chunk request failed. Cache will retry.");
                     if !std::mem::replace(&mut consumer.stalled, true) {
-                        let msg = "Chunk download timeout. Connection might be slow...".to_string();
                         self.base
-                            .send_chat_message(arcstr::literal!("server"), msg)
-                            .ok();
+                            .tell_user("Chunk download timeout. Connection might be slow...");
                     }
                 } else if consumer.is_file_request(request_id) {
                     // Typically a timeout because the hole punch to the
@@ -305,17 +314,12 @@ impl CommunicationHandler {
     /// chunk requests still pending go unanswered.
     fn fs_stop_consuming(&mut self, why: &str) {
         self.file_share.take();
-        self.base
-            .send_chat_message(arcstr::literal!("server"), why.to_string())
-            .ok();
-        self.base
-            .message_sender
-            .send(VideoProviderStoppedMsg.into())
-            .ok();
+        self.base.tell_user(why);
+        self.base.stream_stopped();
     }
 
     pub(super) fn fs_video_share(&mut self, msg: VideoShareMsg) -> Result<()> {
-        self.reset_requests_responses();
+        self.fs_end();
         let Some(video) = msg.video else {
             return Ok(());
         };
@@ -336,10 +340,7 @@ impl CommunicationHandler {
 
     pub(super) fn fs_fetch_chunk(&mut self, request: ChunkRequest) -> Result<()> {
         let Some(FileShare::Consumer(consumer)) = &mut self.file_share else {
-            self.base
-                .message_sender
-                .send(VideoProviderStoppedMsg.into())
-                .ok();
+            self.base.stream_stopped();
             bail!("No active file share consumer");
         };
         let Some(provider) = consumer.provider() else {
@@ -383,7 +384,7 @@ impl CommunicationHandler {
                 HashSet::default()
             }
         };
-        self.reset_requests_responses();
+        self.fs_end();
 
         let key = msg.video.as_str().as_bytes().to_vec().into();
         let query = self.base.swarm.kademlia().get_providers(key);
@@ -497,10 +498,7 @@ impl CommunicationHandler {
             }
             Err(error) => {
                 self.file_share.take();
-                self.base
-                    .message_sender
-                    .send(VideoProviderStoppedMsg.into())
-                    .ok();
+                self.base.stream_stopped();
                 bail!("{error}");
             }
         }
