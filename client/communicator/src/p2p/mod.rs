@@ -438,20 +438,22 @@ impl SwarmExt for Swarm<Behaviour> {
     }
 }
 
+/// The communicator's end of a session, whose event loop runs in a task
+/// of its own, as host or as client.
 #[derive(Debug)]
-pub(crate) struct P2PClient {
+pub(crate) struct SessionHandle {
     sender: tokio::sync::mpsc::UnboundedSender<OutgoingMessage>,
     receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingMessage>,
     event_loop: tokio::task::JoinHandle<Stop>,
 }
 
-impl P2PClient {
+impl SessionHandle {
     pub(crate) async fn new(
         node: Node,
         relay_addr: Multiaddr,
         room: RoomName,
         password: String,
-    ) -> Result<P2PClient> {
+    ) -> Result<SessionHandle> {
         let Node {
             keypair,
             mdns,
@@ -560,13 +562,11 @@ impl P2PClient {
         .run()
         .await?;
 
-        let client = P2PClient {
+        Ok(SessionHandle {
             sender: core_sender,
             receiver: message_receiver,
             event_loop: spawn(async move { role.run().await }),
-        };
-
-        Ok(client)
+        })
     }
 
     /// The next message of the room, or why there will be no more. Not to
@@ -586,8 +586,8 @@ impl P2PClient {
 }
 
 #[cfg(test)]
-impl P2PClient {
-    /// A client whose event loop has ended after handing over `messages`.
+impl SessionHandle {
+    /// A session whose event loop has ended after handing over `messages`.
     pub(crate) fn ended_with(messages: Vec<IncomingMessage>) -> Self {
         let (sender, _) = tokio::sync::mpsc::unbounded_channel();
         let (message_sender, receiver) = tokio::sync::mpsc::unbounded_channel();

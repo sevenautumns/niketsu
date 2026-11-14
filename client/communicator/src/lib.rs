@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use libp2p::identity::Keypair;
 use niketsu_core::chunk::ChunkRoute;
 use niketsu_core::communicator::*;
-use p2p::{ChunkRoutes, P2PClient};
+use p2p::{ChunkRoutes, SessionHandle};
 use timing::{CONNECT_TIMEOUT, RECONNECT_INTERVAL};
 use tokio::task::JoinHandle;
 use tracing::error;
@@ -55,12 +55,12 @@ impl Connection {
 
 #[derive(Debug)]
 pub struct Connected {
-    p2p: P2PClient,
+    session: SessionHandle,
 }
 
 impl Connected {
     async fn recv(&mut self) -> std::result::Result<IncomingMessage, Connection> {
-        self.p2p.next().await.map_err(|stop| {
+        self.session.next().await.map_err(|stop| {
             Connection::Disconnected(Disconnected::now(Some(anyhow::anyhow!("{stop}"))))
         })
     }
@@ -69,7 +69,7 @@ impl Connected {
     /// it handed over before that are still to be received, so the
     /// connection stays until `recv` finds it drained.
     fn send(&mut self, msg: OutgoingMessage) {
-        if let Err(error) = self.p2p.send(msg) {
+        if let Err(error) = self.session.send(msg) {
             error!(%error, "Connection error");
         }
     }
@@ -77,7 +77,7 @@ impl Connected {
 
 #[derive(Debug)]
 pub struct Connecting {
-    connect_task: JoinHandle<Result<P2PClient>>,
+    connect_task: JoinHandle<Result<SessionHandle>>,
 }
 
 impl Connecting {
@@ -85,7 +85,7 @@ impl Connecting {
         let connect_task = tokio::task::spawn(async move {
             tokio::time::timeout(
                 CONNECT_TIMEOUT,
-                P2PClient::new(node, endpoint.addr, endpoint.room, endpoint.password),
+                SessionHandle::new(node, endpoint.addr, endpoint.room, endpoint.password),
             )
             .await
             .context("Connection timeout")?
@@ -95,7 +95,7 @@ impl Connecting {
 
     async fn wait(&mut self) -> Connection {
         match (&mut self.connect_task).await.map_err(Error::from) {
-            Ok(Ok(p2p)) => Connection::Connected(Connected { p2p }),
+            Ok(Ok(session)) => Connection::Connected(Connected { session }),
             Err(error) | Ok(Err(error)) => {
                 error!(%error, "Connection error");
                 Connection::Disconnected(Disconnected::now(Some(error)))
@@ -210,7 +210,7 @@ mod test {
             password: String::new(),
         });
         communicator.connection = Connection::Connected(Connected {
-            p2p: P2PClient::ended_with(vec![handover.clone().into()]),
+            session: SessionHandle::ended_with(vec![handover.clone().into()]),
         });
 
         communicator.send(VideoShareMsg { video: None }.into());
