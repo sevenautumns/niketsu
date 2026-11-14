@@ -20,7 +20,7 @@ use libp2p::{
 };
 use links::{Closed, Links, Opened};
 use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
-use niketsu_core::communicator::{IncomingMessage, OutgoingMessage, RoomMessage, UserMessageMsg};
+use niketsu_core::communicator::{IncomingMessage, NoticeMsg, OutgoingMessage, RoomMessage};
 use niketsu_core::log_err_msg;
 use niketsu_core::playlist::Video;
 use niketsu_core::room::RoomName;
@@ -699,6 +699,7 @@ impl Session {
             }
             FileRequest(msg) => self.fs_file_request(msg),
             FileResponse(msg) => self.fs_file_response(msg),
+            FileDecline(msg) => self.fs_file_decline(msg),
             VideoShareChange(msg) => self.fs_video_share(msg),
         }
     }
@@ -798,11 +799,7 @@ impl Net {
 
     /// Shows the user a line in the chat that no peer wrote.
     pub fn tell_user(&self, message: &str) {
-        let msg = UserMessageMsg {
-            actor: arcstr::literal!("server"),
-            message: message.to_string(),
-        };
-        let res = self.message_sender.send(msg.into());
+        let res = self.message_sender.send(NoticeMsg::new(message).into());
         log_err_msg!(res, "Failed to send message to core");
     }
 }

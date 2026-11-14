@@ -101,12 +101,12 @@ impl HostRoom {
     }
 
     /// The name a peer goes by in the room, for messages the host issues on
-    /// the peer's behalf.
+    /// the peer's behalf. A peer that has not told its name yet has none, so
+    /// the host acts in its own.
     pub fn actor_of(&self, peer: &PeerId) -> ArcStr {
         match self.users.peer_status(peer) {
             Some(Some(status)) => status.name.clone(),
-            Some(None) => arcstr::literal!("unknown"),
-            None => arcstr::literal!("server"),
+            Some(None) | None => HOST_ACTOR,
         }
     }
 

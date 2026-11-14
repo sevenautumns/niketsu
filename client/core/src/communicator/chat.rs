@@ -29,7 +29,7 @@ fn action(actor: ArcStr, message: String) -> PlayerMessage {
 impl From<ConnectedMsg> for PlayerMessage {
     fn from(_: ConnectedMsg) -> Self {
         line(
-            "connected to server".to_string(),
+            "connected to the room".to_string(),
             MessageSource::Internal,
             MessageLevel::Normal,
         )
@@ -92,9 +92,9 @@ impl From<UserMessageMsg> for PlayerMessage {
     }
 }
 
-impl From<ServerMessageMsg> for PlayerMessage {
-    fn from(value: ServerMessageMsg) -> Self {
-        line(value.message, MessageSource::Server, MessageLevel::Normal)
+impl From<NoticeMsg> for PlayerMessage {
+    fn from(value: NoticeMsg) -> Self {
+        line(value.message, MessageSource::Room, MessageLevel::Normal)
     }
 }
 
@@ -112,7 +112,7 @@ impl From<UserStatus> for PlayerMessage {
         let name = value.name;
         line(
             format!("Username changed to {name}"),
-            MessageSource::Server,
+            MessageSource::Room,
             MessageLevel::Warn,
         )
     }

@@ -10,7 +10,7 @@ use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::{PeerId, kad};
 use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
 use niketsu_core::communicator::{
-    FileRequestMsg, FileResponseMsg, VideoProviderStoppedMsg, VideoShareMsg,
+    FileDeclineMsg, FileRequestMsg, FileResponseMsg, VideoProviderStoppedMsg, VideoShareMsg,
 };
 use niketsu_core::playlist::Video;
 use serde::{Deserialize, Serialize};
@@ -394,19 +394,27 @@ impl Session {
 
     pub(super) fn fs_file_response(&mut self, msg: FileResponseMsg) -> Result<()> {
         debug!(?msg, "Responding to file request ...");
+        self.fs_answer_file_request(msg.uuid, Ok(FileShareResponse::File(msg)))
+    }
+
+    /// The requester's communicator shows the reason to its user.
+    pub(super) fn fs_file_decline(&mut self, msg: FileDeclineMsg) -> Result<()> {
+        debug!(?msg, "Declining file request");
+        self.fs_answer_file_request(msg.uuid, Err(msg.reason))
+    }
+
+    fn fs_answer_file_request(
+        &mut self,
+        uuid: uuid::Uuid,
+        answer: FileShareResponseResult,
+    ) -> Result<()> {
         let Some(FileShare::Provider(provider)) = &mut self.file_share else {
             bail!("No active file share provider");
         };
-        let Some(channel) = provider.pending_file_responses.remove(&msg.uuid) else {
+        let Some(channel) = provider.pending_file_responses.remove(&uuid) else {
             bail!("Cannot send file response if response channel does not exist");
         };
-
-        let resp = if msg.video.is_none() {
-            Err(String::from("Not providing any files"))
-        } else {
-            Ok(FileShareResponse::File(msg))
-        };
-        self.net.swarm.send_file_response(channel, resp)
+        self.net.swarm.send_file_response(channel, answer)
     }
 
     /// Hands the request to the local video provider. When its queue is
@@ -496,9 +504,9 @@ impl Session {
                 Ok(())
             }
             Err(error) => {
-                self.file_share.take();
-                self.net.stream_stopped();
-                bail!("{error}");
+                warn!(%error, "The provider turned a request down");
+                self.fs_stop_consuming(&error);
+                Ok(())
             }
         }
     }

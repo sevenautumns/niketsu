@@ -59,6 +59,7 @@ pub enum RoomMessage {
     UserMessage(UserMessageMsg),
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
+    FileDecline(FileDeclineMsg),
     VideoShareChange(VideoShareMsg),
 }
 
@@ -125,6 +126,7 @@ outgoing_from! {
     UserMessageMsg => Room(RoomMessage::UserMessage),
     FileRequestMsg => Room(RoomMessage::FileRequest),
     FileResponseMsg => Room(RoomMessage::FileResponse),
+    FileDeclineMsg => Room(RoomMessage::FileDecline),
     VideoShareMsg => Room(RoomMessage::VideoShareChange),
     VideoStatusMsg => Host(HostInstruction::VideoStatus),
     UserStatusListMsg => Host(HostInstruction::UserStatusList),
@@ -147,7 +149,7 @@ pub enum IncomingMessage {
     Seek(SeekMsg),
     Select(SelectMsg),
     UserMessage(UserMessageMsg),
-    ServerMessage(ServerMessageMsg),
+    Notice(NoticeMsg),
     Playlist(PlaylistMsg),
     UserStatus(UserStatusMsg),
     FileRequest(FileRequestMsg),

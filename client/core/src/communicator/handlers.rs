@@ -14,7 +14,7 @@ use crate::{CoreModel, EventHandler};
 
 impl EventHandler for ConnectedMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!("server connection established");
+        trace!(is_host = self.is_host, "connected to the room");
         if self.is_host {
             model.become_host();
         } else {
@@ -174,9 +174,9 @@ impl EventHandler for UserMessageMsg {
     }
 }
 
-impl EventHandler for ServerMessageMsg {
+impl EventHandler for NoticeMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!(server_message = ?self, "received");
+        trace!(notice = ?self, "received");
         model.ui.player_message(PlayerMessage::from(self))
     }
 }
@@ -190,7 +190,7 @@ impl EventHandler for PlaylistMsg {
 
 impl EventHandler for UserStatusMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!("username changed by server");
+        trace!("username changed by the host");
         model.config.username.clone_from(&self.name);
         model.ui.username_change(self.name.clone());
         model.ui.player_message(PlayerMessage::from(self));
@@ -216,25 +216,21 @@ impl EventHandler for FileRequestMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(file_request = ?self, "received");
         model.ui.player_message(self.clone().into());
-        let shared = shared_file(model, &self);
-        let (video, size) = match &shared {
-            Ok((file_name, size)) => (Some(file_name.as_str().into()), *size),
-            Err(_) => (None, 0),
+        let answer: OutgoingMessage = match shared_file(model, &self) {
+            Ok((file_name, size)) => FileResponseMsg {
+                uuid: self.uuid,
+                actor: model.config.username.clone(),
+                video: file_name.as_str().into(),
+                size,
+            }
+            .into(),
+            Err(reason) => FileDeclineMsg {
+                uuid: self.uuid,
+                reason: reason.into(),
+            }
+            .into(),
         };
-        let response = FileResponseMsg {
-            uuid: self.uuid,
-            actor: model.config.username.clone(),
-            video,
-            size,
-        };
-        model.communicator.send(response.into());
-        if let Err(why) = shared {
-            let msg = OutgoingMessage::from(UserMessageMsg {
-                actor: arcstr::literal!("server message"),
-                message: why.into(),
-            });
-            model.communicator.send(msg);
-        }
+        model.communicator.send(answer);
     }
 }
 
@@ -242,18 +238,8 @@ impl EventHandler for FileResponseMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!("received file response message");
         model.ui.player_message(self.clone().into());
-        match self.video {
-            Some(video) => {
-                let video = ArcStr::from(video.as_str());
-                model.video_server.start_server(video, self.size);
-            }
-            None => {
-                debug!("file response contains no video");
-                // a server still up from an earlier stream would keep
-                // serving a file nobody will ever send chunks for
-                model.video_server.stop_server();
-            }
-        }
+        let video = ArcStr::from(self.video.as_str());
+        model.video_server.start_server(video, self.size);
     }
 }
 

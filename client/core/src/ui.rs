@@ -202,7 +202,9 @@ impl std::fmt::Debug for PlayerMessageInner {
 pub enum MessageSource {
     UserMessage(ArcStr),
     UserAction(ArcStr),
-    Server,
+    /// What the room tells this user, in no user's name.
+    Room,
+    /// What this program tells its user.
     Internal,
 }
 

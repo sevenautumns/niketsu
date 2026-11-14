@@ -152,10 +152,19 @@ pub struct UserMessageMsg {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ServerMessageMsg {
+/// A line for the chat that no user wrote: what became of the connection or
+/// of a file share.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticeMsg {
     pub message: String,
+}
+
+impl NoticeMsg {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -182,8 +191,16 @@ pub struct FileRequestMsg {
 pub struct FileResponseMsg {
     pub uuid: uuid::Uuid,
     pub actor: ArcStr,
-    pub video: Option<Video>,
+    pub video: Video,
     pub size: u64,
+}
+
+/// The provider cannot answer the request `uuid` with a file. The requester
+/// is told the `reason`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDeclineMsg {
+    pub uuid: uuid::Uuid,
+    pub reason: String,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]

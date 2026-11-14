@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::communicator::{
     ClientRequest, CommunicatorTrait, ConnectedMsg, EndpointInfo, HostHandoverMsg, HostInstruction,
-    HostRoundTripMsg, IncomingMessage, OutgoingMessage, PeerConnectedMsg, PeerDisconnectedMsg,
-    PeerId, PeerStatusMsg, RoomMessage, VideoProviderStoppedMsg,
+    HostRoundTripMsg, IncomingMessage, NoticeMsg, OutgoingMessage, PeerConnectedMsg,
+    PeerDisconnectedMsg, PeerId, PeerStatusMsg, RoomMessage, VideoProviderStoppedMsg,
 };
 use niketsu_core::config::Config;
 use niketsu_core::file_database::{
@@ -727,6 +727,17 @@ impl Room {
             },
             RoomMessage::FileResponse(m) => match self.file_requests.remove(&m.uuid) {
                 Some(requester) => vec![(requester, IncomingMessage::FileResponse(m))],
+                None => vec![],
+            },
+            // the requester's consumer shows the reason and gives up
+            RoomMessage::FileDecline(m) => match self.file_requests.remove(&m.uuid) {
+                Some(requester) => vec![
+                    (requester, NoticeMsg::new(m.reason).into()),
+                    (
+                        requester,
+                        IncomingMessage::VideoProviderStopped(VideoProviderStoppedMsg),
+                    ),
+                ],
                 None => vec![],
             },
         }

@@ -92,7 +92,7 @@ impl PlayerMessageExt for PlayerMessage {
 
         let text = match &self.source {
             MessageSource::UserMessage(usr) => format!("{when} {usr}: {message}"),
-            MessageSource::Server => format!("{when} {message}"),
+            MessageSource::Room => format!("{when} {message}"),
             MessageSource::Internal => format!("{when} {message}"),
             MessageSource::UserAction(_) => format!("{when} {message}"),
         };

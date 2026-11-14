@@ -43,9 +43,7 @@ impl Connection {
                     let reason = d.reason.clone();
                     *self = d.reconnect(endpoint, node).await;
                     if let Some(r) = reason {
-                        return IncomingMessage::from(ServerMessageMsg {
-                            message: r.to_string(),
-                        });
+                        return NoticeMsg::new(r.to_string()).into();
                     }
                 }
             }
