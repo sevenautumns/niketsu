@@ -157,6 +157,24 @@ impl Deref for PlayerMessage {
     }
 }
 
+impl PlayerMessage {
+    /// A line for the chat, stamped with the time it is made.
+    pub fn new(message: impl Into<String>, source: MessageSource, level: MessageLevel) -> Self {
+        PlayerMessageInner {
+            message: message.into(),
+            source,
+            level,
+            timestamp: Local::now(),
+        }
+        .into()
+    }
+
+    /// Why this program cannot do what its user asked for.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::new(message, MessageSource::Internal, MessageLevel::Error)
+    }
+}
+
 impl From<PlayerMessageInner> for PlayerMessage {
     fn from(value: PlayerMessageInner) -> Self {
         let inner = Arc::new(value);
@@ -260,28 +278,16 @@ impl EventHandler for FileShareChange {
         }
 
         let Some(current_video) = model.player.playing_video() else {
-            model.ui.player_message(
-                PlayerMessageInner {
-                    message: "Can not provide video if none is loaded".into(),
-                    source: MessageSource::Internal,
-                    level: MessageLevel::Error,
-                    timestamp: Local::now(),
-                }
-                .into(),
-            );
+            model.ui.player_message(PlayerMessage::error(
+                "Can not provide video if none is loaded",
+            ));
             return;
         };
 
         let Some(file) = model.database.find_file(current_video.as_str()) else {
-            model.ui.player_message(
-                PlayerMessageInner {
-                    message: "Can not provide current video. Not found in file database".into(),
-                    source: MessageSource::Internal,
-                    level: MessageLevel::Error,
-                    timestamp: Local::now(),
-                }
-                .into(),
-            );
+            model.ui.player_message(PlayerMessage::error(
+                "Can not provide current video. Not found in file database",
+            ));
             return;
         };
 
@@ -299,28 +305,16 @@ impl EventHandler for FileRequest {
         let actor = model.config.username.clone();
 
         let Some(current_video) = model.player.playing_video() else {
-            model.ui.player_message(
-                PlayerMessageInner {
-                    message: "Can not request video if none is loaded".into(),
-                    source: MessageSource::Internal,
-                    level: MessageLevel::Error,
-                    timestamp: Local::now(),
-                }
-                .into(),
-            );
+            model.ui.player_message(PlayerMessage::error(
+                "Can not request video if none is loaded",
+            ));
             return;
         };
 
         if model.database.find_file(current_video.as_str()).is_some() {
-            model.ui.player_message(
-                PlayerMessageInner {
-                    message: "Video is available in file database. Video is not requested".into(),
-                    source: MessageSource::Internal,
-                    level: MessageLevel::Error,
-                    timestamp: Local::now(),
-                }
-                .into(),
-            );
+            model.ui.player_message(PlayerMessage::error(
+                "Video is available in file database. Video is not requested",
+            ));
             return;
         };
 
@@ -348,15 +342,10 @@ impl EventHandler for HostHandover {
         };
         let Some(peer) = host.users.find_by_name(&self.new_host) else {
             warn!(new_host = %self.new_host, "handover target not found in user list");
-            model.ui.player_message(
-                PlayerMessageInner {
-                    message: format!("Cannot hand over to {}: not in the room", self.new_host),
-                    source: MessageSource::Internal,
-                    level: MessageLevel::Error,
-                    timestamp: Local::now(),
-                }
-                .into(),
-            );
+            model.ui.player_message(PlayerMessage::error(format!(
+                "Cannot hand over to {}: not in the room",
+                self.new_host
+            )));
             return;
         };
         model.communicator.send(
@@ -541,13 +530,11 @@ impl UiModel {
 
     pub fn send_message(&self, msg: String) {
         trace!("send user message");
-        let player_message: PlayerMessage = PlayerMessageInner {
-            message: msg.clone(),
-            source: MessageSource::UserMessage(self.user.get_inner_arc().name.clone()),
-            level: MessageLevel::Normal,
-            timestamp: Local::now(),
-        }
-        .into();
+        let player_message = PlayerMessage::new(
+            msg.clone(),
+            MessageSource::UserMessage(self.user.get_inner_arc().name.clone()),
+            MessageLevel::Normal,
+        );
         self.messages.rcu(|msgs| {
             let mut msgs = RingBuffer::clone(msgs);
             msgs.push(player_message.clone());

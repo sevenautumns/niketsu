@@ -1,24 +1,13 @@
 //! How a message reads as a line in the chat.
 
 use arcstr::ArcStr;
-use chrono::Local;
 
 use super::messages::*;
-use crate::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
-
-fn line(message: String, source: MessageSource, level: MessageLevel) -> PlayerMessage {
-    PlayerMessageInner {
-        message,
-        source,
-        level,
-        timestamp: Local::now(),
-    }
-    .into()
-}
+use crate::ui::{MessageLevel, MessageSource, PlayerMessage};
 
 /// A line about something `actor` did in the room.
 fn action(actor: ArcStr, message: String) -> PlayerMessage {
-    line(
+    PlayerMessage::new(
         message,
         MessageSource::UserAction(actor),
         MessageLevel::Normal,
@@ -27,7 +16,7 @@ fn action(actor: ArcStr, message: String) -> PlayerMessage {
 
 impl From<ConnectedMsg> for PlayerMessage {
     fn from(_: ConnectedMsg) -> Self {
-        line(
+        PlayerMessage::new(
             "connected to the room".to_string(),
             MessageSource::Internal,
             MessageLevel::Normal,
@@ -83,7 +72,7 @@ impl From<SelectMsg> for PlayerMessage {
 
 impl From<UserMessageMsg> for PlayerMessage {
     fn from(value: UserMessageMsg) -> Self {
-        line(
+        PlayerMessage::new(
             value.message,
             MessageSource::UserMessage(value.actor),
             MessageLevel::Normal,
@@ -93,7 +82,7 @@ impl From<UserMessageMsg> for PlayerMessage {
 
 impl From<NoticeMsg> for PlayerMessage {
     fn from(value: NoticeMsg) -> Self {
-        line(value.message, MessageSource::Room, MessageLevel::Normal)
+        PlayerMessage::new(value.message, MessageSource::Room, MessageLevel::Normal)
     }
 }
 
@@ -108,7 +97,7 @@ impl From<PlaylistMsg> for PlayerMessage {
 impl From<ForcedRenameMsg> for PlayerMessage {
     fn from(value: ForcedRenameMsg) -> Self {
         let name = value.name;
-        line(
+        PlayerMessage::new(
             format!("Username changed to {name}"),
             MessageSource::Room,
             MessageLevel::Warn,
@@ -129,7 +118,7 @@ impl From<FileResponseMsg> for PlayerMessage {
     fn from(value: FileResponseMsg) -> Self {
         let actor = value.actor;
         let video = value.video;
-        line(
+        PlayerMessage::new(
             format!("Received video response for {video:?} from {actor:?}"),
             MessageSource::UserAction(actor),
             MessageLevel::Debug,
@@ -139,7 +128,7 @@ impl From<FileResponseMsg> for PlayerMessage {
 
 impl From<HostHandoverMsg> for PlayerMessage {
     fn from(value: HostHandoverMsg) -> Self {
-        line(
+        PlayerMessage::new(
             format!("{} is now the host", value.new_host),
             MessageSource::Internal,
             MessageLevel::Success,

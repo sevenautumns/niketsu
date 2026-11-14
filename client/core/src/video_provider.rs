@@ -2,7 +2,6 @@ use std::io::{ErrorKind, SeekFrom};
 
 use arcstr::ArcStr;
 use async_trait::async_trait;
-use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, BufReader};
@@ -10,7 +9,7 @@ use tokio::sync::mpsc::{self, Receiver};
 use tracing::{trace, warn};
 
 use crate::chunk::{CHUNK_SIZE, ChunkRequest, ChunkRoute};
-use crate::ui::{MessageLevel, MessageSource, PlayerMessageInner};
+use crate::ui::PlayerMessage;
 use crate::{CoreModel, EventHandler, FileEntry, VideoShareMsg};
 
 /// Chunk requests waiting for the shared file to be read. The communicator
@@ -65,15 +64,9 @@ impl EventHandler for SharingStopped {
     fn handle(self, model: &mut CoreModel) {
         trace!("video provider stopped sharing");
         model.stop_sharing();
-        model.ui.player_message(
-            PlayerMessageInner {
-                message: "Stopped sharing: failed to read the shared file".into(),
-                source: MessageSource::Internal,
-                level: MessageLevel::Error,
-                timestamp: Local::now(),
-            }
-            .into(),
-        );
+        model.ui.player_message(PlayerMessage::error(
+            "Stopped sharing: failed to read the shared file",
+        ));
     }
 }
 

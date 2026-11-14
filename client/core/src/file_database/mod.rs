@@ -7,7 +7,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use arcstr::ArcStr;
 use async_trait::async_trait;
-use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use im::Vector;
 use itertools::Itertools;
@@ -17,7 +16,7 @@ use tracing::{trace, warn};
 
 use self::updater::FileDatabaseUpdater;
 use super::player::MediaPlayerTrait;
-use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
+use super::ui::{MessageLevel, MessageSource, PlayerMessage};
 use super::{CoreModel, EventHandler};
 use crate::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
 
@@ -51,13 +50,11 @@ pub struct UpdateComplete;
 
 impl From<UpdateComplete> for PlayerMessage {
     fn from(_: UpdateComplete) -> Self {
-        PlayerMessageInner {
-            message: "Filedatabase update complete".to_string(),
-            source: MessageSource::Internal,
-            level: MessageLevel::Normal,
-            timestamp: Local::now(),
-        }
-        .into()
+        PlayerMessage::new(
+            "Filedatabase update complete",
+            MessageSource::Internal,
+            MessageLevel::Normal,
+        )
     }
 }
 
