@@ -17,13 +17,19 @@ pub(super) enum NiketsuMessage {
     Select(SelectMsg),
     UserMessage(UserMessageMsg),
     Playlist(PlaylistMsg),
+    /// A client's own status, for the host.
     Status(UserStatusMsg),
+    ForcedRename(ForcedRenameMsg),
     HostHandover(HostHandoverMsg),
 }
 
-impl From<NiketsuMessage> for IncomingMessage {
-    fn from(value: NiketsuMessage) -> Self {
-        match value {
+/// A status means nothing to the core without the peer it is of, so the
+/// host hands it over as a `PeerStatusMsg` and nobody else takes one.
+impl TryFrom<NiketsuMessage> for IncomingMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(value: NiketsuMessage) -> anyhow::Result<Self> {
+        Ok(match value {
             NiketsuMessage::VideoStatus(m) => m.into(),
             NiketsuMessage::StatusList(m) => m.into(),
             NiketsuMessage::Pause(m) => m.into(),
@@ -33,9 +39,10 @@ impl From<NiketsuMessage> for IncomingMessage {
             NiketsuMessage::Select(m) => m.into(),
             NiketsuMessage::UserMessage(m) => m.into(),
             NiketsuMessage::Playlist(m) => m.into(),
-            NiketsuMessage::Status(m) => m.into(),
+            NiketsuMessage::ForcedRename(m) => m.into(),
             NiketsuMessage::HostHandover(m) => m.into(),
-        }
+            NiketsuMessage::Status(m) => anyhow::bail!("Received a status out of place: {m:?}"),
+        })
     }
 }
 
@@ -78,6 +85,7 @@ wire_from! {
     UserMessageMsg => UserMessage,
     PlaylistMsg => Playlist,
     UserStatusMsg => Status,
+    ForcedRenameMsg => ForcedRename,
     HostHandoverMsg => HostHandover,
 }
 
@@ -86,7 +94,7 @@ impl From<DirectMessage> for NiketsuMessage {
         match value {
             DirectMessage::Playlist(msg) => msg.into(),
             DirectMessage::Select(msg) => msg.into(),
-            DirectMessage::UserStatus(msg) => msg.into(),
+            DirectMessage::Rename(msg) => msg.into(),
         }
     }
 }
@@ -111,8 +119,11 @@ mod tests {
                 video: Some("ep1".into()),
             }),
             NiketsuMessage::Status(UserStatusMsg {
-                name: "bob_2".into(),
+                name: "bob".into(),
                 ready: true,
+            }),
+            NiketsuMessage::ForcedRename(ForcedRenameMsg {
+                name: "bob_2".into(),
             }),
             NiketsuMessage::HostHandover(HostHandoverMsg {
                 new_host: "bob".into(),

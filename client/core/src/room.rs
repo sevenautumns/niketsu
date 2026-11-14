@@ -14,8 +14,8 @@ use tracing::{debug, warn};
 
 pub(crate) use crate::UserStatusListMsg;
 use crate::communicator::{
-    ClientRequest, DirectMessage, HostInstruction, OutgoingMessage, PlaylistMsg, SelectMsg,
-    StartMsg, ToPeerMsg,
+    ClientRequest, DirectMessage, ForcedRenameMsg, HostInstruction, OutgoingMessage, PlaylistMsg,
+    SelectMsg, StartMsg, ToPeerMsg,
 };
 use crate::player::MediaPlayerTrait;
 use crate::ui::PlayerMessage;
@@ -130,7 +130,8 @@ impl HostRoom {
     /// when the peer asked for a name that is taken.
     pub fn peer_status(&mut self, peer: PeerId, status: UserStatus) -> Option<OutgoingMessage> {
         let forced = self.users.apply_status(status, peer)?;
-        Some(ToPeerMsg::new(peer, DirectMessage::UserStatus(forced)).into())
+        let rename = ForcedRenameMsg { name: forced.name };
+        Some(ToPeerMsg::new(peer, DirectMessage::Rename(rename)).into())
     }
 
     /// Takes `msg` as the room's playlist. Returns the selection the room

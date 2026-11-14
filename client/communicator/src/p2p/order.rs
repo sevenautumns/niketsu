@@ -33,7 +33,7 @@ impl State {
             Seek(_) => Some(Self::Position),
             Select(_) => Some(Self::Selection),
             Playlist(_) => Some(Self::Playlist),
-            UserMessage(_) | Status(_) | HostHandover(_) => None,
+            UserMessage(_) | Status(_) | ForcedRename(_) | HostHandover(_) => None,
         }
     }
 }

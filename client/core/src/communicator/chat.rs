@@ -5,7 +5,6 @@ use chrono::Local;
 
 use super::messages::*;
 use crate::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
-use crate::user::UserStatus;
 
 fn line(message: String, source: MessageSource, level: MessageLevel) -> PlayerMessage {
     PlayerMessageInner {
@@ -106,9 +105,8 @@ impl From<PlaylistMsg> for PlayerMessage {
     }
 }
 
-/// A rename the host forced on this user.
-impl From<UserStatus> for PlayerMessage {
-    fn from(value: UserStatus) -> Self {
+impl From<ForcedRenameMsg> for PlayerMessage {
+    fn from(value: ForcedRenameMsg) -> Self {
         let name = value.name;
         line(
             format!("Username changed to {name}"),

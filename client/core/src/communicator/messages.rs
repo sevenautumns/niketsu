@@ -51,8 +51,7 @@ pub struct HostRoundTripMsg {
 pub enum DirectMessage {
     Playlist(PlaylistMsg),
     Select(SelectMsg),
-    /// A rename the host forces on the peer.
-    UserStatus(UserStatusMsg),
+    Rename(ForcedRenameMsg),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,7 +174,15 @@ pub struct PlaylistMsg {
     pub playlist: Playlist,
 }
 
+/// A user's own status, as the user announces it.
 pub type UserStatusMsg = UserStatus;
+
+/// The host renames a peer whose name another user of the room goes by.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForcedRenameMsg {
+    pub name: ArcStr,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

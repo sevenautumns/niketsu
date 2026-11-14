@@ -188,9 +188,9 @@ impl EventHandler for PlaylistMsg {
     }
 }
 
-impl EventHandler for UserStatusMsg {
+impl EventHandler for ForcedRenameMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!("username changed by the host");
+        trace!(name = %self.name, "renamed by the host");
         model.config.username.clone_from(&self.name);
         model.ui.username_change(self.name.clone());
         model.ui.player_message(PlayerMessage::from(self));

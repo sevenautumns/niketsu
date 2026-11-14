@@ -262,7 +262,14 @@ impl Role for ClientRole {
             debug!("Dropping the greeting's state, a broadcast was newer");
             return self.session.acknowledge(channel);
         }
-        self.session.send_to_core(msg, channel)
+        // what the host addresses to a single peer, see `DirectMessage`
+        use NiketsuMessage::*;
+        match msg {
+            Playlist(m) => self.session.send_to_core(m, channel),
+            Select(m) => self.session.send_to_core(m, channel),
+            ForcedRename(m) => self.session.send_to_core(m, channel),
+            other => self.session.respond_with_err(other, channel),
+        }
     }
 
     fn handle_swarm_broadcast(
@@ -281,7 +288,7 @@ impl Role for ClientRole {
                 self.session.fs_end();
                 self.session.forward(msg)
             }
-            other => self.session.forward(other),
+            other => self.session.forward(IncomingMessage::try_from(other)?),
         }
     }
 

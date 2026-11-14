@@ -352,7 +352,7 @@ impl Role for HostRole {
                 self.session.forward(m)
             }
             m @ (Pause(_) | Start(_) | PlaybackSpeed(_) | Seek(_) | UserMessage(_)) => {
-                self.session.forward(m)
+                self.session.forward(IncomingMessage::try_from(m)?)
             }
             other => bail!("Host received unexpected broadcast message: {other:?}"),
         }

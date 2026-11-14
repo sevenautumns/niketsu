@@ -151,7 +151,7 @@ pub enum IncomingMessage {
     UserMessage(UserMessageMsg),
     Notice(NoticeMsg),
     Playlist(PlaylistMsg),
-    UserStatus(UserStatusMsg),
+    ForcedRename(ForcedRenameMsg),
     FileRequest(FileRequestMsg),
     FileResponse(FileResponseMsg),
     VideoProviderStopped(VideoProviderStoppedMsg),
@@ -167,7 +167,7 @@ impl From<DirectMessage> for IncomingMessage {
         match value {
             DirectMessage::Playlist(msg) => msg.into(),
             DirectMessage::Select(msg) => msg.into(),
-            DirectMessage::UserStatus(msg) => msg.into(),
+            DirectMessage::Rename(msg) => msg.into(),
         }
     }
 }
