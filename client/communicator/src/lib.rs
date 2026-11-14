@@ -3,14 +3,16 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
+use backoff::Backoff;
 use libp2p::identity::Keypair;
 use niketsu_core::chunk::ChunkRoute;
 use niketsu_core::communicator::*;
-use p2p::{ChunkRoutes, SessionHandle};
-use timing::{CONNECT_TIMEOUT, RECONNECT_INTERVAL};
+use p2p::{AuthDenied, ChunkRoutes, SessionHandle};
+use timing::CONNECT_TIMEOUT;
 use tokio::task::JoinHandle;
 use tracing::error;
 
+mod backoff;
 pub mod messages;
 pub mod p2p;
 mod timing;
@@ -20,6 +22,7 @@ pub enum Connection {
     Connected(Connected),
     Connecting(Connecting),
     Disconnected(Disconnected),
+    Denied(Denied),
 }
 
 impl Default for Connection {
@@ -46,6 +49,12 @@ impl Connection {
                         return NoticeMsg::new(r.to_string()).into();
                     }
                 }
+                Connection::Denied(d) => {
+                    return match d.reason.take() {
+                        Some(r) => NoticeMsg::new(r.to_string()).into(),
+                        None => std::future::pending().await,
+                    };
+                }
             }
         }
     }
@@ -57,9 +66,14 @@ pub struct Connected {
 }
 
 impl Connected {
+    /// An established connection that ends is replaced promptly, so the
+    /// next attempt waits no more than the reconnect interval.
     async fn recv(&mut self) -> std::result::Result<IncomingMessage, Connection> {
         self.session.next().await.map_err(|stop| {
-            Connection::Disconnected(Disconnected::now(Some(anyhow::anyhow!("{stop}"))))
+            Connection::Disconnected(Disconnected::now(
+                Some(anyhow::anyhow!("{stop}")),
+                Backoff::default(),
+            ))
         })
     }
 
@@ -76,10 +90,12 @@ impl Connected {
 #[derive(Debug)]
 pub struct Connecting {
     connect_task: JoinHandle<Result<SessionHandle>>,
+    /// How long to wait for the next attempt should this one fail.
+    backoff: Backoff,
 }
 
 impl Connecting {
-    fn new(endpoint: EndpointInfo, node: Node) -> Self {
+    fn new(endpoint: EndpointInfo, node: Node, backoff: Backoff) -> Self {
         let connect_task = tokio::task::spawn(async move {
             tokio::time::timeout(
                 CONNECT_TIMEOUT,
@@ -88,7 +104,10 @@ impl Connecting {
             .await
             .context("Connection timeout")?
         });
-        Self { connect_task }
+        Self {
+            connect_task,
+            backoff,
+        }
     }
 
     async fn wait(&mut self) -> Connection {
@@ -96,7 +115,13 @@ impl Connecting {
             Ok(Ok(session)) => Connection::Connected(Connected { session }),
             Err(error) | Ok(Err(error)) => {
                 error!(%error, "Connection error");
-                Connection::Disconnected(Disconnected::now(Some(error)))
+                if error.is::<AuthDenied>() {
+                    Connection::Denied(Denied {
+                        reason: Some(error),
+                    })
+                } else {
+                    Connection::Disconnected(Disconnected::now(Some(error), self.backoff))
+                }
             }
         }
     }
@@ -106,24 +131,38 @@ impl Connecting {
 pub struct Disconnected {
     when: Option<Instant>,
     reason: Option<Arc<Error>>,
+    backoff: Backoff,
 }
 
 impl Disconnected {
-    fn now(reason: Option<Error>) -> Self {
+    fn now(reason: Option<Error>, backoff: Backoff) -> Self {
         Self {
             when: Some(Instant::now()),
             reason: reason.map(Arc::new),
+            backoff,
         }
     }
 
     async fn reconnect(&self, endpoint: &EndpointInfo, node: &Node) -> Connection {
         let elapsed = self.when.map(|i| i.elapsed()).unwrap_or(Duration::MAX);
-        let remaining = RECONNECT_INTERVAL.saturating_sub(elapsed);
+        let remaining = self.backoff.delay().saturating_sub(elapsed);
         if !remaining.is_zero() {
             tokio::time::sleep(remaining).await;
         }
-        Connection::Connecting(Connecting::new(endpoint.clone(), node.clone()))
+        Connection::Connecting(Connecting::new(
+            endpoint.clone(),
+            node.clone(),
+            self.backoff.next(),
+        ))
     }
+}
+
+/// The relay denied the room. Asking again would get the same answer, so
+/// the connection stays down until the core connects anew.
+#[derive(Debug)]
+pub struct Denied {
+    /// Why, until the user has been told.
+    reason: Option<Error>,
 }
 
 /// What every connection of one communicator has in common.
@@ -169,7 +208,11 @@ impl P2PCommunicator {
 impl CommunicatorTrait for P2PCommunicator {
     fn connect(&mut self, endpoint: EndpointInfo) {
         self.endpoint.replace(endpoint.clone());
-        self.connection = Connection::Connecting(Connecting::new(endpoint, self.node.clone()))
+        self.connection = Connection::Connecting(Connecting::new(
+            endpoint,
+            self.node.clone(),
+            Backoff::default(),
+        ))
     }
 
     fn send(&mut self, msg: OutgoingMessage) {
@@ -194,6 +237,82 @@ impl CommunicatorTrait for P2PCommunicator {
 mod test {
     use super::*;
 
+    fn communicator() -> P2PCommunicator {
+        let mut communicator = P2PCommunicator::new(ChunkRoute::default(), ChunkRoute::default());
+        communicator.endpoint = Some(EndpointInfo {
+            addr: "/ip4/127.0.0.1/udp/1/quic-v1".parse().unwrap(),
+            room: "room".into(),
+            password: String::new(),
+        });
+        communicator
+    }
+
+    /// An attempt that has already ended with `outcome`.
+    fn attempt(outcome: Result<SessionHandle>, backoff: Backoff) -> Connecting {
+        Connecting {
+            connect_task: tokio::spawn(async { outcome }),
+            backoff,
+        }
+    }
+
+    /// After a denial the user is told once, and no attempt follows.
+    #[tokio::test]
+    async fn a_denied_room_is_not_asked_for_again() {
+        let mut communicator = communicator();
+        communicator.connection =
+            Connection::Connecting(attempt(Err(AuthDenied.into()), Backoff::default()));
+
+        let IncomingMessage::Notice(notice) = communicator.receive().await else {
+            panic!("the user was not told of the denial");
+        };
+        assert_eq!(notice.message, AuthDenied.to_string());
+
+        for _ in 0..2 {
+            let waited =
+                tokio::time::timeout(Backoff::default().next().delay(), communicator.receive())
+                    .await;
+            assert!(waited.is_err(), "a denied connection said more");
+            assert!(matches!(communicator.connection, Connection::Denied(_)));
+        }
+    }
+
+    /// Connecting again leaves the denial behind.
+    #[tokio::test]
+    async fn connecting_again_after_a_denial_makes_a_new_attempt() {
+        let mut communicator = communicator();
+        communicator.connection = Connection::Denied(Denied { reason: None });
+        let endpoint = communicator.endpoint.clone().unwrap();
+        communicator.connect(endpoint);
+        assert!(matches!(communicator.connection, Connection::Connecting(_)));
+    }
+
+    /// A failure that may pass waits as long as its attempt's backoff says.
+    #[tokio::test]
+    async fn a_failed_attempt_hands_on_its_backoff() {
+        let backoff = Backoff::default().next().next();
+        let mut connecting = attempt(Err(anyhow::anyhow!("relay unreachable")), backoff);
+        let Connection::Disconnected(disconnected) = connecting.wait().await else {
+            panic!("a failure that may pass ended the attempts");
+        };
+        assert_eq!(disconnected.backoff, backoff);
+        assert!(disconnected.reason.is_some());
+    }
+
+    /// Losing an established connection retries at the base interval, however
+    /// long the attempts before it waited.
+    #[tokio::test]
+    async fn a_connection_resets_the_backoff() {
+        let backoff = Backoff::default().next().next().next();
+        let mut connecting = attempt(Ok(SessionHandle::ended_with(vec![])), backoff);
+        let Connection::Connected(mut connected) = connecting.wait().await else {
+            panic!("the attempt did not connect");
+        };
+        let Err(Connection::Disconnected(disconnected)) = connected.recv().await else {
+            panic!("the ended session did not disconnect");
+        };
+        assert_eq!(disconnected.backoff, Backoff::default());
+    }
+
     /// What the room said before the connection ended still reaches the
     /// core, also when the core finds the connection ended by sending.
     #[tokio::test]
@@ -202,12 +321,7 @@ mod test {
             actor: "bob".into(),
             message: "bye".into(),
         };
-        let mut communicator = P2PCommunicator::new(ChunkRoute::default(), ChunkRoute::default());
-        communicator.endpoint = Some(EndpointInfo {
-            addr: "/ip4/127.0.0.1/udp/1/quic-v1".parse().unwrap(),
-            room: "room".into(),
-            password: String::new(),
-        });
+        let mut communicator = communicator();
         communicator.connection = Connection::Connected(Connected {
             session: SessionHandle::ended_with(vec![last_words.clone().into()]),
         });

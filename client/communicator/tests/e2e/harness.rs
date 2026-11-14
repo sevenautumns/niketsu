@@ -32,8 +32,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 /// How long a scenario waits for the network to deliver. Generous, because
-/// joining a room takes a relay round trip, a password hash and a hole
-/// punch; a passing scenario never waits this long.
+/// joining a room takes a relay round trip and a hole punch; a passing
+/// scenario never waits this long.
 const PATIENCE: Duration = Duration::from_secs(30);
 
 /// Waits until `holds`, panicking with `what` if the network never gets
@@ -446,6 +446,15 @@ impl Peer {
 
     /// Like [`Peer::join`], for a peer whose files exist on disk.
     pub fn join_with_files(relay: &Relay, name: &str, files: Vec<FileEntry>) -> Self {
+        Self::start(relay, name, files, "secret")
+    }
+
+    /// Like [`Peer::join`], for a peer that knows the room by `password`.
+    pub fn join_with_password(relay: &Relay, name: &str, password: &str) -> Self {
+        Self::start(relay, name, vec![], password)
+    }
+
+    fn start(relay: &Relay, name: &str, files: Vec<FileEntry>, password: &str) -> Self {
         let fetch = ChunkRoute::default();
         let provide = ChunkRoute::default();
         let communicator = P2PCommunicator::new(fetch.clone(), provide.clone()).without_mdns();
@@ -456,7 +465,7 @@ impl Peer {
             relay: "127.0.0.1".to_string(),
             port: relay.port,
             room: ArcStr::from("e2e"),
-            password: "secret".to_string(),
+            password: password.to_string(),
             auto_connect: true,
             ..Default::default()
         };

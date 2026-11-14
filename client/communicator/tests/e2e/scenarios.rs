@@ -37,6 +37,32 @@ async fn two_peers_meet_in_a_room() {
     }
 }
 
+/// A peer with the wrong password is told so once and stays out of the
+/// room instead of asking the relay again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wrong_password_keeps_a_peer_out() {
+    let relay = Relay::start();
+    let alice = Peer::join(&relay, "alice", &[]).hosting().await;
+    let mallory = Peer::join_with_password(&relay, "mallory", "guess");
+
+    let denials = || {
+        mallory
+            .ui
+            .state()
+            .messages
+            .iter()
+            .filter(|m| m.contains("Wrong password"))
+            .count()
+    };
+    eventually("mallory is told of the wrong password", || denials() > 0).await;
+    // The one wait for something not to happen: a retry would come within
+    // a few reconnect intervals.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(denials(), 1, "mallory asked the relay again");
+    assert_eq!(mallory.ui.state().is_host, None);
+    assert_eq!(alice.ui.state().user_names(), ["alice"]);
+}
+
 /// A selection, a seek and a pause by one peer reach the other, in both
 /// directions: the host's travel as gossip, the client's as well.
 #[tokio::test(flavor = "multi_thread")]

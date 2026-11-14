@@ -49,6 +49,7 @@ mod host;
 mod links;
 mod order;
 
+pub(crate) use auth::AuthDenied;
 use direct_only::DirectOnly;
 
 /// Result of one iteration of the shared event loop in

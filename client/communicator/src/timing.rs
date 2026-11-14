@@ -6,6 +6,12 @@ use std::time::Duration;
 /// The least time between two attempts to connect to the relay.
 pub(crate) const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 
+/// The most time between two attempts to connect to the relay. Every failed
+/// attempt doubles the time to the next one up to this, so a relay that is
+/// down is not asked twice a second.
+pub(crate) const MAX_RECONNECT_INTERVAL: Duration = Duration::from_secs(30);
+const _: () = assert!(RECONNECT_INTERVAL.as_millis() < MAX_RECONNECT_INTERVAL.as_millis());
+
 /// How long a connection attempt may take from the start until the relay
 /// has authenticated this peer: waiting for the listeners, dialing the
 /// relay and the auth request.

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use anyhow::Result;
-use bcrypt::{DEFAULT_COST, hash, verify};
 use futures::StreamExt;
 use libp2p::core::Multiaddr;
 use libp2p::core::multiaddr::Protocol;
@@ -11,6 +10,7 @@ use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, StreamProtocol, Swarm, identify, noise, ping, relay, tcp, yamux};
 use niketsu_protocol::{AUTH_PROTOCOL, AuthRequest, AuthResponse, AuthStatus};
+use subtle::ConstantTimeEq;
 use tracing::debug;
 
 use crate::timing::{
@@ -26,16 +26,15 @@ struct Behaviour {
     auth: request_response::cbor::Behaviour<AuthRequest, AuthResponse>,
 }
 
-struct PasswordHash(String);
+/// The digest of a room's password as its host sent it. It is a digest
+/// already and never leaves memory, so it is kept as it is.
+struct PasswordDigest(String);
 
-impl PasswordHash {
-    /// None for a digest bcrypt refuses to hash.
-    fn new(digest: &str) -> Option<Self> {
-        hash(digest, DEFAULT_COST).ok().map(Self)
-    }
-
-    fn verify(&self, digest: &str) -> bool {
-        verify(digest, &self.0).unwrap_or(false)
+impl PasswordDigest {
+    /// Compares in constant time, so the time of an answer does not tell
+    /// how much of a guess was right.
+    fn matches(&self, digest: &str) -> bool {
+        self.0.as_bytes().ct_eq(digest.as_bytes()).into()
     }
 }
 
@@ -57,7 +56,7 @@ type RoomName = String;
 
 struct Room {
     host: PeerId,
-    password: PasswordHash,
+    password: PasswordDigest,
 }
 
 /// The open rooms and who hosts them. A peer hosts at most one room, and
@@ -75,15 +74,11 @@ impl Rooms {
         let AuthRequest { room, password } = request;
 
         let Some(open) = self.get(&room) else {
-            let Some(password) = PasswordHash::new(&password) else {
-                debug!(%peer, %room, "Refused to open room: unusable password digest");
-                return denied();
-            };
             debug!(%peer, %room, "Opened room");
-            self.open(room, peer, password);
+            self.open(room, peer, PasswordDigest(password));
             return granted(None);
         };
-        if !open.password.verify(&password) {
+        if !open.password.matches(&password) {
             debug!(%peer, %room, "Refused to join room: wrong password");
             return denied();
         }
@@ -96,7 +91,7 @@ impl Rooms {
         self.rooms.get(name)
     }
 
-    fn open(&mut self, name: RoomName, host: PeerId, password: PasswordHash) {
+    fn open(&mut self, name: RoomName, host: PeerId, password: PasswordDigest) {
         self.close_hosted_by(host);
         self.hosts.insert(host, name.clone());
         self.rooms.insert(name, Room { host, password });
@@ -242,8 +237,8 @@ impl Relay {
 mod tests {
     use super::*;
 
-    fn password() -> PasswordHash {
-        PasswordHash(String::new())
+    fn password() -> PasswordDigest {
+        PasswordDigest(String::new())
     }
 
     fn ask(room: &str, password: &str) -> AuthRequest {
@@ -264,6 +259,25 @@ mod tests {
             granted(Some(alice))
         );
         assert_eq!(rooms.answer(alice, ask("room", "secret")), granted(None));
+    }
+
+    #[test]
+    fn a_host_asking_for_its_room_with_another_password_is_denied() {
+        let alice = PeerId::random();
+        let mut rooms = Rooms::default();
+        assert_eq!(rooms.answer(alice, ask("room", "secret")), granted(None));
+        assert_eq!(rooms.answer(alice, ask("room", "guess")), denied());
+        assert_eq!(rooms.answer(alice, ask("room", "secret")), granted(None));
+    }
+
+    #[test]
+    fn a_digest_matches_only_itself() {
+        let digest = PasswordDigest("secret".into());
+        assert!(digest.matches("secret"));
+        assert!(!digest.matches("secreT"));
+        assert!(!digest.matches("secre"));
+        assert!(!digest.matches("secrets"));
+        assert!(!digest.matches(""));
     }
 
     #[test]

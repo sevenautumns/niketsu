@@ -10,7 +10,7 @@ use niketsu_core::communicator::{IncomingMessage, OutgoingMessage};
 use niketsu_core::room::RoomName;
 use tracing::{debug, info, warn};
 
-use super::auth::AuthEvent;
+use super::auth::{AuthDenied, AuthEvent};
 use super::client::ClientRole;
 use super::host::HostRole;
 use super::{
@@ -181,6 +181,9 @@ impl Setup {
                 SwarmEvent::Behaviour(BehaviourEvent::Transport(
                     TransportBehaviourEvent::Auth(AuthEvent::Complete { relay, host }),
                 )) => return Ok(PeerInfo { relay, host }),
+                SwarmEvent::Behaviour(BehaviourEvent::Transport(
+                    TransportBehaviourEvent::Auth(AuthEvent::Denied),
+                )) => return Err(AuthDenied.into()),
                 SwarmEvent::Behaviour(BehaviourEvent::Transport(
                     TransportBehaviourEvent::Auth(AuthEvent::Failed(err)),
                 )) => return Err(err),

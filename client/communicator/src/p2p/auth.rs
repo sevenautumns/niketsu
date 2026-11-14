@@ -25,9 +25,23 @@ fn request(room: RoomName, password: String) -> AuthRequest {
     }
 }
 
+/// The relay refused this peer the room: the password is not the room's.
+/// Asking again with the same password gets the same answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AuthDenied;
+
+impl std::fmt::Display for AuthDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Wrong password for the room")
+    }
+}
+
+impl std::error::Error for AuthDenied {}
+
 #[derive(Debug)]
 pub(crate) enum AuthEvent {
     Complete { relay: PeerId, host: Option<PeerId> },
+    Denied,
     Failed(anyhow::Error),
 }
 
@@ -152,9 +166,7 @@ impl NetworkBehaviour for AuthBehaviour {
                                     relay,
                                     host: response.peer_id,
                                 },
-                                AuthStatus::Err => {
-                                    AuthEvent::Failed(anyhow!("Authentication failed"))
-                                }
+                                AuthStatus::Err => AuthEvent::Denied,
                             }
                         }
                         request_response::Event::OutboundFailure { error, .. } => {
