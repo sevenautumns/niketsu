@@ -15,6 +15,8 @@
 //!   connection bookkeeping and debug assertions — survive a relayed-then-
 //!   direct connection lifecycle in both directions, with substreams actually
 //!   flowing through the `Either` handler plumbing.
+//!
+//! The same swarms pin what the handlers assume about relay reservations.
 
 use std::time::Duration;
 
@@ -23,6 +25,7 @@ use libp2p::core::transport::MemoryTransport;
 use libp2p::core::upgrade::Version;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ProtocolSupport};
+use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{Multiaddr, StreamProtocol, Transport, gossipsub, noise, relay, yamux};
 use serde::{Deserialize, Serialize};
@@ -124,6 +127,86 @@ async fn listen(swarm: &mut Swarm<impl NetworkBehaviour>, addr: Multiaddr) -> Mu
     })
     .await
     .expect("no listen address within timeout")
+}
+
+/// The next event of `swarm` that `find` picks.
+async fn wait_for<B: NetworkBehaviour, T>(
+    swarm: &mut Swarm<B>,
+    what: &str,
+    mut find: impl FnMut(SwarmEvent<B::ToSwarm>) -> Option<T>,
+) -> T {
+    timeout(TIMEOUT, async {
+        loop {
+            if let Some(found) = find(swarm.select_next_some().await) {
+                return found;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("never happened: {what}"))
+}
+
+/// What the client's handling of a closed reservation builds on (see
+/// `ClientCommunicationHandler::on_listener_closed`): a reservation lives on
+/// the oldest direct connection to the relay, its listener closes without
+/// an error when that connection does, and the relay then accepts a
+/// reservation over a connection that remains.
+#[tokio::test]
+async fn a_reservation_ends_with_its_connection_and_can_be_made_again() {
+    let mut relay = relay_swarm();
+    let relay_peer_id = *relay.local_peer_id();
+    let relay_addr = listen(&mut relay, "/memory/0".parse().unwrap()).await;
+    relay.add_external_address(relay_addr.clone());
+    tokio::spawn(async move {
+        loop {
+            relay.select_next_some().await;
+        }
+    });
+
+    let mut client = client_swarm();
+    let mut connections = Vec::new();
+    for _ in 0..2 {
+        let dial = DialOpts::peer_id(relay_peer_id)
+            .addresses(vec![relay_addr.clone()])
+            .condition(PeerCondition::Always)
+            .build();
+        client.dial(dial).unwrap();
+        let connection = wait_for(&mut client, "a connection to the relay", |e| match e {
+            SwarmEvent::ConnectionEstablished { connection_id, .. } => Some(connection_id),
+            _ => None,
+        })
+        .await;
+        connections.push(connection);
+    }
+
+    let circuit = relay_addr
+        .with(Protocol::P2p(relay_peer_id))
+        .with(Protocol::P2pCircuit);
+    let reservation = client.listen_on(circuit.clone()).unwrap();
+    wait_for(&mut client, "the relay accepts the reservation", |e| {
+        matches!(e, SwarmEvent::NewListenAddr { listener_id, .. } if listener_id == reservation)
+            .then_some(())
+    })
+    .await;
+
+    assert!(client.close_connection(connections[0]));
+    let reason = wait_for(
+        &mut client,
+        "the reservation's listener closes",
+        |e| match e {
+            SwarmEvent::ListenerClosed {
+                listener_id,
+                reason,
+                ..
+            } if listener_id == reservation => Some(reason),
+            _ => None,
+        },
+    )
+    .await;
+    assert!(reason.is_ok(), "closed with {reason:?}");
+    assert!(client.is_connected(&relay_peer_id));
+
+    listen(&mut client, circuit).await;
 }
 
 #[tokio::test]

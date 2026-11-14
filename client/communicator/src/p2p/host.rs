@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use libp2p::core::ConnectedPoint;
+use libp2p::core::transport::ListenerId;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::ResponseChannel;
 use libp2p::swarm::{ConnectionError, ConnectionId, SwarmEvent};
@@ -27,6 +28,9 @@ use crate::messages::NiketsuMessage;
 pub(crate) struct HostCommunicationHandler {
     handler: CommunicationHandler,
     relay_peer_id: PeerId,
+    /// The listener on the relay's circuit, which lives as long as the
+    /// reservation there does. Peers join the room through it.
+    reservation: ListenerId,
     password: String,
     room: RoomName,
     /// The connected peers. The core hears of the room's members among
@@ -53,6 +57,7 @@ impl HostCommunicationHandler {
         topic: gossipsub::IdentTopic,
         host: PeerId,
         relay_peer_id: PeerId,
+        reservation: ListenerId,
         password: String,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
@@ -74,6 +79,7 @@ impl HostCommunicationHandler {
         Self {
             handler,
             relay_peer_id,
+            reservation,
             password,
             room,
             links: Links::default(),
@@ -319,6 +325,16 @@ impl CommunicationHandlerTrait for HostCommunicationHandler {
                 cause,
                 ..
             } => self.on_connection_closed(peer_id, connection_id, cause),
+            // Without the reservation nobody can join the room, also when
+            // the connection to the relay is still up.
+            SwarmEvent::ListenerClosed {
+                listener_id,
+                reason,
+                ..
+            } if listener_id == self.reservation => {
+                error!(?reason, "Reservation of host on relay server closed");
+                self.handler.base.stop(Stop::RelayLost);
+            }
             other => debug!(event = ?other, "Received not captured event"),
         }
     }

@@ -1,6 +1,7 @@
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use libp2p::core::ConnectedPoint;
+use libp2p::core::transport::ListenerId;
 use libp2p::request_response::{self, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, mdns, ping};
@@ -21,6 +22,9 @@ pub(crate) struct ClientCommunicationHandler {
     handler: CommunicationHandler,
     /// The host and the peers this client shares files with.
     links: Links,
+    /// The listener on the host's circuit, which lives as long as the
+    /// reservation on the host's relay does.
+    host_reservation: Option<ListenerId>,
 }
 
 impl ClientCommunicationHandler {
@@ -46,6 +50,7 @@ impl ClientCommunicationHandler {
         Self {
             handler,
             links: Links::default(),
+            host_reservation: None,
         }
     }
 
@@ -143,14 +148,38 @@ impl ClientCommunicationHandler {
     /// punches. The relay client only makes reservations over non-relayed
     /// connections, and every `listen_on` of the circuit spawns another
     /// listener whose own reservation renewals count against the host
-    /// relay's per-peer rate limit; hence once, when the host gets linked.
+    /// relay's per-peer rate limit; hence one at a time, starting when the
+    /// host gets linked (see [`Self::on_listener_closed`]).
     fn reserve_host_circuit(&mut self) {
         let Some(host_circuit) = self.handler.base.host_circuit() else {
             return;
         };
         match self.handler.base.swarm.listen_on(host_circuit.clone()) {
-            Ok(_) => info!(%host_circuit, "Reserving slot on host relay"),
+            Ok(listener) => {
+                info!(%host_circuit, "Reserving slot on host relay");
+                self.host_reservation = Some(listener);
+            }
             Err(err) => warn!(?err, %host_circuit, "Failed to listen on host relay circuit"),
+        }
+    }
+
+    /// A reservation belongs to the connection it was made on, and its
+    /// listener closes with it. While another direct connection keeps the
+    /// host linked, the slot is reserved again there. A reservation the
+    /// host's relay ended itself is not asked for again.
+    fn on_listener_closed(&mut self, listener: ListenerId, reason: std::io::Result<()>) {
+        if self.host_reservation != Some(listener) {
+            return debug!(?listener, ?reason, "Listener closed");
+        }
+        self.host_reservation = None;
+        let host = self.handler.base.host;
+        match reason {
+            Ok(()) if self.links.is_linked(&host) => {
+                info!("Reservation on host relay closed with its connection");
+                self.reserve_host_circuit();
+            }
+            Ok(()) => debug!("Reservation on host relay closed with the link to the host"),
+            Err(error) => warn!(%error, "Host relay ended the reservation"),
         }
     }
 
@@ -231,6 +260,11 @@ impl CommunicationHandlerTrait for ClientCommunicationHandler {
                 peer_id,
                 error,
             } => self.on_outgoing_connection_error(connection_id, peer_id, error),
+            SwarmEvent::ListenerClosed {
+                listener_id,
+                reason,
+                ..
+            } => self.on_listener_closed(listener_id, reason),
             other => debug!(event = ?other, "Received not captured event"),
         }
     }

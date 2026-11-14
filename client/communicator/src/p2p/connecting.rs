@@ -85,54 +85,51 @@ impl ConnectingHandler {
             .with_p2p(peer_info.relay)
             .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
-        let host = match peer_info.host {
+        self.swarm.gossipsub().subscribe(&self.topic)?;
+
+        let handler: Box<dyn CommunicationHandlerTrait> = match peer_info.host {
             Some(host_peer_id) => {
                 info!(%host_peer_id, "Dialing host via relay circuit");
                 let peer_addr = relay_with_peer
                     .with(Protocol::P2pCircuit)
                     .with(Protocol::P2p(host_peer_id));
                 self.swarm.dial(peer_addr)?;
-                host_peer_id
+                Box::new(ClientCommunicationHandler::new(
+                    self.swarm,
+                    self.topic,
+                    host_peer_id,
+                    self.core_receiver,
+                    self.message_sender,
+                    self.chunk_routes,
+                ))
             }
             None => {
                 info!(%local_peer_id, "Listening on relay circuit as host");
-                self.swarm
+                let reservation = self
+                    .swarm
                     .listen_on(relay_with_peer.with(Protocol::P2pCircuit))
                     .context("Failed to listen on relay circuit")?;
                 // before the reservation confirms the host's address, which
                 // the host relay hands out
                 self.swarm.behaviour_mut().transport.relay_server =
                     host_relay::serve(local_peer_id);
-                local_peer_id
+                Box::new(HostCommunicationHandler::new(
+                    self.swarm,
+                    self.topic,
+                    local_peer_id,
+                    peer_info.relay,
+                    reservation,
+                    self.password,
+                    self.core_receiver,
+                    self.message_sender,
+                    self.room,
+                    self.chunk_routes,
+                ))
             }
         };
 
-        self.swarm.gossipsub().subscribe(&self.topic)?;
-
         info!(%local_peer_id, "Connection setup complete");
-
-        if host == local_peer_id {
-            Ok(Box::new(HostCommunicationHandler::new(
-                self.swarm,
-                self.topic,
-                host,
-                peer_info.relay,
-                self.password,
-                self.core_receiver,
-                self.message_sender,
-                self.room,
-                self.chunk_routes,
-            )))
-        } else {
-            Ok(Box::new(ClientCommunicationHandler::new(
-                self.swarm,
-                self.topic,
-                host,
-                self.core_receiver,
-                self.message_sender,
-                self.chunk_routes,
-            )))
-        }
+        Ok(handler)
     }
 
     /// Waits until every listener has reported an address (or given up).
