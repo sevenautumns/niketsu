@@ -15,6 +15,8 @@ use crate::user::UserStatus;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConnectedMsg {
     pub is_host: bool,
+    /// This peer's own id, under which the room's users reach it.
+    pub peer: PeerId,
 }
 
 /// A peer reachable over a direct connection, so room messages can flow.
@@ -48,8 +50,6 @@ pub struct HostRoundTripMsg {
 /// What the host can address to a single peer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DirectMessage {
-    /// The greeting of a peer that joined.
-    RoomState(RoomStateMsg),
     Rename(ForcedRenameMsg),
 }
 
@@ -67,19 +67,26 @@ impl ToPeerMsg {
 
 /// Everything the room agrees on, as the host publishes it.
 ///
-/// States are ordered by `(version, beat)`: the host bumps `version` with
-/// every change of the room and every intent it handles, and `beat` with
-/// every heartbeat, which only refreshes `position`.
+/// The host bumps `version` with every change of the room and every intent
+/// it handles; a heartbeat repeats the version and only refreshes
+/// `position`.
+///
+/// The playlist is too large to go with every heartbeat. The host's core
+/// attaches it to every state, and the host's communicator leaves it out
+/// for a member that has acknowledged a state carrying the playlist of
+/// `playlist_version`.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoomStateMsg {
     pub version: u64,
-    pub beat: u64,
     /// Bumped whenever the position jumps, by a seek or a selection. A
     /// follower sets such a position exactly; any other only has to be
     /// within the tolerance.
     pub jumps: u64,
-    pub playlist: Playlist,
+    /// The version of the change that set the room's playlist. It names
+    /// that playlist and is only ever compared for equality.
+    pub playlist_version: u64,
+    pub playlist: Option<Playlist>,
     pub video: Option<Video>,
     #[serde(with = "serde_millis")]
     pub position: Duration,
@@ -89,12 +96,6 @@ pub struct RoomStateMsg {
     /// position and play state are not the room's.
     pub file_loaded: bool,
     pub users: UserStatusListMsg,
-}
-
-impl RoomStateMsg {
-    pub fn order(&self) -> (u64, u64) {
-        (self.version, self.beat)
-    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -134,10 +135,14 @@ pub struct IntentMsg {
     pub intent: Intent,
 }
 
-/// What the host did on a user's behalf, for the chat only. The room state
-/// carries the outcome.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct ActionMsg(pub IntentMsg);
+/// The chat line for what the host did on a user's behalf. The room state
+/// carries the outcome, so this carries no more than the line.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionMsg {
+    pub actor: ArcStr,
+    pub message: String,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -168,44 +173,16 @@ pub struct ForcedRenameMsg {
     pub name: ArcStr,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct FileRequestMsg {
-    /// Pairs the provider's answer with this request.
-    pub uuid: uuid::Uuid,
-    pub actor: ArcStr,
-    pub video: Video,
+/// The local video server's chunks are fetched from `provider`, a user the
+/// room state shows offering the video.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamMsg {
+    pub provider: PeerId,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct FileResponseMsg {
-    pub uuid: uuid::Uuid,
-    pub actor: ArcStr,
-    pub video: Video,
-    pub size: u64,
-}
-
-/// The provider cannot answer the request `uuid` with a file. The requester
-/// is told the `reason`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileDeclineMsg {
-    pub uuid: uuid::Uuid,
-    pub reason: String,
-}
-
+/// The stream the local video server plays has ended. The communicator
+/// tells the core when the provider's side ended it; the core tells the
+/// communicator when it ended the stream itself.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct VideoShareMsg {
-    pub video: Option<Video>,
-}
-
-impl VideoShareMsg {
-    pub fn new(video: Video) -> Self {
-        Self { video: Some(video) }
-    }
-}
-
-#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct VideoProviderStoppedMsg;
+pub struct StreamEndedMsg;

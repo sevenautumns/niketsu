@@ -6,7 +6,7 @@ use libp2p::PeerId;
 use libp2p::core::transport::PortUse;
 use libp2p::core::{Endpoint, Multiaddr};
 use libp2p::multiaddr::Protocol;
-use libp2p::swarm::behaviour::{ConnectionClosed, ConnectionEstablished};
+use libp2p::swarm::behaviour::ConnectionClosed;
 use libp2p::swarm::{
     ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandlerInEvent, THandlerOutEvent,
     ToSwarm, dummy,
@@ -34,16 +34,13 @@ use tracing::debug;
 /// (and thus no `ConnectionEstablished` bookkeeping) for — several libp2p behaviours
 /// (e.g. request-response) assert on that pairing and panic.
 ///
-/// Withholding events is not enough on its own: the `other_established` /
-/// `remaining_established` counts inside the *forwarded* events are computed by
-/// the swarm across **all** connections to a peer, including the relayed ones
-/// hidden from `inner`. Behaviours use those counts to detect a peer's first
-/// connection and last disconnection (gossipsub only sends its subscription
-/// handshake when `other_established == 0`; gossipsub and kademlia only run
-/// full peer cleanup when `remaining_established == 0`; request-response
-/// `debug_assert`s its own bookkeeping against them). So before forwarding,
-/// the counts are reduced by the number of currently-open dummy connections to
-/// that peer, making them consistent with what `inner` has actually seen.
+/// Withholding events is not enough on its own: the `remaining_established`
+/// count inside a *forwarded* `ConnectionClosed` is computed by the swarm
+/// across **all** connections to a peer, including the relayed ones hidden
+/// from `inner`, and request-response `debug_assert`s its own bookkeeping
+/// against it. So before forwarding, the count is reduced by the number of
+/// currently-open dummy connections to that peer, making it consistent with
+/// what `inner` has actually seen.
 pub(crate) struct DirectOnly<T> {
     inner: T,
     dummy_connections: HashMap<ConnectionId, PeerId>,
@@ -152,19 +149,8 @@ impl<T: NetworkBehaviour> NetworkBehaviour for DirectOnly<T> {
 
     fn on_swarm_event(&mut self, event: FromSwarm) {
         match event {
-            FromSwarm::ConnectionEstablished(e) => {
-                if self.dummy_connections.contains_key(&e.connection_id) {
-                    return;
-                }
-                self.inner.on_swarm_event(FromSwarm::ConnectionEstablished(
-                    ConnectionEstablished {
-                        other_established: e
-                            .other_established
-                            .saturating_sub(self.open_dummy_connections_to(e.peer_id)),
-                        ..e
-                    },
-                ));
-            }
+            FromSwarm::ConnectionEstablished(e)
+                if self.dummy_connections.contains_key(&e.connection_id) => {}
             FromSwarm::ConnectionClosed(e) => {
                 // `ConnectionClosed` is the last event for a connection id; forget it
                 // here so the map doesn't grow unboundedly over the process lifetime.
@@ -405,15 +391,13 @@ mod tests {
         assert_eq!(behaviour.inner_mut().closed, vec![(connection_id, 0)]);
     }
 
-    /// The swarm counts relayed connections in `other_established` /
-    /// `remaining_established` even though `DirectOnly` hides them from `inner`.
-    /// Forwarded unadjusted, `inner` would treat the first direct connection as
-    /// a reconnect (gossipsub then never sends its subscription handshake) and
-    /// a direct disconnect as leaving connections behind (skipping full peer
-    /// cleanup, tripping request-response's debug_assert). The counts must be
-    /// reduced by the hidden open dummy connections to that peer.
+    /// The swarm counts relayed connections in `remaining_established` even
+    /// though `DirectOnly` hides them from `inner`. Forwarded unadjusted,
+    /// `inner` would treat a direct disconnect as leaving connections behind,
+    /// tripping request-response's debug_assert. The count must be reduced by
+    /// the hidden open dummy connections to that peer.
     #[test]
-    fn adjusts_connection_counts_for_hidden_relayed_connections() {
+    fn adjusts_the_remaining_count_for_hidden_relayed_connections() {
         let mut behaviour = DirectOnly::new(Probe::default());
         let peer = PeerId::random();
         let relayed_id = ConnectionId::new_unchecked(0);
@@ -447,8 +431,7 @@ mod tests {
             },
         ));
 
-        // Direct connection second: the swarm reports `other_established = 1`
-        // (the relayed connection), but `inner` must see its first connection.
+        // Direct connection second: `inner` sees it, as its only one.
         behaviour
             .handle_established_inbound_connection(
                 direct_id,
@@ -467,7 +450,13 @@ mod tests {
                 other_established: 1,
             },
         ));
-        assert_eq!(behaviour.inner_mut().established, vec![(direct_id, 0)]);
+        let established: Vec<_> = behaviour
+            .inner_mut()
+            .established
+            .iter()
+            .map(|e| e.0)
+            .collect();
+        assert_eq!(established, vec![direct_id]);
 
         // Direct connection closes while the circuit is still open: the swarm
         // reports `remaining_established = 1`, but for `inner` no connections

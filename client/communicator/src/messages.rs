@@ -1,41 +1,25 @@
 use niketsu_core::communicator::*;
 use serde::{Deserialize, Serialize};
 
-/// The room messages that travel between peers, over gossipsub or as a
-/// direct request. File sharing has its own protocol (see `p2p/file_share`).
+/// The room messages, each a direct request between the host and a
+/// member. File sharing has its own protocol (see `p2p/file_share`).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
 pub(super) enum NiketsuMessage {
-    /// The host's room state, to the room or as a joiner's greeting.
+    /// The host's room state, to every member.
     RoomState(RoomStateMsg),
     /// What the host did on a user's behalf, for the chat.
     Action(ActionMsg),
     /// A client asks the host for a change of the room.
     Intent(IntentMsg),
+    /// A line of chat: from a client to the host, and from the host to
+    /// every member but its author.
     UserMessage(UserMessageMsg),
     ForcedRename(ForcedRenameMsg),
     /// A client asks the host to take it into the room. Only the
     /// communicator sees it.
     Join,
-}
-
-/// An intent means nothing to the core as it is: it needs the peer it is
-/// of, so the host hands it over as a `PeerIntentMsg`.
-impl TryFrom<NiketsuMessage> for IncomingMessage {
-    type Error = anyhow::Error;
-
-    fn try_from(value: NiketsuMessage) -> anyhow::Result<Self> {
-        Ok(match value {
-            NiketsuMessage::RoomState(m) => m.into(),
-            NiketsuMessage::Action(m) => m.into(),
-            NiketsuMessage::UserMessage(m) => m.into(),
-            NiketsuMessage::ForcedRename(m) => m.into(),
-            m @ (NiketsuMessage::Intent(_) | NiketsuMessage::Join) => {
-                anyhow::bail!("Received a message out of place: {m:?}")
-            }
-        })
-    }
 }
 
 /// `From<$msg> for NiketsuMessage`, one variant per message.
@@ -60,8 +44,15 @@ wire_from! {
 impl From<DirectMessage> for NiketsuMessage {
     fn from(value: DirectMessage) -> Self {
         match value {
-            DirectMessage::RoomState(msg) => msg.into(),
             DirectMessage::Rename(msg) => msg.into(),
+        }
+    }
+}
+
+impl From<ClientRequest> for NiketsuMessage {
+    fn from(value: ClientRequest) -> Self {
+        match value {
+            ClientRequest::Intent(msg) => msg.into(),
         }
     }
 }
@@ -74,11 +65,6 @@ mod tests {
     use niketsu_core::user::UserStatus;
 
     use super::*;
-
-    fn json_roundtrip(msg: NiketsuMessage) -> NiketsuMessage {
-        let bytes = serde_json::to_vec(&msg).unwrap();
-        serde_json::from_slice(&bytes).unwrap()
-    }
 
     /// The codec of direct requests.
     fn cbor_roundtrip(msg: NiketsuMessage) -> NiketsuMessage {
@@ -98,9 +84,9 @@ mod tests {
         let messages = [
             NiketsuMessage::RoomState(RoomStateMsg {
                 version: 3,
-                beat: 7,
                 jumps: 1,
-                playlist: Playlist::from_iter(["ep1", "ep2"]),
+                playlist_version: 2,
+                playlist: Some(Playlist::from_iter(["ep1", "ep2"])),
                 video: Some("ep1".into()),
                 position: Duration::from_millis(1500),
                 paused: false,
@@ -111,6 +97,7 @@ mod tests {
                     users: [UserStatus {
                         name: "bob".into(),
                         ready: true,
+                        ..Default::default()
                     }]
                     .into(),
                 },
@@ -119,28 +106,24 @@ mod tests {
                 video: "ep1".into(),
                 position: Duration::from_millis(1500),
             })),
+            NiketsuMessage::RoomState(RoomStateMsg::default()),
             NiketsuMessage::Intent(intent(Intent::Speed(1.5))),
-            NiketsuMessage::Action(ActionMsg(intent(Intent::Pause))),
-            NiketsuMessage::Action(ActionMsg(intent(Intent::Select {
-                video: None,
-                position: Duration::ZERO,
-            }))),
+            NiketsuMessage::Intent(intent(Intent::Playlist(Playlist::from_iter(["ep1"])))),
+            NiketsuMessage::Action(ActionMsg {
+                actor: "alice".into(),
+                message: "alice paused playback".into(),
+            }),
+            NiketsuMessage::UserMessage(UserMessageMsg {
+                actor: "alice".into(),
+                message: "hello".into(),
+            }),
             NiketsuMessage::ForcedRename(ForcedRenameMsg {
                 name: "bob_2".into(),
             }),
             NiketsuMessage::Join,
         ];
         for msg in messages {
-            assert_eq!(json_roundtrip(msg.clone()), msg);
             assert_eq!(cbor_roundtrip(msg.clone()), msg);
         }
-    }
-
-    #[test]
-    fn the_wire_tag_names_the_message() {
-        let msg = NiketsuMessage::Action(ActionMsg(intent(Intent::Pause)));
-        let json = serde_json::to_value(&msg).unwrap();
-        assert_eq!(json["type"], "action");
-        assert_eq!(json["actor"], "alice");
     }
 }

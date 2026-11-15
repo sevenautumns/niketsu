@@ -183,6 +183,44 @@ fn assert_room_converged(room: &mut Room) {
     }
 }
 
+/// The room shows a user offering a video exactly when it is the selected
+/// one and that user's provider has it open: no stale offer, none missing.
+fn assert_offers_are_real(room: &mut Room) {
+    let host = room.host_index();
+    let selected = room.peer(host).player.state().video;
+    let mut open = vec![];
+    for i in 0..room.peers.len() {
+        let peer = room.peer(i);
+        let file = peer.model.video_provider.file_name();
+        let offers = file.filter(|f| selected.as_ref().is_some_and(|v| v.as_str() == f.as_str()));
+        if peer.online && offers.is_some() {
+            open.push(peer.name().to_string());
+        }
+    }
+    open.sort();
+    for i in 0..room.peers.len() {
+        if !room.peer(i).online {
+            continue;
+        }
+        let ui = room.peer(i).ui.state();
+        let mut offering: Vec<String> = ui
+            .users
+            .iter()
+            .filter(|u| u.offers.is_some())
+            .map(|u| u.name.to_string())
+            .collect();
+        offering.sort();
+        assert_eq!(offering, open, "peer {i}: the offers shown are not real");
+        for user in ui.users.iter() {
+            if let Some(file) = &user.offers {
+                let offered = Some(file.name.as_str());
+                let selected = selected.as_ref().map(|v| v.as_str());
+                assert_eq!(offered, selected, "peer {i}: stale offer");
+            }
+        }
+    }
+}
+
 proptest! {
     /// After ANY sequence of user actions — including the room moving to
     /// another host and peers joining mid-session — the room goes quiescent (pump panics on
@@ -245,16 +283,20 @@ proptest! {
                 }
             }
 
-            // when no provider is announced, nobody keeps a video server
+            // when nobody shares a file, nobody keeps a video server
             // running (there is nothing left to stream from)
-            if room.provider_index().is_none() {
+            if !room.anyone_shares() {
                 for i in 0..room.peers.len() {
                     assert!(
                         !room.peer(i).video_server.running(),
-                        "peer {i}: video server running without an announced provider"
+                        "peer {i}: video server running while nobody shares"
                     );
                 }
             }
+
+            // every offer the room shows is one of the selected video, by a
+            // user whose provider has it open
+            assert_offers_are_real(&mut room);
         });
     }
 }

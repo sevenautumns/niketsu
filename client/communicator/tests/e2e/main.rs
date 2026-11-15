@@ -6,7 +6,7 @@
 //! Where the `dance` in `niketsu-core` specifies the protocol with an
 //! in-memory network, these scenarios check that the libp2p transport
 //! carries it: room authorisation at the relay, the direct connection
-//! between peers, gossip and direct requests.
+//! between peers, and the messages between the host and its members.
 //!
 //! Nothing here is instant, so scenarios state what must *eventually* hold
 //! (see `harness::eventually`) and never sleep for a fixed time.

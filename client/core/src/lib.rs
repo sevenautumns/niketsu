@@ -102,47 +102,52 @@ impl CoreModel {
         self.communicator.connect(self.config.endpoint());
     }
 
-    /// Stop providing the current file and announce it to the room and UI.
+    /// Stops providing the current file and tells the UI and the room.
     pub fn stop_sharing(&mut self) {
-        self.communicator.send(VideoShareMsg { video: None }.into());
         self.video_provider.stop_providing();
         self.ui.video_share(false);
+        self.publish_status();
     }
 
-    /// Switch playlist, player, sharing, persistence and UI over to `video` —
-    /// the choreography shared by every video selection, local or remote.
+    /// Switch playlist, player, sharing, streaming, persistence and UI over
+    /// to `video` — the choreography shared by every video selection, local
+    /// or remote. An offer is one of the selected video, so the host drops
+    /// them all, and a stream is one of it, so the stream ends.
     pub fn select_video(&mut self, video: Option<&Video>, position: Duration) {
+        if let Some(host) = &mut self.host {
+            host.users.drop_offers();
+        }
+        self.video_server.stop_server();
+        self.communicator.send(StreamEndedMsg.into());
         match video {
             Some(video) => {
                 self.playlist.select_playing(video);
                 let store = self.database.all_files();
                 self.player.load_video(video.clone(), position, store);
-                self.reshare_or_stop(video);
             }
             None => {
                 self.playlist.unload_playing();
                 self.player.unload_video();
-                self.stop_sharing();
             }
         }
+        self.reshare_or_stop(video);
         self.save_playlist();
         self.ui.video_change(video.cloned());
     }
 
     /// Carry auto-sharing over to the newly selected `video` if we are
-    /// currently sharing and have the file; otherwise stop sharing.
-    fn reshare_or_stop(&mut self, video: &Video) {
-        if self.config.auto_share
-            && self.video_provider.sharing()
-            && let Some(file) = self.database.find_file(video.as_str())
-        {
-            self.video_provider.start_providing(file);
-            self.communicator
-                .send(VideoShareMsg::new(video.clone()).into());
-            self.ui.video_share(true);
-        } else {
-            self.stop_sharing();
+    /// currently sharing and have the file; otherwise stop sharing. The
+    /// room learns of a carried share once its file is open, and of a
+    /// stopped one from the host dropping every offer.
+    fn reshare_or_stop(&mut self, video: Option<&Video>) {
+        let file = video
+            .filter(|_| self.config.auto_share && self.video_provider.sharing())
+            .and_then(|video| self.database.find_file(video.as_str()));
+        match file {
+            Some(file) => self.video_provider.start_providing(file),
+            None => self.video_provider.stop_providing(),
         }
+        self.ui.video_share(self.video_provider.sharing());
     }
 }
 

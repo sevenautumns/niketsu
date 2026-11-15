@@ -5,7 +5,7 @@ use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use backoff::Backoff;
 use libp2p::identity::Keypair;
-use niketsu_core::chunk::ChunkRoute;
+use niketsu_core::chunk::{ChunkRoute, ProvideRoute};
 use niketsu_core::communicator::*;
 use p2p::{AuthDenied, ChunkRoutes, SessionHandle};
 use timing::CONNECT_TIMEOUT;
@@ -184,8 +184,9 @@ pub struct P2PCommunicator {
 
 impl P2PCommunicator {
     /// The communicator fetches the chunk requests of `fetch` from the
-    /// provider, and hands the chunk requests of other peers to `provide`.
-    pub fn new(fetch: ChunkRoute, provide: ChunkRoute) -> Self {
+    /// provider, and answers the file and chunk requests of other peers
+    /// from `provide`.
+    pub fn new(fetch: ChunkRoute, provide: ProvideRoute) -> Self {
         Self {
             connection: Connection::default(),
             endpoint: None,
@@ -238,7 +239,7 @@ mod test {
     use super::*;
 
     fn communicator() -> P2PCommunicator {
-        let mut communicator = P2PCommunicator::new(ChunkRoute::default(), ChunkRoute::default());
+        let mut communicator = P2PCommunicator::new(ChunkRoute::default(), ProvideRoute::default());
         communicator.endpoint = Some(EndpointInfo {
             addr: "/ip4/127.0.0.1/udp/1/quic-v1".parse().unwrap(),
             room: "room".into(),
@@ -326,7 +327,7 @@ mod test {
             session: SessionHandle::ended_with(vec![last_words.clone().into()]),
         });
 
-        communicator.send(VideoShareMsg { video: None }.into());
+        communicator.send(StreamEndedMsg.into());
 
         let IncomingMessage::UserMessage(received) = communicator.receive().await else {
             panic!("the message was dropped with the connection");

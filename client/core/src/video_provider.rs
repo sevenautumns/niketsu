@@ -5,27 +5,32 @@ use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, BufReader};
-use tokio::sync::mpsc::{self, Receiver};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tracing::{trace, warn};
 
-use crate::chunk::{CHUNK_SIZE, ChunkRequest, ChunkRoute};
+use crate::chunk::{CHUNK_SIZE, ChunkRequest, ProvideRoute, SharedFile};
 use crate::ui::PlayerMessage;
-use crate::{CoreModel, EventHandler, FileEntry, VideoShareMsg};
+use crate::{CoreModel, EventHandler, FileEntry};
 
 /// Chunk requests waiting for the shared file to be read. The communicator
 /// turns away requests beyond that.
 const QUEUED_REQUESTS: usize = 16;
 
-/// Provides a local file to other peers. While providing, it answers the
-/// chunk requests of a [`ChunkRoute`] given at construction.
+/// Provides a local file to other peers. Once the file is open, it serves
+/// the [`ProvideRoute`] given at construction with the file's name and
+/// size; what this peer offers is what that route serves.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait VideoProviderTrait: std::fmt::Debug + Send {
     fn start_providing(&mut self, file: FileEntry);
     fn stop_providing(&mut self);
-    fn size(&self) -> Option<u64>;
+    /// Whether a file is being provided, also while it is still opening.
     fn sharing(&self) -> bool;
+    /// The file being provided, also while it is still opening.
     fn file_name(&self) -> Option<ArcStr>;
+    /// The file other peers can stream from this one: the file the route
+    /// serves.
+    fn offered(&self) -> Option<SharedFile>;
     async fn event(&mut self) -> VideoProviderEvent;
 }
 
@@ -42,16 +47,12 @@ pub struct FileReady {
     pub size: u64,
 }
 
+/// The room learns of the offer from this peer's status.
 impl EventHandler for FileReady {
     fn handle(self, model: &mut CoreModel) {
         trace!("video provider ready");
         model.ui.video_share(true);
-        model.communicator.send(
-            VideoShareMsg {
-                video: Some((&self.file_name).into()),
-            }
-            .into(),
-        )
+        model.publish_status();
     }
 }
 
@@ -72,12 +73,12 @@ impl EventHandler for SharingStopped {
 
 #[derive(Debug)]
 pub struct VideoProvider {
-    route: ChunkRoute,
+    route: ProvideRoute,
     file_handle: Option<FileHandle>,
 }
 
 impl VideoProvider {
-    pub fn new(route: ChunkRoute) -> Self {
+    pub fn new(route: ProvideRoute) -> Self {
         Self {
             route,
             file_handle: None,
@@ -89,17 +90,12 @@ impl VideoProvider {
 impl VideoProviderTrait for VideoProvider {
     fn start_providing(&mut self, file: FileEntry) {
         self.stop_providing();
-        let requests = self.route.serve(QUEUED_REQUESTS);
-        self.file_handle = Some(FileServer::run(file, requests));
+        self.file_handle = Some(FileServer::run(file));
     }
 
     fn stop_providing(&mut self) {
         self.file_handle.take();
         self.route.close();
-    }
-
-    fn size(&self) -> Option<u64> {
-        self.file_handle.as_ref().and_then(|f| f.size)
     }
 
     fn sharing(&self) -> bool {
@@ -110,33 +106,43 @@ impl VideoProviderTrait for VideoProvider {
         self.file_handle.as_ref().map(|f| f.file_name.clone())
     }
 
+    fn offered(&self) -> Option<SharedFile> {
+        self.route.server().map(|server| server.file.clone())
+    }
+
+    /// Opens the route once the file is open, so the offer carries its
+    /// size.
     async fn event(&mut self) -> VideoProviderEvent {
         let Some(handle) = self.file_handle.as_mut() else {
             std::future::pending().await
         };
-        match handle.event().await {
-            Some(event) => event,
-            None => {
-                self.file_handle = None;
-                SharingStopped.into()
-            }
-        }
+        let Some(size) = handle.file_rx.recv().await else {
+            self.stop_providing();
+            return SharingStopped.into();
+        };
+        let file_name = handle.file_name.clone();
+        let file = SharedFile {
+            name: file_name.clone(),
+            size,
+        };
+        self.route.open(file, handle.requests.clone());
+        FileReady { file_name, size }.into()
     }
 }
 
 struct FileServer;
 
 impl FileServer {
-    /// Reads the chunks of `requests` from the file, one at a time, until the
-    /// route stops sending requests.
-    fn run(file: FileEntry, mut requests: Receiver<ChunkRequest>) -> FileHandle {
+    /// Opens the file and reads the chunks of the requests sent to the
+    /// handle, one at a time, until no request can come anymore.
+    fn run(file: FileEntry) -> FileHandle {
         let (file_tx, file_rx) = mpsc::channel(1);
+        let (requests, mut queue) = mpsc::channel::<ChunkRequest>(QUEUED_REQUESTS);
         let file_name = file.file_name_arc();
 
         // On any I/O error the task returns, which closes the size channel
         // and surfaces as a `SharingStopped` event in `VideoProvider::event`.
         tokio::spawn(async move {
-            let name = file.file_name_arc();
             let path = file.path().to_path_buf();
             let file = match File::open(&path).await {
                 Ok(file) => file,
@@ -150,11 +156,7 @@ impl FileServer {
                 return;
             }
             let mut reader = BufReader::new(file);
-            while let Some(request) = requests.recv().await {
-                // a request for another file is dropped unanswered
-                if request.file_name != name {
-                    continue;
-                }
+            while let Some(request) = queue.recv().await {
                 match Self::read_chunk(request.start, request.len, &mut reader).await {
                     Ok(bytes) => {
                         request.reply.send(bytes).ok();
@@ -166,7 +168,7 @@ impl FileServer {
         FileHandle {
             file_name,
             file_rx,
-            size: None,
+            requests,
         }
     }
 
@@ -196,24 +198,12 @@ impl FileServer {
 #[derive(Debug)]
 struct FileHandle {
     file_name: ArcStr,
+    /// The file's size once it is open. The channel closes when the file
+    /// server task died (e.g. the file disappeared or became unreadable)
+    /// and sharing has to stop.
     file_rx: Receiver<u64>,
-    size: Option<u64>,
-}
-
-impl FileHandle {
-    /// `None` means the file server task died (e.g. the file disappeared or
-    /// became unreadable) and sharing has to stop.
-    async fn event(&mut self) -> Option<VideoProviderEvent> {
-        let size = self.file_rx.recv().await?;
-        self.size = Some(size);
-        Some(
-            FileReady {
-                file_name: self.file_name.clone(),
-                size,
-            }
-            .into(),
-        )
-    }
+    /// Where the chunk requests for the task go.
+    requests: Sender<ChunkRequest>,
 }
 
 #[cfg(test)]
@@ -256,38 +246,47 @@ mod tests {
         )
     }
 
+    /// The route offers the file with its size once the file is open, its
+    /// requests are answered from the file, and stopping closes it.
     #[tokio::test]
-    async fn test_route_requests_are_answered_from_the_shared_file() {
+    async fn test_the_route_offers_the_open_file_and_answers_from_it() {
         let path =
             std::env::temp_dir().join(format!("niketsu-route-test-{}", uuid::Uuid::new_v4()));
         let content: Vec<u8> = (0..1000u32).flat_map(u32::to_le_bytes).collect();
         tokio::fs::write(&path, &content).await.unwrap();
 
-        let route = ChunkRoute::default();
+        let route = ProvideRoute::default();
         let mut provider = VideoProvider::new(route.clone());
         provider.start_providing(FileEntry::new("shared.mkv".into(), path.clone(), None));
+        assert!(provider.sharing());
+        assert!(route.server().is_none(), "offered before the file is open");
+        assert_eq!(provider.offered(), None);
+
         let event = provider.event().await;
         assert!(matches!(event, VideoProviderEvent::FileReady(_)));
+        let server = route.server().expect("the open file is not offered");
+        let shared = SharedFile {
+            name: "shared.mkv".into(),
+            size: content.len() as u64,
+        };
+        assert_eq!(server.file, shared);
+        assert_eq!(provider.offered(), Some(shared));
 
         let (request, bytes) = chunk_request("shared.mkv", 100, 50);
-        route.sender().unwrap().send(request).await.unwrap();
+        server.sender.send(request).await.unwrap();
         assert_eq!(bytes.await.unwrap(), content[100..150]);
 
-        let (request, bytes) = chunk_request("other.mkv", 0, 10);
-        route.sender().unwrap().send(request).await.unwrap();
-        assert!(
-            bytes.await.is_err(),
-            "a request for another file is dropped"
-        );
-
+        drop(server);
         provider.stop_providing();
-        assert!(route.sender().is_none());
+        assert!(route.server().is_none());
+        assert_eq!(provider.offered(), None);
         tokio::fs::remove_file(&path).await.ok();
     }
 
     #[tokio::test]
     async fn test_missing_file_stops_sharing() {
-        let mut provider = VideoProvider::new(ChunkRoute::default());
+        let route = ProvideRoute::default();
+        let mut provider = VideoProvider::new(route.clone());
         provider.start_providing(FileEntry::new(
             "missing.mkv".into(),
             "/nonexistent/missing.mkv".into(),
@@ -298,5 +297,6 @@ mod tests {
         let event = provider.event().await;
         assert!(matches!(event, VideoProviderEvent::SharingStopped(_)));
         assert!(!provider.sharing());
+        assert!(route.server().is_none());
     }
 }

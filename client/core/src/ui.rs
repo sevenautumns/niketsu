@@ -11,7 +11,7 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tracing::{Level, trace};
 
-use super::communicator::{Intent, UserMessageMsg};
+use super::communicator::{Intent, StreamMsg, UserMessageMsg};
 use super::player::MediaPlayerTrait;
 use super::playlist::Video;
 use super::user::UserStatus;
@@ -21,7 +21,6 @@ use crate::file_database::FileStore;
 use crate::playlist::Playlist;
 use crate::room::{RoomName, UserList};
 use crate::util::{Observed, RingBuffer};
-use crate::{FileRequestMsg, OutgoingMessage};
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -263,8 +262,7 @@ impl EventHandler for FileShareChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video share change message");
         if model.video_provider.sharing() {
-            model.stop_sharing();
-            return;
+            return model.stop_sharing();
         }
 
         let Some(current_video) = model.player.playing_video() else {
@@ -292,8 +290,6 @@ pub struct FileRequest {}
 impl EventHandler for FileRequest {
     fn handle(self, model: &mut CoreModel) {
         trace!("video file request message");
-        let actor = model.config.username.clone();
-
         let Some(current_video) = model.player.playing_video() else {
             model.ui.player_message(PlayerMessage::error(
                 "Can not request video if none is loaded",
@@ -308,13 +304,26 @@ impl EventHandler for FileRequest {
             return;
         };
 
-        model
-            .communicator
-            .send(OutgoingMessage::from(FileRequestMsg {
-                uuid: uuid::Uuid::new_v4(),
-                actor,
-                video: current_video,
-            }))
+        // A random provider per request, so a retry after a failure is not
+        // stuck with the same (possibly unreachable) peer. A v4 uuid is a
+        // random number.
+        let random = uuid::Uuid::new_v4().as_u128() as usize;
+        let providers = model.providers_of(&current_video);
+        let index = random % providers.len().max(1);
+        let Some((provider, size)) = providers.get(index).copied() else {
+            model.ui.player_message(PlayerMessage::error(
+                "No providers found for the requested file",
+            ));
+            // nothing is left to stream from
+            model.video_server.stop_server();
+            return;
+        };
+
+        // the communicator streams from the provider before the video
+        // server asks it for the first chunk
+        model.communicator.send(StreamMsg { provider }.into());
+        let file_name = ArcStr::from(current_video.as_str());
+        model.video_server.start_server(file_name, size);
     }
 }
 
@@ -357,7 +366,7 @@ impl UserInterface {
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
             name: config.username.clone(),
-            ready: false,
+            ..Default::default()
         };
         let model = UiModel {
             file_database: Observed::<_>::default_with_notify(&notify),
@@ -682,7 +691,8 @@ mod tests {
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
         let video_server = MockVideoServerTrait::default();
-        let video_provider = MockVideoProviderTrait::default();
+        let mut video_provider = MockVideoProviderTrait::default();
+        video_provider.expect_offered().return_const(None);
 
         let user = arcstr::literal!("max");
         let user_new = arcstr::literal!("moritz");
@@ -696,6 +706,7 @@ mod tests {
             intent: Intent::Status(UserStatus {
                 ready,
                 name: user_new.clone(),
+                ..Default::default()
             }),
         });
 
@@ -841,7 +852,7 @@ mod tests {
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
             name: arcstr::literal!("TestUser"),
-            ready: false,
+            ..Default::default()
         };
         let ui_model = UiModel {
             file_database: Observed::new(FileStore::default(), &notify),
@@ -870,7 +881,7 @@ mod tests {
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
             name: arcstr::literal!("TestUser"),
-            ready: false,
+            ..Default::default()
         };
         let ui_model = UiModel {
             file_database: Observed::new(FileStore::default(), &notify),
@@ -899,7 +910,7 @@ mod tests {
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
             name: arcstr::literal!("TestUser"),
-            ready: false,
+            ..Default::default()
         };
         let ui_model = UiModel {
             file_database: Observed::new(FileStore::default(), &notify),

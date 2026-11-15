@@ -40,7 +40,7 @@ This is a **jj-colocated** repo: `.jj` and `.git` exist side by side. Either too
 ```
 client/                       niketsu (binary; wires everything together; entry: src/main.rs)
 client/core/                  niketsu-core: traits, CoreModel, the event loop
-client/communicator/          niketsu-communicator: libp2p (gossipsub, relay, QUIC/TCP)
+client/communicator/          niketsu-communicator: libp2p (request-response through the host, relay, QUIC/TCP)
 client/player/mpv/            niketsu-mpv: libmpv FFI
 client/player/video_server/   niketsu-video-server: HTTP server that feeds mpv from peer chunks
 client/ui/iced/               niketsu-iced (feature-gated GUI)

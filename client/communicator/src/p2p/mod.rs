@@ -3,37 +3,34 @@ use std::pin::Pin;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 pub(crate) use file_share::ChunkRoutes;
-use file_share::{ChunkRead, FileShare, FileShareRequest, FileShareResponseResult};
+use file_share::{ChunkRead, FileShareConsumer, FileShareRequest, FileShareResponseResult};
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use libp2p::core::ConnectedPoint;
-use libp2p::gossipsub::PublishError;
-use libp2p::kad::store::MemoryStore;
+use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::{ConnectionError, ConnectionId, NetworkBehaviour, Swarm, SwarmEvent};
 use libp2p::{
-    Multiaddr, PeerId, StreamProtocol, dcutr, gossipsub, identify, kad, mdns, noise, ping, relay,
-    tcp, yamux,
+    Multiaddr, PeerId, StreamProtocol, dcutr, identify, mdns, noise, ping, relay, tcp, yamux,
 };
 use links::{Closed, Links, Opened};
-use niketsu_core::chunk::{ChunkRequest, ChunkRoute};
-use niketsu_core::communicator::{IncomingMessage, NoticeMsg, OutgoingMessage, RoomMessage};
+use niketsu_core::chunk::{ChunkRequest, ProvideRoute};
+use niketsu_core::communicator::{
+    IncomingMessage, NoticeMsg, OutgoingMessage, RoomMessage, UserMessageMsg,
+};
 use niketsu_core::log_err_msg;
-use niketsu_core::playlist::Video;
 use niketsu_core::room::RoomName;
 use serde::{Deserialize, Serialize};
-use sha256::digest;
 use tokio::spawn;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, trace, warn};
 
 use crate::Node;
 use crate::messages::NiketsuMessage;
 use crate::timing::{
-    DIRECT_CONNECT_TIMEOUT, FILE_REQUEST_TIMEOUT, GOSSIP_DUPLICATE_MEMORY,
-    GOSSIP_HEARTBEAT_INTERVAL, IDLE_CONNECTION_TIMEOUT, MESSAGE_REQUEST_TIMEOUT, PING_INTERVAL,
-    PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT, QUIC_IDLE_TIMEOUT,
+    DIRECT_CONNECT_TIMEOUT, FILE_REQUEST_TIMEOUT, IDLE_CONNECTION_TIMEOUT, MESSAGE_REQUEST_TIMEOUT,
+    PING_INTERVAL, PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT, QUIC_IDLE_TIMEOUT,
 };
 
 mod auth;
@@ -48,6 +45,7 @@ mod file_share;
 mod host;
 mod links;
 mod member;
+mod outbox;
 
 pub(crate) use auth::AuthDenied;
 use direct_only::DirectOnly;
@@ -149,19 +147,16 @@ pub(crate) struct TransportBehaviour {
     auth: auth::AuthBehaviour,
 }
 
-/// Room sync protocol: gossip broadcasts and direct host↔client messages.
-#[derive(NetworkBehaviour)]
-pub(crate) struct MessagingBehaviour {
-    gossipsub: gossipsub::Behaviour,
-    request_response: request_response::cbor::Behaviour<MessageRequest, MessageResponse>,
-}
+/// The room's messages, between the host and each member.
+pub(crate) type MessagingBehaviour =
+    request_response::cbor::Behaviour<MessageRequest, MessageResponse>;
 
-/// P2P file sharing: provider discovery (kademlia + mDNS) and chunk transfer.
+/// P2P file sharing: chunk transfer, and mDNS for the addresses of peers on
+/// the local network. Who offers a video is in the room's state.
 #[derive(NetworkBehaviour)]
 pub(crate) struct FileShareBehaviour {
     request_response:
         request_response::cbor::Behaviour<Tagged<FileShareRequest>, FileShareResponseResult>,
-    kademlia: kad::Behaviour<MemoryStore>,
     mdns: Toggle<mdns::tokio::Behaviour>,
 }
 
@@ -172,7 +167,57 @@ pub(crate) struct Behaviour {
     file_share: DirectOnly<FileShareBehaviour>,
 }
 
+impl Behaviour {
+    fn new(key: &Keypair, relay_client: relay::client::Behaviour, mdns: bool) -> Result<Self> {
+        let peer_id = key.public().to_peer_id();
+        Ok(Behaviour {
+            transport: TransportBehaviour {
+                relay_client,
+                relay_server: None.into(),
+                identify: identify::Behaviour::new(identify::Config::new(
+                    "/niketsu-identify/1".to_string(),
+                    key.public(),
+                )),
+                dcutr: dcutr::Behaviour::new(peer_id),
+                ping: ping::Behaviour::new(
+                    ping::Config::new()
+                        .with_interval(PING_INTERVAL)
+                        .with_timeout(PING_TIMEOUT),
+                ),
+                auth: auth::AuthBehaviour::new(),
+            },
+            messaging: DirectOnly::new(messaging()),
+            file_share: DirectOnly::new(FileShareBehaviour {
+                request_response: request_response::cbor::Behaviour::new(
+                    [(StreamProtocol::new("/fileshare/1"), ProtocolSupport::Full)],
+                    request_response::Config::default().with_request_timeout(FILE_REQUEST_TIMEOUT),
+                ),
+                mdns: mdns
+                    .then(|| mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id))
+                    .transpose()?
+                    .into(),
+            }),
+        })
+    }
+}
+
+fn messaging() -> MessagingBehaviour {
+    request_response::Behaviour::with_codec(
+        request_response::cbor::codec::Codec::default()
+            .set_request_size_maximum(MESSAGE_SIZE_MAXIMUM),
+        [(
+            StreamProtocol::new("/niketsu-message/1"),
+            ProtocolSupport::Full,
+        )],
+        request_response::Config::default().with_request_timeout(MESSAGE_REQUEST_TIMEOUT),
+    )
+}
+
 pub(crate) type MessageRequest = Tagged<NiketsuMessage>;
+
+/// The most a direct message may take on the wire; the receiver drops a
+/// larger one. It bounds the room's playlist.
+pub(crate) const MESSAGE_SIZE_MAXIMUM: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MessageResponse(StatusResponse);
@@ -185,14 +230,15 @@ pub(crate) enum StatusResponse {
 }
 
 /// The role a peer has in the room: its host or a client. The provided
-/// methods are the event loop and everything both roles share (gossip
-/// broadcasts, direct messages, file sharing); a role supplies its own
-/// message handling and the residual swarm events.
+/// methods are the event loop and everything both roles share (direct
+/// messages, file sharing); a role supplies its own message handling and
+/// the residual swarm events.
 #[async_trait]
 pub(crate) trait Role: Send {
     fn session(&mut self) -> &mut Session;
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()>;
-    fn handle_swarm_broadcast(&mut self, msg: NiketsuMessage, source: PeerId) -> Result<()>;
+    /// Sends this user's chat line to the room.
+    fn chat(&mut self, msg: UserMessageMsg) -> Result<()>;
     fn handle_swarm_request(
         &mut self,
         msg: NiketsuMessage,
@@ -289,18 +335,29 @@ pub(crate) trait Role: Send {
         }
     }
 
+    /// Routing shared by both roles: the chat goes the role's way, file
+    /// sharing the same way for both. A new selection ends the stream of
+    /// the old video with the `StreamEnded` the core sends for every
+    /// selection.
+    fn route_room_message(&mut self, msg: RoomMessage) -> Result<()> {
+        use RoomMessage::*;
+        let session = self.session();
+        match msg {
+            UserMessage(msg) => self.chat(msg),
+            Stream(msg) => session.fs_stream(msg),
+            StreamEnded(_) => session.fs_stream_ended(),
+        }
+    }
+
     fn dispatch_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         debug!(?event, "Handling event from swarm");
         use BehaviourEvent::*;
         use FileShareBehaviourEvent as F;
-        use MessagingBehaviourEvent as M;
         match event {
-            SwarmEvent::Behaviour(Messaging(M::Gossipsub(e))) => self.on_gossipsub(e),
-            SwarmEvent::Behaviour(Messaging(M::RequestResponse(e))) => self.on_msg_req_resp(e),
+            SwarmEvent::Behaviour(Messaging(e)) => self.on_msg_req_resp(e),
             SwarmEvent::Behaviour(FileShare(F::RequestResponse(e))) => {
                 self.session().fs_req_resp_event(e)
             }
-            SwarmEvent::Behaviour(FileShare(F::Kademlia(e))) => self.session().fs_kad_event(e),
             SwarmEvent::ConnectionEstablished {
                 peer_id,
                 connection_id,
@@ -321,39 +378,6 @@ pub(crate) trait Role: Send {
                 self.on_closed(peer_id, connection_id, cause, closed);
             }
             other => self.handle_swarm_event(other),
-        }
-    }
-
-    fn on_gossipsub(&mut self, event: gossipsub::Event) {
-        match event {
-            gossipsub::Event::Message {
-                message_id,
-                message,
-                ..
-            } => {
-                debug!(%message_id, msg = %String::from_utf8_lossy(&message.data),
-                    "Received gossipsub message",
-                );
-                // propagation_source is only the last hop in the gossip mesh;
-                // the signed source identifies the actual author.
-                let Some(source) = message.source else {
-                    warn!(%message_id, "Dropping gossipsub message without signed source");
-                    return;
-                };
-                let Tagged { tag, msg } = match serde_json::from_slice(&message.data) {
-                    Ok(tagged) => tagged,
-                    Err(error) => return error!(%error, "Failed to read broadcast message"),
-                };
-                if !self.session().net.membership.admits(&source, &tag) {
-                    return warn!(%source, "Dropping a broadcast of a peer outside the room");
-                }
-                let res = self.handle_swarm_broadcast(msg, source);
-                log_err_msg!(res, "Failed to handle broadcast message");
-            }
-            gossipsub_event => debug!(
-                ?gossipsub_event,
-                "Received gossipsub event that is not handled"
-            ),
         }
     }
 
@@ -383,8 +407,6 @@ pub(crate) trait Role: Send {
 
 /// Shorthands for what the session asks of its swarm's behaviours.
 pub(super) trait SwarmExt {
-    fn gossipsub(&mut self) -> &mut gossipsub::Behaviour;
-    fn kademlia(&mut self) -> &mut kad::Behaviour<MemoryStore>;
     fn auth(&mut self) -> &mut auth::AuthBehaviour;
     fn send_message_response(
         &mut self,
@@ -396,24 +418,9 @@ pub(super) trait SwarmExt {
         channel: ResponseChannel<FileShareResponseResult>,
         msg: FileShareResponseResult,
     ) -> Result<()>;
-    fn try_broadcast(
-        &mut self,
-        topic: gossipsub::IdentTopic,
-        msg: Tagged<NiketsuMessage>,
-    ) -> Result<()>;
-    fn start_providing(&mut self, video: &Video) -> Result<()>;
-    fn stop_providing(&mut self, video: &Video);
 }
 
 impl SwarmExt for Swarm<Behaviour> {
-    fn gossipsub(&mut self) -> &mut gossipsub::Behaviour {
-        &mut self.behaviour_mut().messaging.inner_mut().gossipsub
-    }
-
-    fn kademlia(&mut self) -> &mut kad::Behaviour<MemoryStore> {
-        &mut self.behaviour_mut().file_share.inner_mut().kademlia
-    }
-
     fn auth(&mut self) -> &mut auth::AuthBehaviour {
         &mut self.behaviour_mut().transport.auth
     }
@@ -423,8 +430,11 @@ impl SwarmExt for Swarm<Behaviour> {
         channel: ResponseChannel<MessageResponse>,
         msg: MessageResponse,
     ) -> Result<()> {
-        let req_resp = &mut self.behaviour_mut().messaging.inner_mut().request_response;
-        let res = req_resp.send_response(channel, msg);
+        let res = self
+            .behaviour_mut()
+            .messaging
+            .inner_mut()
+            .send_response(channel, msg);
 
         match res {
             Ok(_) => debug!("Successfully sent response status"),
@@ -446,40 +456,6 @@ impl SwarmExt for Swarm<Behaviour> {
             Err(e) => bail!("Failed to send response status {e:?}"),
         }
         Ok(())
-    }
-
-    fn try_broadcast(
-        &mut self,
-        topic: gossipsub::IdentTopic,
-        msg: Tagged<NiketsuMessage>,
-    ) -> Result<()> {
-        let res = self.gossipsub().publish(topic, serde_json::to_vec(&msg)?);
-
-        match res {
-            Err(PublishError::NoPeersSubscribedToTopic) => {
-                debug!("Gossipsub insufficient peers. Publishing when no one is connected")
-            }
-            Err(err) => return Err(anyhow::Error::from(err)),
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn start_providing(&mut self, video: &Video) -> Result<()> {
-        let filename = video.as_str().as_bytes().to_vec();
-        let res = self.kademlia().start_providing(filename.clone().into());
-
-        match res {
-            Ok(id) => debug!(?filename, ?id, "Successfully started providing file"),
-            Err(e) => bail!("Failed to start providing {e:?}"),
-        }
-        Ok(())
-    }
-
-    fn stop_providing(&mut self, video: &Video) {
-        let filename = video.as_str().as_bytes().to_vec();
-        self.kademlia().stop_providing(&filename.clone().into());
-        debug!(?filename, "Stopped providing file");
     }
 }
 
@@ -518,78 +494,11 @@ impl SessionHandle {
             .with_quic_config(|_| quic_config)
             .with_dns()?
             .with_relay_client(noise::Config::new, yamux::Config::default)?
-            .with_behaviour(|key, relay_behaviour| {
-                let gossipsub_config = gossipsub::ConfigBuilder::default()
-                    .heartbeat_interval(GOSSIP_HEARTBEAT_INTERVAL)
-                    .duplicate_cache_time(GOSSIP_DUPLICATE_MEMORY)
-                    .validation_mode(gossipsub::ValidationMode::Strict)
-                    .build()
-                    .map_err(anyhow::Error::from)?;
-
-                Ok(Behaviour {
-                    transport: TransportBehaviour {
-                        relay_client: relay_behaviour,
-                        relay_server: None.into(),
-                        identify: identify::Behaviour::new(identify::Config::new(
-                            "/niketsu-identify/1".to_string(),
-                            key.public(),
-                        )),
-                        dcutr: dcutr::Behaviour::new(key.public().to_peer_id()),
-                        ping: ping::Behaviour::new(
-                            ping::Config::new()
-                                .with_interval(PING_INTERVAL)
-                                .with_timeout(PING_TIMEOUT),
-                        ),
-                        auth: auth::AuthBehaviour::new(),
-                    },
-                    messaging: DirectOnly::new(MessagingBehaviour {
-                        gossipsub: gossipsub::Behaviour::new(
-                            gossipsub::MessageAuthenticity::Signed(key.clone()),
-                            gossipsub_config,
-                        )?,
-                        request_response: request_response::cbor::Behaviour::new(
-                            [(
-                                StreamProtocol::new("/niketsu-message/1"),
-                                ProtocolSupport::Full,
-                            )],
-                            request_response::Config::default()
-                                .with_request_timeout(MESSAGE_REQUEST_TIMEOUT),
-                        ),
-                    }),
-                    file_share: DirectOnly::new(FileShareBehaviour {
-                        request_response: request_response::cbor::Behaviour::new(
-                            [(StreamProtocol::new("/fileshare/1"), ProtocolSupport::Full)],
-                            request_response::Config::default()
-                                .with_request_timeout(FILE_REQUEST_TIMEOUT),
-                        ),
-                        // Kademlia stays in its default auto mode: it answers
-                        // queries only once the swarm confirms an external
-                        // address, which only an accepted relay reservation
-                        // does here. Without the reservations every node stays
-                        // a kad client and provider discovery silently dies.
-                        kademlia: kad::Behaviour::new(
-                            keypair.public().to_peer_id(),
-                            MemoryStore::new(key.public().to_peer_id()),
-                        ),
-                        mdns: mdns
-                            .then(|| {
-                                mdns::tokio::Behaviour::new(
-                                    mdns::Config::default(),
-                                    key.public().to_peer_id(),
-                                )
-                            })
-                            .transpose()?
-                            .into(),
-                    }),
-                })
-            })?
+            .with_behaviour(|key, relay_client| Ok(Behaviour::new(key, relay_client, mdns)?))?
             .with_swarm_config(|c| c.with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT))
             .build();
 
         debug!(%relay_addr, "Attempting to connect to relay");
-
-        let topic_hash = digest(format!("{room}|{password}"));
-        let topic = gossipsub::IdentTopic::new(topic_hash);
 
         let (core_sender, core_receiver) = tokio::sync::mpsc::unbounded_channel();
         let (message_sender, message_receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -599,7 +508,6 @@ impl SessionHandle {
             relay_addr,
             room,
             password,
-            topic,
             core_receiver,
             message_sender,
             chunk_routes,
@@ -653,14 +561,13 @@ pub(crate) struct Session {
     /// The connections to every peer, kept by the shared dispatch. A role
     /// hears what each one means for the link to its peer.
     links: Links,
-    file_share: Option<FileShare>,
+    /// The stream from another peer that the local video server plays.
+    consumer: Option<FileShareConsumer>,
 }
 
 impl Session {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         swarm: Swarm<Behaviour>,
-        topic: gossipsub::IdentTopic,
         membership: Membership,
         host: PeerId,
         host_link: HostLink,
@@ -670,7 +577,6 @@ impl Session {
     ) -> Self {
         let net = Net {
             swarm,
-            topic,
             membership,
             host,
             host_link,
@@ -684,21 +590,7 @@ impl Session {
         Self {
             net,
             links: Links::default(),
-            file_share: None,
-        }
-    }
-
-    /// Routing shared by both roles: room-wide gossip and file sharing. A
-    /// new selection ends the share of the old video with the
-    /// `VideoShareChange` the core sends for every selection.
-    pub fn route_room_message(&mut self, msg: RoomMessage) -> Result<()> {
-        use RoomMessage::*;
-        match msg {
-            UserMessage(msg) => self.broadcast(msg.into()),
-            FileRequest(msg) => self.fs_file_request(msg),
-            FileResponse(msg) => self.fs_file_response(msg),
-            FileDecline(msg) => self.fs_file_decline(msg),
-            VideoShareChange(msg) => self.fs_video_share(msg),
+            consumer: None,
         }
     }
 
@@ -709,12 +601,6 @@ impl Session {
     pub fn drop_for_other_role(&self, msg: impl std::fmt::Debug) -> Result<()> {
         warn!(?msg, "Dropping a core message meant for the other role");
         Ok(())
-    }
-
-    pub fn broadcast(&mut self, msg: NiketsuMessage) -> Result<()> {
-        let topic = self.net.topic.clone();
-        let msg = self.net.membership.tag(msg);
-        self.net.swarm.try_broadcast(topic, msg)
     }
 
     /// Hands a room message from the network to the core.
@@ -758,7 +644,6 @@ impl Session {
 /// session, so the file share can use it while the session holds the share.
 pub(crate) struct Net {
     swarm: Swarm<Behaviour>,
-    topic: gossipsub::IdentTopic,
     /// Tags what this peer sends and checks what other peers send.
     membership: Membership,
     host: PeerId,
@@ -769,8 +654,9 @@ pub(crate) struct Net {
     message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
     /// Chunk requests of the local video server.
     chunk_fetches: tokio::sync::mpsc::Receiver<ChunkRequest>,
-    /// Where chunk requests of other peers go to the local video provider.
-    provide: ChunkRoute,
+    /// The file this peer offers, and where chunk requests of other peers
+    /// for it go to the local video provider.
+    provide: ProvideRoute,
     chunk_reads: FuturesUnordered<ChunkRead>,
 }
 
@@ -784,7 +670,7 @@ impl Net {
     pub fn send_request(&mut self, peer: &PeerId, msg: NiketsuMessage) -> OutboundRequestId {
         let msg = self.membership.tag(msg);
         let messaging = self.swarm.behaviour_mut().messaging.inner_mut();
-        messaging.request_response.send_request(peer, msg)
+        messaging.send_request(peer, msg)
     }
 
     pub fn send_file_request(&mut self, peer: &PeerId, msg: FileShareRequest) -> OutboundRequestId {
@@ -814,5 +700,96 @@ impl Net {
     pub fn tell_user(&self, message: &str) {
         let res = self.message_sender.send(NoticeMsg::new(message).into());
         log_err_msg!(res, "Failed to send message to core");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use niketsu_core::chunk::SharedFile;
+    use niketsu_core::communicator::{
+        ActionMsg, Intent, IntentMsg, RoomStateMsg, UserMessageMsg, UserStatusListMsg,
+    };
+    use niketsu_core::playlist::{Playlist, Video};
+    use niketsu_core::user::UserStatus;
+
+    use super::*;
+
+    /// A playlist of `len` episodes with names as long as a release's.
+    fn long_playlist(len: usize) -> Playlist {
+        let name = |i: usize| {
+            format!(
+                "[Release Group] A Fairly Long Series Title S{:02}E{:03} - The Episode Title (1080p BluRay x265 10bit).mkv",
+                i / 100,
+                i % 100
+            )
+        };
+        (0..len)
+            .map(name)
+            .collect::<Vec<_>>()
+            .iter()
+            .map(String::as_str)
+            .collect()
+    }
+
+    fn room_state(playlist: Option<Playlist>) -> RoomStateMsg {
+        let video: Video = "[Release Group] A Fairly Long Series Title S01E001.mkv".into();
+        // every user offers the video
+        let users = (0..10).map(|i| UserStatus {
+            name: format!("someone with a long name {i}").into(),
+            ready: true,
+            offers: Some(SharedFile {
+                name: video.as_str().into(),
+                size: u64::MAX,
+            }),
+            peer: Some(PeerId::random()),
+        });
+        RoomStateMsg {
+            version: u64::MAX,
+            jumps: u64::MAX,
+            playlist_version: u64::MAX,
+            playlist,
+            video: Some(video.clone()),
+            users: UserStatusListMsg {
+                room_name: "a room".into(),
+                users: users.collect(),
+            },
+            ..Default::default()
+        }
+    }
+
+    /// What a message puts on the wire: the request-response codec's cbor.
+    fn wire_size(msg: NiketsuMessage) -> u64 {
+        let membership = Membership::new("a room".into(), "a password".into(), &PeerId::random());
+        let bytes = cbor4ii::serde::to_vec(Vec::new(), &membership.tag(msg)).unwrap();
+        bytes.len() as u64
+    }
+
+    /// Every room message reaches its peer with a playlist of 5,000
+    /// episodes, and the heartbeat, which goes out twice a second, stays
+    /// small whatever the playlist.
+    #[test]
+    fn every_room_message_fits_with_a_playlist_of_5000_episodes() {
+        let playlist = long_playlist(5_000);
+        let actor = "someone with a long name";
+        let heartbeat = NiketsuMessage::RoomState(room_state(None));
+        assert!(wire_size(heartbeat) < 4 * 1024);
+        let messages = [
+            NiketsuMessage::RoomState(room_state(Some(playlist.clone()))),
+            NiketsuMessage::Intent(IntentMsg {
+                actor: actor.into(),
+                intent: Intent::Playlist(playlist),
+            }),
+            NiketsuMessage::Action(ActionMsg {
+                actor: actor.into(),
+                message: format!("{actor} changed playlist"),
+            }),
+            NiketsuMessage::UserMessage(UserMessageMsg {
+                actor: actor.into(),
+                message: "a line of chat ".repeat(100),
+            }),
+        ];
+        for msg in messages {
+            assert!(wire_size(msg) < MESSAGE_SIZE_MAXIMUM);
+        }
     }
 }

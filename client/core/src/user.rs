@@ -1,6 +1,8 @@
 use arcstr::ArcStr;
+use multiaddr::PeerId;
 use serde::{Deserialize, Serialize};
 
+use super::chunk::SharedFile;
 use super::ui::UserChange;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, Default)]
@@ -8,6 +10,15 @@ use super::ui::UserChange;
 pub struct UserStatus {
     pub name: ArcStr,
     pub ready: bool,
+    /// The file this user offers to the others. The host keeps an offer
+    /// only of the room's selected video and drops every offer when the
+    /// selection changes, so in a room state it is the selected video or
+    /// nothing. The name is kept because a status can reach the host after
+    /// the selection it was sent for has changed.
+    pub offers: Option<SharedFile>,
+    /// Where the host reaches the user. The host sets it from the
+    /// connection; what a user sends is ignored.
+    pub peer: Option<PeerId>,
 }
 
 impl UserStatus {
@@ -29,6 +40,7 @@ impl From<UserChange> for UserStatus {
         Self {
             name: value.name,
             ready: value.ready,
+            ..Default::default()
         }
     }
 }

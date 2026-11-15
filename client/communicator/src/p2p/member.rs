@@ -2,10 +2,10 @@
 //!
 //! A peer's *member tag* is a digest of the room, its password and the
 //! peer's id: whoever knows room and password can compute the tag of any
-//! peer, nobody else can. A peer presents its own tag, and the receiver
-//! checks it against the peer libp2p authenticated, the remote of a
-//! request or the signed source of a broadcast. A tag is worth nothing to
-//! anyone but its peer, so it can travel in the clear and be reused.
+//! peer, nobody else can. A peer presents its own tag with every request,
+//! and the receiver checks it against the remote libp2p authenticated. A
+//! tag is worth nothing to anyone but its peer, so it can travel in the
+//! clear and be reused.
 
 use libp2p::PeerId;
 use niketsu_core::room::RoomName;
@@ -19,7 +19,7 @@ pub(crate) struct MemberTag(String);
 impl MemberTag {
     fn of(room: &str, password: &str, peer: &PeerId) -> Self {
         // Length prefixes keep room and password apart, the prefix keeps the
-        // tag apart from the topic and the relay's password digest.
+        // tag apart from the relay's password digest.
         Self(digest(format!(
             "niketsu-member\0{}:{room}{}:{password}{peer}",
             room.len(),

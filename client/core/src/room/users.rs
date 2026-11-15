@@ -92,6 +92,18 @@ impl RoomUsers {
         true
     }
 
+    /// Forgets what every user offers.
+    pub fn drop_offers(&mut self) {
+        let statuses = self.peers.values_mut().flatten().chain(&mut self.local);
+        statuses.for_each(|status| status.offers = None);
+        let users = std::mem::take(&mut self.status_list.users);
+        let without_offers = users.into_iter().map(|status| UserStatus {
+            offers: None,
+            ..status
+        });
+        self.status_list.users = without_offers.collect();
+    }
+
     /// Whether any user, the host included, goes by `name`.
     fn username_exists(&self, name: &str) -> bool {
         self.status_list.users.iter().any(|u| u.name == name)
@@ -148,7 +160,7 @@ impl RoomUsers {
                 if self.username_exists(&status.name) {
                     new_status = UserStatus {
                         name: self.roll_new_username(&status.name),
-                        ready: status.ready,
+                        ..status.clone()
                     };
                     forced = Some(new_status.clone());
                 }
@@ -161,7 +173,7 @@ impl RoomUsers {
             // new user whose name is already taken
             new_status = UserStatus {
                 name: self.roll_new_username(&status.name),
-                ready: status.ready,
+                ..status.clone()
             };
             forced = Some(new_status.clone());
         }
@@ -185,6 +197,7 @@ mod tests {
         UserStatus {
             name: name.into(),
             ready,
+            ..Default::default()
         }
     }
 

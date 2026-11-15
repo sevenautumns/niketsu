@@ -1,21 +1,22 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use async_trait::async_trait;
 use libp2p::core::ConnectedPoint;
 use libp2p::core::transport::ListenerId;
 use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
-use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, mdns, ping};
+use libp2p::{Multiaddr, PeerId, dcutr, ping};
 use niketsu_core::communicator::{
-    ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
+    ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage, UserMessageMsg,
 };
 use niketsu_core::log_err_msg;
 use tracing::{debug, info, warn};
 
 use super::links::{Closed, Opened};
 use super::member::Membership;
+use super::outbox::Outbox;
 use super::{
-    Behaviour, BehaviourEvent, ChunkRoutes, FileShareBehaviourEvent, HostLink, MessageResponse,
-    Role, Session, StatusResponse, Stop, SwarmExt, TransportBehaviourEvent,
+    Behaviour, BehaviourEvent, ChunkRoutes, HostLink, MessageResponse, Role, Session,
+    StatusResponse, Stop, TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
 
@@ -26,12 +27,14 @@ pub(crate) struct ClientRole {
     host_reservation: Option<ListenerId>,
     /// The request to join the room, until the host answers it.
     join: Option<OutboundRequestId>,
+    /// What this peer sends the host, its intents and chat lines, which
+    /// reach the host in the order sent.
+    outbox: Outbox<OutboundRequestId>,
 }
 
 impl ClientRole {
     pub(crate) fn new(
         swarm: Swarm<Behaviour>,
-        topic: gossipsub::IdentTopic,
         membership: Membership,
         host: PeerId,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
@@ -43,7 +46,6 @@ impl ClientRole {
         // the host took it into the room.
         let session = Session::new(
             swarm,
-            topic,
             membership,
             host,
             HostLink::rendezvous(),
@@ -55,6 +57,7 @@ impl ClientRole {
             session,
             host_reservation: None,
             join: None,
+            outbox: Outbox::default(),
         }
     }
 
@@ -96,19 +99,9 @@ impl ClientRole {
         }
     }
 
-    fn on_mdns(&mut self, event: mdns::Event) {
-        if let mdns::Event::Discovered(list) = event {
-            for (peer_id, addr) in list {
-                let swarm = &mut self.session.net.swarm;
-                swarm.kademlia().add_address(&peer_id, addr);
-            }
-        }
-    }
-
     /// Asks the host to take this peer into the room.
     fn on_host_linked(&mut self, addr: &Multiaddr) {
         let net = &mut self.session.net;
-        net.swarm.kademlia().add_address(&net.host, addr.clone());
         net.host_link = HostLink::direct(addr);
         let host = net.host;
         self.join = Some(net.send_request(&host, NiketsuMessage::Join));
@@ -168,9 +161,39 @@ impl ClientRole {
     }
 
     fn send_to_host(&mut self, msg: NiketsuMessage) -> Result<()> {
-        let host = self.session.net.host;
-        self.session.net.send_request(&host, msg);
+        let net = &mut self.session.net;
+        let host = net.host;
+        self.outbox.push(msg, |msg| net.send_request(&host, msg));
         Ok(())
+    }
+
+    /// The host did not take the message on its way to it: it refused it,
+    /// the request timed out or the connection closed. Whether the host
+    /// applied it is unknown, and what waits behind it would reach the
+    /// host out of step, so the session ends as with a lost host, and
+    /// what waits goes with it. The core connects anew and is greeted with
+    /// the room.
+    fn lose_host(&mut self, why: &dyn std::fmt::Debug) {
+        warn!(?why, "The host did not take a message; leaving the room");
+        self.session.net.stop(Stop::HostLost);
+    }
+
+    /// The host took this peer into the room: it answered the request to
+    /// join, or sent the room's first message, which can arrive before
+    /// that answer. The client is connected from here on. The core learns
+    /// of it here: after the host took this peer in, so the core's first
+    /// requests reach a member, and before the host's first message, so
+    /// the core starts the connection afresh before it follows the room.
+    fn joined(&mut self) {
+        if self.join.take().is_none() {
+            return;
+        }
+        let peer = *self.session.net.swarm.local_peer_id();
+        let res = self.session.forward(ConnectedMsg {
+            is_host: false,
+            peer,
+        });
+        log_err_msg!(res, "Failed to send connected message to core");
     }
 }
 
@@ -199,7 +222,6 @@ impl Role for ClientRole {
                 for circuit in circuits {
                     swarm.close_connection(circuit);
                 }
-                swarm.gossipsub().add_explicit_peer(&peer_id);
                 if peer_id == self.session.net.host {
                     self.on_host_linked(endpoint.get_remote_address());
                 }
@@ -224,22 +246,16 @@ impl Role for ClientRole {
             warn!(?cause, %peer_id, %connection_id, "Connection to host closed");
             self.session.net.stop(stop);
         } else if closed == Closed::Unlinked {
-            // Gossipsub redials disconnected explicit peers forever; forget
-            // departed file-share peers.
-            let swarm = &mut self.session.net.swarm;
-            swarm.gossipsub().remove_explicit_peer(&peer_id);
             self.session.fs_peer_unlinked(peer_id);
         }
     }
 
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         use BehaviourEvent::*;
-        use FileShareBehaviourEvent as F;
         use TransportBehaviourEvent as T;
         match event {
             SwarmEvent::Behaviour(Transport(T::Ping(e))) => self.on_ping(e),
             SwarmEvent::Behaviour(Transport(T::Dcutr(e))) => self.on_dcutr(e),
-            SwarmEvent::Behaviour(FileShare(F::Mdns(e))) => self.on_mdns(e),
             SwarmEvent::OutgoingConnectionError {
                 connection_id,
                 peer_id,
@@ -261,32 +277,23 @@ impl Role for ClientRole {
         peer_id: PeerId,
     ) -> Result<()> {
         debug!("Received swarm request {msg:?}");
+        // only the host speaks for the room, and only to its members
         if peer_id != self.session.net.host {
             return self.session.respond_with_err(msg, channel);
         }
-        // what the host addresses to a single peer, see `DirectMessage`
+        self.joined();
         use NiketsuMessage::*;
         match msg {
             RoomState(m) => self.session.send_to_core(m, channel),
+            Action(m) => self.session.send_to_core(m, channel),
+            UserMessage(m) => self.session.send_to_core(m, channel),
             ForcedRename(m) => self.session.send_to_core(m, channel),
             other => self.session.respond_with_err(other, channel),
         }
     }
 
-    fn handle_swarm_broadcast(
-        &mut self,
-        niketsu_msg: NiketsuMessage,
-        source: PeerId,
-    ) -> Result<()> {
-        debug!(message = ?niketsu_msg, %source, "Received broadcast");
-        use NiketsuMessage::*;
-        match niketsu_msg {
-            // only the host speaks for the room
-            RoomState(_) | Action(_) if source != self.session.net.host => {
-                bail!("Received the room's state from non-host peer: {source:?}")
-            }
-            other => self.session.forward(IncomingMessage::try_from(other)?),
-        }
+    fn chat(&mut self, msg: UserMessageMsg) -> Result<()> {
+        self.send_to_host(msg.into())
     }
 
     fn on_msg_response(
@@ -297,18 +304,24 @@ impl Role for ClientRole {
     ) {
         debug!(?response, %peer, "Received response");
         if self.join != Some(request_id) {
+            let net = &mut self.session.net;
+            let host = net.host;
+            match response.0 {
+                StatusResponse::Ok => {
+                    self.outbox
+                        .answered(&request_id, |msg| net.send_request(&host, msg));
+                }
+                StatusResponse::Err if self.outbox.is_on_its_way(&request_id) => {
+                    self.lose_host(&response)
+                }
+                StatusResponse::Err => {}
+            }
             return;
         }
-        self.join = None;
         match response.0 {
-            // The client is connected from here on. The core learns of it
-            // only now, so its first requests reach a host that took this
-            // peer in.
-            StatusResponse::Ok => {
-                let res = self.session.forward(ConnectedMsg { is_host: false });
-                log_err_msg!(res, "Failed to send connected message to core");
-            }
+            StatusResponse::Ok => self.joined(),
             StatusResponse::Err => {
+                self.join = None;
                 warn!(%peer, "The host refused to take this peer into the room");
                 self.session.net.stop(Stop::HostUnreachable);
             }
@@ -330,8 +343,8 @@ impl Role for ClientRole {
                 if self.join == Some(request_id) {
                     warn!(%error, %host, "Failed to join the room");
                     self.session.net.stop(Stop::HostUnreachable);
-                } else if peer == host {
-                    warn!(%error, %peer, %host, "Outbound failure for request response");
+                } else if peer == host && self.outbox.is_on_its_way(&request_id) {
+                    self.lose_host(&error);
                 }
             }
             other => debug!(
@@ -344,9 +357,330 @@ impl Role for ClientRole {
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()> {
         debug!(?msg, host = %self.session.net.host, peer = %self.session.net.swarm.local_peer_id(), "Handling core message");
         match msg {
-            OutgoingMessage::Room(m) => self.session.route_room_message(m),
+            OutgoingMessage::Room(m) => self.route_room_message(m),
             OutgoingMessage::Client(m) => self.send_to_host(m.into()),
             OutgoingMessage::Host(m) => self.session.drop_for_other_role(m),
         }
+    }
+}
+
+/// A client role against a host played by the test over the memory
+/// transport.
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use futures::StreamExt;
+    use libp2p::core::transport::MemoryTransport;
+    use libp2p::core::upgrade::Version;
+    use libp2p::multiaddr::Protocol;
+    use libp2p::request_response::{Event, Message};
+    use libp2p::swarm::NetworkBehaviour;
+    use libp2p::{Transport, noise, yamux};
+    use niketsu_core::chunk::ChunkRoute;
+    use niketsu_core::communicator::{Intent, IntentMsg, RoomStateMsg};
+    use tokio::sync::mpsc::unbounded_channel;
+
+    use super::*;
+    use crate::p2p::{MessagingBehaviour, messaging};
+
+    const ROOM: &str = "room";
+    const PASSWORD: &str = "secret";
+
+    /// What the host's side needs for the client to keep its connection:
+    /// the room's messages, and pings.
+    #[derive(NetworkBehaviour)]
+    struct HostSide {
+        messaging: MessagingBehaviour,
+        ping: ping::Behaviour,
+    }
+
+    fn swarm<B: NetworkBehaviour>(
+        behaviour: impl FnOnce(&libp2p::identity::Keypair, libp2p::relay::client::Behaviour) -> B,
+    ) -> Swarm<B> {
+        libp2p::SwarmBuilder::with_new_identity()
+            .with_tokio()
+            .with_other_transport(|key| {
+                Ok(MemoryTransport::default()
+                    .upgrade(Version::V1)
+                    .authenticate(noise::Config::new(key)?)
+                    .multiplex(yamux::Config::default()))
+            })
+            .unwrap()
+            .with_relay_client(noise::Config::new, yamux::Config::default)
+            .unwrap()
+            .with_behaviour(|key, relay_client| behaviour(key, relay_client))
+            .unwrap()
+            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+            .build()
+    }
+
+    /// A client role dialing the test's host side, and the test's ends of
+    /// the channels to the client's core.
+    struct Setup {
+        host_side: Swarm<HostSide>,
+        host_membership: Membership,
+        /// The client's peer id.
+        peer: PeerId,
+        core: tokio::sync::mpsc::UnboundedSender<OutgoingMessage>,
+        to_core: tokio::sync::mpsc::UnboundedReceiver<IncomingMessage>,
+        /// Why the client's session ended, once it has.
+        run: tokio::task::JoinHandle<Stop>,
+    }
+
+    async fn start() -> Setup {
+        let mut host_side = swarm(|_, _| HostSide {
+            messaging: messaging(),
+            ping: ping::Behaviour::default(),
+        });
+        let host = *host_side.local_peer_id();
+        host_side.listen_on("/memory/0".parse().unwrap()).unwrap();
+        let addr = loop {
+            if let SwarmEvent::NewListenAddr { address, .. } = host_side.select_next_some().await {
+                break address.with(Protocol::P2p(host));
+            }
+        };
+        let host_membership = Membership::new(ROOM.into(), PASSWORD.into(), &host);
+
+        let mut client =
+            swarm(|key, relay_client| Behaviour::new(key, relay_client, false).unwrap());
+        let peer = *client.local_peer_id();
+        client.dial(addr).unwrap();
+        let (core, core_receiver) = unbounded_channel();
+        let (message_sender, to_core) = unbounded_channel();
+        let routes = ChunkRoutes {
+            fetch: ChunkRoute::default(),
+            provide: ChunkRoute::default(),
+        };
+        let membership = Membership::new(ROOM.into(), PASSWORD.into(), &peer);
+        let mut role = ClientRole::new(
+            client,
+            membership,
+            host,
+            core_receiver,
+            message_sender,
+            routes,
+        );
+        let run = tokio::spawn(async move { role.run().await });
+        Setup {
+            host_side,
+            host_membership,
+            peer,
+            core,
+            to_core,
+            run,
+        }
+    }
+
+    /// The next room message the client sends the host side.
+    async fn next_request(
+        host_side: &mut Swarm<HostSide>,
+    ) -> (NiketsuMessage, ResponseChannel<MessageResponse>) {
+        loop {
+            if let SwarmEvent::Behaviour(HostSideEvent::Messaging(Event::Message {
+                message:
+                    Message::Request {
+                        request, channel, ..
+                    },
+                ..
+            })) = host_side.select_next_some().await
+            {
+                return (request.msg, channel);
+            }
+        }
+    }
+
+    /// Whether the client sends the host side nothing for a while.
+    async fn sends_nothing(host_side: &mut Swarm<HostSide>) -> bool {
+        let wait = Duration::from_millis(300);
+        tokio::time::timeout(wait, next_request(host_side))
+            .await
+            .is_err()
+    }
+
+    /// The host side takes the client into the room.
+    async fn join(setup: &mut Setup) {
+        let patience = Duration::from_secs(5);
+        let (msg, channel) = tokio::time::timeout(patience, next_request(&mut setup.host_side))
+            .await
+            .expect("the client never asked to join");
+        assert_eq!(msg, NiketsuMessage::Join);
+        let messaging = &mut setup.host_side.behaviour_mut().messaging;
+        let ok = MessageResponse(StatusResponse::Ok);
+        messaging.send_response(channel, ok).unwrap();
+    }
+
+    fn intent(intent: Intent) -> IntentMsg {
+        IntentMsg {
+            actor: "bob".into(),
+            intent,
+        }
+    }
+
+    fn line(message: &str) -> UserMessageMsg {
+        UserMessageMsg {
+            actor: "bob".into(),
+            message: message.into(),
+        }
+    }
+
+    /// The client's intents and chat lines reach the host in the order
+    /// the core sent them, one at a time: the next goes out once the host
+    /// answered the one before.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn intents_and_chat_reach_the_host_in_the_order_sent() {
+        let mut setup = start().await;
+        join(&mut setup).await;
+
+        let sent: Vec<NiketsuMessage> = vec![
+            intent(Intent::Pause).into(),
+            line("one").into(),
+            intent(Intent::Speed(1.5)).into(),
+            intent(Intent::Start).into(),
+            line("two").into(),
+        ];
+        for msg in &sent {
+            let outgoing: OutgoingMessage = match msg.clone() {
+                NiketsuMessage::Intent(m) => m.into(),
+                NiketsuMessage::UserMessage(m) => m.into(),
+                other => unreachable!("not the client's: {other:?}"),
+            };
+            setup.core.send(outgoing).unwrap();
+        }
+
+        let mut received = Vec::new();
+        for _ in &sent {
+            let patience = Duration::from_secs(5);
+            let next = next_request(&mut setup.host_side);
+            let (msg, channel) = tokio::time::timeout(patience, next)
+                .await
+                .expect("the client stopped sending");
+            received.push(msg);
+            assert!(
+                sends_nothing(&mut setup.host_side).await,
+                "a second message while one is unanswered"
+            );
+            let messaging = &mut setup.host_side.behaviour_mut().messaging;
+            let ok = MessageResponse(StatusResponse::Ok);
+            messaging.send_response(channel, ok).unwrap();
+        }
+        assert_eq!(received, sent);
+    }
+
+    /// A message the host does not take ends the client's session as a
+    /// lost host, and what waited behind it goes with the session: a
+    /// refusal, and a request the host drops unanswered.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_client_leaves_a_host_that_does_not_take_its_message() {
+        for refuses in [true, false] {
+            let mut setup = start().await;
+            join(&mut setup).await;
+            setup.core.send(intent(Intent::Pause).into()).unwrap();
+            setup.core.send(line("behind it").into()).unwrap();
+
+            let patience = Duration::from_secs(5);
+            let next = next_request(&mut setup.host_side);
+            let (msg, channel) = tokio::time::timeout(patience, next).await.unwrap();
+            assert_eq!(msg, intent(Intent::Pause).into());
+            if refuses {
+                let messaging = &mut setup.host_side.behaviour_mut().messaging;
+                let refusal = MessageResponse(StatusResponse::Err);
+                messaging.send_response(channel, refusal).unwrap();
+            } else {
+                drop(channel);
+            }
+            let ended = async {
+                tokio::select! {
+                    stop = &mut setup.run => stop.unwrap(),
+                    _ = next_request(&mut setup.host_side) => panic!("the next message went out"),
+                }
+            };
+            let stop = tokio::time::timeout(patience, ended).await;
+            assert_eq!(stop.ok(), Some(Stop::HostLost), "refuses: {refuses}");
+        }
+    }
+
+    /// The host's first message can overtake its answer to the request to
+    /// join. The core hears of the connection before that message all the
+    /// same, so starting the connection afresh does not wipe what the host
+    /// sent.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_core_hears_of_the_connection_before_the_hosts_first_message() {
+        let Setup {
+            mut host_side,
+            host_membership,
+            peer,
+            core: _core,
+            mut to_core,
+            ..
+        } = start().await;
+
+        // the host answers the request to join only once the client took
+        // the room's first message
+        let state = RoomStateMsg {
+            version: 3,
+            ..Default::default()
+        };
+        let mut join = None;
+        let mut first = None;
+        let serve = async {
+            loop {
+                let SwarmEvent::Behaviour(HostSideEvent::Messaging(event)) =
+                    host_side.select_next_some().await
+                else {
+                    continue;
+                };
+                let messaging = &mut host_side.behaviour_mut().messaging;
+                match event {
+                    Event::Message {
+                        message:
+                            Message::Request {
+                                request, channel, ..
+                            },
+                        ..
+                    } if request.msg == NiketsuMessage::Join => {
+                        join = Some(channel);
+                        let msg = host_membership.tag(state.clone().into());
+                        first = Some(messaging.send_request(&peer, msg));
+                    }
+                    Event::Message {
+                        message: Message::Response { request_id, .. },
+                        ..
+                    } if Some(request_id) == first => {
+                        let ok = MessageResponse(StatusResponse::Ok);
+                        messaging.send_response(join.take().unwrap(), ok).unwrap();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(5), serve)
+            .await
+            .expect("the client never took the host's first message");
+
+        // what the core hears beside the round trips the pings measure
+        let mut next = async || loop {
+            match to_core.recv().await.unwrap() {
+                IncomingMessage::HostRoundTrip(_) => continue,
+                msg => return msg,
+            }
+        };
+        let connected = tokio::time::timeout(Duration::from_secs(5), next()).await;
+        assert!(
+            matches!(
+                connected,
+                Ok(IncomingMessage::Connected(ConnectedMsg {
+                    is_host: false,
+                    ..
+                }))
+            ),
+            "the core first hears of the connection: {connected:?}"
+        );
+        let followed = tokio::time::timeout(Duration::from_secs(5), next()).await;
+        assert!(
+            matches!(&followed, Ok(IncomingMessage::RoomState(m)) if *m == state),
+            "then the host's first message: {followed:?}"
+        );
     }
 }

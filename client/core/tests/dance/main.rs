@@ -14,7 +14,10 @@
 //! no-echo rule: handling a broadcast must never re-emit that broadcast.
 //!
 //! Delivery is instant; round trips to the host exist only where a
-//! scenario injects them with `Room::round_trip`.
+//! scenario injects them with `Room::round_trip`. What the host sends a
+//! member goes through the member's outbox as the communicator keeps it:
+//! in order, and held back only where a scenario holds the link with
+//! `Room::hold_link`.
 
 mod harness;
 mod properties;

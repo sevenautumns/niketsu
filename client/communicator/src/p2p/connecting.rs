@@ -5,7 +5,7 @@ use futures::StreamExt;
 use libp2p::core::transport::ListenerId;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{Swarm, SwarmEvent};
-use libp2p::{Multiaddr, PeerId, gossipsub, identify};
+use libp2p::{Multiaddr, PeerId, identify};
 use niketsu_core::communicator::{IncomingMessage, OutgoingMessage};
 use niketsu_core::room::RoomName;
 use tracing::{debug, info, warn};
@@ -31,20 +31,17 @@ pub(crate) struct Setup {
     relay_addr: Multiaddr,
     room: RoomName,
     password: String,
-    topic: gossipsub::IdentTopic,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
     chunk_routes: ChunkRoutes,
 }
 
 impl Setup {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         swarm: Swarm<Behaviour>,
         relay_addr: Multiaddr,
         room: RoomName,
         password: String,
-        topic: gossipsub::IdentTopic,
         core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
         chunk_routes: ChunkRoutes,
@@ -54,7 +51,6 @@ impl Setup {
             relay_addr,
             room,
             password,
-            topic,
             core_receiver,
             message_sender,
             chunk_routes,
@@ -87,7 +83,6 @@ impl Setup {
             .with_p2p(peer_info.relay)
             .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
-        self.swarm.gossipsub().subscribe(&self.topic)?;
         let membership = Membership::new(self.room, self.password, &local_peer_id);
 
         let role: Box<dyn Role> = match peer_info.host {
@@ -99,7 +94,6 @@ impl Setup {
                 self.swarm.dial(peer_addr)?;
                 Box::new(ClientRole::new(
                     self.swarm,
-                    self.topic,
                     membership,
                     host_peer_id,
                     self.core_receiver,
@@ -119,7 +113,6 @@ impl Setup {
                     host_relay::serve(local_peer_id);
                 Box::new(HostRole::new(
                     self.swarm,
-                    self.topic,
                     membership,
                     local_peer_id,
                     peer_info.relay,

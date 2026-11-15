@@ -8,6 +8,7 @@ use serde_with::serde_as;
 use tracing::{debug, warn};
 
 use crate::PROJECT_DIRS;
+use crate::chunk::SharedFile;
 use crate::communicator::EndpointInfo;
 use crate::room::RoomName;
 use crate::user::UserStatus;
@@ -138,10 +139,12 @@ impl Config {
         self.port = bootstrap_port();
     }
 
-    pub(crate) fn status(&self, ready: bool) -> UserStatus {
+    pub(crate) fn status(&self, ready: bool, offers: Option<SharedFile>) -> UserStatus {
         UserStatus {
             name: self.username.clone(),
             ready,
+            offers,
+            peer: None,
         }
     }
 }

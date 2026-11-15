@@ -3458,10 +3458,8 @@ dependencies = [
  "futures",
  "libp2p-core",
  "libp2p-dcutr",
- "libp2p-gossipsub",
  "libp2p-identify",
  "libp2p-identity",
- "libp2p-kad",
  "libp2p-ping",
  "libp2p-relay",
  "libp2p-swarm",
@@ -4149,14 +4147,12 @@ dependencies = [
  "niketsu-video-server",
  "serde",
  "serde_bytes",
- "serde_json",
  "sha256",
  "subtle",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

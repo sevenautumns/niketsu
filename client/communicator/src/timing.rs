@@ -53,12 +53,6 @@ pub(crate) const HOST_CIRCUIT_DURATION: Duration = FILE_REQUEST_TIMEOUT.saturati
 /// renews it.
 pub(crate) const HOST_RESERVATION_DURATION: Duration = Duration::from_secs(3600);
 
-/// How often gossipsub tends its mesh. Broadcasts do not wait for it.
-pub(crate) const GOSSIP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
-
-/// How long gossipsub remembers a broadcast to drop its duplicates.
-pub(crate) const GOSSIP_DUPLICATE_MEMORY: Duration = Duration::from_secs(60);
-
 /// How long a direct message may wait for its answer.
 pub(crate) const MESSAGE_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 

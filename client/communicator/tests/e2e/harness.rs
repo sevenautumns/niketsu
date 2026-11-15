@@ -18,7 +18,10 @@ use niketsu_core::player::{
 };
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::UserList;
-use niketsu_core::ui::{PlayerMessage, UserChange, UserInterfaceEvent, UserInterfaceTrait};
+use niketsu_core::ui::{
+    PlayerMessage, UserChange, UserInterfaceEvent, UserInterfaceTrait, UserMessage,
+};
+use niketsu_core::user::UserStatus;
 use niketsu_core::video_provider::VideoProvider;
 use niketsu_video_server::VideoServer;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -79,7 +82,6 @@ fn log_to_stderr() {
     }
     let filter = Targets::new()
         .with_target("niketsu", Level::DEBUG)
-        .with_target("libp2p_gossipsub", Level::DEBUG)
         .with_target("libp2p_swarm", Level::DEBUG);
     tracing_subscriber::registry()
         .with(
@@ -166,6 +168,12 @@ impl PlayerHandle {
     pub fn start(&self) {
         self.state.lock().unwrap().paused = false;
         self.events.send(PlayerStart.into()).unwrap();
+    }
+
+    /// The player ends up at `position` on its own, as a player that plays
+    /// does, without telling the core.
+    pub fn drift(&self, position: Duration) {
+        self.state.lock().unwrap().position = position;
     }
 
     /// The person seeks in the player window.
@@ -290,6 +298,22 @@ impl UiState {
         names.sort();
         names
     }
+
+    /// The names of the users shown offering the selected video, sorted.
+    pub fn offering(&self) -> Vec<String> {
+        let offers = |u: &&UserStatus| {
+            let offered = u.offers.as_ref().map(|f| f.name.as_str());
+            offered.is_some() && offered == self.playing_video.as_ref().map(|v| v.as_str())
+        };
+        let mut names: Vec<_> = self
+            .users
+            .iter()
+            .filter(offers)
+            .map(|u| u.name.to_string())
+            .collect();
+        names.sort();
+        names
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -306,6 +330,19 @@ impl UiHandle {
     /// The person does something in the UI.
     pub fn act(&self, event: impl Into<UserInterfaceEvent>) {
         self.events.send(event.into()).unwrap();
+    }
+
+    /// The person sends a chat line, which the UI shows right away, as
+    /// `UserInterface::send_message` does.
+    pub fn say(&self, message: &str) {
+        self.state
+            .lock()
+            .unwrap()
+            .messages
+            .push(message.to_string());
+        self.act(UserMessage {
+            message: message.to_string(),
+        });
     }
 }
 
@@ -486,6 +523,10 @@ impl Peer {
             name: name.to_string(),
             core: tokio::spawn(core.run()),
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Waits until the relay has made this peer the host, which it does for

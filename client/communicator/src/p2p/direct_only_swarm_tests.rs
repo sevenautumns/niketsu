@@ -11,10 +11,10 @@
 //!   addresses the swarm passes to `handle_established_*_connection`,
 //! - the swarm-global `num_established` counts include the circuits hidden
 //!   from the wrapped behaviour (the premise of the count adjustment),
-//! - real behaviours — gossipsub's subscription handshake, request-response's
-//!   connection bookkeeping and debug assertions — survive a relayed-then-
-//!   direct connection lifecycle in both directions, with substreams actually
-//!   flowing through the `Either` handler plumbing.
+//! - a peer that sends over the circuit anyway finds the protocol refused,
+//! - request-response's connection bookkeeping and debug assertions survive
+//!   a relayed-then-direct connection lifecycle, with substreams actually
+//!   flowing through the `Either` handler plumbing in both directions.
 //!
 //! The same swarms pin what the handlers assume about relay reservations.
 
@@ -24,10 +24,10 @@ use futures::StreamExt;
 use libp2p::core::transport::MemoryTransport;
 use libp2p::core::upgrade::Version;
 use libp2p::multiaddr::Protocol;
-use libp2p::request_response::{self, ProtocolSupport};
+use libp2p::request_response::{self, OutboundFailure, ProtocolSupport};
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
-use libp2p::{Multiaddr, StreamProtocol, Transport, gossipsub, noise, relay, yamux};
+use libp2p::{Multiaddr, StreamProtocol, Transport, noise, relay, yamux};
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
@@ -50,13 +50,27 @@ struct TestBehaviour {
     messaging: DirectOnly<Messaging>,
 }
 
+/// A peer that runs its protocols over any connection, the circuit
+/// included.
 #[derive(NetworkBehaviour)]
-struct Messaging {
-    gossipsub: gossipsub::Behaviour,
-    request_response: request_response::cbor::Behaviour<Ping, Pong>,
+struct Unwrapped {
+    relay_client: relay::client::Behaviour,
+    messaging: Messaging,
 }
 
-fn client_swarm() -> Swarm<TestBehaviour> {
+type Messaging = request_response::cbor::Behaviour<Ping, Pong>;
+
+fn messaging() -> Messaging {
+    request_response::cbor::Behaviour::new(
+        [(
+            StreamProtocol::new("/direct-only-test/1"),
+            ProtocolSupport::Full,
+        )],
+        request_response::Config::default(),
+    )
+}
+
+fn swarm<B: NetworkBehaviour>(behaviour: impl FnOnce(relay::client::Behaviour) -> B) -> Swarm<B> {
     libp2p::SwarmBuilder::with_new_identity()
         .with_tokio()
         .with_other_transport(|key| {
@@ -68,27 +82,17 @@ fn client_swarm() -> Swarm<TestBehaviour> {
         .expect("memory transport")
         .with_relay_client(noise::Config::new, yamux::Config::default)
         .expect("relay client")
-        .with_behaviour(|key, relay_client| {
-            Ok(TestBehaviour {
-                relay_client,
-                messaging: DirectOnly::new(Messaging {
-                    gossipsub: gossipsub::Behaviour::new(
-                        gossipsub::MessageAuthenticity::Signed(key.clone()),
-                        gossipsub::Config::default(),
-                    )?,
-                    request_response: request_response::cbor::Behaviour::new(
-                        [(
-                            StreamProtocol::new("/direct-only-test/1"),
-                            ProtocolSupport::Full,
-                        )],
-                        request_response::Config::default(),
-                    ),
-                }),
-            })
-        })
+        .with_behaviour(|_, relay_client| behaviour(relay_client))
         .expect("behaviour")
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
         .build()
+}
+
+fn client_swarm() -> Swarm<TestBehaviour> {
+    swarm(|relay_client| TestBehaviour {
+        relay_client,
+        messaging: DirectOnly::new(messaging()),
+    })
 }
 
 fn relay_swarm() -> Swarm<relay::Behaviour> {
@@ -223,34 +227,18 @@ async fn protocols_are_gated_to_direct_connections_on_a_real_swarm() {
         }
     });
 
-    let topic = gossipsub::IdentTopic::new("direct-only-test");
-
     let mut host = client_swarm();
     let host_peer_id = *host.local_peer_id();
-    host.behaviour_mut()
-        .messaging
-        .inner_mut()
-        .gossipsub
-        .subscribe(&topic)
-        .unwrap();
     let host_direct_addr = listen(&mut host, "/memory/0".parse().unwrap()).await;
     let circuit_addr = relay_addr
         .with(Protocol::P2p(relay_peer_id))
         .with(Protocol::P2pCircuit);
     listen(&mut host, circuit_addr.clone()).await;
+    let host_circuit = circuit_addr.with(Protocol::P2p(host_peer_id));
 
     let mut dialer = client_swarm();
     let dialer_peer_id = *dialer.local_peer_id();
-    dialer
-        .behaviour_mut()
-        .messaging
-        .inner_mut()
-        .gossipsub
-        .subscribe(&topic)
-        .unwrap();
-    dialer
-        .dial(circuit_addr.with(Protocol::P2p(host_peer_id)))
-        .unwrap();
+    dialer.dial(host_circuit.clone()).unwrap();
 
     // Phase 1: only the relay circuit connects the two peers.
     timeout(TIMEOUT, async {
@@ -282,71 +270,124 @@ async fn protocols_are_gated_to_direct_connections_on_a_real_swarm() {
     // The circuit must be invisible to the wrapped behaviours: request-response
     // does not consider the peer connected, and a request parks (the dial it
     // issues aborts on its `Disconnected` condition, which `on_dial_failure`
-    // ignores) instead of traveling over the relay.
-    assert!(
-        !dialer
-            .behaviour_mut()
-            .messaging
-            .inner_mut()
-            .request_response
-            .is_connected(&host_peer_id)
-    );
-    dialer
-        .behaviour_mut()
-        .messaging
-        .inner_mut()
-        .request_response
-        .send_request(&host_peer_id, Ping(7));
+    // ignores) instead of traveling over the relay. This holds both ways.
+    for (side, peer, ping) in [
+        (&mut dialer, host_peer_id, 7),
+        (&mut host, dialer_peer_id, 8),
+    ] {
+        let messaging = side.behaviour_mut().messaging.inner_mut();
+        assert!(!messaging.is_connected(&peer));
+        messaging.send_request(&peer, Ping(ping));
+    }
 
-    // Gossipsub legitimately reports the relay itself (reachable over a
-    // direct connection, speaking no gossipsub) as unsupported; anything else
-    // means a protocol ran over the circuit.
-    let allowed = |event: &MessagingEvent| {
-        matches!(
-            event,
-            MessagingEvent::Gossipsub(gossipsub::Event::GossipsubNotSupported { peer_id })
-                if *peer_id == relay_peer_id
-        )
-    };
+    // A peer that does not wrap its protocols sends over the circuit, and the
+    // host refuses the protocol there.
+    let mut unwrapped = swarm(|relay_client| Unwrapped {
+        relay_client,
+        messaging: messaging(),
+    });
+    let unwrapped_peer_id = *unwrapped.local_peer_id();
+    unwrapped.dial(host_circuit).unwrap();
+    let mut refused = false;
+    timeout(TIMEOUT, async {
+        while !refused {
+            tokio::select! {
+                event = unwrapped.select_next_some() => match event {
+                    SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. }
+                        if peer_id == host_peer_id =>
+                    {
+                        assert!(endpoint.is_relayed());
+                        let messaging = &mut unwrapped.behaviour_mut().messaging;
+                        assert!(messaging.is_connected(&host_peer_id));
+                        messaging.send_request(&host_peer_id, Ping(9));
+                    }
+                    SwarmEvent::Behaviour(UnwrappedEvent::Messaging(
+                        request_response::Event::OutboundFailure { peer, error, .. },
+                    )) => {
+                        assert_eq!(peer, host_peer_id);
+                        assert!(
+                            matches!(error, OutboundFailure::UnsupportedProtocols),
+                            "{error:?}"
+                        );
+                        refused = true;
+                    }
+                    SwarmEvent::Behaviour(UnwrappedEvent::Messaging(event)) => {
+                        panic!("the host answered over the circuit: {event:?}")
+                    }
+                    _ => {}
+                },
+                event = host.select_next_some() => {
+                    if let SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(event)) = event {
+                        panic!("messaging activity over the relay circuit on the host: {event:?}");
+                    }
+                }
+                _ = dialer.select_next_some() => {}
+            }
+        }
+    })
+    .await
+    .expect("the host never refused the request over the circuit");
+    drop(unwrapped);
+
+    // Anything the wrapped behaviours report now ran over the circuit.
     let quiet = tokio::time::sleep(Duration::from_millis(500));
     tokio::pin!(quiet);
     loop {
         tokio::select! {
             _ = &mut quiet => break,
             event = dialer.select_next_some() => {
-                if let SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(event)) = event
-                    && !allowed(&event)
-                {
+                if let SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(event)) = event {
                     panic!("messaging activity over the relay circuit on the dialer: {event:?}");
                 }
             }
-            event = host.select_next_some() => {
-                if let SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(event)) = event
-                    && !allowed(&event)
-                {
+            event = host.select_next_some() => match event {
+                SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(event)) => {
                     panic!("messaging activity over the relay circuit on the host: {event:?}");
                 }
+                SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                    assert_eq!(peer_id, unwrapped_peer_id);
+                }
+                _ => {}
             }
         }
     }
 
-    // Phase 2: a direct connection unblocks everything. The parked request
-    // drains onto it, and gossipsub runs its subscription handshake — which it
-    // only does when `other_established` is 0, i.e. only if `DirectOnly`
-    // deducted the hidden circuit from the count.
+    // Phase 2: a direct connection unblocks everything. The parked requests
+    // drain onto it in both directions.
     dialer
         .dial(host_direct_addr.clone().with(Protocol::P2p(host_peer_id)))
         .unwrap();
 
     let mut direct_connection = None;
-    let mut pong = None;
-    let (mut dialer_subscribed, mut host_subscribed) = (false, false);
+    let (mut dialer_pong, mut host_pong) = (None, None);
+    // Answers a request, or returns the answer to one.
+    let answer =
+        |side: &mut Swarm<TestBehaviour>, event: SwarmEvent<TestBehaviourEvent>| -> Option<u32> {
+            match event {
+                SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(
+                    request_response::Event::Message {
+                        message:
+                            request_response::Message::Request {
+                                request, channel, ..
+                            },
+                        ..
+                    },
+                )) => {
+                    let messaging = side.behaviour_mut().messaging.inner_mut();
+                    messaging.send_response(channel, Pong(request.0)).unwrap();
+                    None
+                }
+                SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(
+                    request_response::Event::Message {
+                        message: request_response::Message::Response { response, .. },
+                        ..
+                    },
+                )) => Some(response.0),
+                _ => None,
+            }
+        };
     timeout(TIMEOUT, async {
-        while direct_connection.is_none()
-            || pong.is_none()
-            || !dialer_subscribed
-            || !host_subscribed
-        {
+        while direct_connection.is_none() || dialer_pong.is_none() || host_pong.is_none() {
             tokio::select! {
                 event = dialer.select_next_some() => match event {
                     SwarmEvent::ConnectionEstablished {
@@ -358,54 +399,22 @@ async fn protocols_are_gated_to_direct_connections_on_a_real_swarm() {
                         assert_eq!(num_established.get(), 2);
                         direct_connection = Some(connection_id);
                     }
-                    SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(
-                        MessagingEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. }),
-                    )) => {
-                        assert_eq!(peer_id, host_peer_id);
-                        dialer_subscribed = true;
-                    }
-                    SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(
-                        MessagingEvent::RequestResponse(request_response::Event::Message {
-                            message: request_response::Message::Response { response, .. },
-                            ..
-                        }),
-                    )) => pong = Some(response),
-                    _ => {}
+                    event => dialer_pong = answer(&mut dialer, event).or(dialer_pong),
                 },
-                event = host.select_next_some() => match event {
-                    SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(
-                        MessagingEvent::RequestResponse(request_response::Event::Message {
-                            message: request_response::Message::Request { request, channel, .. },
-                            ..
-                        }),
-                    )) => {
-                        host.behaviour_mut()
-                            .messaging
-                            .inner_mut()
-                            .request_response
-                            .send_response(channel, Pong(request.0))
-                            .unwrap();
-                    }
-                    SwarmEvent::Behaviour(TestBehaviourEvent::Messaging(
-                        MessagingEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. }),
-                    )) => {
-                        assert_eq!(peer_id, dialer_peer_id);
-                        host_subscribed = true;
-                    }
-                    _ => {}
-                },
+                event = host.select_next_some() => {
+                    host_pong = answer(&mut host, event).or(host_pong);
+                }
             }
         }
     })
     .await
     .expect("direct connection did not unblock messaging within timeout");
-    assert_eq!(pong.unwrap().0, 7);
+    assert_eq!((dialer_pong, host_pong), (Some(7), Some(8)));
     assert!(
         dialer
             .behaviour_mut()
             .messaging
             .inner_mut()
-            .request_response
             .is_connected(&host_peer_id)
     );
 
@@ -447,7 +456,6 @@ async fn protocols_are_gated_to_direct_connections_on_a_real_swarm() {
             .behaviour_mut()
             .messaging
             .inner_mut()
-            .request_response
             .is_connected(&host_peer_id)
     );
 

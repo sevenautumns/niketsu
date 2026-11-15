@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
 use arcstr::ArcStr;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 /// The most bytes one chunk carries. The video server asks for no more and
@@ -26,18 +27,47 @@ pub struct ChunkRequest {
 }
 
 /// Where chunk requests go: the channel of whoever serves them at the
-/// moment. Clones share the route, so it is created once at wiring time and
-/// handed to both ends.
-#[derive(Debug, Clone, Default)]
-pub struct ChunkRoute(Arc<ArcSwapOption<mpsc::Sender<ChunkRequest>>>);
+/// moment, and what it serves. Clones share the route, so it is created
+/// once at wiring time and handed to both ends.
+#[derive(Debug)]
+pub struct ChunkRoute<F = ()>(Arc<ArcSwapOption<Server<F>>>);
 
-impl ChunkRoute {
-    /// Serves the route from a fresh channel of `capacity` requests, which
-    /// replaces the channel of the previous server.
-    pub fn serve(&self, capacity: usize) -> mpsc::Receiver<ChunkRequest> {
-        let (sender, receiver) = mpsc::channel(capacity);
-        self.0.store(Some(Arc::new(sender)));
-        receiver
+/// Who serves a route: the requests go to `sender`, and it serves `file`.
+#[derive(Debug)]
+pub struct Server<F> {
+    pub file: F,
+    pub sender: mpsc::Sender<ChunkRequest>,
+}
+
+/// A file a peer offers to the others: what a viewer needs to stream it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SharedFile {
+    pub name: ArcStr,
+    pub size: u64,
+}
+
+/// The chunk requests of other peers, which go to the local video provider.
+/// The provider opens the route once it can serve its file, so the route
+/// holds whether and what this peer offers.
+pub type ProvideRoute = ChunkRoute<SharedFile>;
+
+impl<F> Default for ChunkRoute<F> {
+    fn default() -> Self {
+        Self(Arc::default())
+    }
+}
+
+impl<F> Clone for ChunkRoute<F> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl<F> ChunkRoute<F> {
+    /// Serves the route through `sender` with `file`, in place of the
+    /// previous server.
+    pub fn open(&self, file: F, sender: mpsc::Sender<ChunkRequest>) {
+        self.0.store(Some(Arc::new(Server { file, sender })));
     }
 
     /// Closes the route; the current server's channel ends once no request
@@ -46,7 +76,21 @@ impl ChunkRoute {
         self.0.store(None);
     }
 
-    pub fn sender(&self) -> Option<Arc<mpsc::Sender<ChunkRequest>>> {
+    pub fn server(&self) -> Option<Arc<Server<F>>> {
         self.0.load_full()
+    }
+}
+
+impl ChunkRoute {
+    /// Serves the route from a fresh channel of `capacity` requests, which
+    /// replaces the channel of the previous server.
+    pub fn serve(&self, capacity: usize) -> mpsc::Receiver<ChunkRequest> {
+        let (sender, receiver) = mpsc::channel(capacity);
+        self.open((), sender);
+        receiver
+    }
+
+    pub fn sender(&self) -> Option<mpsc::Sender<ChunkRequest>> {
+        self.server().map(|server| server.sender.clone())
     }
 }

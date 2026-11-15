@@ -33,7 +33,7 @@ impl EventHandler for Heartbeat {
     fn handle(self, model: &mut CoreModel) {
         trace!("heartbeat");
         // only the host's clock is the room's reference
-        model.publish_beat();
+        model.publish_room();
     }
 }
 
@@ -43,11 +43,11 @@ mod tests {
 
     use super::*;
     use crate::builder::CoreBuilder;
-    use crate::communicator::{HostInstruction, MockCommunicatorTrait, OutgoingMessage};
+    use crate::communicator::{HostInstruction, MockCommunicatorTrait, OutgoingMessage, PeerId};
     use crate::config::Config;
     use crate::file_database::MockFileDatabaseTrait;
     use crate::player::{MediaPlayerTrait, MockMediaPlayerTrait};
-    use crate::playlist::Video;
+    use crate::playlist::{Playlist, Video};
     use crate::room::HostRoom;
     use crate::ui::MockUserInterfaceTrait;
     use crate::{MockVideoProviderTrait, MockVideoServerTrait};
@@ -87,12 +87,15 @@ mod tests {
                 let OutgoingMessage::Host(HostInstruction::RoomState(state)) = msg else {
                     return false;
                 };
-                state.order() == (0, 1)
+                // the communicator leaves the playlist out for a member
+                // that has it
+                state.version == 0
                     && state.video.as_ref() == Some(&video)
                     && state.position == Duration::from_secs(15)
                     && state.speed == 1.5
                     && state.paused
                     && state.file_loaded
+                    && state.playlist == Some(Playlist::default())
             })
             .once()
             .return_const(());
@@ -109,7 +112,8 @@ mod tests {
 
         // the room's speed is what the state reports
         core.model.player.set_speed(1.5);
-        core.model.host = Some(HostRoom::new("room".into()));
+        let host = PeerId::from_bytes(&[0x00, 4, 1, 1, 1, 1]).unwrap();
+        core.model.host = Some(HostRoom::new("room".into(), host));
 
         Heartbeat.handle(&mut core.model);
     }

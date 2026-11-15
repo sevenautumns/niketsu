@@ -2,16 +2,18 @@
 
 use std::time::Duration;
 
-use niketsu_core::communicator::{Intent, IntentMsg, PeerIntentMsg};
+use niketsu_core::chunk::SharedFile;
+use niketsu_core::communicator::{Intent, IntentMsg, PeerIntentMsg, RoomStateMsg};
 use niketsu_core::player::{
     PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart,
 };
 use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::RoomName;
+use niketsu_core::sync::PENDING_STATES;
 use niketsu_core::{ui, video_provider};
 
-use crate::harness::Room;
+use crate::harness::{FILE_SIZE, Room};
 
 /// A peer picking a video makes every peer load it from the start, and the
 /// playlist selection converges.
@@ -202,10 +204,8 @@ async fn provider_loss_stops_the_consumers_video_server() {
     assert!(room.peer(alice).ui.state().video_share);
 
     // bob streams alice's copy through his local video server
-    room.peer(bob)
-        .model
-        .video_server
-        .start_server("ep1".into(), 1_000);
+    room.peer(bob).act(ui::FileRequest {});
+    room.pump();
     assert!(room.peer(bob).video_server.running());
 
     // alice's provider dies, e.g. the shared file disappeared
@@ -218,6 +218,7 @@ async fn provider_loss_stops_the_consumers_video_server() {
         !room.peer(bob).video_server.running(),
         "consumer must stop streaming from a dead provider"
     );
+    assert!(offering(&mut room, bob).is_empty(), "the offer stays shown");
 }
 
 /// When a video ends, whoever's player finishes first advances the shared
@@ -640,6 +641,12 @@ async fn auto_share_carries_the_share_to_the_next_selection() {
         "auto-share must carry the share to the new selection"
     );
     assert!(room.peer(alice).ui.state().video_share);
+    // the provider task reports the reshared file ready, which offers it
+    room.peer(alice).act(video_provider::FileReady {
+        file_name: "ep2".into(),
+        size: 1_000,
+    });
+    room.pump();
 
     // bob streams the reshared episode
     room.peer(bob).act(ui::FileRequest {});
@@ -696,6 +703,12 @@ async fn file_end_reshares_or_stops_like_a_manual_selection() {
         "file-end must carry the auto-share to the next video"
     );
     assert!(room.peer(alice).ui.state().video_share);
+    // the provider task reports the reshared file ready, which offers it
+    room.peer(alice).act(video_provider::FileReady {
+        file_name: "ep2".into(),
+        size: 1_000,
+    });
+    room.pump();
 
     // bob streams the reshared episode
     room.peer(bob).act(ui::FileRequest {});
@@ -713,9 +726,9 @@ async fn file_end_reshares_or_stops_like_a_manual_selection() {
     );
 }
 
-/// A file request when nobody announces the file finds no provider: the
-/// requester is told and its video server stops instead of waiting for
-/// chunks that will never come.
+/// A file request when the room shows nobody offering the file asks
+/// nobody: the requester is told and its video server stops instead of
+/// waiting for chunks that will never come.
 #[tokio::test]
 async fn file_request_without_a_provider_stops_the_video_server() {
     let mut room = Room::new();
@@ -738,20 +751,23 @@ async fn file_request_without_a_provider_stops_the_video_server() {
         .start_server("ep1".into(), 1_000);
     assert!(room.peer(bob).video_server.running());
 
-    // nobody shares ep1, so the lookup finds no provider
+    // nobody offers ep1
     room.peer(bob).act(ui::FileRequest {});
-    room.pump();
+    assert!(
+        room.hold(bob).is_empty(),
+        "a request without a provider goes nowhere"
+    );
     assert!(
         !room.peer(bob).video_server.running(),
         "a request without a provider must stop the requester's video server"
     );
 }
 
-/// A failed file response — the announced provider is not actually serving
-/// the file — stops the requester's video server instead of leaving it up
+/// A stream the announced provider turns down — it is not actually serving
+/// the file — stops the viewer's video server instead of leaving it up
 /// serving a stream nobody will ever feed.
 #[tokio::test]
-async fn failed_file_response_stops_the_requesters_video_server() {
+async fn a_refused_stream_stops_the_viewers_video_server() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
     let bob = room.join("bob", &[]);
@@ -772,21 +788,231 @@ async fn failed_file_response_stops_the_requesters_video_server() {
     });
     room.pump();
 
-    // bob streams ep1 from alice
-    room.peer(bob).act(ui::FileRequest {});
-    room.pump();
-    assert!(room.peer(bob).video_server.running());
-
-    // alice's provider dies without the room noticing (a stale provider
-    // record): bob's retry still reaches her and is answered with a
-    // failure, which must take his dead stream down with it
+    // alice's provider stops without the room noticing (her offer still
+    // shows): bob's chunk requests still reach her and are turned down,
+    // which must take his dead stream down with it
     room.peer(alice).model.video_provider.stop_providing();
+    assert_eq!(offering(&mut room, bob), ["alice"]);
     room.peer(bob).act(ui::FileRequest {});
     room.pump();
     assert!(
         !room.peer(bob).video_server.running(),
-        "a failed file response must stop the requester's video server"
+        "a refused stream must stop the viewer's video server"
     );
+    assert_eq!(room.provider_of(bob), None);
+}
+
+/// The users peer `who` sees offering the selected video.
+fn offering(room: &mut Room, who: usize) -> Vec<String> {
+    let ui = room.peer(who).ui.state();
+    let mut names: Vec<String> = ui
+        .users
+        .iter()
+        .filter(|u| {
+            let offered = u.offers.as_ref().map(|f| f.name.as_str());
+            offered.is_some() && offered == ui.playing_video.as_ref().map(|v| v.as_str())
+        })
+        .map(|u| u.name.to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+/// `who` shares the selected `video`, and its provider task reports the
+/// file ready.
+fn share(room: &mut Room, who: usize, video: &str) {
+    room.peer(who).act(ui::FileShareChange {});
+    room.peer(who).act(video_provider::FileReady {
+        file_name: video.into(),
+        size: 1_000,
+    });
+}
+
+/// A room of alice hosting without the file, bob who has ep1 and carol
+/// without it, with ep1 selected.
+fn room_with_ep1_at_bob() -> (Room, usize, usize, usize) {
+    let mut room = Room::new();
+    let alice = room.join("alice", &[]);
+    let bob = room.join("bob", &["ep1"]);
+    let carol = room.join("carol", &[]);
+    room.pump();
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1", "ep2"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+    (room, alice, bob, carol)
+}
+
+/// A user who offers the selected video shows so in everyone's user list,
+/// that of a later joiner included, with the file's size. From that alone
+/// the joiner streams the file from that user.
+#[tokio::test]
+async fn a_late_joiner_learns_who_offers_the_video() {
+    let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
+    share(&mut room, bob, "ep1");
+    room.pump();
+    for who in [alice, bob, carol] {
+        assert_eq!(offering(&mut room, who), ["bob"]);
+    }
+
+    let dave = room.join("dave", &[]);
+    room.pump();
+    assert_eq!(offering(&mut room, dave), ["bob"], "the greeting names it");
+    let ep1 = SharedFile {
+        name: "ep1".into(),
+        size: FILE_SIZE,
+    };
+    let users = room.peer(dave).ui.state().users;
+    let offer = users.iter().find_map(|u| u.offers.clone());
+    assert_eq!(offer, Some(ep1.clone()), "the greeting carries the size");
+
+    room.peer(dave).act(ui::FileRequest {});
+    room.pump();
+    assert_eq!(room.peer(dave).video_server.serves(), Some(ep1));
+    assert_eq!(room.provider_of(dave), Some(bob));
+}
+
+/// An offer leaves the room with its user: nobody sees it any more, the
+/// stream from that user ends, and a new request finds no provider.
+#[tokio::test]
+async fn an_offer_leaves_with_its_user() {
+    let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
+    share(&mut room, bob, "ep1");
+    room.pump();
+    room.peer(carol).act(ui::FileRequest {});
+    room.pump();
+    assert!(room.peer(carol).video_server.running());
+
+    room.leave(bob);
+    room.pump();
+    for who in [alice, carol] {
+        assert!(offering(&mut room, who).is_empty(), "peer {who}");
+    }
+    assert!(!room.peer(carol).video_server.running());
+
+    room.peer(carol).act(ui::FileRequest {});
+    assert!(room.hold(carol).is_empty(), "nobody is asked");
+}
+
+/// A new selection drops every offer, also one that was on its way to the
+/// host while the selection changed: an offer is one of the selected
+/// video, so none can point at a video its user does not offer.
+#[tokio::test]
+async fn a_new_selection_leaves_no_stale_offer() {
+    let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
+    share(&mut room, bob, "ep1");
+    room.pump();
+    assert_eq!(offering(&mut room, carol), ["bob"]);
+
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep2"),
+    });
+    room.pump();
+    for who in [alice, bob, carol] {
+        assert!(offering(&mut room, who).is_empty(), "peer {who}");
+    }
+
+    // bob shares ep1 again while the host moves the room on to ep2: his
+    // offer arrives after the selection
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+    share(&mut room, bob, "ep1");
+    let offer = room.hold(bob);
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep2"),
+    });
+    room.release(bob, offer);
+    room.pump();
+    let host_users = room.peer(alice).model.host.as_ref().unwrap().users.clone();
+    assert!(
+        host_users
+            .status_list()
+            .users
+            .iter()
+            .all(|u| u.offers.is_none()),
+        "an offer of ep1 must not stand for ep2"
+    );
+    for who in [alice, bob, carol] {
+        assert!(offering(&mut room, who).is_empty(), "peer {who}");
+    }
+}
+
+/// After the room moves to another host, the new host knows who offers the
+/// video, and a request is answered by that user.
+#[tokio::test]
+async fn a_new_host_knows_who_offers_the_video() {
+    let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
+    share(&mut room, bob, "ep1");
+    room.pump();
+
+    room.rehost(carol);
+    room.pump();
+    assert!(room.peer(carol).ui.state().is_host);
+    for who in [alice, bob, carol] {
+        assert_eq!(offering(&mut room, who), ["bob"], "peer {who}");
+    }
+
+    room.peer(alice).act(ui::FileRequest {});
+    room.pump();
+    assert!(room.peer(alice).video_server.running());
+}
+
+/// What a user offers follows the share: shown once the file is open,
+/// gone once the user stops sharing or the file cannot be read, and back
+/// when the user shares again. A request after the share stopped is not
+/// answered.
+#[tokio::test]
+async fn the_offer_follows_start_and_stop_of_sharing() {
+    let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
+    let everyone_sees = |room: &mut Room, offering_users: &[&str]| {
+        for who in [alice, bob, carol] {
+            assert_eq!(offering(room, who), offering_users, "peer {who}");
+        }
+    };
+
+    share(&mut room, bob, "ep1");
+    room.pump();
+    everyone_sees(&mut room, &["bob"]);
+
+    // bob stops sharing
+    room.peer(bob).act(ui::FileShareChange {});
+    room.pump();
+    assert!(!room.peer(bob).ui.state().video_share);
+    everyone_sees(&mut room, &[]);
+    room.peer(carol).act(ui::FileRequest {});
+    assert!(room.hold(carol).is_empty(), "nobody is asked");
+
+    // bob shares again, and then his file cannot be read
+    share(&mut room, bob, "ep1");
+    room.pump();
+    everyone_sees(&mut room, &["bob"]);
+    room.peer(bob).act(video_provider::SharingStopped);
+    room.pump();
+    everyone_sees(&mut room, &[]);
+}
+
+/// A stream is one of the selected video: a new selection ends it, and the
+/// requester's communicator streams nothing from the old provider.
+#[tokio::test]
+async fn a_new_selection_ends_the_stream_of_the_old_video() {
+    let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
+    share(&mut room, bob, "ep1");
+    room.pump();
+    room.peer(carol).act(ui::FileRequest {});
+    room.pump();
+    assert!(room.peer(carol).video_server.running());
+
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep2"),
+    });
+    room.pump();
+    assert!(!room.peer(carol).video_server.running());
+    assert_eq!(room.provider_of(carol), None);
 }
 
 fn users(names: &[(&str, bool)]) -> Vec<(String, bool)> {
@@ -978,35 +1204,48 @@ fn seek(room: &mut Room, who: usize, secs: u64) {
     room.peer(who).act(PlayerPositionChange::new(position));
 }
 
+/// The versions of the room states that reached `who` since the last look.
+fn versions_seen(room: &mut Room, who: usize) -> Vec<u64> {
+    let states = room.peer(who).take_states();
+    states.iter().map(|state| state.version).collect()
+}
+
 /// A state the host published before it handled a seek moves nobody back:
-/// not the seeker, whose intent it crossed, and not a peer it reaches
-/// after the seek did.
+/// not the seeker, whose intent it crossed, and not a peer it is still on
+/// its way to, which gets the seek after it, never before.
 #[tokio::test]
 async fn a_state_older_than_a_seek_moves_nobody_back() {
     let (mut room, alice, bob, charlie) = three_playing_ep1();
+    room.hold_link(bob);
+    room.hold_link(charlie);
 
-    let stale = room.held_heartbeat();
+    room.peer(alice).heartbeat();
+    room.pump();
     seek(&mut room, bob, 300);
-    room.deliver(bob, stale.clone());
+    room.release_link(bob);
     assert_eq!(
         room.peer(bob).player.state().position,
         Duration::from_secs(300),
         "a state that predates the seek must not undo it"
     );
 
+    versions_seen(&mut room, charlie);
     room.pump();
+    assert_eq!(
+        versions_seen(&mut room, charlie),
+        [],
+        "the seek waits behind the state on its way"
+    );
+    room.release_link(charlie);
+    let seen = versions_seen(&mut room, charlie);
+    assert_eq!(seen.len(), 2, "the old state, then the seek's: {seen:?}");
+    assert!(seen[0] < seen[1], "the older state comes first: {seen:?}");
     for who in [alice, bob, charlie] {
         assert_eq!(
             room.peer(who).player.state().position,
             Duration::from_secs(300)
         );
     }
-    room.deliver(charlie, stale);
-    assert_eq!(
-        room.peer(charlie).player.state().position,
-        Duration::from_secs(300),
-        "a state older than the one applied must not move anyone"
-    );
 
     // the host's clock counts as ever for what comes after the seek
     room.peer(charlie)
@@ -1068,11 +1307,13 @@ async fn the_host_tells_the_room_its_seek_target_until_its_player_moved() {
 #[tokio::test]
 async fn a_state_from_before_the_host_handled_a_pause_does_not_undo_it() {
     let (mut room, alice, bob, charlie) = three_playing_ep1();
+    room.hold_link(bob);
 
-    let stale = room.held_heartbeat();
+    room.peer(alice).heartbeat();
+    room.pump();
     room.peer(bob).player.set(|player| player.paused = true);
     room.peer(bob).act(PlayerPause);
-    room.deliver(bob, stale);
+    room.release_link(bob);
     assert!(
         room.peer(bob).player.state().paused,
         "a state that predates the pause must not start bob again"
@@ -1297,6 +1538,66 @@ async fn a_new_host_of_the_same_room_ignores_the_saved_playlist() {
     }
 }
 
+/// A host restoring a saved room tells its own chat what it restored. A
+/// host without a saved room restores nothing and says nothing.
+#[tokio::test]
+async fn a_fresh_host_tells_its_chat_what_it_restored() {
+    let mut room = Room::with_saved_playlist(saved_playlist);
+    let alice = room.join("alice", &["ep1", "ep2"]);
+    room.pump();
+    assert_eq!(
+        room.peer(alice).ui.state().actions,
+        ["host changed playlist", "host selected ep2"]
+    );
+
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1", "ep2"]);
+    room.pump();
+    assert!(room.peer(alice).ui.state().actions.is_empty());
+}
+
+/// Every peer sees the line for an action once, its actor included, be it
+/// the host's own user or a client's. The states that follow add none.
+#[tokio::test]
+async fn every_peer_sees_an_action_line_once_the_actor_included() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &["ep1"]);
+    let charlie = room.join("charlie", &["ep1"]);
+    room.pump();
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1"]),
+    });
+    room.peer(bob).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+    let expected = ["alice changed playlist", "bob selected ep1"];
+    for who in [alice, bob, charlie] {
+        assert_eq!(room.peer(who).ui.state().actions, expected);
+    }
+
+    room.peer(bob).player.set(|player| player.paused = false);
+    room.peer(bob).act(PlayerStart);
+    room.pump();
+    room.peer(alice).act(PlayerSpeedChange::new(1.5));
+    room.pump();
+    for _ in 0..3 {
+        room.heartbeat();
+        room.pump();
+    }
+
+    let expected = [
+        "alice changed playlist",
+        "bob selected ep1",
+        "bob started playback",
+        "alice changed playback speed to 1.5",
+    ];
+    for who in [alice, bob, charlie] {
+        assert_eq!(room.peer(who).ui.state().actions, expected);
+    }
+}
+
 /// A client whose selection never reached the host plays another video
 /// than the room. Its intent shadows the room's states only for a few
 /// heartbeats; then the client follows the host back to the room's video.
@@ -1387,5 +1688,268 @@ async fn a_seek_into_another_video_is_what_a_late_joiner_is_greeted_with() {
         room.peer(charlie).player.state().video,
         Some(Video::from("ep2")),
         "a late joiner must load the video the host plays"
+    );
+}
+
+/// The playlists the room states in `states` carry.
+fn playlists(states: &[RoomStateMsg]) -> Vec<Option<Playlist>> {
+    states.iter().map(|state| state.playlist.clone()).collect()
+}
+
+/// A new playlist goes to every member with the first state after its
+/// change; the states after it leave it out for a member that took it, and
+/// every member has it.
+#[tokio::test]
+async fn a_playlist_reaches_each_member_once() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &["ep1"]);
+    let charlie = room.join("charlie", &["ep1"]);
+    room.pump();
+    for who in [bob, charlie] {
+        room.peer(who).take_states();
+    }
+
+    let playlist = Playlist::from_iter(["ep1", "ep2"]);
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: playlist.clone(),
+    });
+    room.pump();
+    for _ in 0..3 {
+        room.heartbeat();
+        room.pump();
+    }
+    for who in [bob, charlie] {
+        let carried = playlists(&room.peer(who).take_states());
+        assert_eq!(carried.len(), 4, "the change and three heartbeats");
+        assert_eq!(carried[0], Some(playlist.clone()), "the change carries it");
+        assert_eq!(carried[1..], [None, None, None], "a heartbeat does not");
+    }
+    for who in [alice, bob, charlie] {
+        assert_eq!(room.peer(who).playlist(), playlist);
+        assert_eq!(room.peer(who).ui.state().playlist, playlist);
+    }
+}
+
+/// A message the host's outbox cannot deliver drops its member from the
+/// room. The member connects again and is greeted with what it missed,
+/// the playlist included.
+#[tokio::test]
+async fn a_member_whose_message_failed_rejoins_with_the_rooms_playlist() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &["ep1"]);
+    room.pump();
+
+    room.hold_link(bob);
+    let playlist = Playlist::from_iter(["ep1", "ep2"]);
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: playlist.clone(),
+    });
+    room.pump();
+    assert_eq!(room.peer(bob).playlist(), Playlist::default());
+
+    room.fail_link(bob);
+    room.pump();
+    assert_eq!(room.peer(bob).playlist(), playlist);
+    assert_eq!(room.peer(bob).ui.state().playlist, playlist);
+    assert_eq!(
+        room.peer(alice).ui.state().user_names(),
+        users(&[("alice", false), ("bob", false)]),
+        "bob is back in the room"
+    );
+}
+
+/// What the host sends a member while a message to it is on its way waits
+/// behind it: a heartbeat after a playlist change reaches the member after
+/// the change, never before. Waiting, the heartbeat takes the place of the
+/// change's state, and carries the playlist the member does not have yet.
+#[tokio::test]
+async fn a_heartbeat_waits_behind_a_playlist_change() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &["ep1"]);
+    room.pump();
+    room.peer(bob).take_states();
+
+    room.hold_link(bob);
+    let playlist = Playlist::from_iter(["ep1", "ep2"]);
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: playlist.clone(),
+    });
+    room.pump();
+    room.peer(alice).heartbeat();
+    room.pump();
+    assert_eq!(room.peer(bob).playlist(), Playlist::default());
+    assert!(room.peer(bob).ui.state().actions.is_empty());
+
+    room.release_link(bob);
+    assert_eq!(
+        room.peer(bob).ui.state().actions,
+        ["alice changed playlist"],
+        "the action line was on its way first"
+    );
+    let states = room.peer(bob).take_states();
+    assert_eq!(playlists(&states), [Some(playlist.clone())]);
+    assert_eq!(room.peer(bob).playlist(), playlist);
+
+    room.heartbeat();
+    room.pump();
+    assert_eq!(playlists(&room.peer(bob).take_states()), [None]);
+}
+
+/// A joiner takes the room's playlist from the first state the host sends
+/// it; the states after it leave the playlist out.
+#[tokio::test]
+async fn a_joiner_gets_the_playlist_from_the_greeting() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    room.pump();
+    let playlist = Playlist::from_iter(["ep1", "ep2"]);
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: playlist.clone(),
+    });
+    room.pump();
+
+    let charlie = room.join("charlie", &["ep1"]);
+    room.pump();
+    room.heartbeat();
+    room.pump();
+    let carried = playlists(&room.peer(charlie).take_states());
+    assert_eq!(
+        carried[0],
+        Some(playlist.clone()),
+        "the greeting carries it"
+    );
+    assert!(carried[1..].iter().all(Option::is_none), "{carried:?}");
+    assert_eq!(room.peer(charlie).playlist(), playlist);
+    assert_eq!(room.peer(charlie).ui.state().playlist, playlist);
+}
+
+/// A new playlist that reaches a client while intents of its own are on
+/// their way to the host comes with a state from before them, which the
+/// client ignores. The client keeps the playlist and shows it with the
+/// host's answer.
+#[tokio::test]
+async fn a_playlist_change_while_intents_are_pending_still_reaches_the_client() {
+    let (mut room, alice, bob, charlie) = three_playing_ep1();
+
+    room.peer(bob).player.set(|player| player.paused = true);
+    room.peer(bob).act(PlayerPause);
+    seek(&mut room, bob, 300);
+    let intents = room.hold(bob);
+
+    let playlist = Playlist::from_iter(["ep1", "ep2"]);
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: playlist.clone(),
+    });
+    room.pump();
+    assert_eq!(room.peer(charlie).playlist(), playlist);
+    assert_eq!(
+        room.peer(bob).playlist(),
+        Playlist::from_iter(["ep1"]),
+        "the playlist came before the host's answer"
+    );
+
+    room.release(bob, intents);
+    room.pump();
+    for who in [alice, bob, charlie] {
+        let peer = room.peer(who);
+        assert_eq!(peer.playlist(), playlist);
+        assert_eq!(peer.ui.state().playlist, playlist);
+        assert!(peer.player.state().paused);
+        assert_eq!(peer.player.state().position, Duration::from_secs(300));
+    }
+}
+
+/// A client's playlist edit that never reached the host shadows the room
+/// only while its intent may still be answered; then the client shows the
+/// room's playlist again, which it kept from the host.
+#[tokio::test]
+async fn a_playlist_edit_the_host_never_got_gives_way_to_the_rooms() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &["ep1"]);
+    room.pump();
+    let playlist = Playlist::from_iter(["ep1", "ep2"]);
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: playlist.clone(),
+    });
+    room.pump();
+
+    let edit = Playlist::from_iter(["ep2"]);
+    room.peer(bob).ui.set(|ui| ui.playlist = edit.clone());
+    room.peer(bob).act(ui::PlaylistChange {
+        playlist: edit.clone(),
+    });
+    room.peer(bob).lose_messages();
+    room.heartbeat();
+    room.pump();
+    assert_eq!(room.peer(bob).playlist(), edit);
+
+    // one state ignored above, and the last of these is the first one the
+    // expired intent lets through
+    for _ in 0..PENDING_STATES {
+        room.heartbeat();
+        room.pump();
+    }
+    assert_eq!(room.peer(bob).playlist(), playlist);
+    assert_eq!(room.peer(bob).ui.state().playlist, playlist);
+}
+
+/// What one client asks of the room reaches the host in the order the
+/// client asked it, also when it arrives all at once: the room ends where
+/// the client's last intent puts it, and every chat shows the client's
+/// actions in its order.
+#[tokio::test]
+async fn one_clients_intents_reach_the_host_in_the_order_sent() {
+    let (mut room, alice, bob, charlie) = three_playing_ep1();
+    let before = room.peer(alice).ui.state().actions.len();
+
+    seek(&mut room, bob, 100);
+    seek(&mut room, bob, 200);
+    room.peer(bob).player.set(|player| player.paused = true);
+    room.peer(bob).act(PlayerPause);
+    let held = room.hold(bob);
+    room.release(bob, held);
+    room.pump();
+
+    for who in [alice, bob, charlie] {
+        let peer = room.peer(who);
+        assert_eq!(peer.player.state().position, Duration::from_secs(200));
+        assert!(peer.player.state().paused);
+        assert_eq!(
+            peer.ui.state().actions[before..],
+            [
+                "bob seeked to 100s",
+                "bob seeked to 200s",
+                "bob paused playback"
+            ],
+            "peer {who}"
+        );
+    }
+}
+
+/// A client's message the host never takes ends the client's session,
+/// and what the client asked goes with it. The client connects again and
+/// follows the room as the host has it.
+#[tokio::test]
+async fn a_client_whose_message_failed_rejoins_and_follows_the_room() {
+    let (mut room, alice, bob, charlie) = three_playing_ep1();
+
+    room.peer(bob).player.set(|player| player.paused = true);
+    room.peer(bob).act(PlayerPause);
+    room.fail_request(bob);
+    room.pump();
+
+    for who in [alice, bob, charlie] {
+        let peer = room.peer(who);
+        assert!(!peer.player.state().paused, "peer {who}: the room plays on");
+        assert_eq!(peer.player.state().video, Some(Video::from("ep1")));
+    }
+    assert_eq!(
+        room.peer(alice).ui.state().user_names(),
+        users(&[("alice", false), ("bob", false), ("charlie", false)]),
+        "bob is back in the room"
     );
 }

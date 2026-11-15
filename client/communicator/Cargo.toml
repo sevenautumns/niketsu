@@ -11,16 +11,14 @@ arcstr.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 serde.workspace = true
-serde_json = "1.0"
 serde_bytes = "0.11"
 async-trait.workspace = true
 either = "1"
 futures = "0.3"
 enum_dispatch.workspace = true
-libp2p = { workspace = true, features = [ "dcutr", "dns", "gossipsub", "identify", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat", "kad", "mdns" ] }
+libp2p = { workspace = true, features = [ "dcutr", "dns", "identify", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat", "mdns" ] }
 sha256 = "1.6"
 subtle = "2.6"
-uuid = { version = "1.19.0", features = [ "v4", "serde", "fast-rng" ] }
 
 [dev-dependencies]
 # the codec of libp2p's request_response::cbor, to measure what goes on the wire

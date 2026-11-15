@@ -33,8 +33,9 @@ pub struct EndpointInfo {
 }
 
 /// What the core asks the communicator to deliver. The communicator decides
-/// only *how* a message travels for its role (gossip broadcast, or a direct
-/// request to the host); *whether* and *what* to send is decided here.
+/// only *how* a message travels for its role (from the host to each member,
+/// or from a client to the host); *whether* and *what* to send is decided
+/// here.
 ///
 /// Messages are grouped by the role that may send them, so each role's
 /// handler matches exhaustively over its own group. Which role the core
@@ -45,29 +46,41 @@ pub struct EndpointInfo {
 pub enum OutgoingMessage {
     Room(RoomMessage),
     Host(HostInstruction),
-    /// What only a client sends: a request to the host.
-    Client(IntentMsg),
+    Client(ClientRequest),
 }
 
-/// Sent the same way whichever role this core holds.
+/// Sent whichever role this core holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoomMessage {
+    /// This user's chat line, which its own chat shows already. A client's
+    /// goes to the host, which shows it and passes it on; the host's goes
+    /// to every member.
     UserMessage(UserMessageMsg),
-    FileRequest(FileRequestMsg),
-    FileResponse(FileResponseMsg),
-    FileDecline(FileDeclineMsg),
-    VideoShareChange(VideoShareMsg),
+    /// Streams from the provider it names, in place of the stream this
+    /// peer played.
+    Stream(StreamMsg),
+    /// Ends the stream this peer plays, without a word to the user.
+    StreamEnded(StreamEndedMsg),
 }
 
-/// What only the host sends.
+/// What only the host sends. Each member gets the host's messages in the
+/// order the host sent them, except that a room state still waiting for
+/// its turn gives way to a newer one.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HostInstruction {
-    /// Everything the room agrees on, sent to the room.
+    /// Everything the room agrees on, sent to every member with the
+    /// playlist, which a member gets until it has it.
     RoomState(RoomStateMsg),
-    /// What the host did on a user's behalf, sent to the room's chat.
+    /// What the host did on a user's behalf, sent to every member's chat.
     Action(ActionMsg),
     /// A message for exactly one peer rather than the room.
     ToPeer(ToPeerMsg),
+}
+
+/// What only a client sends: a request to the host.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClientRequest {
+    Intent(IntentMsg),
 }
 
 impl From<RoomMessage> for OutgoingMessage {
@@ -82,8 +95,8 @@ impl From<HostInstruction> for OutgoingMessage {
     }
 }
 
-impl From<IntentMsg> for OutgoingMessage {
-    fn from(value: IntentMsg) -> Self {
+impl From<ClientRequest> for OutgoingMessage {
+    fn from(value: ClientRequest) -> Self {
         Self::Client(value)
     }
 }
@@ -102,13 +115,12 @@ macro_rules! outgoing_from {
 
 outgoing_from! {
     UserMessageMsg => Room(RoomMessage::UserMessage),
-    FileRequestMsg => Room(RoomMessage::FileRequest),
-    FileResponseMsg => Room(RoomMessage::FileResponse),
-    FileDeclineMsg => Room(RoomMessage::FileDecline),
-    VideoShareMsg => Room(RoomMessage::VideoShareChange),
+    StreamMsg => Room(RoomMessage::Stream),
+    StreamEndedMsg => Room(RoomMessage::StreamEnded),
     RoomStateMsg => Host(HostInstruction::RoomState),
     ActionMsg => Host(HostInstruction::Action),
     ToPeerMsg => Host(HostInstruction::ToPeer),
+    IntentMsg => Client(ClientRequest::Intent),
 }
 
 /// What the communicator hands the core. Each message is an event of the
@@ -122,9 +134,7 @@ pub enum IncomingMessage {
     UserMessage(UserMessageMsg),
     Notice(NoticeMsg),
     ForcedRename(ForcedRenameMsg),
-    FileRequest(FileRequestMsg),
-    FileResponse(FileResponseMsg),
-    VideoProviderStopped(VideoProviderStoppedMsg),
+    StreamEnded(StreamEndedMsg),
     PeerConnected(PeerConnectedMsg),
     PeerDisconnected(PeerDisconnectedMsg),
     PeerIntent(PeerIntentMsg),
@@ -134,7 +144,6 @@ pub enum IncomingMessage {
 impl From<DirectMessage> for IncomingMessage {
     fn from(value: DirectMessage) -> Self {
         match value {
-            DirectMessage::RoomState(msg) => msg.into(),
             DirectMessage::Rename(msg) => msg.into(),
         }
     }
