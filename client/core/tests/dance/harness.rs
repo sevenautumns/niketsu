@@ -9,9 +9,8 @@ use niketsu_core::builder::CoreBuilder;
 use niketsu_core::chunk::SharedFile;
 use niketsu_core::communicator::{
     ClientRequest, CommunicatorTrait, ConnectedMsg, DisconnectedMsg, EndpointInfo, HostInstruction,
-    HostRoundTripMsg, IncomingMessage, NoticeMsg, OutgoingMessage, PeerConnectedMsg,
-    PeerDisconnectedMsg, PeerId, PeerIntentMsg, RoomMessage, RoomStateMsg, StreamEndedMsg,
-    StreamMsg,
+    HostRoundTripMsg, IncomingMessage, NoticeMsg, OutgoingMessage, PeerDisconnectedMsg, PeerId,
+    PeerIntentMsg, RoomMessage, RoomStateMsg, StreamEndedMsg, StreamMsg,
 };
 use niketsu_core::config::Config;
 use niketsu_core::file_database::{
@@ -296,13 +295,18 @@ impl UserInterfaceTrait for FakeUi {
 
 type Outbox = Arc<Mutex<Vec<OutgoingMessage>>>;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct FakeCommunicator {
+    peer: PeerId,
     outbox: Outbox,
 }
 
 #[async_trait]
 impl CommunicatorTrait for FakeCommunicator {
+    fn peer(&self) -> PeerId {
+        self.peer
+    }
+
     fn connect(&mut self, _connect: EndpointInfo) {}
 
     fn send(&mut self, msg: OutgoingMessage) {
@@ -490,7 +494,11 @@ impl Peer {
         let (player, player_handle) = FakePlayer::new();
         let (ui, ui_handle) = FakeUi::new();
         let (video_server, server_handle) = FakeVideoServer::new();
-        let communicator = FakeCommunicator::default();
+        let id = peer_id(index);
+        let communicator = FakeCommunicator {
+            peer: id,
+            outbox: Outbox::default(),
+        };
         let outbox = communicator.outbox.clone();
         let config = Config {
             username: ArcStr::from(name),
@@ -516,7 +524,7 @@ impl Peer {
             player: player_handle,
             ui: ui_handle,
             video_server: server_handle,
-            id: peer_id(index),
+            id,
             online: true,
             outbox,
             states: Vec::new(),
@@ -700,33 +708,19 @@ impl Room {
         self.peers.push(peer);
         if index == 0 {
             self.host = index;
-            let peer = self.peers[index].id;
-            self.deliver(
-                index,
-                ConnectedMsg {
-                    is_host: true,
-                    peer,
-                },
-            );
+            self.deliver(index, ConnectedMsg { is_host: true });
         } else {
             self.connect_client(index);
         }
         index
     }
 
-    /// A client's direct connection to the host comes up: the host's
-    /// communicator reports the peer, the client's reports the connection.
+    /// The host takes a client into the room: the host's communicator opens
+    /// the member's link, the client's reports the connection. The host's
+    /// core learns of the member from its status.
     fn connect_client(&mut self, index: usize) {
-        let peer = self.peers[index].id;
         self.links.insert(index, Link::default());
-        self.deliver(self.host, PeerConnectedMsg { peer });
-        self.deliver(
-            index,
-            ConnectedMsg {
-                is_host: false,
-                peer,
-            },
-        );
+        self.deliver(index, ConnectedMsg { is_host: false });
     }
 
     fn index_of(&self, id: &PeerId) -> Option<usize> {
@@ -751,14 +745,7 @@ impl Room {
                 self.end_session(index);
             }
         }
-        let peer = self.peers[target].id;
-        self.deliver(
-            target,
-            ConnectedMsg {
-                is_host: true,
-                peer,
-            },
-        );
+        self.deliver(target, ConnectedMsg { is_host: true });
         for index in 0..self.peers.len() {
             if index != target && self.peers[index].online {
                 self.connect_client(index);
@@ -990,13 +977,10 @@ impl Room {
     }
 
     /// The transport rules of `client/communicator`:
-    /// - the host sends the room state and the action lines to every member,
-    ///   through the member's [`Link`]
+    /// - the host sends the room state and the lines to every member,
+    ///   through the member's [`Link`], a chat line to every member but its
+    ///   author
     /// - a client's intent is a request to the host
-    /// - a client's chat line goes to the host, which passes it on to every
-    ///   member but its author; the host's goes to every member, so each
-    ///   other peer gets each line once
-    /// - `ToPeer` goes to exactly that peer, through its [`Link`]
     /// - a file request travels directly to the provider it names, whose
     ///   communicator answers it from what its provider offers
     fn route(&mut self, from: usize, msg: OutgoingMessage) -> Vec<(usize, IncomingMessage)> {
@@ -1011,20 +995,21 @@ impl Room {
         }
     }
 
-    /// The host's instructions: to every member, or to one peer.
+    /// The host's instructions, to every member but the author of a chat
+    /// line.
     fn route_instruction(
         &mut self,
         from: usize,
         msg: HostInstruction,
     ) -> Vec<(usize, IncomingMessage)> {
-        let (members, msg): (Vec<usize>, IncomingMessage) = match msg {
-            HostInstruction::RoomState(m) => (self.members(from), m.into()),
-            HostInstruction::Action(m) => (self.members(from), m.into()),
-            HostInstruction::ToPeer(m) => match self.index_of(&m.peer) {
-                Some(to) => (vec![to], m.message.into()),
-                None => (vec![], m.message.into()),
-            },
+        let (author, msg): (Option<PeerId>, IncomingMessage) = match msg {
+            HostInstruction::RoomState(m) => (None, m.into()),
+            HostInstruction::Line(m) => (m.author(), m.into()),
         };
+        let members = self.members(from).into_iter();
+        let members: Vec<usize> = members
+            .filter(|to| Some(self.peers[*to].id) != author)
+            .collect();
         members
             .into_iter()
             .filter_map(|to| self.send_to_member(to, msg.clone()))
@@ -1069,14 +1054,7 @@ impl Room {
     }
 
     fn route_room(&mut self, from: usize, msg: RoomMessage) -> Vec<(usize, IncomingMessage)> {
-        let others = |m: IncomingMessage| -> Vec<(usize, IncomingMessage)> {
-            (0..self.peers.len())
-                .filter(|to| *to != from && self.peers[*to].online)
-                .map(|to| (to, m.clone()))
-                .collect()
-        };
         match msg {
-            RoomMessage::UserMessage(m) => others(m.into()),
             RoomMessage::Stream(m) => self.stream(from, m),
             RoomMessage::StreamEnded(_) => {
                 self.streams.remove(&from);

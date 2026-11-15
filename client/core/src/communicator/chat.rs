@@ -1,18 +1,10 @@
 //! How a message reads as a line in the chat.
 
 use arcstr::ArcStr;
+use multiaddr::PeerId;
 
 use super::messages::*;
 use crate::ui::{MessageLevel, MessageSource, PlayerMessage};
-
-/// A line about something `actor` did in the room.
-fn action(actor: ArcStr, message: String) -> PlayerMessage {
-    PlayerMessage::new(
-        message,
-        MessageSource::UserAction(actor),
-        MessageLevel::Normal,
-    )
-}
 
 impl From<ConnectedMsg> for PlayerMessage {
     fn from(_: ConnectedMsg) -> Self {
@@ -24,12 +16,12 @@ impl From<ConnectedMsg> for PlayerMessage {
     }
 }
 
-impl IntentMsg {
-    /// The line telling the room what the host did for this intent. A
-    /// user's status gets none, the user list shows it.
-    pub(crate) fn action(&self) -> Option<ActionMsg> {
-        let actor = &self.actor;
-        let message = match &self.intent {
+impl Intent {
+    /// The line telling the room what the host did for this intent of
+    /// `actor`, the user at `peer`. A user's status gets none, the user
+    /// list shows it.
+    pub(crate) fn line(&self, actor: &ArcStr, peer: PeerId) -> Option<LineMsg> {
+        let message = match self {
             Intent::Pause | Intent::CachePause => format!("{actor} paused playback"),
             Intent::Start => format!("{actor} started playback"),
             Intent::Speed(speed) => format!("{actor} changed playback speed to {speed}"),
@@ -39,29 +31,31 @@ impl IntentMsg {
             } => format!("{actor} selected {}", video.as_str()),
             Intent::Select { video: None, .. } => format!("{actor} unselected video"),
             Intent::Playlist(_) => format!("{actor} changed playlist"),
+            Intent::Chat(message) => {
+                return Some(LineMsg {
+                    actor: actor.clone(),
+                    message: message.clone(),
+                    kind: LineKind::Chat { author: peer },
+                });
+            }
             // the line of an ended video is that of the selection after it
             Intent::Status(_) | Intent::Ended(_) => return None,
         };
-        Some(ActionMsg {
+        Some(LineMsg {
             actor: actor.clone(),
             message,
+            kind: LineKind::Action,
         })
     }
 }
 
-impl From<ActionMsg> for PlayerMessage {
-    fn from(value: ActionMsg) -> Self {
-        action(value.actor, value.message)
-    }
-}
-
-impl From<UserMessageMsg> for PlayerMessage {
-    fn from(value: UserMessageMsg) -> Self {
-        PlayerMessage::new(
-            value.message,
-            MessageSource::UserMessage(value.actor),
-            MessageLevel::Normal,
-        )
+impl From<LineMsg> for PlayerMessage {
+    fn from(value: LineMsg) -> Self {
+        let source = match value.kind {
+            LineKind::Action => MessageSource::UserAction(value.actor),
+            LineKind::Chat { .. } => MessageSource::UserMessage(value.actor),
+        };
+        PlayerMessage::new(value.message, source, MessageLevel::Normal)
     }
 }
 
@@ -77,9 +71,10 @@ impl From<NoticeMsg> for PlayerMessage {
     }
 }
 
-impl From<ForcedRenameMsg> for PlayerMessage {
-    fn from(value: ForcedRenameMsg) -> Self {
-        let name = value.name;
+impl PlayerMessage {
+    /// The line telling this core's user that the room knows them by
+    /// `name`, which another user went by when they asked for theirs.
+    pub(crate) fn renamed(name: &ArcStr) -> Self {
         PlayerMessage::new(
             format!("Username changed to {name}"),
             MessageSource::Room,

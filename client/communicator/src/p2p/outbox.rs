@@ -93,7 +93,7 @@ impl<R: PartialEq> Outbox<R> {
 
 #[cfg(test)]
 mod tests {
-    use niketsu_core::communicator::{ActionMsg, RoomStateMsg, UserMessageMsg};
+    use niketsu_core::communicator::{Intent, LineKind, LineMsg, RoomStateMsg};
     use niketsu_core::playlist::Playlist;
 
     use super::*;
@@ -127,16 +127,14 @@ mod tests {
     }
 
     fn line(message: &str) -> NiketsuMessage {
-        NiketsuMessage::UserMessage(UserMessageMsg {
-            actor: "someone".into(),
-            message: message.into(),
-        })
+        Intent::Chat(message.into()).into()
     }
 
     fn action(message: &str) -> NiketsuMessage {
-        NiketsuMessage::Action(ActionMsg {
+        NiketsuMessage::Line(LineMsg {
             actor: "someone".into(),
             message: message.into(),
+            kind: LineKind::Action,
         })
     }
 

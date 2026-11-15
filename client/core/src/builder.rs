@@ -10,7 +10,7 @@ use crate::player::wrapper::MediaPlayerWrapper;
 use crate::playlist::file::PlaylistBrowser;
 use crate::room::{Authority, Followed, Role, RoomState};
 use crate::ui::UserInterfaceTrait;
-use crate::user::UserStatus;
+use crate::user::User;
 use crate::video_provider::VideoProviderTrait;
 use crate::{Core, CoreModel, PlaylistSaver, SavedPlaylistLoader, VideoServerTrait};
 
@@ -36,10 +36,11 @@ impl From<CoreBuilder> for CoreModel {
     fn from(builder: CoreBuilder) -> Self {
         // in no room, the core is the authority over a room of one
         let mut state = RoomState::new(Instant::now());
-        state.users.update_local(UserStatus {
+        let me = User {
             name: builder.config.username.clone(),
             ..Default::default()
-        });
+        };
+        state.users.insert(builder.communicator.peer(), me);
         Self {
             state,
             role: Role::Authority(Authority::default()),

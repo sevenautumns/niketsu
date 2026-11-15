@@ -6,7 +6,7 @@
 //! roles the player and the UI are brought in line with the state by the
 //! same [`CoreModel::follow`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use arcstr::ArcStr;
@@ -15,24 +15,22 @@ use tokio::time::Instant;
 use tracing::{debug, warn};
 
 use crate::CoreModel;
-pub(crate) use crate::UserStatusListMsg;
-use crate::communicator::{
-    DirectMessage, ForcedRenameMsg, Intent, IntentMsg, RoomStateMsg, StreamEndedMsg, ToPeerMsg,
-};
+use crate::communicator::{Intent, RoomStateMsg, StreamEndedMsg};
 use crate::player::MediaPlayerTrait;
 use crate::playlist::{Playlist, Video};
 use crate::sync::ClientSync;
-pub(crate) use crate::user::UserStatus;
+use crate::ui::PlayerMessage;
+use crate::user::{User, UserStatus};
 
 mod state;
 mod users;
 
-use state::HOST_ACTOR;
 pub use state::{RoomState, Timeline, select_next};
-pub use users::{NameSuffixes, RoomUsers};
+pub use users::NameSuffixes;
 
 pub type RoomName = ArcStr;
 
+/// The room's users as the UI shows them.
 #[derive(Debug, Clone, Default)]
 pub struct UserList {
     room: RoomName,
@@ -61,15 +59,6 @@ impl UserList {
     }
 }
 
-impl From<UserStatusListMsg> for UserList {
-    fn from(value: UserStatusListMsg) -> Self {
-        Self {
-            room: value.room_name,
-            list: value.users,
-        }
-    }
-}
-
 /// Whose word the room's state is.
 #[derive(Debug, Clone)]
 pub enum Role {
@@ -80,12 +69,11 @@ pub enum Role {
     Follower(ClientSync),
 }
 
-/// What only the authority over a room keeps: how its states are told
-/// apart, and where the room's users reach it.
+/// What only the authority over a room keeps: whether its room has other
+/// users to reach, and how its states are told apart.
 #[derive(Debug, Clone, Default)]
 pub struct Authority {
-    /// This core's own peer id while it hosts a room.
-    hosting: Option<PeerId>,
+    hosting: bool,
     version: u64,
     /// The version that set the playlist, see `RoomStateMsg`.
     playlist: u64,
@@ -99,7 +87,9 @@ pub struct Followed {
     /// holds.
     playlist: Playlist,
     video: Option<Video>,
-    users: UserStatusListMsg,
+    /// The room and the users the UI's user list shows.
+    room: Option<RoomName>,
+    users: BTreeMap<PeerId, User>,
     /// The UI's user edited the playlist or selected a video. The UI shows
     /// that already, whether or not the room takes it.
     pub(crate) unconfirmed: bool,
@@ -119,7 +109,8 @@ impl Default for Followed {
         Self {
             playlist: Playlist::default(),
             video: None,
-            users: UserStatusListMsg::default(),
+            room: None,
+            users: BTreeMap::new(),
             unconfirmed: false,
             player: None,
             loaded: false,
@@ -129,19 +120,18 @@ impl Default for Followed {
     }
 }
 
-fn same_users(a: &UserStatusListMsg, b: &UserStatusListMsg) -> bool {
-    a.room_name == b.room_name
-        && a.users.len() == b.users.len()
-        && a.users.iter().zip(&b.users).all(|(a, b)| a.same_as(b))
-}
-
 impl CoreModel {
     pub fn is_host(&self) -> bool {
-        matches!(&self.role, Role::Authority(authority) if authority.hosting.is_some())
+        matches!(&self.role, Role::Authority(authority) if authority.hosting)
     }
 
     fn is_authority(&self) -> bool {
         matches!(self.role, Role::Authority(_))
+    }
+
+    /// This core's own peer id, under which the room knows its user.
+    pub(crate) fn me(&self) -> PeerId {
+        self.communicator.peer()
     }
 
     /// A session with the configured room began, in which this core hosts
@@ -151,8 +141,8 @@ impl CoreModel {
     /// playlist, selection and position — so a lost host does not interrupt
     /// playback. Otherwise the room starts from its saved playlist, which
     /// the host's chat tells as the room's own changes. Nobody else is in
-    /// the room yet: a peer joining is greeted with the room's state.
-    pub(crate) fn connected(&mut self, is_host: bool, peer: PeerId) {
+    /// the room yet: a peer is in it from its first status on.
+    pub(crate) fn connected(&mut self, is_host: bool) {
         let now = Instant::now();
         let room = self.config.room.clone();
         let followed = self.state.room.as_ref() == Some(&room);
@@ -165,13 +155,13 @@ impl CoreModel {
             return self.publish_status();
         }
         self.role = Role::Authority(Authority {
-            hosting: Some(peer),
+            hosting: true,
             ..Default::default()
         });
+        self.alone();
         if !followed {
             self.restore_saved(now);
         }
-        self.alone();
         self.follow(now);
         self.publish_change(false, now);
     }
@@ -207,35 +197,19 @@ impl CoreModel {
 
     /// A line in this core's own chat for what it did on the room's behalf.
     fn show_action(&mut self, intent: Intent) {
-        let actor = HOST_ACTOR;
-        if let Some(action) = (IntentMsg { actor, intent }).action() {
-            self.ui.player_message(action.into());
+        if let Some(line) = self.state.line(self.me(), &intent) {
+            self.ui.player_message(line.into());
         }
     }
 
     /// Nobody but this core's own user is in the room.
     fn alone(&mut self) {
-        self.state.users = RoomUsers::default();
-        let status = self.own_status();
-        self.state.users.update_local(status);
-    }
-
-    /// The host greets a peer that is reachable over a direct connection
-    /// with the room's state. To the other members it is a heartbeat. A
-    /// peer connecting again keeps its place.
-    pub(crate) fn greet_peer(&mut self, peer: PeerId) {
-        if !self.is_authority() {
-            return debug!(%peer, "a peer connected to a follower");
-        }
-        if !self.state.users.contains(&peer) {
-            self.state.users.add_connected(peer);
-        }
-        self.publish_room(Instant::now());
+        self.state.users = BTreeMap::from([(self.me(), self.own_user())]);
     }
 
     /// The host drops a peer whose last connection closed.
     pub(crate) fn peer_left(&mut self, peer: PeerId) {
-        if !self.is_authority() || !self.state.users.remove(&peer) {
+        if !self.is_authority() || self.state.users.remove(&peer).is_none() {
             return debug!(%peer, "disconnected peer was not in this core's room");
         }
         let now = Instant::now();
@@ -248,92 +222,64 @@ impl CoreModel {
     /// its state and player alone: what the user did in the player or the
     /// UI shows there already, and the rest comes with the host's state.
     pub fn request(&mut self, intent: Intent) {
-        let msg = IntentMsg {
-            actor: self.config.username.clone(),
-            intent,
-        };
         if let Role::Follower(sync) = &mut self.role {
             sync.intent_sent();
-            return self.communicator.send(msg.into());
+            return self.communicator.send(intent.into());
         }
-        self.handle_intent(None, msg);
+        self.handle_intent(self.me(), intent);
     }
 
     /// Announces our own status.
     pub fn publish_status(&mut self) {
-        let status = self.own_status();
-        self.request(Intent::Status(status));
+        let user = self.own_user();
+        self.request(Intent::Status(user));
     }
 
     /// This core's user as the room is to know it. What this peer offers is
     /// read from the video provider's route, which the communicator answers
     /// file requests from.
-    fn own_status(&self) -> UserStatus {
-        let hosting = match &self.role {
-            Role::Authority(authority) => authority.hosting,
-            Role::Follower(_) => None,
-        };
+    fn own_user(&self) -> User {
         let player = self.followed.player.clone();
-        UserStatus {
+        User {
             name: self.config.username.clone(),
             ready: self.ready,
-            offers: self.video_provider.offered(),
             loaded: player.filter(|_| self.followed.loaded),
-            peer: hosting,
+            offers: self.video_provider.offered(),
         }
     }
 
     /// The peers the room shows offering `video`, with the size of their
     /// file.
     pub(crate) fn providers_of(&self, video: &Video) -> Vec<(PeerId, u64)> {
-        let offer = |user: &UserStatus| {
-            let file = user.offers.as_ref().filter(|f| f.name == video.as_str())?;
-            Some((user.peer?, file.size))
-        };
-        self.state.users.list().iter().filter_map(offer).collect()
+        let offer = |(peer, user): (&PeerId, &User)| Some((*peer, user.offer_of(video)?.size));
+        self.state.users.iter().filter_map(offer).collect()
     }
 
-    /// The authority handles what a user asks of the room, a peer's intent
-    /// or, without `peer`, its own user's, and publishes the outcome.
+    /// The authority handles what the user at `peer` asks of the room, and
+    /// publishes the outcome.
     ///
     /// It tells the room's chat what it did. This is the only source of the
-    /// room's action lines: the authority shows each line itself, and every
-    /// client, the actor included, shows it when it arrives.
-    pub(crate) fn handle_intent(&mut self, peer: Option<PeerId>, msg: IntentMsg) {
+    /// room's lines: the authority shows each line itself, and every
+    /// client shows it when it arrives. A chat line is the exception, which
+    /// its author's chat shows from the moment it was written.
+    pub(crate) fn handle_intent(&mut self, peer: PeerId, intent: Intent) {
         if !self.is_authority() {
-            return warn!(?msg, "received an intent while following a host");
+            return warn!(?intent, "received an intent while following a host");
         }
         let now = Instant::now();
-        let playlist_set = matches!(msg.intent, Intent::Playlist(_));
-        let asked_name = match &msg.intent {
-            Intent::Status(status) => Some(status.name.clone()),
-            _ => None,
-        };
+        let playlist_set = matches!(intent, Intent::Playlist(_));
+        let me = self.me();
         let hosting = self.is_host();
-        for line in self.state.apply(peer, msg, now) {
-            self.ui.player_message(line.clone().into());
+        for line in self.state.apply(peer, intent, now) {
+            if line.author() != Some(me) {
+                self.ui.player_message(line.clone().into());
+            }
             if hosting {
                 self.communicator.send(line.into());
             }
         }
-        if let (Some(peer), Some(asked)) = (peer, asked_name) {
-            self.tell_forced_name(peer, &asked);
-        }
         self.follow(now);
         self.publish_change(playlist_set, now);
-    }
-
-    /// Tells `peer` the name the room gave it, if that is not the one it
-    /// asked for.
-    fn tell_forced_name(&mut self, peer: PeerId, asked: &ArcStr) {
-        let Some(Some(status)) = self.state.users.peer_status(&peer) else {
-            return;
-        };
-        if status.name != *asked {
-            let name = status.name.clone();
-            let rename = DirectMessage::Rename(ForcedRenameMsg { name });
-            self.communicator.send(ToPeerMsg::new(peer, rename).into());
-        }
     }
 
     /// A follower takes the state its host published.
@@ -354,7 +300,7 @@ impl CoreModel {
         }
         self.state.video = msg.video;
         self.state.timeline = Timeline::at(position, msg.paused, msg.speed, msg.jumps, now);
-        self.state.users = RoomUsers::listed(msg.users.users);
+        self.state.users = msg.users;
         self.follow(now);
     }
 
@@ -382,11 +328,28 @@ impl CoreModel {
             self.save_playlist();
         }
         self.follow_playback(now);
-        let users = self.user_list();
-        if !same_users(&users, &self.followed.users) {
-            self.followed.users = users.clone();
-            self.ui.user_list(users.into());
+        self.take_given_name();
+        let users_changed = self.followed.users != self.state.users;
+        if users_changed || self.followed.room != self.state.room || video_changed {
+            self.followed.users = self.state.users.clone();
+            self.followed.room = self.state.room.clone();
+            self.ui.user_list(self.user_list());
         }
+    }
+
+    /// This core's user goes by the name the room knows it by, which is
+    /// another than the one it asked for when another user goes by that.
+    fn take_given_name(&mut self) {
+        let Some(user) = self.state.users.get(&self.me()) else {
+            return;
+        };
+        if user.name == self.config.username {
+            return;
+        }
+        let name = user.name.clone();
+        self.config.username = name.clone();
+        self.ui.username_change(name.clone());
+        self.ui.player_message(PlayerMessage::renamed(&name));
     }
 
     /// The player loads the selected video where the room is in it.
@@ -470,7 +433,7 @@ impl CoreModel {
         let Role::Authority(authority) = &self.role else {
             return;
         };
-        if authority.hosting.is_none() {
+        if !authority.hosting {
             return;
         }
         let timeline = &self.state.timeline;
@@ -483,15 +446,23 @@ impl CoreModel {
             position: timeline.position_at(now),
             paused: timeline.paused(),
             speed: timeline.speed(),
-            users: self.user_list(),
+            users: self.state.users.clone(),
         };
         self.communicator.send(state.into());
     }
 
-    fn user_list(&self) -> UserStatusListMsg {
-        UserStatusListMsg {
-            room_name: self.state.room.clone().unwrap_or_default(),
-            users: self.state.users.list().clone(),
+    /// The users as the UI shows them. An offer shows while it is one of
+    /// the selected video.
+    fn user_list(&self) -> UserList {
+        let video = self.state.video.as_ref();
+        let shown = |user: &User| UserStatus {
+            name: user.name.clone(),
+            ready: user.ready,
+            offers: video.and_then(|video| user.offer_of(video)).cloned(),
+        };
+        UserList {
+            room: self.state.room.clone().unwrap_or_default(),
+            list: self.state.users.values().map(shown).collect(),
         }
     }
 }
@@ -532,40 +503,5 @@ mod tests {
 
         // Now, it should not be empty
         assert!(!room_list.is_empty());
-    }
-
-    #[test]
-    fn test_from_niketsu_user_status() {
-        let mut btreeset = BTreeSet::new();
-
-        btreeset.insert(UserStatus {
-            name: arcstr::literal!("User1"),
-            ready: true,
-            ..Default::default()
-        });
-
-        let user_list: UserList = UserStatusListMsg {
-            room_name: arcstr::literal!("room"),
-            users: btreeset,
-        }
-        .into();
-
-        // Ensure the RoomList contains the converted data.
-        assert!(user_list.iter().any(|user| user.name == "User1"));
-    }
-
-    #[test]
-    fn users_differ_by_more_than_their_names() {
-        let list = |ready: bool| UserStatusListMsg {
-            room_name: "room".into(),
-            users: BTreeSet::from([UserStatus {
-                name: "alice".into(),
-                ready,
-                ..Default::default()
-            }]),
-        };
-
-        assert!(same_users(&list(true), &list(true)));
-        assert!(!same_users(&list(true), &list(false)));
     }
 }

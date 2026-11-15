@@ -1,41 +1,51 @@
 use arcstr::ArcStr;
-use multiaddr::PeerId;
 use serde::{Deserialize, Serialize};
 
 use super::chunk::SharedFile;
 use super::playlist::Video;
 use super::ui::UserChange;
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, Default)]
+/// A user of the room, as the room's authority keeps it and publishes it.
+/// What a user says about a video names that video, and counts while the
+/// room has it selected: nobody clears it when the selection changes.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct User {
+    /// The name the room knows the user by. The authority gives a user
+    /// whose name another user goes by a name of its own.
+    pub name: ArcStr,
+    pub ready: bool,
+    /// The video the user's player has loaded.
+    pub loaded: Option<Video>,
+    /// The file the user offers to the others.
+    pub offers: Option<SharedFile>,
+}
+
+impl User {
+    /// Whether the user's player has `video` loaded.
+    pub fn has_loaded(&self, video: &Video) -> bool {
+        self.loaded.as_ref() == Some(video)
+    }
+
+    /// What the user offers of `video`.
+    pub fn offer_of(&self, video: &Video) -> Option<&SharedFile> {
+        self.offers
+            .as_ref()
+            .filter(|file| file.name == video.as_str())
+    }
+}
+
+/// A user as the UI shows it: by name, ready or not, and what it offers of
+/// the selected video. Users are told apart and ordered by name, which is
+/// what the user list is sorted by.
+#[derive(Debug, Clone, Eq, Default)]
 pub struct UserStatus {
     pub name: ArcStr,
     pub ready: bool,
-    /// The file this user offers to the others. The host keeps an offer
-    /// only of the room's selected video and drops every offer when the
-    /// selection changes, so in a room state it is the selected video or
-    /// nothing. The name is kept because a status can reach the host after
-    /// the selection it was sent for has changed.
     pub offers: Option<SharedFile>,
-    /// The video the user's player has loaded. It counts while it names the
-    /// room's selected video.
-    pub loaded: Option<Video>,
-    /// Where the host reaches the user. The host sets it from the
-    /// connection; what a user sends is ignored.
-    pub peer: Option<PeerId>,
 }
 
 impl UserStatus {
-    /// Whether everything about the two users is the same. Equality only
-    /// compares the names, which is what the user list is ordered by.
-    pub fn same_as(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.ready == other.ready
-            && self.offers == other.offers
-            && self.loaded == other.loaded
-            && self.peer == other.peer
-    }
-
     pub fn ready(&mut self) {
         self.ready = true;
     }

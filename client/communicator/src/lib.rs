@@ -211,6 +211,10 @@ impl P2PCommunicator {
 
 #[async_trait]
 impl CommunicatorTrait for P2PCommunicator {
+    fn peer(&self) -> PeerId {
+        self.node.keypair.public().to_peer_id()
+    }
+
     fn connect(&mut self, endpoint: EndpointInfo) {
         self.endpoint.replace(endpoint.clone());
         self.connection = Connection::Connecting(Connecting::new(
@@ -322,9 +326,10 @@ mod test {
     /// core, also when the core finds the connection ended by sending.
     #[tokio::test]
     async fn messages_of_an_ended_connection_survive_a_failed_send() {
-        let last_words = UserMessageMsg {
+        let last_words = LineMsg {
             actor: "bob".into(),
             message: "bye".into(),
+            kind: LineKind::Action,
         };
         let mut communicator = communicator();
         communicator.connection = Connection::Connected(Connected {
@@ -333,7 +338,7 @@ mod test {
 
         communicator.send(StreamEndedMsg.into());
 
-        let IncomingMessage::UserMessage(received) = communicator.receive().await else {
+        let IncomingMessage::Line(received) = communicator.receive().await else {
             panic!("the message was dropped with the connection");
         };
         assert_eq!(received, last_words);

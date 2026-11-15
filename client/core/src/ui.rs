@@ -11,7 +11,7 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
 use tracing::{Level, trace};
 
-use super::communicator::{Intent, StreamMsg, UserMessageMsg};
+use super::communicator::{Intent, StreamMsg};
 use super::playlist::Video;
 use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
@@ -117,14 +117,12 @@ pub struct UserMessage {
     pub message: String,
 }
 
+/// The room's host stamps the line with the name the room knows this user
+/// by, and tells everyone else.
 impl EventHandler for UserMessage {
     fn handle(self, model: &mut CoreModel) {
         trace!("user chat message");
-        let actor = model.config.username.clone();
-        let message = self.message;
-        model
-            .communicator
-            .send(UserMessageMsg { actor, message }.into())
+        model.request(Intent::Chat(self.message));
     }
 }
 
@@ -623,12 +621,13 @@ mod tests {
 
     use super::*;
     use crate::builder::CoreBuilder;
-    use crate::communicator::{EndpointInfo, IntentMsg, MockCommunicatorTrait, OutgoingMessage};
+    use crate::communicator::{EndpointInfo, MockCommunicatorTrait, OutgoingMessage};
     use crate::config::Config;
     use crate::file_database::MockFileDatabaseTrait;
     use crate::player::MockMediaPlayerTrait;
     use crate::room::Role;
     use crate::sync::ClientSync;
+    use crate::user::User;
     use crate::util::Observed;
     use crate::{MockVideoProviderTrait, MockVideoServerTrait};
 
@@ -638,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_server_change() {
-        let mut communicator = MockCommunicatorTrait::default();
+        let mut communicator = MockCommunicatorTrait::with_peer();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
@@ -689,7 +688,7 @@ mod tests {
 
     #[test]
     fn test_user_change() {
-        let mut communicator = MockCommunicatorTrait::default();
+        let mut communicator = MockCommunicatorTrait::with_peer();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
@@ -704,14 +703,11 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(IntentMsg {
-            actor: user_new.clone(),
-            intent: Intent::Status(UserStatus {
-                ready,
-                name: user_new.clone(),
-                ..Default::default()
-            }),
-        });
+        let message = OutgoingMessage::from(Intent::Status(User {
+            ready,
+            name: user_new.clone(),
+            ..Default::default()
+        }));
 
         communicator
             .expect_send()
@@ -746,7 +742,7 @@ mod tests {
 
     #[test]
     fn test_user_message() {
-        let mut communicator = MockCommunicatorTrait::default();
+        let mut communicator = MockCommunicatorTrait::with_peer();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
@@ -759,10 +755,7 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(UserMessageMsg {
-            actor: user.clone(),
-            message: user_msg.clone(),
-        });
+        let message = OutgoingMessage::from(Intent::Chat(user_msg.clone()));
 
         communicator
             .expect_send()
@@ -779,6 +772,8 @@ mod tests {
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
+        // a follower's line goes to its host, which stamps it
+        core.model.role = Role::Follower(ClientSync::default());
 
         let change = UserMessage { message: user_msg };
         change.handle(&mut core.model);
@@ -786,7 +781,7 @@ mod tests {
 
     #[test]
     fn test_file_database_change_start_stop() {
-        let communicator = MockCommunicatorTrait::default();
+        let communicator = MockCommunicatorTrait::with_peer();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
@@ -817,7 +812,7 @@ mod tests {
 
     #[test]
     fn test_file_database_change_paths() {
-        let communicator = MockCommunicatorTrait::default();
+        let communicator = MockCommunicatorTrait::with_peer();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();

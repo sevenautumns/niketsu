@@ -1,7 +1,7 @@
 //! The messages themselves: what each one carries, and how those that
 //! travel between peers look on the wire.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use arcstr::ArcStr;
@@ -9,23 +9,11 @@ use multiaddr::PeerId;
 use serde::{Deserialize, Serialize};
 
 use crate::playlist::{Playlist, Video};
-use crate::room::RoomName;
-use crate::user::UserStatus;
+use crate::user::User;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConnectedMsg {
     pub is_host: bool,
-    /// This peer's own id, under which the room's users reach it.
-    pub peer: PeerId,
-}
-
-/// A peer reachable over a direct connection, so room messages can flow.
-/// The host greets it with the room state. This repeats for every new
-/// direct connection to the same peer, as any of them can be the peer
-/// starting over after a reconnect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PeerConnectedMsg {
-    pub peer: PeerId,
 }
 
 /// The last direct connection to a peer closed.
@@ -38,31 +26,13 @@ pub struct PeerDisconnectedMsg {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PeerIntentMsg {
     pub peer: PeerId,
-    pub intent: IntentMsg,
+    pub intent: Intent,
 }
 
 /// One measured round trip to the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostRoundTripMsg {
     pub rtt: Duration,
-}
-
-/// What the host can address to a single peer.
-#[derive(Debug, Clone, PartialEq)]
-pub enum DirectMessage {
-    Rename(ForcedRenameMsg),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ToPeerMsg {
-    pub peer: PeerId,
-    pub message: DirectMessage,
-}
-
-impl ToPeerMsg {
-    pub fn new(peer: PeerId, message: DirectMessage) -> Self {
-        Self { peer, message }
-    }
 }
 
 /// Everything the room agrees on, as the host publishes it.
@@ -92,18 +62,12 @@ pub struct RoomStateMsg {
     pub position: Duration,
     pub paused: bool,
     pub speed: f64,
-    pub users: UserStatusListMsg,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct UserStatusListMsg {
-    pub room_name: RoomName,
-    pub users: BTreeSet<UserStatus>,
+    /// Every user of the room, the host's own included, by peer id.
+    pub users: BTreeMap<PeerId, User>,
 }
 
 /// What a user wants of the room. The host decides and publishes the
-/// outcome in its room state.
+/// outcome in its room state. Who asks is the peer the intent came from.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Intent {
@@ -130,31 +94,41 @@ pub enum Intent {
     Ended(Video),
     Playlist(Playlist),
     /// The user's own name and readiness, and what its player has loaded
-    /// and offers.
-    Status(UserStatus),
+    /// and offers. The user is in the room from its first status on.
+    Status(User),
+    /// A line the user wrote in the chat.
+    Chat(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IntentMsg {
-    pub actor: ArcStr,
-    pub intent: Intent,
-}
-
-/// The chat line for what the host did on a user's behalf. The room state
-/// carries the outcome, so this carries no more than the line.
+/// A line of the room's chat, which the host stamps with the name of the
+/// user it is about.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ActionMsg {
+pub struct LineMsg {
     pub actor: ArcStr,
     pub message: String,
+    pub kind: LineKind,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UserMessageMsg {
-    pub actor: ArcStr,
-    pub message: String,
+pub enum LineKind {
+    /// What the host did on the actor's behalf. Everyone shows it when it
+    /// arrives, the actor included.
+    Action,
+    /// What the actor wrote. Its author's chat shows it from the moment it
+    /// was written, so the line goes to everyone else.
+    Chat { author: PeerId },
+}
+
+impl LineMsg {
+    /// The peer whose chat shows this line already.
+    pub fn author(&self) -> Option<PeerId> {
+        match self.kind {
+            LineKind::Chat { author } => Some(author),
+            LineKind::Action => None,
+        }
+    }
 }
 
 /// This core is in no room: its session ended, or a connection attempt
@@ -176,13 +150,6 @@ impl NoticeMsg {
             message: message.into(),
         }
     }
-}
-
-/// The host renames a peer whose name another user of the room goes by.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ForcedRenameMsg {
-    pub name: ArcStr,
 }
 
 /// The local video server's chunks are fetched from `provider`, a user the

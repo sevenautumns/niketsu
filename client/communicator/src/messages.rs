@@ -9,14 +9,12 @@ use serde::{Deserialize, Serialize};
 pub(super) enum NiketsuMessage {
     /// The host's room state, to every member.
     RoomState(RoomStateMsg),
-    /// What the host did on a user's behalf, for the chat.
-    Action(ActionMsg),
-    /// A client asks the host for a change of the room.
-    Intent(IntentMsg),
-    /// A line of chat: from a client to the host, and from the host to
-    /// every member but its author.
-    UserMessage(UserMessageMsg),
-    ForcedRename(ForcedRenameMsg),
+    /// A line of the room's chat, from the host to every member but the
+    /// author of a chat line.
+    Line(LineMsg),
+    /// A client asks the host for a change of the room. A field rather
+    /// than a newtype: the tag of a message needs a map to go in.
+    Intent { intent: Intent },
     /// A client asks the host to take it into the room. Only the
     /// communicator sees it.
     Join,
@@ -35,34 +33,31 @@ macro_rules! wire_from {
 
 wire_from! {
     RoomStateMsg => RoomState,
-    ActionMsg => Action,
-    IntentMsg => Intent,
-    UserMessageMsg => UserMessage,
-    ForcedRenameMsg => ForcedRename,
+    LineMsg => Line,
 }
 
-impl From<DirectMessage> for NiketsuMessage {
-    fn from(value: DirectMessage) -> Self {
-        match value {
-            DirectMessage::Rename(msg) => msg.into(),
-        }
+impl From<Intent> for NiketsuMessage {
+    fn from(intent: Intent) -> Self {
+        Self::Intent { intent }
     }
 }
 
 impl From<ClientRequest> for NiketsuMessage {
     fn from(value: ClientRequest) -> Self {
         match value {
-            ClientRequest::Intent(msg) => msg.into(),
+            ClientRequest::Intent(intent) => intent.into(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::time::Duration;
 
+    use libp2p::PeerId;
     use niketsu_core::playlist::Playlist;
-    use niketsu_core::user::UserStatus;
+    use niketsu_core::user::User;
 
     use super::*;
 
@@ -72,15 +67,14 @@ mod tests {
         cbor4ii::serde::from_slice(&bytes).unwrap()
     }
 
-    fn intent(intent: Intent) -> IntentMsg {
-        IntentMsg {
-            actor: "alice".into(),
-            intent,
-        }
-    }
-
     #[test]
     fn room_messages_survive_the_wire() {
+        let bob = User {
+            name: "bob".into(),
+            ready: true,
+            loaded: Some("ep1".into()),
+            ..Default::default()
+        };
         let messages = [
             NiketsuMessage::RoomState(RoomStateMsg {
                 version: 3,
@@ -91,36 +85,31 @@ mod tests {
                 position: Duration::from_millis(1500),
                 paused: false,
                 speed: 1.5,
-                users: UserStatusListMsg {
-                    room_name: "room".into(),
-                    users: [UserStatus {
-                        name: "bob".into(),
-                        ready: true,
-                        loaded: Some("ep1".into()),
-                        ..Default::default()
-                    }]
-                    .into(),
-                },
+                users: BTreeMap::from([(PeerId::random(), bob.clone())]),
             }),
-            NiketsuMessage::Intent(intent(Intent::CachePause)),
-            NiketsuMessage::Intent(intent(Intent::Ended("ep1".into()))),
-            NiketsuMessage::Intent(intent(Intent::Seek {
+            Intent::CachePause.into(),
+            Intent::Ended("ep1".into()).into(),
+            Intent::Seek {
                 video: "ep1".into(),
                 position: Duration::from_millis(1500),
-            })),
+            }
+            .into(),
             NiketsuMessage::RoomState(RoomStateMsg::default()),
-            NiketsuMessage::Intent(intent(Intent::Speed(1.5))),
-            NiketsuMessage::Intent(intent(Intent::Playlist(Playlist::from_iter(["ep1"])))),
-            NiketsuMessage::Action(ActionMsg {
+            Intent::Speed(1.5).into(),
+            Intent::Playlist(Playlist::from_iter(["ep1"])).into(),
+            Intent::Status(bob).into(),
+            Intent::Chat("hello".into()).into(),
+            NiketsuMessage::Line(LineMsg {
                 actor: "alice".into(),
                 message: "alice paused playback".into(),
+                kind: LineKind::Action,
             }),
-            NiketsuMessage::UserMessage(UserMessageMsg {
+            NiketsuMessage::Line(LineMsg {
                 actor: "alice".into(),
                 message: "hello".into(),
-            }),
-            NiketsuMessage::ForcedRename(ForcedRenameMsg {
-                name: "bob_2".into(),
+                kind: LineKind::Chat {
+                    author: PeerId::random(),
+                },
             }),
             NiketsuMessage::Join,
         ];

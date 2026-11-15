@@ -6,7 +6,7 @@ use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, dcutr, ping};
 use niketsu_core::communicator::{
-    ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage, UserMessageMsg,
+    ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
 };
 use niketsu_core::log_err_msg;
 use tracing::{debug, info, warn};
@@ -27,8 +27,8 @@ pub(crate) struct ClientRole {
     host_reservation: Option<ListenerId>,
     /// The request to join the room, until the host answers it.
     join: Option<OutboundRequestId>,
-    /// What this peer sends the host, its intents and chat lines, which
-    /// reach the host in the order sent.
+    /// What this peer sends the host, its intents, which reach the host in
+    /// the order sent.
     outbox: Outbox<OutboundRequestId>,
 }
 
@@ -188,11 +188,7 @@ impl ClientRole {
         if self.join.take().is_none() {
             return;
         }
-        let peer = *self.session.net.swarm.local_peer_id();
-        let res = self.session.forward(ConnectedMsg {
-            is_host: false,
-            peer,
-        });
+        let res = self.session.forward(ConnectedMsg { is_host: false });
         log_err_msg!(res, "Failed to send connected message to core");
     }
 }
@@ -285,15 +281,9 @@ impl Role for ClientRole {
         use NiketsuMessage::*;
         match msg {
             RoomState(m) => self.session.send_to_core(m, channel),
-            Action(m) => self.session.send_to_core(m, channel),
-            UserMessage(m) => self.session.send_to_core(m, channel),
-            ForcedRename(m) => self.session.send_to_core(m, channel),
+            Line(m) => self.session.send_to_core(m, channel),
             other => self.session.respond_with_err(other, channel),
         }
-    }
-
-    fn chat(&mut self, msg: UserMessageMsg) -> Result<()> {
-        self.send_to_host(msg.into())
     }
 
     fn on_msg_response(
@@ -378,7 +368,7 @@ mod tests {
     use libp2p::swarm::NetworkBehaviour;
     use libp2p::{Transport, noise, yamux};
     use niketsu_core::chunk::ChunkRoute;
-    use niketsu_core::communicator::{Intent, IntentMsg, RoomStateMsg};
+    use niketsu_core::communicator::{Intent, RoomStateMsg};
     use tokio::sync::mpsc::unbounded_channel;
 
     use super::*;
@@ -510,43 +500,29 @@ mod tests {
         messaging.send_response(channel, ok).unwrap();
     }
 
-    fn intent(intent: Intent) -> IntentMsg {
-        IntentMsg {
-            actor: "bob".into(),
-            intent,
-        }
+    fn line(message: &str) -> Intent {
+        Intent::Chat(message.into())
     }
 
-    fn line(message: &str) -> UserMessageMsg {
-        UserMessageMsg {
-            actor: "bob".into(),
-            message: message.into(),
-        }
-    }
-
-    /// The client's intents and chat lines reach the host in the order
-    /// the core sent them, one at a time: the next goes out once the host
-    /// answered the one before.
+    /// The client's intents, chat lines among them, reach the host in the
+    /// order the core sent them, one at a time: the next goes out once the
+    /// host answered the one before.
     #[tokio::test(flavor = "multi_thread")]
     async fn intents_and_chat_reach_the_host_in_the_order_sent() {
         let mut setup = start().await;
         join(&mut setup).await;
 
-        let sent: Vec<NiketsuMessage> = vec![
-            intent(Intent::Pause).into(),
-            line("one").into(),
-            intent(Intent::Speed(1.5)).into(),
-            intent(Intent::Start).into(),
-            line("two").into(),
+        let sent = [
+            Intent::Pause,
+            line("one"),
+            Intent::Speed(1.5),
+            Intent::Start,
+            line("two"),
         ];
-        for msg in &sent {
-            let outgoing: OutgoingMessage = match msg.clone() {
-                NiketsuMessage::Intent(m) => m.into(),
-                NiketsuMessage::UserMessage(m) => m.into(),
-                other => unreachable!("not the client's: {other:?}"),
-            };
-            setup.core.send(outgoing).unwrap();
+        for intent in &sent {
+            setup.core.send(intent.clone().into()).unwrap();
         }
+        let sent: Vec<NiketsuMessage> = sent.into_iter().map(NiketsuMessage::from).collect();
 
         let mut received = Vec::new();
         for _ in &sent {
@@ -575,13 +551,13 @@ mod tests {
         for refuses in [true, false] {
             let mut setup = start().await;
             join(&mut setup).await;
-            setup.core.send(intent(Intent::Pause).into()).unwrap();
+            setup.core.send(Intent::Pause.into()).unwrap();
             setup.core.send(line("behind it").into()).unwrap();
 
             let patience = Duration::from_secs(5);
             let next = next_request(&mut setup.host_side);
             let (msg, channel) = tokio::time::timeout(patience, next).await.unwrap();
-            assert_eq!(msg, intent(Intent::Pause).into());
+            assert_eq!(msg, Intent::Pause.into());
             if refuses {
                 let messaging = &mut setup.host_side.behaviour_mut().messaging;
                 let refusal = MessageResponse(StatusResponse::Err);

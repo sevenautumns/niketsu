@@ -17,9 +17,7 @@ use libp2p::{
 };
 use links::{Closed, Links, Opened};
 use niketsu_core::chunk::{ChunkRequest, ProvideRoute};
-use niketsu_core::communicator::{
-    IncomingMessage, NoticeMsg, OutgoingMessage, RoomMessage, UserMessageMsg,
-};
+use niketsu_core::communicator::{IncomingMessage, NoticeMsg, OutgoingMessage, RoomMessage};
 use niketsu_core::log_err_msg;
 use niketsu_core::room::RoomName;
 use serde::{Deserialize, Serialize};
@@ -237,8 +235,6 @@ pub(crate) enum StatusResponse {
 pub(crate) trait Role: Send {
     fn session(&mut self) -> &mut Session;
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()>;
-    /// Sends this user's chat line to the room.
-    fn chat(&mut self, msg: UserMessageMsg) -> Result<()>;
     fn handle_swarm_request(
         &mut self,
         msg: NiketsuMessage,
@@ -335,15 +331,13 @@ pub(crate) trait Role: Send {
         }
     }
 
-    /// Routing shared by both roles: the chat goes the role's way, file
-    /// sharing the same way for both. A new selection ends the stream of
-    /// the old video with the `StreamEnded` the core sends for every
-    /// selection.
+    /// File sharing, the same for both roles. A new selection ends the
+    /// stream of the old video with the `StreamEnded` the core sends for
+    /// every selection.
     fn route_room_message(&mut self, msg: RoomMessage) -> Result<()> {
         use RoomMessage::*;
         let session = self.session();
         match msg {
-            UserMessage(msg) => self.chat(msg),
             Stream(msg) => session.fs_stream(msg),
             StreamEnded(_) => session.fs_stream_ended(),
         }
@@ -706,11 +700,9 @@ impl Net {
 #[cfg(test)]
 mod tests {
     use niketsu_core::chunk::SharedFile;
-    use niketsu_core::communicator::{
-        ActionMsg, Intent, IntentMsg, RoomStateMsg, UserMessageMsg, UserStatusListMsg,
-    };
+    use niketsu_core::communicator::{Intent, LineKind, LineMsg, RoomStateMsg};
     use niketsu_core::playlist::{Playlist, Video};
-    use niketsu_core::user::UserStatus;
+    use niketsu_core::user::User;
 
     use super::*;
 
@@ -734,7 +726,7 @@ mod tests {
     fn room_state(playlist: Option<Playlist>) -> RoomStateMsg {
         let video: Video = "[Release Group] A Fairly Long Series Title S01E001.mkv".into();
         // every user has the video loaded and offers it
-        let users = (0..10).map(|i| UserStatus {
+        let user = |i| User {
             name: format!("someone with a long name {i}").into(),
             ready: true,
             offers: Some(SharedFile {
@@ -742,18 +734,14 @@ mod tests {
                 size: u64::MAX,
             }),
             loaded: Some(video.clone()),
-            peer: Some(PeerId::random()),
-        });
+        };
         RoomStateMsg {
             version: u64::MAX,
             jumps: u64::MAX,
             playlist_version: u64::MAX,
             playlist,
             video: Some(video.clone()),
-            users: UserStatusListMsg {
-                room_name: "a room".into(),
-                users: users.collect(),
-            },
+            users: (0..10).map(|i| (PeerId::random(), user(i))).collect(),
             ..Default::default()
         }
     }
@@ -776,17 +764,19 @@ mod tests {
         assert!(wire_size(heartbeat) < 4 * 1024);
         let messages = [
             NiketsuMessage::RoomState(room_state(Some(playlist.clone()))),
-            NiketsuMessage::Intent(IntentMsg {
-                actor: actor.into(),
-                intent: Intent::Playlist(playlist),
-            }),
-            NiketsuMessage::Action(ActionMsg {
+            Intent::Playlist(playlist).into(),
+            Intent::Chat("a line of chat ".repeat(100)).into(),
+            NiketsuMessage::Line(LineMsg {
                 actor: actor.into(),
                 message: format!("{actor} changed playlist"),
+                kind: LineKind::Action,
             }),
-            NiketsuMessage::UserMessage(UserMessageMsg {
+            NiketsuMessage::Line(LineMsg {
                 actor: actor.into(),
                 message: "a line of chat ".repeat(100),
+                kind: LineKind::Chat {
+                    author: PeerId::random(),
+                },
             }),
         ];
         for msg in messages {

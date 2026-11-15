@@ -70,7 +70,7 @@ mod tests {
     #[test]
     fn a_followers_heartbeat_does_nothing() {
         let mut core = CoreBuilder::builder()
-            .communicator(Box::new(MockCommunicatorTrait::default()))
+            .communicator(Box::new(MockCommunicatorTrait::with_peer()))
             .player(Box::new(MockMediaPlayerTrait::default()))
             .ui(Box::new(MockUserInterfaceTrait::default()))
             .file_database(Box::new(MockFileDatabaseTrait::default()))
@@ -92,7 +92,7 @@ mod tests {
         let mut ui = MockUserInterfaceTrait::default();
         ui.expect_user_list().once().return_const(());
         let mut core = CoreBuilder::builder()
-            .communicator(Box::new(MockCommunicatorTrait::default()))
+            .communicator(Box::new(MockCommunicatorTrait::with_peer()))
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(MockFileDatabaseTrait::default()))

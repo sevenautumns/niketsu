@@ -19,10 +19,24 @@ pub use messages::*;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait CommunicatorTrait: std::fmt::Debug + Send {
+    /// This peer's own id, under which the room's users know it. It is the
+    /// same in and between every session.
+    fn peer(&self) -> PeerId;
     fn connect(&mut self, connect: EndpointInfo);
     fn send(&mut self, msg: OutgoingMessage);
     async fn receive(&mut self) -> IncomingMessage;
     fn has_endpoint(&self) -> bool;
+}
+
+#[cfg(test)]
+impl MockCommunicatorTrait {
+    /// A communicator that has a peer id and expects nothing else.
+    pub fn with_peer() -> Self {
+        let mut communicator = Self::default();
+        let peer = PeerId::from_bytes(&[0x00, 4, 1, 1, 1, 1]).expect("an identity multihash");
+        communicator.expect_peer().return_const(peer);
+        communicator
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,10 +66,6 @@ pub enum OutgoingMessage {
 /// Sent whichever role this core holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoomMessage {
-    /// This user's chat line, which its own chat shows already. A client's
-    /// goes to the host, which shows it and passes it on; the host's goes
-    /// to every member.
-    UserMessage(UserMessageMsg),
     /// Streams from the provider it names, in place of the stream this
     /// peer played.
     Stream(StreamMsg),
@@ -71,16 +81,15 @@ pub enum HostInstruction {
     /// Everything the room agrees on, sent to every member with the
     /// playlist, which a member gets until it has it.
     RoomState(RoomStateMsg),
-    /// What the host did on a user's behalf, sent to every member's chat.
-    Action(ActionMsg),
-    /// A message for exactly one peer rather than the room.
-    ToPeer(ToPeerMsg),
+    /// A line of the room's chat, sent to every member but the author of a
+    /// chat line.
+    Line(LineMsg),
 }
 
 /// What only a client sends: a request to the host.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientRequest {
-    Intent(IntentMsg),
+    Intent(Intent),
 }
 
 impl From<RoomMessage> for OutgoingMessage {
@@ -114,13 +123,11 @@ macro_rules! outgoing_from {
 }
 
 outgoing_from! {
-    UserMessageMsg => Room(RoomMessage::UserMessage),
     StreamMsg => Room(RoomMessage::Stream),
     StreamEndedMsg => Room(RoomMessage::StreamEnded),
     RoomStateMsg => Host(HostInstruction::RoomState),
-    ActionMsg => Host(HostInstruction::Action),
-    ToPeerMsg => Host(HostInstruction::ToPeer),
-    IntentMsg => Client(ClientRequest::Intent),
+    LineMsg => Host(HostInstruction::Line),
+    Intent => Client(ClientRequest::Intent),
 }
 
 /// What the communicator hands the core. Each message is an event of the
@@ -129,23 +136,12 @@ outgoing_from! {
 #[derive(Clone, Debug)]
 pub enum IncomingMessage {
     RoomState(RoomStateMsg),
-    Action(ActionMsg),
+    Line(LineMsg),
     Connected(ConnectedMsg),
     Disconnected(DisconnectedMsg),
-    UserMessage(UserMessageMsg),
     Notice(NoticeMsg),
-    ForcedRename(ForcedRenameMsg),
     StreamEnded(StreamEndedMsg),
-    PeerConnected(PeerConnectedMsg),
     PeerDisconnected(PeerDisconnectedMsg),
     PeerIntent(PeerIntentMsg),
     HostRoundTrip(HostRoundTripMsg),
-}
-
-impl From<DirectMessage> for IncomingMessage {
-    fn from(value: DirectMessage) -> Self {
-        match value {
-            DirectMessage::Rename(msg) => msg.into(),
-        }
-    }
 }

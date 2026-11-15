@@ -4,22 +4,18 @@
 //! in line with it. Nothing here reads a clock or a player: time comes in
 //! as a parameter.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
-use arcstr::ArcStr;
 use multiaddr::PeerId;
 use tokio::time::Instant;
 use tracing::debug;
 
-use super::{RoomName, RoomUsers};
-use crate::chunk::SharedFile;
-use crate::communicator::{ActionMsg, Intent, IntentMsg};
+use super::RoomName;
+use super::users::{NameSuffixes, buzzword, free_name};
+use crate::communicator::{Intent, LineMsg};
 use crate::playlist::{Playlist, Video};
-use crate::user::UserStatus;
-
-/// The actor of what the authority does on the room's behalf rather than a
-/// user's.
-pub(crate) const HOST_ACTOR: ArcStr = arcstr::literal!("host");
+use crate::user::User;
 
 /// Whether a player can play at `speed`. A timeline only ever has such a
 /// speed, whatever a peer sends.
@@ -121,7 +117,9 @@ pub struct RoomState {
     /// The selected video.
     pub video: Option<Video>,
     pub timeline: Timeline,
-    pub users: RoomUsers,
+    /// Every user of the room by peer id, the authority's own included.
+    pub users: BTreeMap<PeerId, User>,
+    suffixes: NameSuffixes,
 }
 
 impl RoomState {
@@ -132,26 +130,41 @@ impl RoomState {
             playlist: Playlist::default(),
             video: None,
             timeline: Timeline::new(now),
-            users: RoomUsers::default(),
+            users: BTreeMap::new(),
+            suffixes: buzzword,
         }
     }
 
-    /// Does what a user asks of the room: the user at `peer`, or without it
-    /// the authority's own. Returns the chat lines for what was done.
-    pub fn apply(&mut self, peer: Option<PeerId>, msg: IntentMsg, now: Instant) -> Vec<ActionMsg> {
-        let mut lines: Vec<ActionMsg> = msg.action().into_iter().collect();
-        let IntentMsg { actor, intent } = msg;
+    /// Does what the user at `peer` asks of the room. Returns the chat
+    /// lines for what was done, each in the name the room knows the user
+    /// by. A user is in the room from its first status on; until then it
+    /// has nothing else to ask.
+    pub fn apply(&mut self, peer: PeerId, intent: Intent, now: Instant) -> Vec<LineMsg> {
+        let status = matches!(intent, Intent::Status(_));
+        if !status && !self.users.contains_key(&peer) {
+            debug!(%peer, ?intent, "ignoring an intent of a user outside the room");
+            return vec![];
+        }
         let selected = self.video.clone();
-        let mut status_changed = false;
+        let mut lines = self.act(peer, intent, now);
+        // a new video starts paused, so a ready room starts it
+        if (status || self.video != selected) && self.start_if_all_ready(now) {
+            lines.extend(self.line(peer, &Intent::Start));
+        }
+        lines
+    }
+
+    fn act(&mut self, peer: PeerId, intent: Intent, now: Instant) -> Vec<LineMsg> {
+        let mut lines: Vec<LineMsg> = self.line(peer, &intent).into_iter().collect();
         match intent {
             Intent::Pause => {
                 self.timeline.pause(now);
-                self.users.set_ready(peer, false);
+                self.set_ready(peer, false);
             }
             Intent::CachePause => self.timeline.pause(now),
             Intent::Start => {
                 self.timeline.start(now);
-                self.users.set_ready(peer, true);
+                self.set_ready(peer, true);
             }
             Intent::Speed(speed) if playable(speed) => self.timeline.set_speed(speed, now),
             Intent::Speed(speed) => {
@@ -166,37 +179,37 @@ impl RoomState {
                     return vec![];
                 }
                 let next = self.video_after(&video);
-                lines.extend(selection_line(&actor, next.clone()));
+                lines.extend(self.line(peer, &selection(next.clone())));
                 self.select(next, Duration::ZERO, now);
             }
             Intent::Playlist(playlist) => {
                 let old = std::mem::replace(&mut self.playlist, playlist);
                 if let Some(next) = select_next(&old, self.video.as_ref(), &self.playlist) {
-                    lines.extend(selection_line(&HOST_ACTOR, Some(next.clone())));
+                    // the edit that removed the selected video selects its
+                    // successor
+                    lines.extend(self.line(peer, &selection(Some(next.clone()))));
                     self.select(Some(next), Duration::ZERO, now);
                 }
             }
-            Intent::Status(status) => {
-                self.status(peer, status);
-                status_changed = true;
-            }
-        }
-        // a new video starts paused, so a ready room starts it
-        if (status_changed || self.video != selected) && self.start_if_all_ready(now) {
-            let intent = Intent::Start;
-            lines.extend(IntentMsg { actor, intent }.action());
+            Intent::Status(user) => self.take_status(peer, user),
+            Intent::Chat(_) => {}
         }
         lines
     }
 
+    /// The line telling the room what the user at `peer` did, in the name
+    /// the room knows the user by.
+    pub(crate) fn line(&self, peer: PeerId, intent: &Intent) -> Option<LineMsg> {
+        let actor = &self.users.get(&peer)?.name;
+        intent.line(actor, peer)
+    }
+
     /// Moves the room to `position` in `video`. Another video than the
-    /// selected one becomes the selection and starts paused; an offer is
-    /// one of the selected video, so every offer goes with the old one.
+    /// selected one becomes the selection and starts paused.
     pub(crate) fn select(&mut self, video: Option<Video>, position: Duration, now: Instant) {
         if self.video != video {
             self.video = video;
             self.timeline.pause(now);
-            self.users.drop_offers();
         }
         self.timeline.jump(position, now);
     }
@@ -206,28 +219,26 @@ impl RoomState {
         self.playlist.get(index + 1).cloned()
     }
 
-    /// Takes a user's own status. An offer counts only of the selected
-    /// video: a status can arrive after the selection it was sent for has
-    /// changed.
-    fn status(&mut self, peer: Option<PeerId>, mut status: UserStatus) {
-        let video = self.video.as_ref();
-        let selected = |offer: &SharedFile| video.is_some_and(|v| offer.name == v.as_str());
-        status.offers = status.offers.filter(selected);
-        match peer {
-            Some(peer) => {
-                status.peer = Some(peer);
-                self.users.apply_status(status, peer);
-            }
-            None => self.users.update_local(status),
+    /// Takes a user's own status, under a name no other user goes by.
+    fn take_status(&mut self, peer: PeerId, mut user: User) {
+        user.name = free_name(&self.users, &user.name, peer, self.suffixes);
+        self.users.insert(peer, user);
+    }
+
+    fn set_ready(&mut self, peer: PeerId, ready: bool) {
+        if let Some(user) = self.users.get_mut(&peer) {
+            user.ready = ready;
         }
     }
 
     /// Playback starts for the whole room once every user is ready and has
     /// the selected video loaded. Returns whether it started.
     fn start_if_all_ready(&mut self, now: Instant) -> bool {
-        let start = self.video.is_some()
-            && self.timeline.paused()
-            && self.users.all_ready(self.video.as_ref());
+        let Some(video) = &self.video else {
+            return false;
+        };
+        let ready = |user: &User| user.ready && user.has_loaded(video);
+        let start = self.timeline.paused() && self.users.values().all(ready);
         if start {
             debug!("All users are ready. Starting playback for the room");
             self.timeline.start(now);
@@ -236,14 +247,12 @@ impl RoomState {
     }
 }
 
-/// The line for `actor` selecting `video`.
-fn selection_line(actor: &ArcStr, video: Option<Video>) -> Option<ActionMsg> {
-    let intent = Intent::Select {
+/// The intent of selecting `video` from its start.
+fn selection(video: Option<Video>) -> Intent {
+    Intent::Select {
         video,
         position: Duration::ZERO,
-    };
-    let actor = actor.clone();
-    IntentMsg { actor, intent }.action()
+    }
 }
 
 /// When the playlist shrank and the video playing was removed, picks the
@@ -292,6 +301,8 @@ pub fn select_next(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::chunk::SharedFile;
+    use crate::communicator::LineKind;
 
     const SECOND: Duration = Duration::from_secs(1);
 
@@ -303,53 +314,73 @@ mod tests {
         videos.iter().copied().collect()
     }
 
-    fn intent(actor: &str, intent: Intent) -> IntentMsg {
-        IntentMsg {
-            actor: actor.into(),
-            intent,
+    /// The authority's own user.
+    fn alice() -> PeerId {
+        peer(1)
+    }
+
+    fn user(name: &str, ready: bool, loaded: Option<&str>) -> User {
+        User {
+            name: name.into(),
+            ready,
+            loaded: loaded.map(Video::from),
+            offers: None,
         }
     }
 
     fn status(name: &str, ready: bool, loaded: Option<&str>) -> Intent {
-        Intent::Status(UserStatus {
-            name: name.into(),
-            ready,
-            loaded: loaded.map(Video::from),
-            ..Default::default()
-        })
+        Intent::Status(user(name, ready, loaded))
     }
 
     fn select(video: &str) -> Intent {
-        Intent::Select {
-            video: Some(Video::from(video)),
-            position: Duration::ZERO,
-        }
+        selection(Some(Video::from(video)))
     }
 
-    fn lines(lines: Vec<ActionMsg>) -> Vec<String> {
+    fn lines(lines: Vec<LineMsg>) -> Vec<String> {
         lines.into_iter().map(|line| line.message).collect()
+    }
+
+    fn name_of(state: &RoomState, peer: PeerId) -> &str {
+        state.users[&peer].name.as_str()
+    }
+
+    fn names(state: &RoomState) -> Vec<&str> {
+        let mut names: Vec<&str> = state.users.values().map(|u| u.name.as_str()).collect();
+        names.sort();
+        names
+    }
+
+    fn synergy() -> String {
+        "synergy".into()
+    }
+
+    /// A room whose given names are predictable.
+    fn empty_room(now: Instant) -> RoomState {
+        RoomState {
+            suffixes: synergy,
+            ..RoomState::new(now)
+        }
     }
 
     /// A room of alice, its authority, and bob, with ep1 to ep3 in the
     /// playlist.
     fn room(now: Instant) -> (RoomState, PeerId) {
-        let mut state = RoomState::new(now);
+        let mut state = empty_room(now);
         let bob = peer(2);
-        state.users.add_connected(bob);
-        state.apply(None, intent("alice", status("alice", false, None)), now);
-        state.apply(Some(bob), intent("bob", status("bob", false, None)), now);
+        state.apply(alice(), status("alice", false, None), now);
+        state.apply(bob, status("bob", false, None), now);
         let episodes = Intent::Playlist(playlist(&["ep1", "ep2", "ep3"]));
-        state.apply(None, intent("alice", episodes), now);
+        state.apply(alice(), episodes, now);
         (state, bob)
     }
 
     /// The room with ep1 selected, which alice and bob have loaded.
     fn room_with_ep1(now: Instant) -> (RoomState, PeerId) {
         let (mut state, bob) = room(now);
-        state.apply(None, intent("alice", select("ep1")), now);
+        state.apply(alice(), select("ep1"), now);
         let loaded = Some("ep1");
-        state.apply(None, intent("alice", status("alice", false, loaded)), now);
-        state.apply(Some(bob), intent("bob", status("bob", false, loaded)), now);
+        state.apply(alice(), status("alice", false, loaded), now);
+        state.apply(bob, status("bob", false, loaded), now);
         (state, bob)
     }
 
@@ -402,7 +433,7 @@ mod tests {
         }
 
         let (mut state, _) = room_with_ep1(t0);
-        let told = state.apply(None, intent("alice", Intent::Speed(f64::NAN)), t0);
+        let told = state.apply(alice(), Intent::Speed(f64::NAN), t0);
         assert!(told.is_empty());
         assert_eq!(state.timeline.speed(), 1.0);
     }
@@ -412,44 +443,41 @@ mod tests {
         let t0 = Instant::now();
         let (mut state, bob) = room_with_ep1(t0);
 
-        let told = state.apply(Some(bob), intent("bob", Intent::Start), t0);
+        let told = state.apply(bob, Intent::Start, t0);
         assert_eq!(lines(told), ["bob started playback"]);
         assert!(!state.timeline.paused());
-        let ready = |state: &RoomState, name: &str| {
-            let user = state.users.list().iter().find(|u| u.name == name);
-            user.unwrap().ready
-        };
-        assert!(ready(&state, "bob") && !ready(&state, "alice"));
+        let ready = |state: &RoomState, peer: PeerId| state.users[&peer].ready;
+        assert!(ready(&state, bob) && !ready(&state, alice()));
 
-        state.apply(None, intent("alice", Intent::Start), t0 + SECOND);
-        let told = state.apply(Some(bob), intent("bob", Intent::Pause), t0 + 4 * SECOND);
+        state.apply(alice(), Intent::Start, t0 + SECOND);
+        let told = state.apply(bob, Intent::Pause, t0 + 4 * SECOND);
         assert_eq!(lines(told), ["bob paused playback"]);
         assert!(state.timeline.paused());
         assert_eq!(state.timeline.position_at(t0 + 9 * SECOND), 4 * SECOND);
-        assert!(!ready(&state, "bob") && ready(&state, "alice"));
+        assert!(!ready(&state, bob) && ready(&state, alice()));
     }
 
     #[test]
     fn a_cache_pause_pauses_the_room_and_leaves_readiness_alone() {
         let t0 = Instant::now();
         let (mut state, bob) = room_with_ep1(t0);
-        state.apply(None, intent("alice", Intent::Start), t0);
-        state.apply(Some(bob), intent("bob", Intent::Start), t0);
+        state.apply(alice(), Intent::Start, t0);
+        state.apply(bob, Intent::Start, t0);
 
-        state.apply(Some(bob), intent("bob", Intent::CachePause), t0 + SECOND);
+        state.apply(bob, Intent::CachePause, t0 + SECOND);
 
         assert!(state.timeline.paused());
-        assert!(state.users.list().iter().all(|u| u.ready));
+        assert!(state.users.values().all(|u| u.ready));
     }
 
     #[test]
     fn a_new_selection_starts_paused_at_its_position() {
         let t0 = Instant::now();
         let (mut state, _) = room_with_ep1(t0);
-        state.apply(None, intent("alice", Intent::Start), t0);
+        state.apply(alice(), Intent::Start, t0);
         let jumps = state.timeline.jumps();
 
-        let told = state.apply(None, intent("alice", select("ep2")), t0 + 5 * SECOND);
+        let told = state.apply(alice(), select("ep2"), t0 + 5 * SECOND);
 
         assert_eq!(lines(told), ["alice selected ep2"]);
         assert_eq!(state.video, Some(Video::from("ep2")));
@@ -462,9 +490,9 @@ mod tests {
     fn selecting_the_selected_video_is_a_seek() {
         let t0 = Instant::now();
         let (mut state, _) = room_with_ep1(t0);
-        state.apply(None, intent("alice", Intent::Start), t0);
+        state.apply(alice(), Intent::Start, t0);
 
-        state.apply(None, intent("alice", select("ep1")), t0 + 5 * SECOND);
+        state.apply(alice(), select("ep1"), t0 + 5 * SECOND);
 
         assert!(!state.timeline.paused(), "the room plays on");
         assert_eq!(state.timeline.position_at(t0 + 6 * SECOND), SECOND);
@@ -479,7 +507,7 @@ mod tests {
             position: 300 * SECOND,
         };
 
-        let told = state.apply(Some(bob), intent("bob", seek), t0);
+        let told = state.apply(bob, seek, t0);
 
         assert_eq!(lines(told), ["bob seeked to 300s"]);
         assert_eq!(state.video, Some(Video::from("ep2")));
@@ -491,38 +519,50 @@ mod tests {
     fn the_room_starts_once_everyone_is_ready_and_has_the_video_loaded() {
         let t0 = Instant::now();
         let (mut state, bob) = room(t0);
-        state.apply(None, intent("alice", status("alice", true, None)), t0);
-        state.apply(Some(bob), intent("bob", status("bob", true, None)), t0);
+        state.apply(alice(), status("alice", true, None), t0);
+        state.apply(bob, status("bob", true, None), t0);
 
-        let told = state.apply(None, intent("alice", select("ep1")), t0);
+        let told = state.apply(alice(), select("ep1"), t0);
         assert_eq!(lines(told), ["alice selected ep1"]);
         assert!(state.timeline.paused(), "nobody has loaded it yet");
 
-        let loaded = status("alice", true, Some("ep1"));
-        state.apply(None, intent("alice", loaded), t0);
+        state.apply(alice(), status("alice", true, Some("ep1")), t0);
         assert!(state.timeline.paused(), "bob has not loaded it yet");
 
-        let stale = status("bob", true, Some("ep0"));
-        state.apply(Some(bob), intent("bob", stale), t0);
+        state.apply(bob, status("bob", true, Some("ep0")), t0);
         assert!(state.timeline.paused(), "bob has another video loaded");
 
-        let loaded = status("bob", true, Some("ep1"));
-        let told = state.apply(Some(bob), intent("bob", loaded), t0);
+        let told = state.apply(bob, status("bob", true, Some("ep1")), t0);
         assert_eq!(lines(told), ["bob started playback"]);
         assert!(!state.timeline.paused());
 
-        let again = status("bob", true, Some("ep1"));
-        let told = state.apply(Some(bob), intent("bob", again), t0);
+        let told = state.apply(bob, status("bob", true, Some("ep1")), t0);
         assert!(told.is_empty(), "a room that plays is not started");
+    }
+
+    #[test]
+    fn a_video_loaded_before_its_selection_counts_once_it_is_selected() {
+        let t0 = Instant::now();
+        let (mut state, bob) = room(t0);
+        state.apply(alice(), status("alice", true, Some("ep1")), t0);
+        state.apply(bob, status("bob", true, Some("ep1")), t0);
+
+        let told = state.apply(alice(), select("ep1"), t0);
+
+        assert_eq!(
+            lines(told),
+            ["alice selected ep1", "alice started playback"]
+        );
+        assert!(!state.timeline.paused());
     }
 
     #[test]
     fn an_explicit_start_does_not_wait_for_anyone() {
         let t0 = Instant::now();
         let (mut state, bob) = room(t0);
-        state.apply(None, intent("alice", select("ep1")), t0);
+        state.apply(alice(), select("ep1"), t0);
 
-        state.apply(Some(bob), intent("bob", Intent::Start), t0);
+        state.apply(bob, Intent::Start, t0);
 
         assert!(!state.timeline.paused());
     }
@@ -533,13 +573,13 @@ mod tests {
         let (mut state, bob) = room_with_ep1(t0);
         let ended = || Intent::Ended(Video::from("ep1"));
 
-        let told = state.apply(None, intent("alice", ended()), t0);
+        let told = state.apply(alice(), ended(), t0);
         assert_eq!(lines(told), ["alice selected ep2"]);
         assert_eq!(state.video, Some(Video::from("ep2")));
         state.timeline.jump(40 * SECOND, t0);
         let jumps = state.timeline.jumps();
 
-        let told = state.apply(Some(bob), intent("bob", ended()), t0);
+        let told = state.apply(bob, ended(), t0);
         assert!(told.is_empty());
         assert_eq!(state.video, Some(Video::from("ep2")));
         assert_eq!(state.timeline.jumps(), jumps, "ep2 is not seeked back");
@@ -549,10 +589,9 @@ mod tests {
     fn the_end_of_the_last_video_unselects_it() {
         let t0 = Instant::now();
         let (mut state, _) = room(t0);
-        state.apply(None, intent("alice", select("ep3")), t0);
+        state.apply(alice(), select("ep3"), t0);
 
-        let ended = Intent::Ended(Video::from("ep3"));
-        let told = state.apply(None, intent("alice", ended), t0);
+        let told = state.apply(alice(), Intent::Ended(Video::from("ep3")), t0);
 
         assert_eq!(lines(told), ["alice unselected video"]);
         assert_eq!(state.video, None);
@@ -562,43 +601,152 @@ mod tests {
     fn removing_the_selected_video_selects_its_successor() {
         let t0 = Instant::now();
         let (mut state, bob) = room(t0);
-        state.apply(None, intent("alice", select("ep2")), t0);
+        state.apply(alice(), select("ep2"), t0);
 
         let edit = Intent::Playlist(playlist(&["ep1", "ep3"]));
-        let told = state.apply(Some(bob), intent("bob", edit), t0);
+        let told = state.apply(bob, edit, t0);
 
-        assert_eq!(lines(told), ["bob changed playlist", "host selected ep3"]);
+        assert_eq!(lines(told), ["bob changed playlist", "bob selected ep3"]);
         assert_eq!(state.video, Some(Video::from("ep3")));
         assert_eq!(state.playlist, playlist(&["ep1", "ep3"]));
     }
 
     #[test]
-    fn an_offer_counts_only_of_the_selected_video_and_goes_with_it() {
+    fn an_offer_counts_for_the_video_it_names() {
         let t0 = Instant::now();
         let (mut state, bob) = room_with_ep1(t0);
         let offer = |video: &str| {
-            Intent::Status(UserStatus {
-                name: "bob".into(),
+            Intent::Status(User {
                 offers: Some(SharedFile {
                     name: video.into(),
                     size: 1,
                 }),
-                ..Default::default()
+                ..user("bob", false, Some("ep1"))
             })
         };
         let offered = |state: &RoomState| {
-            let offers = state.users.list().iter().filter_map(|u| u.offers.clone());
+            let video = state.video.as_ref().unwrap();
+            let offers = state.users.values().filter_map(|u| u.offer_of(video));
             offers.map(|file| file.name.to_string()).collect::<Vec<_>>()
         };
 
-        state.apply(Some(bob), intent("bob", offer("ep2")), t0);
+        state.apply(bob, offer("ep2"), t0);
         assert!(offered(&state).is_empty(), "ep2 is not selected");
 
-        state.apply(Some(bob), intent("bob", offer("ep1")), t0);
+        state.apply(bob, offer("ep1"), t0);
         assert_eq!(offered(&state), ["ep1"]);
 
-        state.apply(None, intent("alice", select("ep2")), t0);
-        assert!(offered(&state).is_empty(), "the offer was one of ep1");
+        state.apply(alice(), select("ep2"), t0);
+        assert!(offered(&state).is_empty(), "the offer is one of ep1");
+        assert!(state.users[&bob].offers.is_some(), "nobody cleared it");
+    }
+
+    #[test]
+    fn a_free_name_is_kept_and_a_taken_one_is_suffixed() {
+        let t0 = Instant::now();
+        let (mut state, bob) = room(t0);
+        let carol = peer(3);
+
+        state.apply(carol, status("carol", false, None), t0);
+        assert_eq!(name_of(&state, carol), "carol");
+
+        let impostor = peer(4);
+        state.apply(impostor, status("bob", false, None), t0);
+        assert_eq!(name_of(&state, impostor), "bob_synergy");
+        assert_eq!(name_of(&state, bob), "bob", "the first bob keeps his name");
+
+        state.apply(impostor, status("bob_synergy", true, None), t0);
+        assert_eq!(name_of(&state, impostor), "bob_synergy", "its own name");
+    }
+
+    #[test]
+    fn a_rename_to_a_taken_name_is_suffixed_and_leaves_the_other_user_alone() {
+        let t0 = Instant::now();
+        let (mut state, bob) = room(t0);
+
+        state.apply(bob, status("alice", false, None), t0);
+
+        assert_eq!(name_of(&state, bob), "alice_synergy");
+        assert_eq!(names(&state), ["alice", "alice_synergy"]);
+
+        // the authority's own user is named like everyone else
+        state.apply(alice(), status("alice_synergy", false, None), t0);
+        assert_eq!(name_of(&state, alice()), "alice_synergy_synergy");
+    }
+
+    #[test]
+    fn given_names_avoid_each_other() {
+        let t0 = Instant::now();
+        let (mut state, _) = room(t0);
+        let rolled: Vec<String> = (3..7)
+            .map(|n| {
+                state.apply(peer(n), status("alice", false, None), t0);
+                name_of(&state, peer(n)).to_string()
+            })
+            .collect();
+
+        // the one suffix is taken after the first roll, so a counter follows
+        assert_eq!(
+            rolled,
+            [
+                "alice_synergy",
+                "alice_synergy_2",
+                "alice_synergy_3",
+                "alice_synergy_4"
+            ]
+        );
+    }
+
+    #[test]
+    fn given_names_are_buzzwords_by_default() {
+        let t0 = Instant::now();
+        let mut state = RoomState::new(t0);
+        state.apply(alice(), status("alice", false, None), t0);
+        let intruder = peer(2);
+
+        state.apply(intruder, status("alice", false, None), t0);
+
+        let suffix = name_of(&state, intruder).strip_prefix("alice_").unwrap();
+        assert!(!suffix.is_empty());
+        assert!(
+            !suffix.chars().all(|c| c.is_ascii_digit()),
+            "a buzzword, not a counter: {suffix}"
+        );
+    }
+
+    #[test]
+    fn a_line_is_in_the_name_the_room_knows_its_user_by() {
+        let t0 = Instant::now();
+        let (mut state, _) = room(t0);
+        let impostor = peer(4);
+        state.apply(impostor, status("alice", false, None), t0);
+
+        let told = state.apply(impostor, Intent::Chat("hi".into()), t0);
+
+        assert_eq!(
+            told,
+            [LineMsg {
+                actor: "alice_synergy".into(),
+                message: "hi".into(),
+                kind: LineKind::Chat { author: impostor },
+            }]
+        );
+    }
+
+    #[test]
+    fn a_user_outside_the_room_asks_for_nothing_but_its_status() {
+        let t0 = Instant::now();
+        let (mut state, _) = room(t0);
+        let stranger = peer(5);
+
+        assert!(
+            state
+                .apply(stranger, Intent::Chat("hi".into()), t0)
+                .is_empty()
+        );
+        assert!(state.apply(stranger, select("ep2"), t0).is_empty());
+        assert_eq!(state.video, None);
+        assert!(!state.users.contains_key(&stranger));
     }
 
     fn selected(result: Option<Video>) -> Option<String> {

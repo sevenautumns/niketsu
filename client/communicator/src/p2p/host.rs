@@ -9,8 +9,8 @@ use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, mdns};
 use niketsu_core::communicator::{
-    ConnectedMsg, HostInstruction, IncomingMessage, OutgoingMessage, PeerConnectedMsg,
-    PeerDisconnectedMsg, PeerIntentMsg, RoomStateMsg, UserMessageMsg,
+    ConnectedMsg, HostInstruction, IncomingMessage, OutgoingMessage, PeerDisconnectedMsg,
+    PeerIntentMsg, RoomStateMsg,
 };
 use niketsu_core::log_err_msg;
 use tracing::{debug, error, info, warn};
@@ -52,13 +52,7 @@ impl HostRole {
         chunk_routes: ChunkRoutes,
     ) -> Self {
         message_sender
-            .send(
-                ConnectedMsg {
-                    is_host: true,
-                    peer: host,
-                }
-                .into(),
-            )
+            .send(ConnectedMsg { is_host: true }.into())
             .ok();
         let session = Session::new(
             swarm,
@@ -126,28 +120,19 @@ impl HostRole {
 
     /// Takes a peer that asked to join into the room. A peer joins again
     /// with each session, also while connections of its previous one are
-    /// open, and starts over with an empty outbox each time.
+    /// open, and starts over with an empty outbox each time. The core
+    /// learns of the member from the status it sends once it is in.
     fn welcome(&mut self, peer_id: PeerId) {
         self.members.insert(peer_id, Outbox::default());
-        let res = self.session.forward(PeerConnectedMsg { peer: peer_id });
-        log_err_msg!(res, "Failed to report connected peer to core");
     }
 
     fn on_core_instruction(&mut self, instruction: HostInstruction) {
         use HostInstruction::*;
         match instruction {
             RoomState(m) => self.publish(m),
-            Action(m) => self.send_to_members(m.into(), None),
-            ToPeer(m) => {
-                let net = &mut self.session.net;
-                match self.members.get_mut(&m.peer) {
-                    Some(outbox) => {
-                        outbox.push(m.message.into(), |msg| net.send_request(&m.peer, msg))
-                    }
-                    None => {
-                        debug!(peer = %m.peer, "Dropping a message for a peer outside the room")
-                    }
-                }
+            Line(m) => {
+                let author = m.author();
+                self.send_to_members(m.into(), author)
             }
         }
     }
@@ -294,24 +279,15 @@ impl Role for HostRole {
                 self.welcome(peer_id);
                 self.session.acknowledge(channel)
             }
-            Intent(intent) => {
+            Intent { intent } => {
                 let msg = PeerIntentMsg {
                     peer: peer_id,
                     intent,
                 };
                 self.session.send_to_core(msg, channel)
             }
-            UserMessage(m) => {
-                self.send_to_members(m.clone().into(), Some(peer_id));
-                self.session.send_to_core(m, channel)
-            }
             other => self.session.respond_with_err(other, channel),
         }
-    }
-
-    fn chat(&mut self, msg: UserMessageMsg) -> Result<()> {
-        self.send_to_members(msg.into(), None);
-        Ok(())
     }
 
     /// A member answered the message on its way to it, or a request of a
@@ -382,6 +358,7 @@ impl Role for HostRole {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -392,7 +369,7 @@ mod tests {
     use libp2p::request_response::{Event, Message, ProtocolSupport};
     use libp2p::{StreamProtocol, Transport, noise, yamux};
     use niketsu_core::chunk::{ChunkRequest, ChunkRoute, ProvideRoute, SharedFile};
-    use niketsu_core::communicator::ActionMsg;
+    use niketsu_core::communicator::{Intent, LineKind, LineMsg};
     use niketsu_core::playlist::Playlist;
     use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
@@ -503,6 +480,9 @@ mod tests {
     struct Neighbour {
         peer: PeerId,
         received: Arc<Mutex<Vec<NiketsuMessage>>>,
+        /// Whether the host took the peer into the room: it answered the
+        /// request to join.
+        joined: Arc<AtomicBool>,
         outbox: UnboundedSender<NiketsuMessage>,
     }
 
@@ -533,20 +513,32 @@ mod tests {
                 outbox.send(NiketsuMessage::Join).unwrap();
             }
             let log = Arc::clone(&received);
+            let joined = Arc::<AtomicBool>::default();
+            let took_in = Arc::clone(&joined);
             tokio::spawn(async move {
                 let mut unanswered = Vec::new();
+                let mut join = None;
                 loop {
                     tokio::select! {
                         Some(msg) = requests.recv() => {
-                            swarm.behaviour_mut().send_request(&host, membership.tag(msg));
+                            let joining = msg == NiketsuMessage::Join;
+                            let id = swarm.behaviour_mut().send_request(&host, membership.tag(msg));
+                            if joining {
+                                join = Some(id);
+                            }
                         }
                         event = swarm.select_next_some() => {
-                            let SwarmEvent::Behaviour(Event::Message {
-                                message: Message::Request { request, channel, .. },
-                                ..
-                            }) = event
-                            else {
+                            let SwarmEvent::Behaviour(Event::Message { message, .. }) = event else {
                                 continue;
+                            };
+                            let (request, channel) = match message {
+                                Message::Request { request, channel, .. } => (request, channel),
+                                Message::Response { request_id, response } => {
+                                    if Some(request_id) == join && response.0 == StatusResponse::Ok {
+                                        took_in.store(true, Ordering::SeqCst);
+                                    }
+                                    continue;
+                                }
                             };
                             log.lock().unwrap().push(request.msg);
                             if answers {
@@ -562,8 +554,13 @@ mod tests {
             Self {
                 peer,
                 received,
+                joined,
                 outbox,
             }
+        }
+
+        fn joined(&self) -> bool {
+            self.joined.load(Ordering::SeqCst)
         }
 
         fn received(&self) -> Vec<NiketsuMessage> {
@@ -583,17 +580,18 @@ mod tests {
             self.received().contains(msg)
         }
 
-        fn say(&self, line: &str) -> NiketsuMessage {
-            let msg = NiketsuMessage::UserMessage(chat(line));
-            self.outbox.send(msg.clone()).unwrap();
-            msg
+        /// The peer asks the host for `intent`.
+        fn ask(&self, intent: Intent) {
+            self.outbox.send(intent.into()).unwrap();
         }
     }
 
-    fn chat(line: &str) -> UserMessageMsg {
-        UserMessageMsg {
+    /// A chat line of the user at `author`.
+    fn chat(line: &str, author: PeerId) -> LineMsg {
+        LineMsg {
             actor: "someone".into(),
             message: line.into(),
+            kind: LineKind::Chat { author },
         }
     }
 
@@ -604,10 +602,11 @@ mod tests {
         }
     }
 
-    fn action(line: &str) -> ActionMsg {
-        ActionMsg {
+    fn action(line: &str) -> LineMsg {
+        LineMsg {
             actor: "someone".into(),
             message: line.into(),
+            kind: LineKind::Action,
         }
     }
 
@@ -621,35 +620,25 @@ mod tests {
         }
     }
 
-    /// The peers the host reported to its core as `IncomingMessage`s that
-    /// `peer` picks.
-    fn reported(
-        to_core: &Mutex<Vec<IncomingMessage>>,
-        peer: impl Fn(&IncomingMessage) -> Option<PeerId>,
-    ) -> HashSet<PeerId> {
+    fn departed(to_core: &Mutex<Vec<IncomingMessage>>) -> HashSet<PeerId> {
+        let peer = |msg: &IncomingMessage| match msg {
+            IncomingMessage::PeerDisconnected(m) => Some(m.peer),
+            _ => None,
+        };
         to_core.lock().unwrap().iter().filter_map(peer).collect()
     }
 
-    fn welcomed(to_core: &Mutex<Vec<IncomingMessage>>) -> HashSet<PeerId> {
-        reported(to_core, |msg| match msg {
-            IncomingMessage::PeerConnected(m) => Some(m.peer),
-            _ => None,
-        })
-    }
-
-    fn departed(to_core: &Mutex<Vec<IncomingMessage>>) -> HashSet<PeerId> {
-        reported(to_core, |msg| match msg {
-            IncomingMessage::PeerDisconnected(m) => Some(m.peer),
-            _ => None,
-        })
+    /// Whether the host handed its core `intent` of the user at `peer`.
+    fn asked(to_core: &Mutex<Vec<IncomingMessage>>, peer: PeerId, intent: &Intent) -> bool {
+        let asked = |msg: &IncomingMessage| matches!(msg, IncomingMessage::PeerIntent(m) if m.peer == peer && m.intent == *intent);
+        to_core.lock().unwrap().iter().any(asked)
     }
 
     /// What the core hands the host role for it to send `msg` to the room.
     fn from_core(msg: &NiketsuMessage) -> OutgoingMessage {
         match msg.clone() {
             NiketsuMessage::RoomState(m) => m.into(),
-            NiketsuMessage::Action(m) => m.into(),
-            NiketsuMessage::UserMessage(m) => m.into(),
+            NiketsuMessage::Line(m) => m.into(),
             other => unreachable!("not for the room: {other:?}"),
         }
     }
@@ -662,11 +651,12 @@ mod tests {
     }
 
     /// Every member gets what the host sends the room in the order sent:
-    /// every action and chat line, and of the room states at least the
-    /// newest, a waiting one giving way to a newer one. The host passes a
-    /// member's chat line on to everyone but its author. A peer next to
+    /// every line, and of the room states at least the newest, a waiting
+    /// one giving way to a newer one. A chat line goes to everyone but its
+    /// author. A member's intent reaches the host's core. A peer next to
     /// the host that is not a member gets nothing, whether it knows the
-    /// room and never joined or was refused.
+    /// room and never joined or was refused, and what a refused peer asks
+    /// never reaches the core.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_host_sends_each_member_the_room_in_order_and_outsiders_nothing() {
         let (host, addr, core, to_core) = host().await;
@@ -675,13 +665,18 @@ mod tests {
         let lurker = Neighbour::start(host, &addr, PASSWORD, false, true);
         let intruder = Neighbour::start(host, &addr, "guess", true, true);
         eventually("the host takes in both members", || {
-            welcomed(&to_core) == HashSet::from([one.peer, two.peer])
+            one.joined() && two.joined()
         })
         .await;
 
-        let from_one = one.say("from one");
-        let from_intruder = intruder.say("from the intruder");
-        eventually("the other member gets the line", || two.has(&from_one)).await;
+        let from_one = Intent::Chat("from one".into());
+        let from_intruder = Intent::Chat("from the intruder".into());
+        one.ask(from_one.clone());
+        intruder.ask(from_intruder.clone());
+        eventually("the host's core hears the member", || {
+            asked(&to_core, one.peer, &from_one)
+        })
+        .await;
 
         let mut sent: Vec<NiketsuMessage> = Vec::new();
         for i in 1..=30 {
@@ -690,31 +685,33 @@ mod tests {
                 sent.push(action(&format!("action {i}")).into());
             }
             if i % 5 == 0 {
-                sent.push(chat(&format!("chat {i}")).into());
+                sent.push(chat(&format!("chat {i}"), host).into());
+            }
+            if i == 14 {
+                sent.push(chat("from one", one.peer).into());
             }
         }
         for msg in &sent {
             core.send(from_core(msg)).unwrap();
         }
         let last = NiketsuMessage::RoomState(state(30));
-        let lines: Vec<&NiketsuMessage> = sent
-            .iter()
-            .filter(|msg| !matches!(msg, NiketsuMessage::RoomState(_)))
-            .collect();
         let final_line = sent.last().unwrap();
+        let ones_line = NiketsuMessage::Line(chat("from one", one.peer));
         for member in [&one, &two] {
             eventually("every member gets the last message", || {
                 member.has(final_line)
             })
             .await;
-            let received: Vec<NiketsuMessage> = member
-                .received()
-                .into_iter()
-                .filter(|msg| *msg != from_one)
-                .collect();
+            let received = member.received();
             assert!(in_order(&received, &sent), "out of order: {received:#?}");
+            let line_for_member = |msg: &&NiketsuMessage| match msg {
+                NiketsuMessage::Line(line) => line.author() != Some(member.peer),
+                _ => false,
+            };
             assert!(
-                lines.iter().all(|line| received.contains(line)),
+                sent.iter()
+                    .filter(line_for_member)
+                    .all(|line| received.contains(line)),
                 "a line is missing: {received:#?}"
             );
             let newest = received
@@ -722,24 +719,14 @@ mod tests {
                 .rfind(|msg| matches!(msg, NiketsuMessage::RoomState(_)));
             assert_eq!(newest, Some(&last), "the newest state is the last");
         }
-        eventually("the host shows the member's line", || {
-            let shows = |msg: &IncomingMessage| {
-                matches!(msg, IncomingMessage::UserMessage(m) if m.message == "from one")
-            };
-            to_core.lock().unwrap().iter().any(shows)
-        })
-        .await;
 
-        assert!(!one.has(&from_one), "the author shows its line already");
-        for member in [&one, &two] {
-            assert!(!member.has(&from_intruder));
-        }
+        assert!(two.has(&ones_line));
+        assert!(!one.has(&ones_line), "the author shows its line already");
         for outsider in [&lurker, &intruder] {
             assert_eq!(outsider.received(), [], "an outsider got the room");
+            assert!(!outsider.joined());
         }
-        assert!(!welcomed(&to_core).contains(&intruder.peer));
-        let shows_intruder = |msg: &IncomingMessage| matches!(msg, IncomingMessage::UserMessage(m) if m.message == "from the intruder");
-        assert!(!to_core.lock().unwrap().iter().any(shows_intruder));
+        assert!(!asked(&to_core, intruder.peer, &from_intruder));
     }
 
     /// A member that does not answer gets nothing past the message on its
@@ -752,15 +739,15 @@ mod tests {
         let quick = Neighbour::start(host, &addr, PASSWORD, true, true);
         let silent = Neighbour::start(host, &addr, PASSWORD, true, false);
         eventually("the host takes in both members", || {
-            welcomed(&to_core) == HashSet::from([quick.peer, silent.peer])
+            quick.joined() && silent.joined()
         })
         .await;
 
         let room = [
             NiketsuMessage::RoomState(state(1)),
-            NiketsuMessage::Action(action("someone paused playback")),
+            NiketsuMessage::Line(action("someone paused playback")),
             NiketsuMessage::RoomState(state(2)),
-            NiketsuMessage::UserMessage(chat("from the host")),
+            NiketsuMessage::Line(chat("from the host", host)),
         ];
         for msg in &room {
             core.send(from_core(msg)).unwrap();
@@ -889,12 +876,9 @@ mod tests {
     /// member that joins later gets the playlist with its first state.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_member_gets_the_playlist_until_it_took_it() {
-        let (host, addr, core, to_core) = host().await;
+        let (host, addr, core, _to_core) = host().await;
         let early = Neighbour::start(host, &addr, PASSWORD, true, true);
-        eventually("the host takes in the member", || {
-            welcomed(&to_core).contains(&early.peer)
-        })
-        .await;
+        eventually("the host takes in the member", || early.joined()).await;
 
         let states = [
             with_playlist(1, 1, "ep1"),
@@ -914,10 +898,7 @@ mod tests {
         assert_eq!(early.playlists(), [ep1, None, ep3.clone(), None]);
 
         let late = Neighbour::start(host, &addr, PASSWORD, true, true);
-        eventually("the host takes in the late member", || {
-            welcomed(&to_core).contains(&late.peer)
-        })
-        .await;
+        eventually("the host takes in the late member", || late.joined()).await;
         core.send(with_playlist(5, 3, "ep3").into()).unwrap();
         eventually("the late member gets the playlist", || {
             late.playlists() == [ep3.clone()]

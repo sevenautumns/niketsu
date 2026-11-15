@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use niketsu_core::chunk::SharedFile;
-use niketsu_core::communicator::{Intent, IntentMsg, PeerIntentMsg, RoomStateMsg};
+use niketsu_core::communicator::{Intent, PeerIntentMsg, RoomStateMsg};
 use niketsu_core::player::{
     PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart,
 };
@@ -909,9 +909,9 @@ async fn an_offer_leaves_with_its_user() {
     assert!(room.hold(carol).is_empty(), "nobody is asked");
 }
 
-/// A new selection drops every offer, also one that was on its way to the
-/// host while the selection changed: an offer is one of the selected
-/// video, so none can point at a video its user does not offer.
+/// A new selection leaves no offer standing for it: an offer names its
+/// video, so an offer of the old one, also one that was on its way to the
+/// host while the selection changed, does not count for the new one.
 #[tokio::test(start_paused = true)]
 async fn a_new_selection_leaves_no_stale_offer() {
     let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
@@ -940,9 +940,10 @@ async fn a_new_selection_leaves_no_stale_offer() {
     });
     room.release(bob, offer);
     room.pump();
+    let ep2 = Video::from("ep2");
     let host_users = room.peer(alice).model.state.users.clone();
     assert!(
-        host_users.list().iter().all(|u| u.offers.is_none()),
+        host_users.values().all(|u| u.offer_of(&ep2).is_none()),
         "an offer of ep1 must not stand for ep2"
     );
     for who in [alice, bob, carol] {
@@ -1063,8 +1064,8 @@ async fn the_user_list_follows_joins_ready_changes_and_departures() {
     }
 }
 
-/// A joiner whose name is taken is renamed by the host, and the rename
-/// reaches the joiner itself.
+/// A joiner whose name is taken gets a name of its own from the host, and
+/// goes by it itself.
 #[tokio::test(start_paused = true)]
 async fn the_host_resolves_username_collisions() {
     let mut room = Room::new();
@@ -1517,8 +1518,9 @@ async fn a_new_host_of_the_same_room_ignores_the_saved_playlist() {
     }
 }
 
-/// A host restoring a saved room tells its own chat what it restored. A
-/// host without a saved room restores nothing and says nothing.
+/// A host restoring a saved room tells its own chat what it restored, in
+/// its own user's name. A host without a saved room restores nothing and
+/// says nothing.
 #[tokio::test(start_paused = true)]
 async fn a_fresh_host_tells_its_chat_what_it_restored() {
     let mut room = Room::with_saved_playlist(saved_playlist);
@@ -1526,7 +1528,7 @@ async fn a_fresh_host_tells_its_chat_what_it_restored() {
     room.pump();
     assert_eq!(
         room.peer(alice).ui.state().actions,
-        ["host changed playlist", "host selected ep2"]
+        ["alice changed playlist", "alice selected ep2"]
     );
 
     let mut room = Room::new();
@@ -1652,12 +1654,9 @@ async fn a_seek_into_another_video_is_what_a_late_joiner_is_greeted_with() {
     room.pump();
 
     let peer = room.peer(bob).id;
-    let intent = IntentMsg {
-        actor: "bob".into(),
-        intent: Intent::Seek {
-            video: Video::from("ep2"),
-            position: Duration::from_secs(300),
-        },
+    let intent = Intent::Seek {
+        video: Video::from("ep2"),
+        position: Duration::from_secs(300),
     };
     room.deliver(alice, PeerIntentMsg { peer, intent });
     room.pump();

@@ -96,9 +96,10 @@ impl CoreModel {
 
     /// Carry auto-sharing over to the newly selected `video` if we are
     /// currently sharing and have the file; otherwise stop sharing. The
-    /// room learns of a carried share once its file is open, and of a
-    /// stopped one from the authority dropping every offer.
+    /// room learns of a carried share once its file is open, and of the
+    /// offer withdrawn until then from this user's status.
     pub(crate) fn reshare_or_stop(&mut self, video: Option<&Video>) {
+        let offered = self.video_provider.offered();
         let file = video
             .filter(|_| self.config.auto_share && self.video_provider.sharing())
             .and_then(|video| self.database.find_file(video.as_str()));
@@ -107,6 +108,9 @@ impl CoreModel {
             None => self.video_provider.stop_providing(),
         }
         self.ui.video_share(self.video_provider.sharing());
+        if self.video_provider.offered() != offered {
+            self.publish_status();
+        }
     }
 }
 
