@@ -13,11 +13,37 @@ use niketsu_core::room::RoomName;
 use niketsu_core::sync::PENDING_STATES;
 use niketsu_core::{ui, video_provider};
 
-use crate::harness::{FILE_SIZE, Room};
+use crate::harness::{FILE_SIZE, Peer, Room};
+
+const SECOND: Duration = Duration::from_secs(1);
+
+/// A user starts playback in mpv, which plays before anyone else knows.
+fn start(room: &mut Room, who: usize) {
+    room.peer(who).player.set(|player| player.paused = false);
+    room.peer(who).act(PlayerStart);
+}
+
+/// A user pauses in mpv, which is paused before anyone else knows.
+fn pause(room: &mut Room, who: usize) {
+    room.peer(who).player.set(|player| player.paused = true);
+    room.peer(who).act(PlayerPause);
+}
+
+/// The player of `who` ends up at `secs` without telling anyone.
+fn drift(room: &mut Room, who: usize, secs: u64) {
+    let position = Duration::from_secs(secs);
+    room.peer(who)
+        .player
+        .set(|player| player.position = position);
+}
+
+fn position(room: &mut Room, who: usize) -> Duration {
+    room.peer(who).player.state().position
+}
 
 /// A peer picking a video makes every peer load it from the start, and the
 /// playlist selection converges.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn selection_by_one_peer_loads_it_everywhere() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1", "ep2"]);
@@ -41,22 +67,24 @@ async fn selection_by_one_peer_loads_it_everywhere() {
         assert_eq!(player.video, Some(Video::from("ep1")));
         assert_eq!(player.position, Duration::ZERO);
         assert_eq!(peer.playlist(), Playlist::from_iter(["ep1", "ep2"]));
-        assert_eq!(
-            peer.model.playlist.get_current_video(),
-            Some(Video::from("ep1"))
-        );
+        assert_eq!(peer.selected(), Some(Video::from("ep1")));
         assert_eq!(peer.ui.state().playing_video, Some(Video::from("ep1")));
     }
 }
 
-/// A host that is still loading reports a stale paused=false and a frozen
-/// position from the previous video; clients must hold paused instead of
-/// following either, and follow again once the host has the file loaded.
-#[tokio::test]
-async fn clients_hold_paused_while_host_is_still_loading() {
+/// A room of ready users starts a newly selected video once everyone has
+/// it loaded, not before: nobody plays ahead of a player that is still
+/// opening the file.
+#[tokio::test(start_paused = true)]
+async fn the_room_does_not_start_until_everyone_has_loaded() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
     let bob = room.join("bob", &["ep1"]);
+    room.pump();
+    for who in [alice, bob] {
+        let name = room.peer(who).name();
+        room.peer(who).act(ui::UserChange { name, ready: true });
+    }
     room.pump();
 
     room.peer(alice).act(ui::PlaylistChange {
@@ -68,48 +96,34 @@ async fn clients_hold_paused_while_host_is_still_loading() {
         video: Video::from("ep1"),
     });
     room.pump();
-
-    let bob_player = room.peer(bob).player.state();
-    assert!(bob_player.file_loaded);
-    assert!(bob_player.paused);
-
-    // while loading, the host reports garbage: stale unpaused state and a
-    // frozen position from the previous video
-    room.peer(alice).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(42);
-    });
-    room.peer(alice).heartbeat();
+    room.pass(3 * SECOND).await;
+    room.heartbeat();
     room.pump();
 
-    let bob_player = room.peer(bob).player.state();
-    assert!(
-        bob_player.paused,
-        "client must not start while the host is still loading"
-    );
-    assert_eq!(
-        bob_player.position,
-        Duration::ZERO,
-        "client must not be yanked to the host's stale position"
-    );
+    assert!(room.peer(bob).player.state().file_loaded);
+    for who in [alice, bob] {
+        let player = room.peer(who).player.state();
+        assert!(player.paused, "peer {who} plays before alice has loaded");
+        assert_eq!(player.position, Duration::ZERO);
+    }
 
-    // the host finished loading and plays from the start; bob follows
-    room.peer(alice).player.set(|player| {
-        player.file_loaded = true;
-        player.position = Duration::ZERO;
-    });
-    room.peer(alice).heartbeat();
+    room.peer(alice).player.finish_load();
     room.pump();
 
-    let bob_player = room.peer(bob).player.state();
-    assert!(!bob_player.paused);
-    assert_eq!(bob_player.position, Duration::ZERO);
+    for who in [alice, bob] {
+        assert!(!room.peer(who).player.state().paused, "peer {who}");
+    }
+    room.pass(5 * SECOND).await;
+    for who in [alice, bob] {
+        assert_eq!(position(&mut room, who), 5 * SECOND);
+    }
 }
 
-/// A client within the tolerance is left alone — no seek and, above all, no
+/// A player within the tolerance is left alone — no seek and, above all, no
 /// speed correction, which would be audible for as long as it takes to close
-/// the gap. Drifting past the tolerance costs one seek.
-#[tokio::test]
+/// the gap. Drifting past the tolerance costs one seek. The host's player
+/// is corrected like a client's.
+#[tokio::test(start_paused = true)]
 async fn small_drift_is_tolerated_and_larger_drift_hard_syncs() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -123,62 +137,56 @@ async fn small_drift_is_tolerated_and_larger_drift_hard_syncs() {
         video: Video::from("ep1"),
     });
     room.pump();
-
-    // both play, but bob is 2 seconds behind — within the tolerance
-    room.peer(alice).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(100);
-    });
-    room.peer(bob).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(98);
-    });
-    room.peer(alice).heartbeat();
+    start(&mut room, alice);
     room.pump();
+    room.pass(100 * SECOND).await;
 
-    let bob_player = room.peer(bob).player.state();
-    assert_eq!(
-        bob_player.position,
-        Duration::from_secs(98),
-        "a drift within the tolerance must not cause a seek"
-    );
-    assert_eq!(
-        bob_player.speed, 1.0,
-        "a drift must never be corrected by changing the speed"
-    );
+    for who in [alice, bob] {
+        // 2 seconds behind the room — within the tolerance
+        drift(&mut room, who, 98);
+        room.heartbeat();
+        room.pump();
 
-    // bob drifted past the tolerance: one seek puts him back on the host
-    room.peer(bob)
-        .player
-        .set(|player| player.position = Duration::from_secs(95));
-    room.peer(alice).heartbeat();
-    room.pump();
+        let player = room.peer(who).player.state();
+        assert_eq!(
+            player.position,
+            98 * SECOND,
+            "a drift within the tolerance must not cause a seek"
+        );
+        assert_eq!(
+            player.speed, 1.0,
+            "a drift must never be corrected by changing the speed"
+        );
 
-    let bob_player = room.peer(bob).player.state();
-    assert_eq!(
-        bob_player.position,
-        Duration::from_secs(100),
-        "a drift past the tolerance must hard-sync"
-    );
-    assert_eq!(bob_player.speed, 1.0);
+        // drifted past the tolerance: one seek puts the player back
+        drift(&mut room, who, 95);
+        room.heartbeat();
+        room.pump();
 
-    // ...and so does a client that ran ahead
-    room.peer(bob)
-        .player
-        .set(|player| player.position = Duration::from_secs(110));
-    room.peer(alice).heartbeat();
-    room.pump();
+        let player = room.peer(who).player.state();
+        assert_eq!(
+            player.position,
+            100 * SECOND,
+            "a drift past the tolerance must hard-sync"
+        );
+        assert_eq!(player.speed, 1.0);
 
-    assert_eq!(
-        room.peer(bob).player.state().position,
-        Duration::from_secs(100),
-        "a client ahead of the host must hard-sync too"
-    );
+        // ...and so does a player that ran ahead
+        drift(&mut room, who, 110);
+        room.heartbeat();
+        room.pump();
+
+        assert_eq!(
+            position(&mut room, who),
+            100 * SECOND,
+            "a player ahead of the room must hard-sync too"
+        );
+    }
 }
 
 /// When the provider stops sharing, every consumer's video server stops —
 /// nobody keeps streaming from a dead provider.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn provider_loss_stops_the_consumers_video_server() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -223,7 +231,7 @@ async fn provider_loss_stops_the_consumers_video_server() {
 
 /// When a video ends, whoever's player finishes first advances the shared
 /// playlist for everyone; the end of the playlist unloads everywhere.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn file_end_advances_the_playlist_everywhere() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1", "ep2"]);
@@ -239,34 +247,72 @@ async fn file_end_advances_the_playlist_everywhere() {
     room.pump();
 
     // alice's mpv reaches the end of ep1 first
-    room.peer(alice).act(PlayerFileEnd(Video::from("ep1")));
+    room.peer(alice).reach_end();
     room.pump();
 
     for who in [alice, bob] {
         let peer = room.peer(who);
         assert_eq!(peer.player.state().video, Some(Video::from("ep2")));
         assert_eq!(peer.player.state().position, Duration::ZERO);
-        assert_eq!(
-            peer.model.playlist.get_current_video(),
-            Some(Video::from("ep2"))
-        );
+        assert_eq!(peer.selected(), Some(Video::from("ep2")));
     }
 
     // this time bob's mpv ends first — and ep2 was the last video
-    room.peer(bob).act(PlayerFileEnd(Video::from("ep2")));
+    room.peer(bob).reach_end();
     room.pump();
 
     for who in [alice, bob] {
         let peer = room.peer(who);
         assert_eq!(peer.player.state().video, None);
-        assert_eq!(peer.model.playlist.get_current_video(), None);
+        assert_eq!(peer.selected(), None);
         assert_eq!(peer.ui.state().playing_video, None);
     }
 }
 
+/// Every player reaches the end of a video, one after the other. The room
+/// moves on to the next video once, and the later ends neither skip that
+/// video nor start it over.
+#[tokio::test(start_paused = true)]
+async fn two_peers_reaching_the_end_advance_the_playlist_once() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1", "ep2", "ep3"]);
+    let bob = room.join("bob", &["ep1", "ep2", "ep3"]);
+    room.pump();
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1", "ep2", "ep3"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    room.pump();
+
+    // bob's player ends first, and the room is 40 seconds into ep2 when
+    // the end of ep1 on alice's reaches the room
+    room.peer(bob).reach_end();
+    room.pump();
+    seek(&mut room, bob, 40);
+    room.pump();
+    room.peer(alice).act(PlayerFileEnd(Video::from("ep1")));
+    room.pump();
+
+    for who in [alice, bob] {
+        let peer = room.peer(who);
+        assert_eq!(peer.selected(), Some(Video::from("ep2")), "peer {who}");
+        let player = peer.player.state();
+        assert_eq!(player.video, Some(Video::from("ep2")), "peer {who}");
+        assert_eq!(player.position, 40 * SECOND, "peer {who}");
+    }
+    let selections = |line: &&String| line.contains("selected");
+    let actions = room.peer(alice).ui.state().actions;
+    assert_eq!(
+        actions.iter().filter(selections).collect::<Vec<_>>(),
+        ["alice selected ep1", "bob selected ep2"]
+    );
+}
+
 /// When the room moves to another host, the new host's clock is the
-/// position authority and the old host's heartbeats move nobody.
-#[tokio::test]
+/// room's, and the old host follows it like any client.
+#[tokio::test(start_paused = true)]
 async fn a_new_host_is_the_position_authority() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -288,40 +334,33 @@ async fn a_new_host_is_the_position_authority() {
     assert!(!room.peer(alice).ui.state().is_host);
     assert!(room.peer(bob).ui.state().is_host);
 
-    // bob's clock is now the reference: a drifting alice syncs to him
-    room.peer(bob).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(100);
-    });
-    room.peer(alice).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(95);
-    });
-    room.peer(bob).heartbeat();
+    // the room plays by bob's clock now: a drifting alice is corrected
+    start(&mut room, bob);
+    room.pump();
+    room.pass(100 * SECOND).await;
+    drift(&mut room, alice, 95);
+    room.heartbeat();
     room.pump();
     assert_eq!(
-        room.peer(alice).player.state().position,
-        Duration::from_secs(100),
-        "clients must follow the new host's clock"
+        position(&mut room, alice),
+        100 * SECOND,
+        "the old host must follow the new host's clock"
     );
 
-    // ...and the old host's heartbeats have no authority anymore
-    room.peer(alice)
-        .player
-        .set(|player| player.position = Duration::from_secs(200));
+    // ...and where the old host's player is moves nobody
+    drift(&mut room, alice, 200);
     room.peer(alice).heartbeat();
     room.pump();
     assert_eq!(
-        room.peer(bob).player.state().position,
-        Duration::from_secs(100),
-        "the old host's clock must not move anyone"
+        position(&mut room, bob),
+        100 * SECOND,
+        "the old host's player must not move anyone"
     );
 }
 
 /// A peer joining mid-session is greeted with the room's playlist and the
-/// running video at the host's current position, and starts playing on the
-/// next heartbeat.
-#[tokio::test]
+/// running video where the room is in it, and plays along.
+#[tokio::test(start_paused = true)]
 async fn late_joiner_gets_playlist_selection_and_position() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1", "ep2"]);
@@ -336,39 +375,29 @@ async fn late_joiner_gets_playlist_selection_and_position() {
     room.pump();
 
     // the session is 100 seconds in when charlie joins
-    room.peer(alice).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(100);
-    });
-    room.peer(alice).heartbeat();
+    start(&mut room, alice);
     room.pump();
+    room.pass(100 * SECOND).await;
 
     let charlie = room.join("charlie", &["ep1", "ep2"]);
     room.pump();
 
     let peer = room.peer(charlie);
     assert_eq!(peer.playlist(), Playlist::from_iter(["ep1", "ep2"]));
-    assert_eq!(
-        peer.model.playlist.get_current_video(),
-        Some(Video::from("ep1"))
-    );
+    assert_eq!(peer.selected(), Some(Video::from("ep1")));
     let player = peer.player.state();
     assert_eq!(player.video, Some(Video::from("ep1")));
     assert_eq!(
         player.position,
-        Duration::from_secs(100),
-        "joiner must start where the host currently is, not at zero"
+        100 * SECOND,
+        "joiner must start where the room currently is, not at zero"
     );
-
-    // the next host heartbeat starts the (still paused) joiner
-    room.peer(alice).heartbeat();
-    room.pump();
-    assert!(!room.peer(charlie).player.state().paused);
+    assert!(!player.paused, "the joiner plays along with the room");
 }
 
 /// A peer joining right after the host seeks starts at the seek, though no
 /// heartbeat has carried it yet.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn late_joiner_right_after_a_seek_starts_there() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -381,24 +410,22 @@ async fn late_joiner_right_after_a_seek_starts_there() {
     });
     room.pump();
 
-    room.peer(alice).player.set(|player| {
-        player.position = Duration::from_secs(600);
-    });
+    seek(&mut room, alice, 600);
 
     let charlie = room.join("charlie", &["ep1"]);
     room.pump();
 
     assert_eq!(
-        room.peer(charlie).player.state().position,
-        Duration::from_secs(600),
-        "joiner must start where the host is, not at its last heartbeat"
+        position(&mut room, charlie),
+        600 * SECOND,
+        "joiner must start where the room is, not at its last heartbeat"
     );
 }
 
 /// A peer joining a session that already runs at another speed adopts it
-/// from the host's heartbeat: the speed change itself was announced long
+/// from the room's state: the speed change itself was announced long
 /// before the joiner existed.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn late_joiner_adopts_the_running_speed() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -412,46 +439,39 @@ async fn late_joiner_adopts_the_running_speed() {
     });
     room.pump();
 
-    // the room has been running at 1.5x, 100 seconds in
+    // the room has been running at 1.5x for 100 seconds
     room.peer(alice).player.set(|player| player.speed = 1.5);
     room.peer(alice).act(PlayerSpeedChange::new(1.5));
-    room.peer(alice).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(100);
-    });
-    room.peer(alice).heartbeat();
+    start(&mut room, alice);
     room.pump();
+    room.pass(100 * SECOND).await;
 
     let charlie = room.join("charlie", &["ep1"]);
     room.pump();
-    room.peer(alice).heartbeat();
-    room.pump();
 
+    let player = room.peer(charlie).player.state();
     assert_eq!(
-        room.peer(charlie).player.state().speed,
-        1.5,
+        player.speed, 1.5,
         "a joiner must play at the speed the room is running at, not at 1.0"
     );
+    assert_eq!(player.position, 150 * SECOND);
 
     // the joiner reconciles against that speed too, so it tolerates the
     // same drift as everyone else instead of being hard-synced constantly
-    room.peer(charlie).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(97);
-    });
-    room.peer(alice).heartbeat();
+    drift(&mut room, charlie, 147);
+    room.heartbeat();
     room.pump();
 
     assert_eq!(
-        room.peer(charlie).player.state().position,
-        Duration::from_secs(97),
+        position(&mut room, charlie),
+        147 * SECOND,
         "the joiner's tolerance must scale with the room's speed"
     );
 }
 
 /// One peer pausing pauses everyone; when the last unready user readies up,
 /// the host auto-starts playback for the whole room.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pause_propagates_and_all_ready_auto_starts() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -499,7 +519,7 @@ async fn pause_propagates_and_all_ready_auto_starts() {
 /// A host speed change propagates to every player, and the tolerance scales
 /// with it: positions are media time, so at double speed twice as much of a
 /// gap amounts to the same wait for the viewer.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn host_speed_change_propagates_and_scales_the_tolerance() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -525,14 +545,11 @@ async fn host_speed_change_propagates_and_scales_the_tolerance() {
     );
 
     // 4 seconds apart is beyond the tolerance at 1x, but not at 2x
-    room.peer(alice).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(100);
-    });
-    room.peer(bob).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(96);
-    });
+    start(&mut room, alice);
+    room.pump();
+    room.pass(50 * SECOND).await;
+    assert_eq!(position(&mut room, alice), 100 * SECOND);
+    drift(&mut room, bob, 96);
     room.peer(alice).heartbeat();
     room.pump();
 
@@ -560,7 +577,7 @@ async fn host_speed_change_propagates_and_scales_the_tolerance() {
 /// A client-initiated speed change is adopted by the initiator as its own
 /// reference speed too: the next host heartbeat must not drag the initiator
 /// back to the old speed while everyone else keeps the new one.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn client_speed_change_survives_the_next_heartbeat() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -586,15 +603,10 @@ async fn client_speed_change_survives_the_next_heartbeat() {
     );
 
     // both play in sync; the next host heartbeat reconciles bob against
-    // the host clock and must leave his speed alone
-    room.peer(alice).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(100);
-    });
-    room.peer(bob).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(100);
-    });
+    // the room's clock and must leave his speed alone
+    start(&mut room, alice);
+    room.pump();
+    room.pass(100 * SECOND).await;
     room.peer(alice).heartbeat();
     room.pump();
 
@@ -608,7 +620,7 @@ async fn client_speed_change_survives_the_next_heartbeat() {
 /// With auto-share on, selecting the next video carries the announced share
 /// over to it; selecting one the provider does not have stops the share and
 /// every consumer's video server with it.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn auto_share_carries_the_share_to_the_next_selection() {
     let mut room = Room::new();
     let alice = room.join_with_auto_share("alice", &["ep1", "ep2"]);
@@ -671,7 +683,7 @@ async fn auto_share_carries_the_share_to_the_next_selection() {
 /// one runs the same choreography as a manual selection: auto-share carries
 /// the share over, and the end of the playlist stops it — on the finishing
 /// peer just like on everyone who receives its Select.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn file_end_reshares_or_stops_like_a_manual_selection() {
     let mut room = Room::new();
     let alice = room.join_with_auto_share("alice", &["ep1", "ep2"]);
@@ -695,7 +707,7 @@ async fn file_end_reshares_or_stops_like_a_manual_selection() {
 
     // alice's mpv finishes ep1: the share must follow to ep2 exactly as it
     // would on a manual selection
-    room.peer(alice).act(PlayerFileEnd(Video::from("ep1")));
+    room.peer(alice).reach_end();
     room.pump();
     assert_eq!(
         room.peer(alice).model.video_provider.file_name().as_deref(),
@@ -716,7 +728,7 @@ async fn file_end_reshares_or_stops_like_a_manual_selection() {
     assert!(room.peer(bob).video_server.running());
 
     // ep2 was the last video: the share stops and bob's server with it
-    room.peer(alice).act(PlayerFileEnd(Video::from("ep2")));
+    room.peer(alice).reach_end();
     room.pump();
     assert!(!room.peer(alice).model.video_provider.sharing());
     assert!(!room.peer(alice).ui.state().video_share);
@@ -729,7 +741,7 @@ async fn file_end_reshares_or_stops_like_a_manual_selection() {
 /// A file request when the room shows nobody offering the file asks
 /// nobody: the requester is told and its video server stops instead of
 /// waiting for chunks that will never come.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn file_request_without_a_provider_stops_the_video_server() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -766,7 +778,7 @@ async fn file_request_without_a_provider_stops_the_video_server() {
 /// A stream the announced provider turns down — it is not actually serving
 /// the file — stops the viewer's video server instead of leaving it up
 /// serving a stream nobody will ever feed.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_refused_stream_stops_the_viewers_video_server() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -849,7 +861,7 @@ fn room_with_ep1_at_bob() -> (Room, usize, usize, usize) {
 /// A user who offers the selected video shows so in everyone's user list,
 /// that of a later joiner included, with the file's size. From that alone
 /// the joiner streams the file from that user.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_late_joiner_learns_who_offers_the_video() {
     let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
     share(&mut room, bob, "ep1");
@@ -877,7 +889,7 @@ async fn a_late_joiner_learns_who_offers_the_video() {
 
 /// An offer leaves the room with its user: nobody sees it any more, the
 /// stream from that user ends, and a new request finds no provider.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_offer_leaves_with_its_user() {
     let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
     share(&mut room, bob, "ep1");
@@ -900,7 +912,7 @@ async fn an_offer_leaves_with_its_user() {
 /// A new selection drops every offer, also one that was on its way to the
 /// host while the selection changed: an offer is one of the selected
 /// video, so none can point at a video its user does not offer.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_new_selection_leaves_no_stale_offer() {
     let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
     share(&mut room, bob, "ep1");
@@ -928,13 +940,9 @@ async fn a_new_selection_leaves_no_stale_offer() {
     });
     room.release(bob, offer);
     room.pump();
-    let host_users = room.peer(alice).model.host.as_ref().unwrap().users.clone();
+    let host_users = room.peer(alice).model.state.users.clone();
     assert!(
-        host_users
-            .status_list()
-            .users
-            .iter()
-            .all(|u| u.offers.is_none()),
+        host_users.list().iter().all(|u| u.offers.is_none()),
         "an offer of ep1 must not stand for ep2"
     );
     for who in [alice, bob, carol] {
@@ -944,7 +952,7 @@ async fn a_new_selection_leaves_no_stale_offer() {
 
 /// After the room moves to another host, the new host knows who offers the
 /// video, and a request is answered by that user.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_new_host_knows_who_offers_the_video() {
     let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
     share(&mut room, bob, "ep1");
@@ -966,7 +974,7 @@ async fn a_new_host_knows_who_offers_the_video() {
 /// gone once the user stops sharing or the file cannot be read, and back
 /// when the user shares again. A request after the share stopped is not
 /// answered.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_offer_follows_start_and_stop_of_sharing() {
     let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
     let everyone_sees = |room: &mut Room, offering_users: &[&str]| {
@@ -998,7 +1006,7 @@ async fn the_offer_follows_start_and_stop_of_sharing() {
 
 /// A stream is one of the selected video: a new selection ends it, and the
 /// requester's communicator streams nothing from the old provider.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_new_selection_ends_the_stream_of_the_old_video() {
     let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
     share(&mut room, bob, "ep1");
@@ -1021,7 +1029,7 @@ fn users(names: &[(&str, bool)]) -> Vec<(String, bool)> {
 
 /// Everyone, late joiners included, sees the same user list, and the host
 /// keeps it current as users come, ready up and leave.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_user_list_follows_joins_ready_changes_and_departures() {
     let mut room = Room::new();
     let alice = room.join("alice", &[]);
@@ -1057,7 +1065,7 @@ async fn the_user_list_follows_joins_ready_changes_and_departures() {
 
 /// A joiner whose name is taken is renamed by the host, and the rename
 /// reaches the joiner itself.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_host_resolves_username_collisions() {
     let mut room = Room::new();
     let alice = room.join("alice", &[]);
@@ -1091,7 +1099,7 @@ async fn the_host_resolves_username_collisions() {
 
 /// When the last user readies up — here a client, so the decision is the
 /// host's reaction to a peer's status — playback starts for everyone.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_client_readying_up_last_auto_starts_the_room() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -1129,7 +1137,7 @@ async fn a_client_readying_up_last_auto_starts_the_room() {
 
 /// A client removing the running video from the playlist makes the host
 /// move the whole room on to the video that took its place.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn removing_the_running_video_selects_its_successor() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1", "ep2", "ep3"]);
@@ -1154,10 +1162,7 @@ async fn removing_the_running_video_selects_its_successor() {
         let peer = room.peer(who);
         assert_eq!(peer.playlist(), Playlist::from_iter(["ep1", "ep3"]));
         assert_eq!(peer.player.state().video, Some(Video::from("ep3")));
-        assert_eq!(
-            peer.model.playlist.get_current_video(),
-            Some(Video::from("ep3"))
-        );
+        assert_eq!(peer.selected(), Some(Video::from("ep3")));
     }
 
     // a late joiner gets the same picture
@@ -1170,7 +1175,7 @@ async fn removing_the_running_video_selects_its_successor() {
 }
 
 /// A room of alice (the host), bob and charlie, all playing ep1 at 10s.
-fn three_playing_ep1() -> (Room, usize, usize, usize) {
+async fn three_playing_ep1() -> (Room, usize, usize, usize) {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
     let bob = room.join("bob", &["ep1"]);
@@ -1184,12 +1189,9 @@ fn three_playing_ep1() -> (Room, usize, usize, usize) {
         video: Video::from("ep1"),
     });
     room.pump();
-    for who in [alice, bob, charlie] {
-        room.peer(who).player.set(|player| {
-            player.paused = false;
-            player.position = Duration::from_secs(10);
-        });
-    }
+    start(&mut room, alice);
+    room.pump();
+    room.pass(10 * SECOND).await;
     room.heartbeat();
     room.pump();
     (room, alice, bob, charlie)
@@ -1213,9 +1215,9 @@ fn versions_seen(room: &mut Room, who: usize) -> Vec<u64> {
 /// A state the host published before it handled a seek moves nobody back:
 /// not the seeker, whose intent it crossed, and not a peer it is still on
 /// its way to, which gets the seek after it, never before.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_state_older_than_a_seek_moves_nobody_back() {
-    let (mut room, alice, bob, charlie) = three_playing_ep1();
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
     room.hold_link(bob);
     room.hold_link(charlie);
 
@@ -1247,27 +1249,20 @@ async fn a_state_older_than_a_seek_moves_nobody_back() {
         );
     }
 
-    // the host's clock counts as ever for what comes after the seek
-    room.peer(charlie)
-        .player
-        .set(|player| player.position = Duration::from_secs(301));
-    room.peer(alice)
-        .player
-        .set(|player| player.position = Duration::from_secs(320));
+    // the room's clock counts as ever for what comes after the seek
+    room.pass(20 * SECOND).await;
+    drift(&mut room, charlie, 310);
     room.heartbeat();
     room.pump();
-    assert_eq!(
-        room.peer(charlie).player.state().position,
-        Duration::from_secs(320)
-    );
+    assert_eq!(position(&mut room, charlie), 320 * SECOND);
 }
 
 /// The host's player takes a moment to seek and reports the old position
-/// meanwhile. Until it has moved, the host tells the room where it seeks
-/// to, so its heartbeats do not drag the room back.
-#[tokio::test]
-async fn the_host_tells_the_room_its_seek_target_until_its_player_moved() {
-    let (mut room, alice, bob, charlie) = three_playing_ep1();
+/// meanwhile. The room is where it was told to go all the same: the
+/// host's player follows the room, it does not say where the room is.
+#[tokio::test(start_paused = true)]
+async fn a_host_player_slow_to_seek_does_not_drag_the_room_back() {
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
     room.peer(alice).player.set(|player| player.seek_lag = true);
 
     seek(&mut room, bob, 300);
@@ -1287,26 +1282,26 @@ async fn the_host_tells_the_room_its_seek_target_until_its_player_moved() {
         );
     }
 
-    // landed, and moved on: the host's own clock counts again
+    // a peer joining meanwhile starts at the seek's target
+    let dave = room.join("dave", &["ep1"]);
+    room.pump();
+    assert_eq!(position(&mut room, dave), 300 * SECOND);
+
+    // landed, the host's player plays along with the room
     room.peer(alice).player.land_seek();
-    room.peer(alice)
-        .player
-        .set(|player| player.position = Duration::from_secs(310));
+    room.pass(10 * SECOND).await;
     room.heartbeat();
     room.pump();
-    for who in [bob, charlie] {
-        assert_eq!(
-            room.peer(who).player.state().position,
-            Duration::from_secs(310)
-        );
+    for who in [alice, bob, charlie, dave] {
+        assert_eq!(position(&mut room, who), 310 * SECOND, "peer {who}");
     }
 }
 
 /// A state the host published before it handled a client's pause does not
 /// start the client again on its way.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_state_from_before_the_host_handled_a_pause_does_not_undo_it() {
-    let (mut room, alice, bob, charlie) = three_playing_ep1();
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
     room.hold_link(bob);
 
     room.peer(alice).heartbeat();
@@ -1327,9 +1322,9 @@ async fn a_state_from_before_the_host_handled_a_pause_does_not_undo_it() {
 
 /// A seek shorter than the tolerance moves every peer by exactly that much:
 /// a jump is set, not reconciled.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_seek_within_the_tolerance_reaches_every_peer() {
-    let (mut room, alice, bob, charlie) = three_playing_ep1();
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
 
     seek(&mut room, bob, 12);
     room.pump();
@@ -1354,9 +1349,9 @@ async fn a_seek_within_the_tolerance_reaches_every_peer() {
 
 /// Two clients seeking at the same moment end where the host's order puts
 /// them: the room takes the one the host handled last.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn two_clients_acting_at_once_end_in_the_hosts_order() {
-    let (mut room, alice, bob, charlie) = three_playing_ep1();
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
 
     // both before either reached the host; bob's arrives first
     seek(&mut room, bob, 200);
@@ -1375,7 +1370,7 @@ async fn two_clients_acting_at_once_end_in_the_hosts_order() {
 /// The host's position is half a round trip old when it arrives; a playing
 /// client reconciles against where the host is by now, a paused one against
 /// the reported position as is.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn clients_compensate_the_host_position_for_the_network_delay() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -1394,55 +1389,41 @@ async fn clients_compensate_the_host_position_for_the_network_delay() {
     room.round_trip(bob, Duration::from_millis(400));
     room.round_trip(bob, Duration::from_secs(3));
 
-    room.peer(alice).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(100);
-    });
-    room.peer(bob).player.set(|player| {
-        player.paused = false;
-        player.position = Duration::from_secs(90);
-    });
+    start(&mut room, alice);
+    room.pump();
+    room.pass(100 * SECOND).await;
+    drift(&mut room, bob, 90);
     room.peer(alice).heartbeat();
     room.pump();
     assert_eq!(
-        room.peer(bob).player.state().position,
+        position(&mut room, bob),
         Duration::from_millis(100_200),
-        "a playing host is half the quietest round trip further by now"
+        "a playing room is half the quietest round trip further by now"
     );
 
     // 2.6s ahead of the reported position, but only 2.4s ahead of where
-    // the host is by now: within the tolerance
+    // the room is by now: within the tolerance
     room.peer(bob)
         .player
         .set(|player| player.position = Duration::from_millis(102_600));
-    room.peer(bob).heartbeat();
     room.peer(alice).heartbeat();
     room.pump();
-    assert_eq!(
-        room.peer(bob).player.state().position,
-        Duration::from_millis(102_600)
-    );
+    assert_eq!(position(&mut room, bob), Duration::from_millis(102_600));
 
-    // a paused host does not move while the message travels
-    room.peer(alice).player.set(|player| player.paused = true);
-    room.peer(bob).player.set(|player| {
-        player.paused = true;
-        player.position = Duration::from_secs(90);
-    });
-    room.peer(bob).heartbeat();
+    // a paused room does not move while the message travels
+    pause(&mut room, alice);
+    room.pump();
+    drift(&mut room, bob, 90);
     room.peer(alice).heartbeat();
     room.pump();
-    assert_eq!(
-        room.peer(bob).player.state().position,
-        Duration::from_secs(100)
-    );
+    assert_eq!(position(&mut room, bob), 100 * SECOND);
 }
 
 /// A room moving to another host keeps its state: the new host does not
 /// restart the running video, and everyone who reconnects to it — the old
 /// host included — is greeted with the playlist, the video at the new
 /// host's position, and the full user list.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_new_host_keeps_the_room_running() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1", "ep2"]);
@@ -1457,12 +1438,9 @@ async fn a_new_host_keeps_the_room_running() {
         video: Video::from("ep2"),
     });
     room.pump();
-    for who in [alice, bob, charlie] {
-        room.peer(who).player.set(|player| {
-            player.paused = false;
-            player.position = Duration::from_secs(60);
-        });
-    }
+    start(&mut room, alice);
+    room.pump();
+    room.pass(60 * SECOND).await;
 
     room.rehost(bob);
     room.pump();
@@ -1472,30 +1450,31 @@ async fn a_new_host_keeps_the_room_running() {
     assert_eq!(bob_player.video, Some(Video::from("ep2")));
     assert_eq!(
         bob_player.position,
-        Duration::from_secs(60),
+        60 * SECOND,
         "the new host must not restart the running video"
     );
-    let everyone = users(&[("alice", false), ("bob", false), ("charlie", false)]);
+    // alice started the room, which made her ready
+    let everyone = users(&[("alice", true), ("bob", false), ("charlie", false)]);
     for who in [alice, bob, charlie] {
         let peer = room.peer(who);
         assert_eq!(peer.playlist(), Playlist::from_iter(["ep1", "ep2"]));
-        assert_eq!(peer.player.state().video, Some(Video::from("ep2")));
-        assert_eq!(peer.player.state().position, Duration::from_secs(60));
+        let player = peer.player.state();
+        assert_eq!(player.video, Some(Video::from("ep2")));
+        assert_eq!(player.position, 60 * SECOND);
+        assert!(!player.paused, "peer {who}: the room plays on");
         assert_eq!(peer.ui.state().user_names(), everyone);
     }
 }
 
 /// The playlist of an earlier session: ep1 and ep2, with ep2 playing.
 fn saved_playlist(_: &RoomName) -> Option<PlaylistHandler> {
-    let mut saved = PlaylistHandler::default();
-    saved.replace(Playlist::from_iter(["ep1", "ep2"]));
-    saved.select_playing(&Video::from("ep2"));
-    Some(saved)
+    let playlist = Playlist::from_iter(["ep1", "ep2"]);
+    Some(PlaylistHandler::new(playlist, Some(&Video::from("ep2"))))
 }
 
 /// A host starting a room fresh restores the room's saved playlist and
 /// selection, and peers joining later are greeted with it.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_fresh_host_restores_the_rooms_saved_playlist() {
     let mut room = Room::with_saved_playlist(saved_playlist);
     let alice = room.join("alice", &["ep1", "ep2"]);
@@ -1513,7 +1492,7 @@ async fn a_fresh_host_restores_the_rooms_saved_playlist() {
 
 /// A core that already followed the room keeps the room's state when it
 /// becomes host, whatever is saved for the room.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_new_host_of_the_same_room_ignores_the_saved_playlist() {
     let mut room = Room::with_saved_playlist(saved_playlist);
     let alice = room.join("alice", &["ep1", "ep2", "ep3"]);
@@ -1540,7 +1519,7 @@ async fn a_new_host_of_the_same_room_ignores_the_saved_playlist() {
 
 /// A host restoring a saved room tells its own chat what it restored. A
 /// host without a saved room restores nothing and says nothing.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_fresh_host_tells_its_chat_what_it_restored() {
     let mut room = Room::with_saved_playlist(saved_playlist);
     let alice = room.join("alice", &["ep1", "ep2"]);
@@ -1558,7 +1537,7 @@ async fn a_fresh_host_tells_its_chat_what_it_restored() {
 
 /// Every peer sees the line for an action once, its actor included, be it
 /// the host's own user or a client's. The states that follow add none.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn every_peer_sees_an_action_line_once_the_actor_included() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -1598,11 +1577,12 @@ async fn every_peer_sees_an_action_line_once_the_actor_included() {
     }
 }
 
-/// A client whose selection never reached the host plays another video
-/// than the room. Its intent shadows the room's states only for a few
-/// heartbeats; then the client follows the host back to the room's video.
-#[tokio::test]
-async fn an_intent_the_host_never_answers_stops_shadowing_the_room() {
+/// A client whose selection never reached the host shows another video
+/// than the room, while its player stays with the room. Its intent shadows
+/// the room's states only for a few heartbeats; then the client shows the
+/// room's video again.
+#[tokio::test(start_paused = true)]
+async fn a_selection_the_host_never_got_gives_way_to_the_rooms() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1", "ep2"]);
     let bob = room.join("bob", &["ep1", "ep2"]);
@@ -1616,23 +1596,28 @@ async fn an_intent_the_host_never_answers_stops_shadowing_the_room() {
     });
     room.pump();
 
-    // bob selects ep1, and the request is lost on its way to the host
+    // bob selects ep1, which his UI shows at once, and the request is
+    // lost on its way to the host
+    let ep1 = Some(Video::from("ep1"));
+    room.peer(bob).ui.set(|ui| ui.playing_video = ep1.clone());
     room.peer(bob).act(ui::VideoChange {
         video: Video::from("ep1"),
     });
     room.peer(bob).lose_messages();
-    room.peer(alice)
-        .player
-        .set(|player| player.position = Duration::from_secs(40));
 
     for _ in 0..2 {
         room.heartbeat();
         room.pump();
     }
     assert_eq!(
-        room.peer(bob).player.state().video,
-        Some(Video::from("ep1")),
+        room.peer(bob).ui.state().playing_video,
+        ep1,
         "a state or two may just predate the host's answer"
+    );
+    assert_eq!(
+        room.peer(bob).player.state().video,
+        Some(Video::from("ep2")),
+        "the player waits for the room"
     );
 
     for _ in 0..3 {
@@ -1641,9 +1626,9 @@ async fn an_intent_the_host_never_answers_stops_shadowing_the_room() {
     }
     let player = room.peer(bob).player.state();
     assert_eq!(player.video, Some(Video::from("ep2")));
-    assert_eq!(player.position, Duration::from_secs(40));
+    assert_eq!(room.peer(bob).selected(), Some(Video::from("ep2")));
     assert_eq!(
-        room.peer(bob).model.playlist.get_current_video(),
+        room.peer(bob).ui.state().playing_video,
         Some(Video::from("ep2"))
     );
 }
@@ -1651,7 +1636,7 @@ async fn an_intent_the_host_never_answers_stops_shadowing_the_room() {
 /// A seek can name another video than the one the host plays, when it
 /// crossed a selection on the way. The host moves the room to it, and
 /// greets a peer joining afterwards with the video the room plays.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_seek_into_another_video_is_what_a_late_joiner_is_greeted_with() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1", "ep2"]);
@@ -1699,7 +1684,7 @@ fn playlists(states: &[RoomStateMsg]) -> Vec<Option<Playlist>> {
 /// A new playlist goes to every member with the first state after its
 /// change; the states after it leave it out for a member that took it, and
 /// every member has it.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_playlist_reaches_each_member_once() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -1734,7 +1719,7 @@ async fn a_playlist_reaches_each_member_once() {
 /// A message the host's outbox cannot deliver drops its member from the
 /// room. The member connects again and is greeted with what it missed,
 /// the playlist included.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_member_whose_message_failed_rejoins_with_the_rooms_playlist() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -1764,7 +1749,7 @@ async fn a_member_whose_message_failed_rejoins_with_the_rooms_playlist() {
 /// behind it: a heartbeat after a playlist change reaches the member after
 /// the change, never before. Waiting, the heartbeat takes the place of the
 /// change's state, and carries the playlist the member does not have yet.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_heartbeat_waits_behind_a_playlist_change() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -1800,7 +1785,7 @@ async fn a_heartbeat_waits_behind_a_playlist_change() {
 
 /// A joiner takes the room's playlist from the first state the host sends
 /// it; the states after it leave the playlist out.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_joiner_gets_the_playlist_from_the_greeting() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -1830,9 +1815,9 @@ async fn a_joiner_gets_the_playlist_from_the_greeting() {
 /// their way to the host comes with a state from before them, which the
 /// client ignores. The client keeps the playlist and shows it with the
 /// host's answer.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_playlist_change_while_intents_are_pending_still_reaches_the_client() {
-    let (mut room, alice, bob, charlie) = three_playing_ep1();
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
 
     room.peer(bob).player.set(|player| player.paused = true);
     room.peer(bob).act(PlayerPause);
@@ -1865,7 +1850,7 @@ async fn a_playlist_change_while_intents_are_pending_still_reaches_the_client() 
 /// A client's playlist edit that never reached the host shadows the room
 /// only while its intent may still be answered; then the client shows the
 /// room's playlist again, which it kept from the host.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_playlist_edit_the_host_never_got_gives_way_to_the_rooms() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
@@ -1885,7 +1870,8 @@ async fn a_playlist_edit_the_host_never_got_gives_way_to_the_rooms() {
     room.peer(bob).lose_messages();
     room.heartbeat();
     room.pump();
-    assert_eq!(room.peer(bob).playlist(), edit);
+    assert_eq!(room.peer(bob).ui.state().playlist, edit);
+    assert_eq!(room.peer(bob).playlist(), playlist, "the room's is kept");
 
     // one state ignored above, and the last of these is the first one the
     // expired intent lets through
@@ -1901,9 +1887,9 @@ async fn a_playlist_edit_the_host_never_got_gives_way_to_the_rooms() {
 /// client asked it, also when it arrives all at once: the room ends where
 /// the client's last intent puts it, and every chat shows the client's
 /// actions in its order.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn one_clients_intents_reach_the_host_in_the_order_sent() {
-    let (mut room, alice, bob, charlie) = three_playing_ep1();
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
     let before = room.peer(alice).ui.state().actions.len();
 
     seek(&mut room, bob, 100);
@@ -1933,9 +1919,9 @@ async fn one_clients_intents_reach_the_host_in_the_order_sent() {
 /// A client's message the host never takes ends the client's session,
 /// and what the client asked goes with it. The client connects again and
 /// follows the room as the host has it.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_client_whose_message_failed_rejoins_and_follows_the_room() {
-    let (mut room, alice, bob, charlie) = three_playing_ep1();
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
 
     room.peer(bob).player.set(|player| player.paused = true);
     room.peer(bob).act(PlayerPause);
@@ -1949,7 +1935,100 @@ async fn a_client_whose_message_failed_rejoins_and_follows_the_room() {
     }
     assert_eq!(
         room.peer(alice).ui.state().user_names(),
-        users(&[("alice", false), ("bob", false), ("charlie", false)]),
+        users(&[("alice", true), ("bob", false), ("charlie", false)]),
         "bob is back in the room"
+    );
+}
+
+/// A follower whose session ends is in no room and the authority over the
+/// state it has: its player plays on, and what its user does applies at
+/// once. Back in the room, it takes the room's state again.
+#[tokio::test(start_paused = true)]
+async fn a_follower_without_its_session_keeps_playing_and_rejoins_the_room() {
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
+
+    room.lose_connection(bob);
+    room.pump();
+    room.pass(5 * SECOND).await;
+    room.heartbeat();
+    room.pump();
+    let player = room.peer(bob).player.state();
+    assert!(!player.paused, "bob plays on by himself");
+    assert_eq!(player.position, 15 * SECOND);
+    assert_eq!(
+        room.peer(bob).ui.state().user_names(),
+        users(&[("bob", false)]),
+        "nobody else is in a room of one"
+    );
+
+    // on his own, bob decides: his seek and pause are his state's
+    seek(&mut room, bob, 500);
+    pause(&mut room, bob);
+    room.pass(5 * SECOND).await;
+    room.heartbeat();
+    room.pump();
+    assert_eq!(position(&mut room, bob), 500 * SECOND);
+    for who in [alice, charlie] {
+        assert_eq!(position(&mut room, who), 20 * SECOND, "peer {who}");
+    }
+
+    // back in the room, the room's state overwrites what bob did alone
+    room.reconnect(bob);
+    room.pump();
+    let player = room.peer(bob).player.state();
+    assert!(!player.paused);
+    assert_eq!(player.position, 20 * SECOND);
+    assert_eq!(
+        room.peer(bob).ui.state().user_names(),
+        users(&[("alice", true), ("bob", false), ("charlie", false)])
+    );
+}
+
+/// A core in no room is a room of one: its user selects, plays, seeks and
+/// reaches the end of a video without anyone to ask.
+#[tokio::test(start_paused = true)]
+async fn a_core_in_no_room_selects_plays_and_seeks_locally() {
+    let mut alice = Peer::in_no_room("alice", &["ep1", "ep2"]);
+    alice.act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1", "ep2"]),
+    });
+    alice.act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    alice.hear_player();
+    let player = alice.player.state();
+    assert_eq!(player.video, Some(Video::from("ep1")));
+    assert!(player.paused, "a new selection waits for its user");
+    assert_eq!(alice.ui.state().playing_video, Some(Video::from("ep1")));
+
+    alice.player.set(|player| player.paused = false);
+    alice.act(PlayerStart);
+    tokio::time::advance(10 * SECOND).await;
+    alice.heartbeat();
+    assert_eq!(alice.player.state().position, 10 * SECOND);
+
+    alice.player.set(|player| player.position = 300 * SECOND);
+    alice.act(PlayerPositionChange::new(300 * SECOND));
+    tokio::time::advance(10 * SECOND).await;
+    alice.heartbeat();
+    assert_eq!(alice.player.state().position, 310 * SECOND);
+
+    // ready and alone, the next video starts by itself once it has loaded
+    alice.reach_end();
+    alice.hear_player();
+    let player = alice.player.state();
+    assert_eq!(player.video, Some(Video::from("ep2")));
+    assert_eq!(player.position, Duration::ZERO);
+    assert!(!player.paused);
+    assert_eq!(
+        alice.ui.state().actions,
+        [
+            "alice changed playlist",
+            "alice selected ep1",
+            "alice started playback",
+            "alice seeked to 300s",
+            "alice selected ep2",
+            "alice started playback",
+        ]
     );
 }

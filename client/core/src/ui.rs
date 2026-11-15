@@ -12,7 +12,6 @@ use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as Mp
 use tracing::{Level, trace};
 
 use super::communicator::{Intent, StreamMsg, UserMessageMsg};
-use super::player::MediaPlayerTrait;
 use super::playlist::Video;
 use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
@@ -62,6 +61,7 @@ pub struct PlaylistChange {
 impl EventHandler for PlaylistChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("playlist change message");
+        model.followed.unconfirmed = true;
         model.request(Intent::Playlist(self.playlist));
     }
 }
@@ -74,6 +74,7 @@ pub struct VideoChange {
 impl EventHandler for VideoChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video change message");
+        model.followed.unconfirmed = true;
         model.request(Intent::Select {
             video: Some(self.video),
             position: Duration::ZERO,
@@ -265,7 +266,7 @@ impl EventHandler for FileShareChange {
             return model.stop_sharing();
         }
 
-        let Some(current_video) = model.player.playing_video() else {
+        let Some(current_video) = model.state.video.clone() else {
             model.ui.player_message(PlayerMessage::error(
                 "Can not provide video if none is loaded",
             ));
@@ -290,7 +291,7 @@ pub struct FileRequest {}
 impl EventHandler for FileRequest {
     fn handle(self, model: &mut CoreModel) {
         trace!("video file request message");
-        let Some(current_video) = model.player.playing_video() else {
+        let Some(current_video) = model.state.video.clone() else {
             model.ui.player_message(PlayerMessage::error(
                 "Can not request video if none is loaded",
             ));
@@ -626,6 +627,8 @@ mod tests {
     use crate::config::Config;
     use crate::file_database::MockFileDatabaseTrait;
     use crate::player::MockMediaPlayerTrait;
+    use crate::room::Role;
+    use crate::sync::ClientSync;
     use crate::util::Observed;
     use crate::{MockVideoProviderTrait, MockVideoServerTrait};
 
@@ -725,6 +728,8 @@ mod tests {
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
+        // a follower asks its host and touches nothing else
+        core.model.role = Role::Follower(ClientSync::default());
 
         assert_eq!(core.model.config.username, user);
         assert!(!core.model.ready);

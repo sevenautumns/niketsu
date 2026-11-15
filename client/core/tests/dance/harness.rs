@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::chunk::SharedFile;
 use niketsu_core::communicator::{
-    ClientRequest, CommunicatorTrait, ConnectedMsg, EndpointInfo, HostInstruction,
+    ClientRequest, CommunicatorTrait, ConnectedMsg, DisconnectedMsg, EndpointInfo, HostInstruction,
     HostRoundTripMsg, IncomingMessage, NoticeMsg, OutgoingMessage, PeerConnectedMsg,
     PeerDisconnectedMsg, PeerId, PeerIntentMsg, RoomMessage, RoomStateMsg, StreamEndedMsg,
     StreamMsg,
@@ -18,7 +18,7 @@ use niketsu_core::file_database::{
     FileDatabaseEvent, FileDatabaseTrait, FileEntry, FilePathSearch, FileStore,
 };
 use niketsu_core::heartbeat::Heartbeat;
-use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait};
+use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait, PlayerFileEnd, PlayerLoaded};
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::UserList;
 use niketsu_core::ui::{
@@ -27,30 +27,39 @@ use niketsu_core::ui::{
 use niketsu_core::video_provider::{VideoProviderEvent, VideoProviderTrait};
 use niketsu_core::video_server::{VideoServerEvent, VideoServerTrait};
 use niketsu_core::{CoreModel, EventHandler, SavedPlaylistLoader};
+use tokio::time::Instant;
 
 // ------------------------------------------------------------------
-// Fake player: stands in for mpv. State is shared with the test via a
-// handle so scenarios can simulate playback (position, slow loads).
+// Fake player: stands in for mpv. It plays by the test's clock, which
+// only moves when the test advances it. State is shared with the test via
+// a handle so scenarios can simulate drift, slow seeks and slow loads.
 // ------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct PlayerState {
     pub video: Option<Video>,
+    /// Where the player is. While it has a loaded video and is not paused,
+    /// it plays on from here as the test's clock advances.
     pub position: Duration,
     pub speed: f64,
     pub paused: bool,
     pub file_loaded: bool,
-    /// When true, `load_video` leaves `file_loaded` false until the test
-    /// flips it — simulates mpv still opening the file.
+    /// When true, `load_video` leaves `file_loaded` false until
+    /// [`PlayerHandle::finish_load`] — simulates mpv still opening the
+    /// file.
     pub load_lag: bool,
     /// When true, `set_position` only notes the target and the position
     /// stays until [`PlayerHandle::land_seek`] — simulates mpv seeking.
     pub seek_lag: bool,
     seek_target: Option<Duration>,
+    /// When the player was at `position`.
+    at: Instant,
+    /// What the player has to report to its core.
+    events: Vec<MediaPlayerEvent>,
 }
 
-impl Default for PlayerState {
-    fn default() -> Self {
+impl PlayerState {
+    fn new() -> Self {
         Self {
             video: None,
             position: Duration::ZERO,
@@ -60,8 +69,26 @@ impl Default for PlayerState {
             load_lag: false,
             seek_lag: false,
             seek_target: None,
+            at: Instant::now(),
+            events: Vec::new(),
         }
     }
+
+    /// Plays on to the present.
+    fn play_on(&mut self) {
+        let now = Instant::now();
+        if self.video.is_some() && self.file_loaded && !self.paused {
+            self.position += (now - self.at).mul_f64(self.speed);
+        }
+        self.at = now;
+    }
+}
+
+/// The player's state as it is at this moment.
+fn present(state: &Mutex<PlayerState>) -> std::sync::MutexGuard<'_, PlayerState> {
+    let mut state = state.lock().unwrap();
+    state.play_on();
+    state
 }
 
 #[derive(Debug, Clone)]
@@ -69,19 +96,32 @@ pub struct PlayerHandle(Arc<Mutex<PlayerState>>);
 
 impl PlayerHandle {
     pub fn state(&self) -> PlayerState {
-        self.0.lock().unwrap().clone()
+        present(&self.0).clone()
     }
 
+    /// The player ends up in another state without telling its core, as a
+    /// player does that drifts, or before it reports what its user did.
     pub fn set(&self, f: impl FnOnce(&mut PlayerState)) {
-        f(&mut self.0.lock().unwrap())
+        f(&mut present(&self.0))
     }
 
     /// The player arrives where it was told to seek while `seek_lag` held
     /// it back.
     pub fn land_seek(&self) {
-        let mut state = self.0.lock().unwrap();
+        let mut state = present(&self.0);
         let target = state.seek_target.take().expect("no seek in flight");
         state.position = target;
+    }
+
+    /// The player finishes the load `load_lag` held back, and reports it.
+    pub fn finish_load(&self) {
+        let mut state = present(&self.0);
+        state.file_loaded = true;
+        state.events.push(PlayerLoaded.into());
+    }
+
+    fn take_events(&self) -> Vec<MediaPlayerEvent> {
+        std::mem::take(&mut self.0.lock().unwrap().events)
     }
 }
 
@@ -90,12 +130,12 @@ struct FakePlayer(Arc<Mutex<PlayerState>>);
 
 impl FakePlayer {
     fn new() -> (Self, PlayerHandle) {
-        let state = Arc::new(Mutex::new(PlayerState::default()));
+        let state = Arc::new(Mutex::new(PlayerState::new()));
         (Self(state.clone()), PlayerHandle(state))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, PlayerState> {
-        self.0.lock().unwrap()
+        present(&self.0)
     }
 }
 
@@ -131,11 +171,17 @@ impl MediaPlayerTrait for FakePlayer {
         state.video.as_ref().map(|_| state.position)
     }
 
+    /// Like mpv, the player loads paused and reports when it has loaded.
     fn load_video(&mut self, load: Video, pos: Duration, _db: &FileStore) {
         let mut state = self.lock();
         state.video = Some(load);
         state.position = pos;
+        state.paused = true;
+        state.seek_target = None;
         state.file_loaded = !state.load_lag;
+        if state.file_loaded {
+            state.events.push(PlayerLoaded.into());
+        }
     }
 
     fn unload_video(&mut self) {
@@ -147,14 +193,6 @@ impl MediaPlayerTrait for FakePlayer {
     fn maybe_reload_video(&mut self, _f: &dyn FilePathSearch) {}
 
     fn reload_video(&mut self, _f: &dyn FilePathSearch, _filename: &str) {}
-
-    fn playing_video(&self) -> Option<Video> {
-        self.lock().video.clone()
-    }
-
-    fn video_loaded(&self) -> bool {
-        self.lock().file_loaded
-    }
 
     async fn event(&mut self) -> MediaPlayerEvent {
         std::future::pending().await
@@ -496,6 +534,11 @@ impl Peer {
         self.model.config.username.clone()
     }
 
+    /// A core that is in no room, with nothing saved for any.
+    pub fn in_no_room(name: &str, files: &[&str]) -> Self {
+        Self::new(0, name, files, false, |_| None)
+    }
+
     /// Perform a local action, e.g. a UI event or a player event.
     pub fn act(&mut self, event: impl EventHandler) {
         event.handle(&mut self.model)
@@ -505,8 +548,38 @@ impl Peer {
         Heartbeat.handle(&mut self.model)
     }
 
+    /// The player reaches the end of its video, if it has one. Like mpv, it
+    /// holds no video from then on.
+    pub fn reach_end(&mut self) {
+        let Some(video) = self.player.state().video else {
+            return;
+        };
+        self.player.set(|player| {
+            player.video = None;
+            player.file_loaded = false;
+        });
+        self.act(PlayerFileEnd(video));
+    }
+
+    /// The core handles what its player has to report. Returns whether
+    /// there was anything.
+    pub fn hear_player(&mut self) -> bool {
+        let events = self.player.take_events();
+        let any = !events.is_empty();
+        for event in events {
+            event.handle(&mut self.model);
+        }
+        any
+    }
+
+    /// The room's playlist as this core has it.
     pub fn playlist(&self) -> Playlist {
-        self.model.playlist.get_playlist()
+        self.model.state.playlist.clone()
+    }
+
+    /// The room's selected video as this core has it.
+    pub fn selected(&self) -> Option<Video> {
+        self.model.state.video.clone()
     }
 
     /// The host's core never handles what this client sent since the last
@@ -661,10 +734,11 @@ impl Room {
     }
 
     /// The host loses the room at the relay, and the room there closes
-    /// with it. Everyone connects again; `target` is the first to arrive
-    /// and hosts the room, the others — the old host included — are its
-    /// clients. Every communicator starts a new session, which streams
-    /// nothing; what a peer offers stays with its provide route.
+    /// with it. Everyone's session ends and everyone connects again;
+    /// `target` is the first to arrive and hosts the room, the others —
+    /// the old host included — are its clients. Every communicator starts
+    /// a new session, which streams nothing; what a peer offers stays with
+    /// its provide route.
     pub fn rehost(&mut self, target: usize) {
         assert!(self.peers[target].online, "an offline peer hosts no room");
         self.host = target;
@@ -672,6 +746,11 @@ impl Room {
             self.deliver(consumer, StreamEndedMsg);
         }
         self.links.clear();
+        for index in 0..self.peers.len() {
+            if self.peers[index].online {
+                self.end_session(index);
+            }
+        }
         let peer = self.peers[target].id;
         self.deliver(
             target,
@@ -750,6 +829,12 @@ impl Room {
         self.deliver(index, HostRoundTripMsg { rtt });
     }
 
+    /// The clock moves on by `by`, and with it the room and every player
+    /// that plays.
+    pub async fn pass(&mut self, by: Duration) {
+        tokio::time::advance(by).await;
+    }
+
     /// Every peer's pacemaker ticks once, clients first so the host's
     /// heartbeat is judged against their fresh local state.
     pub fn heartbeat(&mut self) {
@@ -783,15 +868,37 @@ impl Room {
         }
     }
 
-    /// The message on its way to `member` fails. The host drops the member,
-    /// and with it what waited behind the message; the member's session
-    /// ends with its connections, and it connects again.
-    pub fn fail_link(&mut self, member: usize) {
+    /// The communicator of `index` reports that its session ended.
+    fn end_session(&mut self, index: usize) {
+        let reason = "the session ended".to_string();
+        self.deliver(index, DisconnectedMsg { reason });
+    }
+
+    /// The connections between `member` and the host close. The host drops
+    /// the member, and with it what waited on its way there; the member's
+    /// session ends, and what it sent since the last pump goes with it.
+    /// The member is in no room until [`Room::reconnect`].
+    pub fn lose_connection(&mut self, member: usize) {
+        assert_ne!(member, self.host, "a host loses its room, see `rehost`");
+        self.peers[member].drain();
         self.links.remove(&member);
         let peer = self.peers[member].id;
         self.deliver(self.host, PeerDisconnectedMsg { peer });
         self.end_streams_of(member);
+        self.end_session(member);
+    }
+
+    /// A member that lost its connection joins the room again.
+    pub fn reconnect(&mut self, member: usize) {
         self.connect_client(member);
+    }
+
+    /// The message on its way to `member` fails. The host drops the member,
+    /// and with it what waited behind the message; the member's session
+    /// ends with its connections, and it connects again.
+    pub fn fail_link(&mut self, member: usize) {
+        self.lose_connection(member);
+        self.reconnect(member);
     }
 
     /// The first message `client` sent since the last pump fails on its
@@ -800,13 +907,8 @@ impl Room {
     /// it; the host sees the client's connections close, and the client
     /// connects again.
     pub fn fail_request(&mut self, client: usize) {
-        assert_ne!(client, self.host, "the host sends itself nothing");
-        self.peers[client].drain();
-        self.links.remove(&client);
-        let peer = self.peers[client].id;
-        self.deliver(self.host, PeerDisconnectedMsg { peer });
-        self.end_streams_of(client);
-        self.connect_client(client);
+        self.lose_connection(client);
+        self.reconnect(client);
     }
 
     /// The network holds back everything `index` sent since the last pump:
@@ -855,12 +957,16 @@ impl Room {
         self.streams.get(&consumer).copied()
     }
 
-    /// Finish the reads in flight, then deliver messages until the room is
-    /// quiescent. Panicking on too many rounds is the no-echo rule: no
-    /// handler may re-emit the broadcast it is reacting to, or the room
-    /// never settles.
+    /// Finish the reads in flight, then let every core hear its player and
+    /// deliver messages until the room is quiescent. Panicking on too many
+    /// rounds is the no-echo rule: no handler may re-emit the broadcast it
+    /// is reacting to, or the room never settles.
     pub fn pump(&mut self) {
         for _ in 0..100 {
+            let mut heard = false;
+            for peer in self.peers.iter_mut().filter(|peer| peer.online) {
+                heard |= peer.hear_player();
+            }
             let mut deliveries = self.withdrawn_offers();
             for from in 0..self.peers.len() {
                 let outbox = self.peers[from].drain();
@@ -871,7 +977,7 @@ impl Room {
                     deliveries.extend(self.route(from, msg));
                 }
             }
-            if deliveries.is_empty() {
+            if deliveries.is_empty() && !heard {
                 return;
             }
             for (to, msg) in deliveries {

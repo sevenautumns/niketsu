@@ -1,3 +1,4 @@
+use tokio::time::Instant;
 use typed_builder::TypedBuilder;
 
 use crate::communicator::CommunicatorTrait;
@@ -7,9 +8,9 @@ use crate::logging::ChatLogger;
 use crate::player::MediaPlayerTrait;
 use crate::player::wrapper::MediaPlayerWrapper;
 use crate::playlist::file::PlaylistBrowser;
-use crate::playlist::handler::PlaylistHandler;
-use crate::sync::ClientSync;
+use crate::room::{Authority, Followed, Role, RoomState};
 use crate::ui::UserInterfaceTrait;
+use crate::user::UserStatus;
 use crate::video_provider::VideoProviderTrait;
 use crate::{Core, CoreModel, PlaylistSaver, SavedPlaylistLoader, VideoServerTrait};
 
@@ -33,16 +34,21 @@ pub struct CoreBuilder {
 
 impl From<CoreBuilder> for CoreModel {
     fn from(builder: CoreBuilder) -> Self {
+        // in no room, the core is the authority over a room of one
+        let mut state = RoomState::new(Instant::now());
+        state.users.update_local(UserStatus {
+            name: builder.config.username.clone(),
+            ..Default::default()
+        });
         Self {
-            host: None,
-            sync: ClientSync::default(),
-            joined_room: None,
+            state,
+            role: Role::Authority(Authority::default()),
+            followed: Followed::default(),
             communicator: builder.communicator,
             database: builder.file_database,
             player: MediaPlayerWrapper::new(builder.player),
             ui: builder.ui,
             config: builder.config,
-            playlist: PlaylistHandler::default(),
             saved_playlist: builder.saved_playlist,
             save_playlist: builder.save_playlist,
             chat_logger: builder.chat_logger,

@@ -89,9 +89,12 @@ async fn playback_control_reaches_the_other_peer() {
     alice.player.start();
     eventually("bob plays", || !bob.player.state().paused).await;
 
+    // the room plays on from the seek, and the players here stand still:
+    // alice is put where the room is, at the seek or shortly after it
     bob.player.seek(Duration::from_secs(300));
     eventually("alice follows bob's seek", || {
-        alice.player.state().position == Duration::from_secs(300)
+        let position = alice.player.state().position;
+        (Duration::from_secs(300)..Duration::from_secs(360)).contains(&position)
     })
     .await;
 

@@ -32,8 +32,7 @@ pub struct Heartbeat;
 impl EventHandler for Heartbeat {
     fn handle(self, model: &mut CoreModel) {
         trace!("heartbeat");
-        // only the host's clock is the room's reference
-        model.publish_room();
+        model.heartbeat();
     }
 }
 
@@ -43,12 +42,12 @@ mod tests {
 
     use super::*;
     use crate::builder::CoreBuilder;
-    use crate::communicator::{HostInstruction, MockCommunicatorTrait, OutgoingMessage, PeerId};
+    use crate::communicator::MockCommunicatorTrait;
     use crate::config::Config;
     use crate::file_database::MockFileDatabaseTrait;
-    use crate::player::{MediaPlayerTrait, MockMediaPlayerTrait};
-    use crate::playlist::{Playlist, Video};
-    use crate::room::HostRoom;
+    use crate::player::MockMediaPlayerTrait;
+    use crate::room::Role;
+    use crate::sync::ClientSync;
     use crate::ui::MockUserInterfaceTrait;
     use crate::{MockVideoProviderTrait, MockVideoServerTrait};
 
@@ -66,60 +65,10 @@ mod tests {
         .unwrap_err();
     }
 
+    /// The heartbeat is the authority's: a follower's does nothing, and the
+    /// mocks fail the test on any call.
     #[test]
-    fn the_hosts_heartbeat_refreshes_the_rooms_clock() {
-        let mut communicator = MockCommunicatorTrait::default();
-        let mut player = MockMediaPlayerTrait::default();
-
-        let video = Video::from("video2");
-        player
-            .expect_playing_video()
-            .return_const::<Video>(video.clone());
-        player
-            .expect_get_position()
-            .return_const(Some(Duration::from_secs(15)));
-        player.expect_set_speed().return_const(());
-        player.expect_is_paused().return_const(true);
-        player.expect_video_loaded().return_const(true);
-        communicator
-            .expect_send()
-            .withf(move |msg| {
-                let OutgoingMessage::Host(HostInstruction::RoomState(state)) = msg else {
-                    return false;
-                };
-                // the communicator leaves the playlist out for a member
-                // that has it
-                state.version == 0
-                    && state.video.as_ref() == Some(&video)
-                    && state.position == Duration::from_secs(15)
-                    && state.speed == 1.5
-                    && state.paused
-                    && state.file_loaded
-                    && state.playlist == Some(Playlist::default())
-            })
-            .once()
-            .return_const(());
-
-        let mut core = CoreBuilder::builder()
-            .communicator(Box::new(communicator))
-            .player(Box::new(player))
-            .ui(Box::new(MockUserInterfaceTrait::default()))
-            .file_database(Box::new(MockFileDatabaseTrait::default()))
-            .video_server(Box::new(MockVideoServerTrait::default()))
-            .video_provider(Box::new(MockVideoProviderTrait::default()))
-            .config(Config::default())
-            .build();
-
-        // the room's speed is what the state reports
-        core.model.player.set_speed(1.5);
-        let host = PeerId::from_bytes(&[0x00, 4, 1, 1, 1, 1]).unwrap();
-        core.model.host = Some(HostRoom::new("room".into(), host));
-
-        Heartbeat.handle(&mut core.model);
-    }
-
-    #[test]
-    fn clients_do_not_send_heartbeats() {
+    fn a_followers_heartbeat_does_nothing() {
         let mut core = CoreBuilder::builder()
             .communicator(Box::new(MockCommunicatorTrait::default()))
             .player(Box::new(MockMediaPlayerTrait::default()))
@@ -129,8 +78,30 @@ mod tests {
             .video_provider(Box::new(MockVideoProviderTrait::default()))
             .config(Config::default())
             .build();
+        core.model.role = Role::Follower(ClientSync::default());
 
-        // the mock communicator fails the test on any send
+        Heartbeat.handle(&mut core.model);
+    }
+
+    /// A core in no room follows its own state and has nobody to publish
+    /// it to: the mock communicator fails the test on any send.
+    #[test]
+    fn a_core_in_no_room_publishes_nothing() {
+        let mut player = MockMediaPlayerTrait::default();
+        player.expect_is_paused().return_const(None);
+        let mut ui = MockUserInterfaceTrait::default();
+        ui.expect_user_list().once().return_const(());
+        let mut core = CoreBuilder::builder()
+            .communicator(Box::new(MockCommunicatorTrait::default()))
+            .player(Box::new(player))
+            .ui(Box::new(ui))
+            .file_database(Box::new(MockFileDatabaseTrait::default()))
+            .video_server(Box::new(MockVideoServerTrait::default()))
+            .video_provider(Box::new(MockVideoProviderTrait::default()))
+            .config(Config::default())
+            .build();
+
+        Heartbeat.handle(&mut core.model);
         Heartbeat.handle(&mut core.model);
     }
 }

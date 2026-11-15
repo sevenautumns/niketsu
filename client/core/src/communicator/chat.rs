@@ -30,7 +30,7 @@ impl IntentMsg {
     pub(crate) fn action(&self) -> Option<ActionMsg> {
         let actor = &self.actor;
         let message = match &self.intent {
-            Intent::Pause => format!("{actor} paused playback"),
+            Intent::Pause | Intent::CachePause => format!("{actor} paused playback"),
             Intent::Start => format!("{actor} started playback"),
             Intent::Speed(speed) => format!("{actor} changed playback speed to {speed}"),
             Intent::Seek { position, .. } => format!("{actor} seeked to {position:?}"),
@@ -39,7 +39,8 @@ impl IntentMsg {
             } => format!("{actor} selected {}", video.as_str()),
             Intent::Select { video: None, .. } => format!("{actor} unselected video"),
             Intent::Playlist(_) => format!("{actor} changed playlist"),
-            Intent::Status(_) => return None,
+            // the line of an ended video is that of the selection after it
+            Intent::Status(_) | Intent::Ended(_) => return None,
         };
         Some(ActionMsg {
             actor: actor.clone(),
@@ -61,6 +62,12 @@ impl From<UserMessageMsg> for PlayerMessage {
             MessageSource::UserMessage(value.actor),
             MessageLevel::Normal,
         )
+    }
+}
+
+impl From<DisconnectedMsg> for PlayerMessage {
+    fn from(value: DisconnectedMsg) -> Self {
+        PlayerMessage::new(value.reason, MessageSource::Room, MessageLevel::Normal)
     }
 }
 

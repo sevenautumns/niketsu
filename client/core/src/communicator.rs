@@ -131,6 +131,7 @@ pub enum IncomingMessage {
     RoomState(RoomStateMsg),
     Action(ActionMsg),
     Connected(ConnectedMsg),
+    Disconnected(DisconnectedMsg),
     UserMessage(UserMessageMsg),
     Notice(NoticeMsg),
     ForcedRename(ForcedRenameMsg),

@@ -14,7 +14,8 @@ use niketsu_core::file_database::{
     FileDatabaseEvent, FileDatabaseTrait, FileEntry, FilePathSearch, FileStore,
 };
 use niketsu_core::player::{
-    MediaPlayerEvent, MediaPlayerTrait, PlayerPause, PlayerPositionChange, PlayerStart,
+    MediaPlayerEvent, MediaPlayerTrait, PlayerLoaded, PlayerPause, PlayerPositionChange,
+    PlayerStart,
 };
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::UserList;
@@ -189,6 +190,8 @@ impl PlayerHandle {
 struct FakePlayer {
     state: Arc<Mutex<PlayerState>>,
     events: UnboundedReceiver<MediaPlayerEvent>,
+    /// Where the player itself reports that it has loaded a video.
+    reports: UnboundedSender<MediaPlayerEvent>,
 }
 
 impl FakePlayer {
@@ -203,9 +206,15 @@ impl FakePlayer {
         let (sender, events) = unbounded_channel();
         let handle = PlayerHandle {
             state: state.clone(),
-            events: sender,
+            events: sender.clone(),
         };
-        (Self { state, events }, handle)
+        let reports = sender;
+        let player = Self {
+            state,
+            events,
+            reports,
+        };
+        (player, handle)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, PlayerState> {
@@ -241,10 +250,13 @@ impl MediaPlayerTrait for FakePlayer {
         state.video.as_ref().map(|_| state.position)
     }
 
+    /// Like mpv, the player loads paused and reports when it has loaded.
     fn load_video(&mut self, load: Video, pos: Duration, _db: &FileStore) {
         let mut state = self.lock();
         state.video = Some(load);
         state.position = pos;
+        state.paused = true;
+        self.reports.send(PlayerLoaded.into()).ok();
     }
 
     fn unload_video(&mut self) {
@@ -255,14 +267,6 @@ impl MediaPlayerTrait for FakePlayer {
 
     fn reload_video(&mut self, f: &dyn FilePathSearch, filename: &str) {
         self.lock().source = f.get_file_path(filename);
-    }
-
-    fn playing_video(&self) -> Option<Video> {
-        self.lock().video.clone()
-    }
-
-    fn video_loaded(&self) -> bool {
-        self.lock().video.is_some()
     }
 
     async fn event(&mut self) -> MediaPlayerEvent {

@@ -3,6 +3,7 @@ use multiaddr::PeerId;
 use serde::{Deserialize, Serialize};
 
 use super::chunk::SharedFile;
+use super::playlist::Video;
 use super::ui::UserChange;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, Default)]
@@ -16,12 +17,25 @@ pub struct UserStatus {
     /// nothing. The name is kept because a status can reach the host after
     /// the selection it was sent for has changed.
     pub offers: Option<SharedFile>,
+    /// The video the user's player has loaded. It counts while it names the
+    /// room's selected video.
+    pub loaded: Option<Video>,
     /// Where the host reaches the user. The host sets it from the
     /// connection; what a user sends is ignored.
     pub peer: Option<PeerId>,
 }
 
 impl UserStatus {
+    /// Whether everything about the two users is the same. Equality only
+    /// compares the names, which is what the user list is ordered by.
+    pub fn same_as(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.ready == other.ready
+            && self.offers == other.offers
+            && self.loaded == other.loaded
+            && self.peer == other.peer
+    }
+
     pub fn ready(&mut self) {
         self.ready = true;
     }

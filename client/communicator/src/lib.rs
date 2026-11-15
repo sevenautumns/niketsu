@@ -45,13 +45,17 @@ impl Connection {
                 Connection::Disconnected(d) => {
                     let reason = d.reason.clone();
                     *self = d.reconnect(endpoint, node).await;
-                    if let Some(r) = reason {
-                        return NoticeMsg::new(r.to_string()).into();
+                    if let Some(reason) = reason {
+                        let reason = reason.to_string();
+                        return DisconnectedMsg { reason }.into();
                     }
                 }
                 Connection::Denied(d) => {
                     return match d.reason.take() {
-                        Some(r) => NoticeMsg::new(r.to_string()).into(),
+                        Some(reason) => {
+                            let reason = reason.to_string();
+                            DisconnectedMsg { reason }.into()
+                        }
                         None => std::future::pending().await,
                     };
                 }
@@ -263,10 +267,10 @@ mod test {
         communicator.connection =
             Connection::Connecting(attempt(Err(AuthDenied.into()), Backoff::default()));
 
-        let IncomingMessage::Notice(notice) = communicator.receive().await else {
+        let IncomingMessage::Disconnected(told) = communicator.receive().await else {
             panic!("the user was not told of the denial");
         };
-        assert_eq!(notice.message, AuthDenied.to_string());
+        assert_eq!(told.reason, AuthDenied.to_string());
 
         for _ in 0..2 {
             let waited =

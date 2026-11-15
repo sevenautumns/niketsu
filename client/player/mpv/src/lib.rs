@@ -401,10 +401,6 @@ impl MediaPlayerTrait for Mpv {
         log_err!(res)
     }
 
-    fn playing_video(&self) -> Option<Video> {
-        self.status.file.clone()
-    }
-
     fn maybe_reload_video(&mut self, f: &dyn FilePathSearch) {
         if !matches!(self.status.file_load_status, FileLoadStatus::NotLoaded) {
             return;
@@ -434,10 +430,6 @@ impl MediaPlayerTrait for Mpv {
 
         let path = CString::new(path).expect("got invalid utf-8");
         self.replace_video(path);
-    }
-
-    fn video_loaded(&self) -> bool {
-        matches!(self.status.file_load_status, FileLoadStatus::Loaded)
     }
 
     async fn event(&mut self) -> MediaPlayerEvent {

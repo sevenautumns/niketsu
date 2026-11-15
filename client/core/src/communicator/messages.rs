@@ -69,7 +69,7 @@ impl ToPeerMsg {
 ///
 /// The host bumps `version` with every change of the room and every intent
 /// it handles; a heartbeat repeats the version and only refreshes
-/// `position`.
+/// `position`, which is where the room is at the moment the state is sent.
 ///
 /// The playlist is too large to go with every heartbeat. The host's core
 /// attaches it to every state, and the host's communicator leaves it out
@@ -92,9 +92,6 @@ pub struct RoomStateMsg {
     pub position: Duration,
     pub paused: bool,
     pub speed: f64,
-    /// Whether the host's player has the video loaded. Until then its
-    /// position and play state are not the room's.
-    pub file_loaded: bool,
     pub users: UserStatusListMsg,
 }
 
@@ -110,7 +107,12 @@ pub struct UserStatusListMsg {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Intent {
+    /// The user paused, and is not ready until they start again.
     Pause,
+    /// The user's player waits for its cache to fill, and the room with
+    /// it. The user stays as ready as before.
+    CachePause,
+    /// The user started playback, and is ready.
     Start,
     Speed(f64),
     Seek {
@@ -123,8 +125,12 @@ pub enum Intent {
         #[serde(with = "serde_millis")]
         position: Duration,
     },
+    /// The user's player reached the end of this video. The room moves on
+    /// to the video after it, unless it has moved on already.
+    Ended(Video),
     Playlist(Playlist),
-    /// The user's own name and readiness.
+    /// The user's own name and readiness, and what its player has loaded
+    /// and offers.
     Status(UserStatus),
 }
 
@@ -151,8 +157,14 @@ pub struct UserMessageMsg {
     pub message: String,
 }
 
-/// A line for the chat that no user wrote: what became of the connection or
-/// of a file share.
+/// This core is in no room: its session ended, or a connection attempt
+/// failed, for `reason`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisconnectedMsg {
+    pub reason: String,
+}
+
+/// A line for the chat that no user wrote: what became of a file share.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoticeMsg {
     pub message: String,

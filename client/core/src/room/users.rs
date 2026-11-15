@@ -5,7 +5,8 @@ use fake::Fake;
 use fake::faker::company::en::Buzzword;
 use multiaddr::PeerId;
 
-use super::{RoomName, UserStatus, UserStatusListMsg};
+use super::UserStatus;
+use crate::playlist::Video;
 
 /// Where the suffix of a forced name comes from: a user whose name is taken
 /// is renamed to `name_<suffix>`.
@@ -19,36 +20,43 @@ fn buzzword() -> String {
 /// free name ends even when every suffix is taken.
 const SUFFIX_ROLLS: usize = 16;
 
-/// Who is in the room, as the host sees it. Remote peers are keyed by their
-/// peer id; the host itself has its own slot, since it never talks to
-/// itself over the network.
+/// Who is in the room. The authority over the room keys remote peers by
+/// their peer id and has its own slot, since it never talks to itself over
+/// the network; a follower only has the list the host published.
 #[derive(Debug, Clone)]
 pub struct RoomUsers {
-    status_list: UserStatusListMsg,
+    status_list: BTreeSet<UserStatus>,
     local: Option<UserStatus>,
     peers: HashMap<PeerId, Option<UserStatus>>,
     suffixes: NameSuffixes,
 }
 
-impl RoomUsers {
-    /// Forced names get a buzzword suffix.
-    pub fn new(room: RoomName) -> Self {
-        Self::with_suffixes(room, buzzword)
+/// Nobody is in the room, and forced names get a buzzword suffix.
+impl Default for RoomUsers {
+    fn default() -> Self {
+        Self::with_suffixes(buzzword)
     }
+}
 
-    pub fn with_suffixes(room: RoomName, suffixes: NameSuffixes) -> Self {
+impl RoomUsers {
+    pub fn with_suffixes(suffixes: NameSuffixes) -> Self {
         Self {
-            status_list: UserStatusListMsg {
-                room_name: room,
-                users: BTreeSet::default(),
-            },
+            status_list: BTreeSet::default(),
             local: None,
             peers: HashMap::default(),
             suffixes,
         }
     }
 
-    pub fn status_list(&self) -> &UserStatusListMsg {
+    /// The users as the room's host published them.
+    pub fn listed(users: BTreeSet<UserStatus>) -> Self {
+        Self {
+            status_list: users,
+            ..Self::default()
+        }
+    }
+
+    pub fn list(&self) -> &BTreeSet<UserStatus> {
         &self.status_list
     }
 
@@ -76,8 +84,24 @@ impl RoomUsers {
         self.peers.get(peer).is_some_and(|s| s.is_none())
     }
 
-    pub fn all_ready(&self) -> bool {
-        self.status_list.users.iter().all(|u| u.ready)
+    /// Whether every user is ready and has `video`, the room's selection,
+    /// loaded in its player.
+    pub fn all_ready(&self, video: Option<&Video>) -> bool {
+        let ready = |user: &UserStatus| user.ready && user.loaded.as_ref() == video;
+        self.status_list.iter().all(ready)
+    }
+
+    /// Sets the readiness of the user at `peer`, or of the local one
+    /// without it. A peer that has sent no status yet has none to set.
+    pub fn set_ready(&mut self, peer: Option<PeerId>, ready: bool) {
+        let status = match peer {
+            Some(peer) => self.peers.get_mut(&peer).and_then(Option::as_mut),
+            None => self.local.as_mut(),
+        };
+        if let Some(status) = status {
+            status.ready = ready;
+            self.status_list.replace(status.clone());
+        }
     }
 
     /// Removes the peer from the user map and the status list.
@@ -87,7 +111,7 @@ impl RoomUsers {
             return false;
         };
         if let Some(s) = status {
-            self.status_list.users.remove(&s);
+            self.status_list.remove(&s);
         }
         true
     }
@@ -96,17 +120,17 @@ impl RoomUsers {
     pub fn drop_offers(&mut self) {
         let statuses = self.peers.values_mut().flatten().chain(&mut self.local);
         statuses.for_each(|status| status.offers = None);
-        let users = std::mem::take(&mut self.status_list.users);
+        let users = std::mem::take(&mut self.status_list);
         let without_offers = users.into_iter().map(|status| UserStatus {
             offers: None,
             ..status
         });
-        self.status_list.users = without_offers.collect();
+        self.status_list = without_offers.collect();
     }
 
     /// Whether any user, the host included, goes by `name`.
     fn username_exists(&self, name: &str) -> bool {
-        self.status_list.users.iter().any(|u| u.name == name)
+        self.status_list.iter().any(|u| u.name == name)
     }
 
     /// A name no user goes by: `username_<suffix>`, rolled again while
@@ -135,14 +159,14 @@ impl RoomUsers {
         if let Some(old) = self.local.take()
             && old.name != status.name
         {
-            self.status_list.users.remove(&old);
+            self.status_list.remove(&old);
         }
-        self.status_list.users.replace(status.clone());
+        self.status_list.replace(status.clone());
         self.local = Some(status);
     }
 
     fn update_peer(&mut self, status: UserStatus, peer: PeerId) {
-        self.status_list.users.replace(status.clone());
+        self.status_list.replace(status.clone());
         self.peers.insert(peer, Some(status));
     }
 
@@ -165,7 +189,7 @@ impl RoomUsers {
                     forced = Some(new_status.clone());
                 }
                 if let Some(s) = &old_status {
-                    self.status_list.users.remove(s);
+                    self.status_list.remove(s);
                 }
             }
             // same name: typical status update, only need to update map & list
@@ -202,11 +226,7 @@ mod tests {
     }
 
     fn names(room: &RoomUsers) -> Vec<&str> {
-        room.status_list()
-            .users
-            .iter()
-            .map(|u| u.name.as_str())
-            .collect()
+        room.list().iter().map(|u| u.name.as_str()).collect()
     }
 
     /// The name `peer` goes by in the room.
@@ -221,7 +241,7 @@ mod tests {
 
     /// A room whose forced names are predictable.
     fn room() -> RoomUsers {
-        RoomUsers::with_suffixes("room".into(), synergy)
+        RoomUsers::with_suffixes(synergy)
     }
 
     #[test]
@@ -248,7 +268,7 @@ mod tests {
 
         let forced = forced.expect("collision must force a rename");
         assert_eq!(forced.name, "alice_synergy");
-        assert_eq!(room.status_list().users.len(), 2);
+        assert_eq!(room.list().len(), 2);
         // the original user is untouched
         assert_eq!(name_of(&room, alice), Some("alice"));
         assert_eq!(name_of(&room, intruder), Some("alice_synergy"));
@@ -256,7 +276,7 @@ mod tests {
 
     #[test]
     fn forced_names_are_buzzwords_by_default() {
-        let mut room = RoomUsers::new("room".into());
+        let mut room = RoomUsers::default();
         room.update_local(status("alice", true));
         let intruder = peer(2);
         room.add_connected(intruder);
@@ -307,7 +327,7 @@ mod tests {
                 "alice_synergy_4"
             ]
         );
-        assert_eq!(room.status_list().users.len(), 5);
+        assert_eq!(room.list().len(), 5);
     }
 
     #[test]
@@ -324,7 +344,7 @@ mod tests {
         let forced = room.apply_status(status("alice", false), intruder).unwrap();
 
         assert_eq!(forced.name, "alice_synergy_2");
-        assert_eq!(room.status_list().users.len(), 3);
+        assert_eq!(room.list().len(), 3);
     }
 
     #[test]
@@ -333,13 +353,13 @@ mod tests {
         let alice = peer(1);
         room.add_connected(alice);
         room.apply_status(status("alice", false), alice);
-        assert!(!room.all_ready());
+        assert!(!room.all_ready(None));
 
         let forced = room.apply_status(status("alice", true), alice);
 
         assert!(forced.is_none());
         assert_eq!(names(&room), vec!["alice"]);
-        assert!(room.all_ready());
+        assert!(room.all_ready(None));
     }
 
     #[test]
@@ -349,10 +369,44 @@ mod tests {
         room.add_connected(bob);
         room.apply_status(status("bob", true), bob);
         room.update_local(status("alice", false));
-        assert!(!room.all_ready());
+        assert!(!room.all_ready(None));
 
         room.update_local(status("alice", true));
-        assert!(room.all_ready());
+        assert!(room.all_ready(None));
+    }
+
+    #[test]
+    fn ready_takes_the_selected_video_loaded() {
+        let mut room = room();
+        let ep1 = Video::from("ep1");
+        room.update_local(UserStatus {
+            loaded: Some(Video::from("ep0")),
+            ..status("alice", true)
+        });
+        assert!(!room.all_ready(Some(&ep1)), "another video is loaded");
+
+        room.update_local(UserStatus {
+            loaded: Some(ep1.clone()),
+            ..status("alice", true)
+        });
+        assert!(room.all_ready(Some(&ep1)));
+    }
+
+    #[test]
+    fn readiness_is_set_for_the_host_and_for_a_peer_with_a_status() {
+        let mut room = room();
+        let (bob, carol) = (peer(2), peer(3));
+        room.update_local(status("alice", false));
+        room.add_connected(bob);
+        room.apply_status(status("bob", false), bob);
+        room.add_connected(carol);
+
+        room.set_ready(None, true);
+        room.set_ready(Some(bob), true);
+        room.set_ready(Some(carol), true);
+
+        assert!(room.all_ready(None));
+        assert_eq!(names(&room), vec!["alice", "bob"]);
     }
 
     #[test]

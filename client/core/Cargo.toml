@@ -36,6 +36,7 @@ fake = "5.1"
 uuid = { version = "1.19.0", features = [ "v4", "serde", "fast-rng" ] } 
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.24"
 mockall = "0.14"
 proptest = "1"

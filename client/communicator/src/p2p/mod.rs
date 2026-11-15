@@ -733,7 +733,7 @@ mod tests {
 
     fn room_state(playlist: Option<Playlist>) -> RoomStateMsg {
         let video: Video = "[Release Group] A Fairly Long Series Title S01E001.mkv".into();
-        // every user offers the video
+        // every user has the video loaded and offers it
         let users = (0..10).map(|i| UserStatus {
             name: format!("someone with a long name {i}").into(),
             ready: true,
@@ -741,6 +741,7 @@ mod tests {
                 name: video.as_str().into(),
                 size: u64::MAX,
             }),
+            loaded: Some(video.clone()),
             peer: Some(PeerId::random()),
         });
         RoomStateMsg {

@@ -1,17 +1,15 @@
-//! Judging the room's state as it reaches a client: when this client's own
+//! Judging the room's state as it reaches a follower: when this core's own
 //! intents are still on their way, and how far the host's clock lags behind
-//! by the time it arrives. On the host's side, the position it reports
-//! while its own player is still jumping.
+//! by the time it arrives.
 //!
 //! The host's messages reach a member in the order the host sent them, so
 //! every state that arrives is the newest the host has sent this client.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use crate::communicator::RoomStateMsg;
 use crate::playlist::Playlist;
-use crate::user::UserStatus;
 
 /// Number of round-trip samples the delay estimate is taken over. The
 /// communicator pings the host once a second, so this covers the last ten.
@@ -53,9 +51,8 @@ impl HostDelay {
     }
 }
 
-/// Intents this client sent that the host has not answered yet. The local
-/// player already did what they ask, and a state the host published before
-/// handling them would undo it.
+/// Intents this client sent that the host has not answered yet. A state the
+/// host published before handling them does not show what this user did.
 #[derive(Debug, Clone, Copy)]
 struct Pending {
     /// The first version that can include every one of them: the host
@@ -65,77 +62,45 @@ struct Pending {
     states: u8,
 }
 
-/// What a client needs to judge the host's room states. Belongs to one
+/// What a follower needs to judge the host's room states. Belongs to one
 /// connection: a new host counts its versions anew.
 #[derive(Debug, Default, Clone)]
 pub struct ClientSync {
     pub delay: HostDelay,
-    /// The counters of the state applied last.
-    applied: Option<Counters>,
+    /// The version of the state taken last.
+    taken: Option<u64>,
     pending: Option<Pending>,
     /// The room's playlist as the host sent it last. A state carries it
     /// only until this client has it, also when the state itself is
-    /// ignored, so it is kept here apart from what is shown.
+    /// ignored, so it is kept here apart from the state taken.
     pub playlist: Playlist,
-    /// The room's users as the state applied last names them.
-    pub users: BTreeSet<UserStatus>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Counters {
-    version: u64,
-    jumps: u64,
-}
-
-impl From<&RoomStateMsg> for Counters {
-    fn from(state: &RoomStateMsg) -> Self {
-        Self {
-            version: state.version,
-            jumps: state.jumps,
-        }
-    }
-}
-
-/// How an admitted state differs from the one applied before it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Admitted {
-    /// The position jumped, so it is to be taken exactly.
-    pub jumped: bool,
-    /// A new version, not only a heartbeat: what is not repeated with
-    /// every heartbeat, like the user list, may have changed.
-    pub changed: bool,
 }
 
 impl ClientSync {
-    /// Notes an intent sent to the host while the state applied here is
-    /// the latest known.
+    /// Notes an intent sent to the host while the state taken here is the
+    /// latest known.
     pub fn intent_sent(&mut self) {
-        let applied = self.applied.map_or(0, |applied| applied.version);
-        let sent_before = self.pending.map_or(applied, |p| p.until.max(applied));
+        let taken = self.taken.unwrap_or(0);
+        let sent_before = self.pending.map_or(taken, |p| p.until.max(taken));
         self.pending = Some(Pending {
             until: sent_before + 1,
             states: PENDING_STATES,
         });
     }
 
-    /// Whether `state` is to be applied, and how it differs from the state
-    /// applied before. A state that predates the pending intents is
-    /// dropped, until they expire.
-    pub fn admit(&mut self, state: &RoomStateMsg) -> Option<Admitted> {
+    /// Whether `state` is to be taken. A state that predates the pending
+    /// intents is not, until they expire.
+    pub fn admit(&mut self, state: &RoomStateMsg) -> bool {
         if let Some(pending) = &mut self.pending
             && state.version < pending.until
             && pending.states > 0
         {
             pending.states -= 1;
-            return None;
+            return false;
         }
         self.pending = None;
-        let admitted = Admitted {
-            jumped: self.applied.is_none_or(|a| a.jumps != state.jumps),
-            changed: self.applied.is_none_or(|a| a.version != state.version),
-        };
-        self.applied = Some(state.into());
-        Some(admitted)
+        self.taken = Some(state.version);
+        true
     }
 
     /// The host's reported position, shifted by how long it was underway.
@@ -146,29 +111,6 @@ impl ClientSync {
         } else {
             reported + self.delay.one_way()
         }
-    }
-}
-
-/// A jump of the host's player to `target`. Until the player has moved, its
-/// position says nothing about where the jump lands, and the room is told
-/// the target instead.
-#[derive(Debug, Clone, Copy)]
-pub struct Jump {
-    target: Duration,
-    /// What the player reported right after it was told to jump.
-    before: Option<Duration>,
-}
-
-impl Jump {
-    pub fn new(target: Duration, before: Option<Duration>) -> Self {
-        Self { target, before }
-    }
-
-    /// The position to tell the room while the player reports `reported`,
-    /// or `None` once the player has moved and its own position counts. A
-    /// player without any position has nothing left to land.
-    pub fn position(&self, reported: Option<Duration>) -> Option<Duration> {
-        (reported.is_some() && reported == self.before).then_some(self.target)
     }
 }
 
@@ -239,11 +181,11 @@ mod tests {
     }
 
     #[test]
-    fn every_state_is_applied_while_no_intent_is_pending() {
+    fn every_state_is_taken_while_no_intent_is_pending() {
         let mut sync = ClientSync::default();
-        assert!(sync.admit(&state(3)).is_some());
-        assert!(sync.admit(&state(3)).is_some(), "a heartbeat");
-        assert!(sync.admit(&state(4)).is_some());
+        assert!(sync.admit(&state(3)));
+        assert!(sync.admit(&state(3)), "a heartbeat");
+        assert!(sync.admit(&state(4)));
     }
 
     #[test]
@@ -252,9 +194,9 @@ mod tests {
         sync.admit(&state(3));
         sync.intent_sent();
 
-        assert!(sync.admit(&state(3)).is_none());
-        assert!(sync.admit(&state(4)).is_some(), "the host answered");
-        assert!(sync.admit(&state(4)).is_some());
+        assert!(!sync.admit(&state(3)));
+        assert!(sync.admit(&state(4)), "the host answered");
+        assert!(sync.admit(&state(4)));
     }
 
     #[test]
@@ -264,8 +206,8 @@ mod tests {
         sync.intent_sent();
         sync.intent_sent();
 
-        assert!(sync.admit(&state(4)).is_none(), "only the first answered");
-        assert!(sync.admit(&state(5)).is_some());
+        assert!(!sync.admit(&state(4)), "only the first answered");
+        assert!(sync.admit(&state(5)));
     }
 
     #[test]
@@ -275,35 +217,9 @@ mod tests {
         sync.intent_sent();
 
         for _ in 0..PENDING_STATES {
-            assert!(sync.admit(&state(3)).is_none());
+            assert!(!sync.admit(&state(3)));
         }
-        assert!(sync.admit(&state(3)).is_some(), "the intent was lost");
-        assert!(sync.admit(&state(3)).is_some());
-    }
-
-    #[test]
-    fn a_jump_or_a_new_version_is_reported() {
-        let mut sync = ClientSync::default();
-        let first = sync.admit(&state(1)).unwrap();
-        assert!(first.jumped && first.changed, "nothing applied yet");
-
-        let beat = sync.admit(&state(1)).unwrap();
-        assert!(!beat.jumped && !beat.changed);
-
-        let mut seek = state(2);
-        seek.jumps = 1;
-        let seek = sync.admit(&seek).unwrap();
-        assert!(seek.jumped && seek.changed);
-    }
-
-    #[test]
-    fn a_jump_reports_its_target_until_the_player_moves() {
-        let jump = Jump::new(Duration::from_secs(300), Some(Duration::from_secs(10)));
-        assert_eq!(
-            jump.position(Some(Duration::from_secs(10))),
-            Some(Duration::from_secs(300))
-        );
-        assert_eq!(jump.position(Some(Duration::from_secs(300))), None);
-        assert_eq!(jump.position(None), None, "an empty player lands nothing");
+        assert!(sync.admit(&state(3)), "the intent was lost");
+        assert!(sync.admit(&state(3)));
     }
 }

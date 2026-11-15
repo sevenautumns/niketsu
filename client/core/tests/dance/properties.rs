@@ -8,9 +8,7 @@
 
 use std::time::Duration;
 
-use niketsu_core::player::{
-    PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart,
-};
+use niketsu_core::player::{PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart};
 use niketsu_core::playlist::Playlist;
 use niketsu_core::{ui, video_provider};
 use proptest::prelude::*;
@@ -125,9 +123,7 @@ fn apply(room: &mut Room, action: Action) {
         }
         Action::FileEnd { peer } => {
             let peer = peer % room.peers.len();
-            if let Some(video) = room.peer(peer).player.state().video {
-                room.peer(peer).act(PlayerFileEnd(video));
-            }
+            room.peer(peer).reach_end();
         }
         Action::Heartbeat => room.heartbeat(),
         Action::Rehost { target } => {
@@ -148,12 +144,13 @@ fn apply(room: &mut Room, action: Action) {
     room.pump();
 }
 
-/// Every peer agrees on the playlist, the playlist marker, the loaded
-/// video, and what its UI shows.
+/// Every peer agrees on the playlist, the selection, the loaded video, and
+/// what its UI shows.
 fn assert_room_converged(room: &mut Room) {
     let playlist = room.peer(0).playlist();
-    let marker = room.peer(0).model.playlist.get_current_video();
+    let selected = room.peer(0).selected();
     let video = room.peer(0).player.state().video;
+    assert_eq!(video, selected, "peer 0: the player holds another video");
     let ui = room.peer(0).ui.state();
     for i in 1..room.peers.len() {
         assert_eq!(
@@ -162,9 +159,9 @@ fn assert_room_converged(room: &mut Room) {
             "peer {i}: playlist diverged"
         );
         assert_eq!(
-            room.peer(i).model.playlist.get_current_video(),
-            marker,
-            "peer {i}: playlist marker diverged"
+            room.peer(i).selected(),
+            selected,
+            "peer {i}: selection diverged"
         );
         assert_eq!(
             room.peer(i).player.state().video,
@@ -187,7 +184,7 @@ fn assert_room_converged(room: &mut Room) {
 /// one and that user's provider has it open: no stale offer, none missing.
 fn assert_offers_are_real(room: &mut Room) {
     let host = room.host_index();
-    let selected = room.peer(host).player.state().video;
+    let selected = room.peer(host).selected();
     let mut open = vec![];
     for i in 0..room.peers.len() {
         let peer = room.peer(i);
@@ -226,17 +223,14 @@ proptest! {
     /// another host and peers joining mid-session — the room goes quiescent (pump panics on
     /// a message storm) and every peer agrees on the playlist, the loaded
     /// video, the video and playlist shown in the UI, and the playlist
-    /// marker. After a few quiet heartbeats everyone also agrees with
+    /// selection. After a few quiet heartbeats everyone also agrees with
     /// the host on paused/playing, and no video server keeps running when
     /// no provider is announced.
-    ///
-    /// The marker assertion guards select_playing: keeping a stale marker
-    /// for a video outside the playlist makes present peers disagree with
-    /// later joiners, who derive it from the room's state.
     #[test]
     fn any_dance_converges(actions in prop::collection::vec(action(), 1..40)) {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
+            .start_paused(true)
             .build()
             .unwrap();
         rt.block_on(async move {

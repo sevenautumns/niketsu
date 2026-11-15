@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use config::Config;
 use directories::ProjectDirs;
 use enum_dispatch::enum_dispatch;
@@ -7,10 +5,9 @@ use futures::future::OptionFuture;
 use logging::ChatLogger;
 use once_cell::sync::Lazy;
 use player::wrapper::MediaPlayerWrapper;
+use playlist::Video;
 use playlist::handler::PlaylistHandler;
-use playlist::{Playlist, Video};
-use room::{HostRoom, RoomName};
-use sync::ClientSync;
+use room::{Followed, Role, RoomName, RoomState};
 use tracing::{info, trace};
 use video_provider::VideoProviderTrait;
 
@@ -63,38 +60,26 @@ pub struct CoreModel {
     pub database: Box<dyn FileDatabaseTrait>,
     pub video_server: Box<dyn VideoServerTrait>,
     pub video_provider: Box<dyn VideoProviderTrait>,
-    pub playlist: PlaylistHandler,
     chat_logger: Option<ChatLogger>,
     pub config: Config,
     pub ready: bool,
     pub running: bool,
-    /// The authoritative room state, present while this core is the host.
-    pub host: Option<HostRoom>,
-    /// How to follow the host's heartbeats while this core is a client.
-    pub sync: ClientSync,
-    /// The room the in-memory playlist and selection belong to, once this
-    /// core has been connected to it.
-    pub joined_room: Option<RoomName>,
+    /// The room's state: the only word on its playlist, selection, play
+    /// state, position and users.
+    pub state: RoomState,
+    /// Whether this core decides the state or takes it from a host.
+    pub role: Role,
+    pub(crate) followed: Followed,
     pub(crate) saved_playlist: SavedPlaylistLoader,
     pub(crate) save_playlist: PlaylistSaver,
 }
 
 impl CoreModel {
-    /// Persist the current playlist for the active room.
+    /// Persist the room's playlist and selection for the configured room.
     pub fn save_playlist(&self) {
-        (self.save_playlist)(&self.config.room, &self.playlist);
-    }
-
-    /// Replace the playlist and re-derive the playing marker from the
-    /// player's video, so the marker is a function of the replicated state
-    /// (playlist + running video) and not of the order edits happened in —
-    /// late joiners derive it exactly this way from the replayed state.
-    pub fn replace_playlist(&mut self, playlist: Playlist) {
-        self.playlist.replace(playlist);
-        if let Some(video) = self.player.playing_video() {
-            self.playlist.select_playing(&video);
-        }
-        self.save_playlist();
+        let playlist = self.state.playlist.clone();
+        let saved = PlaylistHandler::new(playlist, self.state.video.as_ref());
+        (self.save_playlist)(&self.config.room, &saved);
     }
 
     /// Connects to the configured room, leaving the one connected to.
@@ -109,37 +94,11 @@ impl CoreModel {
         self.publish_status();
     }
 
-    /// Switch playlist, player, sharing, streaming, persistence and UI over
-    /// to `video` — the choreography shared by every video selection, local
-    /// or remote. An offer is one of the selected video, so the host drops
-    /// them all, and a stream is one of it, so the stream ends.
-    pub fn select_video(&mut self, video: Option<&Video>, position: Duration) {
-        if let Some(host) = &mut self.host {
-            host.users.drop_offers();
-        }
-        self.video_server.stop_server();
-        self.communicator.send(StreamEndedMsg.into());
-        match video {
-            Some(video) => {
-                self.playlist.select_playing(video);
-                let store = self.database.all_files();
-                self.player.load_video(video.clone(), position, store);
-            }
-            None => {
-                self.playlist.unload_playing();
-                self.player.unload_video();
-            }
-        }
-        self.reshare_or_stop(video);
-        self.save_playlist();
-        self.ui.video_change(video.cloned());
-    }
-
     /// Carry auto-sharing over to the newly selected `video` if we are
     /// currently sharing and have the file; otherwise stop sharing. The
     /// room learns of a carried share once its file is open, and of a
-    /// stopped one from the host dropping every offer.
-    fn reshare_or_stop(&mut self, video: Option<&Video>) {
+    /// stopped one from the authority dropping every offer.
+    pub(crate) fn reshare_or_stop(&mut self, video: Option<&Video>) {
         let file = video
             .filter(|_| self.config.auto_share && self.video_provider.sharing())
             .and_then(|video| self.database.find_file(video.as_str()));

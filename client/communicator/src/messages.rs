@@ -91,17 +91,19 @@ mod tests {
                 position: Duration::from_millis(1500),
                 paused: false,
                 speed: 1.5,
-                file_loaded: true,
                 users: UserStatusListMsg {
                     room_name: "room".into(),
                     users: [UserStatus {
                         name: "bob".into(),
                         ready: true,
+                        loaded: Some("ep1".into()),
                         ..Default::default()
                     }]
                     .into(),
                 },
             }),
+            NiketsuMessage::Intent(intent(Intent::CachePause)),
+            NiketsuMessage::Intent(intent(Intent::Ended("ep1".into()))),
             NiketsuMessage::Intent(intent(Intent::Seek {
                 video: "ep1".into(),
                 position: Duration::from_millis(1500),

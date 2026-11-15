@@ -3,26 +3,24 @@
 use tracing::trace;
 
 use super::messages::*;
-use crate::sync::ClientSync;
+use crate::room::Role;
 use crate::ui::PlayerMessage;
 use crate::{CoreModel, EventHandler};
 
 impl EventHandler for ConnectedMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(is_host = self.is_host, "connected to the room");
-        if self.is_host {
-            model.become_host(self.peer);
-        } else {
-            model.host = None;
-        }
-        model.joined_room = Some(model.config.room.clone());
-        // round trips and states of an earlier connection say nothing about
-        // this one: a new host counts its versions anew
-        model.sync = ClientSync::default();
-        // the host knows no offer until the status names it
-        model.publish_status();
+        model.connected(self.is_host, self.peer);
         model.ui.is_host(self.is_host);
         model.ui.player_message(PlayerMessage::from(self));
+    }
+}
+
+impl EventHandler for DisconnectedMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(reason = %self.reason, "in no room");
+        model.ui.player_message(PlayerMessage::from(self));
+        model.disconnected();
     }
 }
 
@@ -50,14 +48,16 @@ impl EventHandler for PeerIntentMsg {
 impl EventHandler for HostRoundTripMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(rtt = ?self.rtt, "host round trip");
-        model.sync.delay.push(self.rtt);
+        if let Role::Follower(sync) = &mut model.role {
+            sync.delay.push(self.rtt);
+        }
     }
 }
 
 impl EventHandler for RoomStateMsg {
     fn handle(self, model: &mut CoreModel) {
         trace!(version = self.version, "received room state");
-        model.follow_room(self);
+        model.take_room_state(self);
     }
 }
 

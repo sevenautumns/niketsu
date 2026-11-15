@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
-use tracing::{trace, warn};
+use tokio::time::Instant;
+use tracing::trace;
 
 use super::communicator::Intent;
 use super::playlist::Video;
@@ -12,6 +13,9 @@ use crate::file_database::FileStore;
 
 pub mod wrapper;
 
+/// The player follows the room: the core tells it what to load and where
+/// to be, and asks it only where it is itself. Its events report what its
+/// own user did in it, and what became of a load.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait MediaPlayerTrait: std::fmt::Debug + Send {
@@ -27,8 +31,6 @@ pub trait MediaPlayerTrait: std::fmt::Debug + Send {
     fn unload_video(&mut self);
     fn maybe_reload_video(&mut self, f: &dyn FilePathSearch);
     fn reload_video(&mut self, f: &dyn FilePathSearch, filename: &str);
-    fn playing_video(&self) -> Option<Video>;
-    fn video_loaded(&self) -> bool;
     async fn event(&mut self) -> MediaPlayerEvent;
 }
 
@@ -40,39 +42,40 @@ pub enum MediaPlayerEvent {
     CachePause(PlayerCachePause),
     PositionChange(PlayerPositionChange),
     SpeedChange(PlayerSpeedChange),
+    Loaded(PlayerLoaded),
     FileEnd(PlayerFileEnd),
     Exit(PlayerExit),
 }
 
+/// The user paused in the player, which makes them not ready.
 #[derive(Debug, Clone)]
 pub struct PlayerPause;
 
 impl EventHandler for PlayerPause {
     fn handle(self, model: &mut CoreModel) {
         trace!("player pause");
-        model.request(Intent::Pause);
         model.ready = false;
         model.ui.user_update(crate::ui::UserChange {
             name: model.config.username.clone(),
             ready: false,
         });
-        model.publish_status();
+        model.request(Intent::Pause);
     }
 }
 
+/// The user started playback in the player, which makes them ready.
 #[derive(Debug, Clone)]
 pub struct PlayerStart;
 
 impl EventHandler for PlayerStart {
     fn handle(self, model: &mut CoreModel) {
         trace!("player start");
-        model.request(Intent::Start);
         model.ready = true;
         model.ui.user_update(crate::ui::UserChange {
             name: model.config.username.clone(),
             ready: true,
         });
-        model.publish_status();
+        model.request(Intent::Start);
     }
 }
 
@@ -84,10 +87,12 @@ pub struct PlayerCachePause;
 impl EventHandler for PlayerCachePause {
     fn handle(self, model: &mut CoreModel) {
         trace!("player cache pause");
-        model.request(Intent::Pause);
+        model.request(Intent::CachePause);
     }
 }
 
+/// The player is at `pos` without the room having moved there: its user
+/// seeked.
 #[derive(Debug, Clone)]
 pub struct PlayerPositionChange {
     pos: Duration,
@@ -102,7 +107,7 @@ impl PlayerPositionChange {
 impl EventHandler for PlayerPositionChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("player position change");
-        let Some(video) = model.player.playing_video() else {
+        let Some(video) = model.followed.player.clone() else {
             return;
         };
         let position = self.pos;
@@ -110,6 +115,7 @@ impl EventHandler for PlayerPositionChange {
     }
 }
 
+/// The user changed the speed in the player, which plays at it already.
 #[derive(Debug, Clone)]
 pub struct PlayerSpeedChange {
     speed: f64,
@@ -124,10 +130,31 @@ impl PlayerSpeedChange {
 impl EventHandler for PlayerSpeedChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("player speed change");
+        model.followed.speed = self.speed;
         model.request(Intent::Speed(self.speed));
     }
 }
 
+/// The player finished loading its video and has a position from now on.
+/// The room may have moved on while it loaded, so the position is brought
+/// in line exactly, and the room learns that this user has the video.
+#[derive(Debug, Clone)]
+pub struct PlayerLoaded;
+
+impl EventHandler for PlayerLoaded {
+    fn handle(self, model: &mut CoreModel) {
+        trace!("player loaded its video");
+        if model.followed.player.is_none() {
+            return;
+        }
+        model.followed.loaded = true;
+        model.followed.jumps = None;
+        model.follow(Instant::now());
+        model.publish_status();
+    }
+}
+
+/// The player reached the end of the video and holds none anymore.
 #[derive(Debug, Clone)]
 pub struct PlayerFileEnd(pub Video);
 
@@ -135,20 +162,9 @@ impl EventHandler for PlayerFileEnd {
     fn handle(self, model: &mut CoreModel) {
         trace!("player file end");
         model.video_server.stop_server();
-
-        let current_video = model.playlist.get_current_video();
-        if current_video.as_ref().is_none_or(|c| c.ne(&self.0)) {
-            warn!(
-                playlist_video = ?current_video,
-                mpv_video = ?self.0,
-                "current playlist video and mpv video do not match",
-            );
-            return;
-        }
-
-        let video = model.playlist.next_video();
-        let position = Duration::ZERO;
-        model.request(Intent::Select { video, position });
+        model.followed.player = None;
+        model.followed.loaded = false;
+        model.request(Intent::Ended(self.0));
     }
 }
 

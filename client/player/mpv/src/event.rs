@@ -133,7 +133,8 @@ impl MpvEventTrait for MpvFileLoaded {
             mpv.start();
         }
         trace!("file loaded");
-        None
+        // from here on the player has a position of its own
+        (!was_loaded && mpv.status.file.is_some()).then(|| PlayerLoaded.into())
     }
 }
 
