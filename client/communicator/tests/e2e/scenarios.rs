@@ -417,16 +417,18 @@ fn long_playlist(len: usize) -> Playlist {
 /// heartbeats keep flowing beside it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_room_with_5000_episodes_keeps_working() {
+    let playlist = long_playlist(5_000);
+    let first = playlist.get(0).unwrap().clone();
     let relay = Relay::start();
-    let alice = Peer::join(&relay, "alice", &[]).hosting().await;
-    let bob = Peer::join(&relay, "bob", &[]);
+    let alice = Peer::join(&relay, "alice", &[first.as_str()])
+        .hosting()
+        .await;
+    let bob = Peer::join(&relay, "bob", &[first.as_str()]);
     eventually("alice sees bob", || {
         alice.ui.state().user_names() == ["alice", "bob"]
     })
     .await;
 
-    let playlist = long_playlist(5_000);
-    let first = playlist.get(0).unwrap().clone();
     alice.ui.act(ui::PlaylistChange {
         playlist: playlist.clone(),
     });
@@ -468,7 +470,7 @@ async fn a_room_with_5000_episodes_keeps_working() {
     })
     .await;
 
-    let carol = Peer::join(&relay, "carol", &[]);
+    let carol = Peer::join(&relay, "carol", &[first.as_str()]);
     eventually("carol is greeted with the playlist", || {
         carol.ui.state().playlist == edited
     })
@@ -526,7 +528,7 @@ impl Episode {
         eventually(
             "the viewer sees the provider offering its selection",
             || {
-                viewer.player.state().video == Some(Video::from("ep1"))
+                viewer.ui.state().playing_video == Some(Video::from("ep1"))
                     && viewer.ui.state().offering() == [provider.name()]
             },
         )

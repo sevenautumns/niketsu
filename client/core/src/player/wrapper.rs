@@ -3,9 +3,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::MediaPlayerTrait;
-use crate::playlist::Video;
-use crate::{FilePathSearch, FileStore, MediaPlayerEvent, PlayerPositionChange};
+use super::{MediaPlayerTrait, Source};
+use crate::{MediaPlayerEvent, PlayerPositionChange};
 
 /// How far the local position may drift from the room's before it is
 /// corrected. Wide enough to swallow ping jitter and short stalls:
@@ -98,20 +97,12 @@ impl MediaPlayerTrait for MediaPlayerWrapper {
         self.player.get_position()
     }
 
-    fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore) {
-        self.player.load_video(load, pos, db)
+    fn load(&mut self, source: Source, pos: Duration) {
+        self.player.load(source, pos)
     }
 
-    fn unload_video(&mut self) {
-        self.player.unload_video()
-    }
-
-    fn maybe_reload_video(&mut self, f: &dyn FilePathSearch) {
-        self.player.maybe_reload_video(f)
-    }
-
-    fn reload_video(&mut self, f: &dyn FilePathSearch, filename: &str) {
-        self.player.reload_video(f, filename)
+    fn unload(&mut self) {
+        self.player.unload()
     }
 
     async fn event(&mut self) -> MediaPlayerEvent {

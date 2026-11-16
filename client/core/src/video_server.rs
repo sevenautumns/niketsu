@@ -3,9 +3,11 @@ use std::net::SocketAddr;
 use arcstr::ArcStr;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
+use tokio::time::Instant;
 use tracing::trace;
 
-use crate::{CoreModel, EventHandler, FilePathSearch, MediaPlayerTrait};
+use crate::player::Source;
+use crate::{CoreModel, EventHandler};
 
 /// Serves a video that another peer provides to the local player. The
 /// server fetches its chunks over a [`crate::chunk::ChunkRoute`] given at
@@ -30,33 +32,16 @@ pub struct ServerOnline {
     pub addr: SocketAddr,
 }
 
+/// The video server serves the selected video, which the player plays
+/// from there.
 impl EventHandler for ServerOnline {
     fn handle(self, model: &mut CoreModel) {
         trace!("video server online");
-        let file = VideoServerFile::from(self);
-        model.player.reload_video(&file, &file.file_name);
-    }
-}
-
-pub struct VideoServerFile {
-    file_name: ArcStr,
-    addr: SocketAddr,
-}
-
-impl FilePathSearch for VideoServerFile {
-    fn get_file_path(&self, filename: &str) -> Option<String> {
-        if self.file_name.eq(filename) {
-            return Some(format!("http://{}", self.addr));
+        let selected = model.state.video.as_ref();
+        if selected.is_none_or(|video| video.as_str() != self.file_name) {
+            return;
         }
-        None
-    }
-}
-
-impl From<ServerOnline> for VideoServerFile {
-    fn from(server: ServerOnline) -> Self {
-        Self {
-            file_name: server.file_name,
-            addr: server.addr,
-        }
+        let source = Source::Url(format!("http://{}", self.addr));
+        model.play(Some(source), Instant::now());
     }
 }

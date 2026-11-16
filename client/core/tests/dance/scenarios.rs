@@ -5,11 +5,12 @@ use std::time::Duration;
 use niketsu_core::chunk::SharedFile;
 use niketsu_core::communicator::{DisconnectedMsg, Intent, PeerIntentMsg, RoomStateMsg};
 use niketsu_core::player::{
-    PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart,
+    PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart, Source,
 };
 use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::RoomName;
+use niketsu_core::video_server::ServerOnline;
 use niketsu_core::{ui, video_provider};
 
 use crate::harness::{FILE_SIZE, Peer, Room};
@@ -285,13 +286,12 @@ async fn two_peers_reaching_the_end_advance_the_playlist_once() {
     });
     room.pump();
 
-    // bob's player ends first, and the room is 40 seconds into ep2 when
-    // the end of ep1 on alice's reaches the room
+    // alice's player ends first. bob's ends before he hears of ep2, and
+    // the room is 40 seconds into ep2 when the end of ep1 on his reaches
+    // the room
+    room.peer(alice).reach_end();
+    seek(&mut room, alice, 40);
     room.peer(bob).reach_end();
-    room.pump();
-    seek(&mut room, bob, 40);
-    room.pump();
-    room.peer(alice).act(PlayerFileEnd(Video::from("ep1")));
     room.pump();
 
     for who in [alice, bob] {
@@ -305,7 +305,7 @@ async fn two_peers_reaching_the_end_advance_the_playlist_once() {
     let actions = room.peer(alice).ui.state().actions;
     assert_eq!(
         actions.iter().filter(selections).collect::<Vec<_>>(),
-        ["alice selected ep1", "bob selected ep2"]
+        ["alice selected ep1", "alice selected ep2"]
     );
 }
 
@@ -1166,7 +1166,7 @@ async fn removing_the_running_video_selects_its_successor() {
     }
 
     // a late joiner gets the same picture
-    let charlie = room.join("charlie", &[]);
+    let charlie = room.join("charlie", &["ep1", "ep3"]);
     room.pump();
     assert_eq!(
         room.peer(charlie).player.state().video,
@@ -2025,6 +2025,52 @@ async fn a_follower_without_its_session_keeps_playing_and_rejoins_the_room() {
         room.peer(bob).ui.state().user_names(),
         users(&[("alice", true), ("bob", false), ("charlie", false)])
     );
+}
+
+/// A peer that does not have the selected video plays nothing. Its player
+/// loads the video where the room is once the core has something to play
+/// it from: the stream of its video server, or the file when the file
+/// database finds it. A file found while the stream plays leaves the stream
+/// alone.
+#[tokio::test(start_paused = true)]
+async fn a_peer_without_the_file_plays_it_once_it_has_a_source() {
+    let mut room = Room::new();
+    let alice = room.join("alice", &["ep1"]);
+    let bob = room.join("bob", &[]);
+    let carol = room.join("carol", &[]);
+    room.pump();
+    room.peer(alice).act(ui::PlaylistChange {
+        playlist: Playlist::from_iter(["ep1"]),
+    });
+    room.peer(alice).act(ui::VideoChange {
+        video: Video::from("ep1"),
+    });
+    seek(&mut room, alice, 40);
+    room.pump();
+    for who in [bob, carol] {
+        assert_eq!(room.peer(who).selected(), Some(Video::from("ep1")));
+        assert_eq!(room.peer(who).player.state().source, None, "peer {who}");
+    }
+
+    let addr = "127.0.0.1:4000".parse().unwrap();
+    let file_name = "another".into();
+    room.peer(bob).act(ServerOnline { file_name, addr });
+    assert_eq!(room.peer(bob).player.state().source, None);
+    let file_name = "ep1".into();
+    room.peer(bob).act(ServerOnline { file_name, addr });
+    let stream = Some(Source::Url("http://127.0.0.1:4000".into()));
+    let player = room.peer(bob).player.state();
+    assert_eq!(player.source, stream);
+    assert_eq!(player.position, 40 * SECOND);
+    room.peer(bob).find_file("ep1");
+    assert_eq!(room.peer(bob).player.state().source, stream);
+
+    room.peer(carol).find_file("ep2");
+    assert_eq!(room.peer(carol).player.state().source, None);
+    room.peer(carol).find_file("ep1");
+    let player = room.peer(carol).player.state();
+    assert_eq!(player.source, Some(Source::File("/ep1".into())));
+    assert_eq!(player.position, 40 * SECOND);
 }
 
 /// A core in no room is a room of one: its user selects, plays, seeks and

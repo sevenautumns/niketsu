@@ -16,8 +16,8 @@ use tracing::{debug, warn};
 
 use crate::CoreModel;
 use crate::communicator::{Intent, RoomStateMsg, StreamEndedMsg};
-use crate::player::MediaPlayerTrait;
-use crate::playlist::{Playlist, Video};
+use crate::player::{MediaPlayerTrait, Source};
+use crate::playlist::{Playlist, Video, VideoInner};
 use crate::sync::ClientSync;
 use crate::ui::PlayerMessage;
 use crate::user::{User, UserStatus};
@@ -90,8 +90,11 @@ pub struct Followed {
     /// The UI's user edited the playlist or selected a video. The UI shows
     /// that already, whether or not the room takes it.
     pub(crate) unconfirmed: bool,
-    /// The video the player holds.
+    /// The video the player was last told to hold.
     pub(crate) player: Option<Video>,
+    /// What the player plays that video from. Without one the player holds
+    /// nothing.
+    pub(crate) source: Option<Source>,
     /// Whether the player has finished loading its video. Until then it has
     /// no position to bring in line.
     pub(crate) loaded: bool,
@@ -110,6 +113,7 @@ impl Default for Followed {
             users: BTreeMap::new(),
             unconfirmed: false,
             player: None,
+            source: None,
             loaded: false,
             speed: 1.0,
             jumps: None,
@@ -356,19 +360,50 @@ impl CoreModel {
         self.ui.player_message(PlayerMessage::renamed(&name));
     }
 
-    /// The player loads the selected video where the room is in it.
+    /// The player loads the selected video where the room is in it, from
+    /// where this core finds it.
     fn load(&mut self, now: Instant) {
-        let video = self.state.video.clone();
-        match &video {
-            Some(video) => {
+        let source = self.state.video.as_ref().and_then(|video| self.find(video));
+        self.play(source, now);
+    }
+
+    /// The player plays the selected video from `source` where the room is
+    /// in it, or holds nothing.
+    pub(crate) fn play(&mut self, source: Option<Source>, now: Instant) {
+        match source.clone() {
+            Some(source) => {
                 let position = self.state.timeline.position_at(now);
-                let store = self.database.all_files();
-                self.player.load_video(video.clone(), position, store);
+                self.player.load(source, position);
             }
-            None => self.player.unload_video(),
+            None => self.player.unload(),
         }
-        self.followed.player = video;
+        self.followed.player = self.state.video.clone();
+        self.followed.source = source;
         self.followed.loaded = false;
+    }
+
+    /// Where this core has `video` itself: a URL is its own source, a file
+    /// is one the file database knows.
+    fn find(&self, video: &Video) -> Option<Source> {
+        match &**video {
+            VideoInner::Url(url) => Some(Source::Url(url.to_string())),
+            VideoInner::File(name) => {
+                let file = self.database.find_file(name)?;
+                Some(Source::File(file.path().to_path_buf()))
+            }
+        }
+    }
+
+    /// The file database knows other files than before. A selected video
+    /// the player had nothing to play from is loaded if it is among them.
+    pub(crate) fn files_changed(&mut self) {
+        if self.followed.source.is_some() {
+            return;
+        }
+        let source = self.state.video.as_ref().and_then(|video| self.find(video));
+        if source.is_some() {
+            self.play(source, Instant::now());
+        }
     }
 
     /// What goes with the selection: a stream is one of the selected

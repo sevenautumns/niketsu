@@ -10,12 +10,10 @@ use niketsu_communicator::P2PCommunicator;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::chunk::ChunkRoute;
 use niketsu_core::config::Config;
-use niketsu_core::file_database::{
-    FileDatabaseEvent, FileDatabaseTrait, FileEntry, FilePathSearch, FileStore,
-};
+use niketsu_core::file_database::{FileDatabaseEvent, FileDatabaseTrait, FileEntry, FileStore};
 use niketsu_core::player::{
     MediaPlayerEvent, MediaPlayerTrait, PlayerLoaded, PlayerPause, PlayerPositionChange,
-    PlayerStart,
+    PlayerStart, Source,
 };
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::UserList;
@@ -139,11 +137,13 @@ impl Drop for Relay {
 
 #[derive(Debug, Clone)]
 pub struct PlayerState {
+    /// The video the player holds: the file its peer has under that name,
+    /// or the URL it plays.
     pub video: Option<Video>,
     pub position: Duration,
     pub paused: bool,
-    /// Where the core told the player to read the video from once it became
-    /// available, e.g. the URL of the local video server.
+    /// Where the core told the player to read from: the path of a file, or
+    /// a URL such as the one of the local video server.
     pub source: Option<String>,
     speed: f64,
 }
@@ -251,22 +251,26 @@ impl MediaPlayerTrait for FakePlayer {
     }
 
     /// Like mpv, the player loads paused and reports when it has loaded.
-    fn load_video(&mut self, load: Video, pos: Duration, _db: &FileStore) {
+    fn load(&mut self, source: Source, pos: Duration) {
+        let (video, source) = match source {
+            Source::File(path) => (
+                Video::from(path.file_name().unwrap().to_str().unwrap()),
+                path.to_str().unwrap().to_string(),
+            ),
+            Source::Url(url) => (Video::from(url.as_str()), url),
+        };
         let mut state = self.lock();
-        state.video = Some(load);
+        state.video = Some(video);
+        state.source = Some(source);
         state.position = pos;
         state.paused = true;
         self.reports.send(PlayerLoaded.into()).ok();
     }
 
-    fn unload_video(&mut self) {
-        self.lock().video = None;
-    }
-
-    fn maybe_reload_video(&mut self, _f: &dyn FilePathSearch) {}
-
-    fn reload_video(&mut self, f: &dyn FilePathSearch, filename: &str) {
-        self.lock().source = f.get_file_path(filename);
+    fn unload(&mut self) {
+        let mut state = self.lock();
+        state.video = None;
+        state.source = None;
     }
 
     async fn event(&mut self) -> MediaPlayerEvent {

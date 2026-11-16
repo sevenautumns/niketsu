@@ -14,10 +14,12 @@ use niketsu_core::communicator::{
 };
 use niketsu_core::config::Config;
 use niketsu_core::file_database::{
-    FileDatabaseEvent, FileDatabaseTrait, FileEntry, FilePathSearch, FileStore,
+    FileDatabaseEvent, FileDatabaseTrait, FileEntry, FileStore, UpdateComplete,
 };
 use niketsu_core::heartbeat::Heartbeat;
-use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait, PlayerFileEnd, PlayerLoaded};
+use niketsu_core::player::{
+    MediaPlayerEvent, MediaPlayerTrait, PlayerFileEnd, PlayerLoaded, Source,
+};
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::UserList;
 use niketsu_core::ui::{
@@ -36,6 +38,8 @@ use tokio::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct PlayerState {
+    /// What the player was told to play, and the video that is.
+    pub source: Option<Source>,
     pub video: Option<Video>,
     /// Where the player is. While it has a loaded video and is not paused,
     /// it plays on from here as the test's clock advances.
@@ -43,7 +47,7 @@ pub struct PlayerState {
     pub speed: f64,
     pub paused: bool,
     pub file_loaded: bool,
-    /// When true, `load_video` leaves `file_loaded` false until
+    /// When true, `load` leaves `file_loaded` false until
     /// [`PlayerHandle::finish_load`] — simulates mpv still opening the
     /// file.
     pub load_lag: bool,
@@ -60,6 +64,7 @@ pub struct PlayerState {
 impl PlayerState {
     fn new() -> Self {
         Self {
+            source: None,
             video: None,
             position: Duration::ZERO,
             speed: 1.0,
@@ -80,6 +85,15 @@ impl PlayerState {
             self.position += (now - self.at).mul_f64(self.speed);
         }
         self.at = now;
+    }
+}
+
+/// The video a source is of: the fake database keeps every file under its
+/// name, and a URL is its own video.
+fn video_of(source: &Source) -> Video {
+    match source {
+        Source::File(path) => Video::from(path.file_name().unwrap().to_str().unwrap()),
+        Source::Url(url) => Video::from(url.as_str()),
     }
 }
 
@@ -171,9 +185,10 @@ impl MediaPlayerTrait for FakePlayer {
     }
 
     /// Like mpv, the player loads paused and reports when it has loaded.
-    fn load_video(&mut self, load: Video, pos: Duration, _db: &FileStore) {
+    fn load(&mut self, source: Source, pos: Duration) {
         let mut state = self.lock();
-        state.video = Some(load);
+        state.video = Some(video_of(&source));
+        state.source = Some(source);
         state.position = pos;
         state.paused = true;
         state.seek_target = None;
@@ -183,15 +198,12 @@ impl MediaPlayerTrait for FakePlayer {
         }
     }
 
-    fn unload_video(&mut self) {
+    fn unload(&mut self) {
         let mut state = self.lock();
         state.video = None;
+        state.source = None;
         state.file_loaded = false;
     }
-
-    fn maybe_reload_video(&mut self, _f: &dyn FilePathSearch) {}
-
-    fn reload_video(&mut self, _f: &dyn FilePathSearch, _filename: &str) {}
 
     async fn event(&mut self) -> MediaPlayerEvent {
         std::future::pending().await
@@ -345,7 +357,13 @@ impl FakeDatabase {
 
 #[async_trait]
 impl FileDatabaseTrait for FakeDatabase {
-    fn add_path(&mut self, _path: PathBuf) {}
+    /// The file at `path` is one the database knows from now on.
+    fn add_path(&mut self, path: PathBuf) {
+        let name = path.file_name().unwrap().to_str().unwrap().to_string();
+        self.entries.push(FileEntry::new(name, path, None));
+        self.store = FileStore::from_iter(self.entries.clone());
+    }
+
     fn del_path(&mut self, _path: &Path) {}
     fn clear_paths(&mut self) {}
 
@@ -559,14 +577,15 @@ impl Peer {
     /// The player reaches the end of its video, if it has one. Like mpv, it
     /// holds no video from then on.
     pub fn reach_end(&mut self) {
-        let Some(video) = self.player.state().video else {
+        if self.player.state().video.is_none() {
             return;
-        };
+        }
         self.player.set(|player| {
+            player.source = None;
             player.video = None;
             player.file_loaded = false;
         });
-        self.act(PlayerFileEnd(video));
+        self.act(PlayerFileEnd);
     }
 
     /// The core handles what its player has to report. Returns whether
@@ -583,6 +602,17 @@ impl Peer {
     /// The room's playlist as this core has it.
     pub fn playlist(&self) -> Playlist {
         self.model.state.playlist.clone()
+    }
+
+    /// The peer's file database finds the file `name`.
+    pub fn find_file(&mut self, name: &str) {
+        self.model.database.add_path(format!("/{name}").into());
+        self.act(UpdateComplete);
+    }
+
+    /// Whether this peer has `video` itself, to play it from.
+    pub fn has(&self, video: &Video) -> bool {
+        video.is_url() || self.model.database.find_file(video.as_str()).is_some()
     }
 
     /// The room's selected video as this core has it.

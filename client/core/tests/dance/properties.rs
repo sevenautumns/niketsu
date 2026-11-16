@@ -144,13 +144,17 @@ fn apply(room: &mut Room, action: Action) {
     room.pump();
 }
 
-/// Every peer agrees on the playlist, the selection, the loaded video, and
-/// what its UI shows.
+/// Every peer agrees on the playlist, the selection and what its UI shows,
+/// and its player holds the selected video if the peer has it.
 fn assert_room_converged(room: &mut Room) {
     let playlist = room.peer(0).playlist();
     let selected = room.peer(0).selected();
-    let video = room.peer(0).player.state().video;
-    assert_eq!(video, selected, "peer 0: the player holds another video");
+    for i in 0..room.peers.len() {
+        let peer = room.peer(i);
+        let held = selected.clone().filter(|video| peer.has(video));
+        let video = peer.player.state().video;
+        assert_eq!(video, held, "peer {i}: the player holds another video");
+    }
     let ui = room.peer(0).ui.state();
     for i in 1..room.peers.len() {
         assert_eq!(
@@ -162,11 +166,6 @@ fn assert_room_converged(room: &mut Room) {
             room.peer(i).selected(),
             selected,
             "peer {i}: selection diverged"
-        );
-        assert_eq!(
-            room.peer(i).player.state().video,
-            video,
-            "peer {i}: loaded video diverged"
         );
         let peer_ui = room.peer(i).ui.state();
         assert_eq!(
@@ -269,8 +268,12 @@ proptest! {
             let host_player = room.peer(room.host_index()).player.state();
             if host_player.video.is_some() {
                 for i in 0..room.peers.len() {
+                    let player = room.peer(i).player.state();
+                    if player.video.is_none() {
+                        continue;
+                    }
                     assert_eq!(
-                        room.peer(i).player.state().paused,
+                        player.paused,
                         host_player.paused,
                         "peer {i}: paused/playing diverged from the host"
                     );

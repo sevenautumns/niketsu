@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -6,10 +7,7 @@ use tokio::time::Instant;
 use tracing::trace;
 
 use super::communicator::Intent;
-use super::playlist::Video;
 use super::{CoreModel, EventHandler};
-use crate::FilePathSearch;
-use crate::file_database::FileStore;
 
 pub mod wrapper;
 
@@ -24,14 +22,20 @@ pub trait MediaPlayerTrait: std::fmt::Debug + Send {
     fn is_paused(&self) -> Option<bool>;
     fn set_speed(&mut self, speed: f64);
     fn set_position(&mut self, pos: Duration);
+    /// Where the player is in what it has loaded. It has no position
+    /// while it holds nothing or is still loading.
     fn get_position(&mut self) -> Option<Duration>;
-    // TODO separate FileStore from MediaPlayer
-    // for this we need to move the file_loaded out of the player
-    fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore);
-    fn unload_video(&mut self);
-    fn maybe_reload_video(&mut self, f: &dyn FilePathSearch);
-    fn reload_video(&mut self, f: &dyn FilePathSearch, filename: &str);
+    /// Loads `source` paused at `pos`, in place of what the player holds.
+    fn load(&mut self, source: Source, pos: Duration);
+    fn unload(&mut self);
     async fn event(&mut self) -> MediaPlayerEvent;
+}
+
+/// What a player plays a video from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Source {
+    File(PathBuf),
+    Url(String),
 }
 
 #[enum_dispatch(EventHandler)]
@@ -154,17 +158,20 @@ impl EventHandler for PlayerLoaded {
     }
 }
 
-/// The player reached the end of the video and holds none anymore.
+/// The player reached the end of what it had loaded and holds nothing
+/// anymore.
 #[derive(Debug, Clone)]
-pub struct PlayerFileEnd(pub Video);
+pub struct PlayerFileEnd;
 
 impl EventHandler for PlayerFileEnd {
     fn handle(self, model: &mut CoreModel) {
         trace!("player file end");
         model.video_server.stop_server();
-        model.followed.player = None;
+        model.followed.source = None;
         model.followed.loaded = false;
-        model.request(Intent::Ended(self.0));
+        if let Some(video) = model.followed.player.take() {
+            model.request(Intent::Ended(video));
+        }
     }
 }
 

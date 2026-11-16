@@ -7,7 +7,6 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::FilePathSearch;
 use crate::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
 
 pub mod file;
@@ -55,13 +54,6 @@ pub enum VideoInner {
 impl VideoInner {
     pub fn is_url(&self) -> bool {
         matches!(self, Self::Url(_))
-    }
-
-    pub fn to_path_str(&self, f: &dyn FilePathSearch) -> Option<String> {
-        match self {
-            VideoInner::File(name) => f.get_file_path(name),
-            VideoInner::Url(url) => Some(url.as_str().to_string()),
-        }
     }
 
     pub fn as_str(&self) -> &str {
@@ -261,11 +253,7 @@ impl FuzzySearchable<Video> for Playlist {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-    use crate::FileStore;
-    use crate::file_database::FileEntry;
 
     #[test]
     fn test_is_url() {
@@ -274,19 +262,6 @@ mod tests {
 
         assert!(!file_video.is_url());
         assert!(url_video.is_url());
-    }
-
-    #[test]
-    fn test_to_path_str_with_url() {
-        let db = FileStore::default();
-        let video_inner = Video::from("https://www.example.com/video.mp4");
-
-        let path_str = video_inner.to_path_str(&db);
-
-        assert_eq!(
-            path_str,
-            Some("https://www.example.com/video.mp4".to_string())
-        );
     }
 
     #[test]
@@ -308,27 +283,6 @@ mod tests {
     }
 
     #[test]
-    fn test_playlist_video_inner_to_path_str() {
-        let file_store = FileStore::from_iter([FileEntry::new(
-            "video.mp4".to_string(),
-            PathBuf::from("/path/to/video.mp4"),
-            None,
-        )]);
-
-        let file_inner = Video::from("video.mp4");
-        let url_inner = Video::from("https://example.com/video.mp4");
-
-        assert_eq!(
-            file_inner.to_path_str(&file_store),
-            Some("/path/to/video.mp4".to_string())
-        );
-        assert_eq!(
-            url_inner.to_path_str(&file_store),
-            Some("https://example.com/video.mp4".to_string())
-        );
-    }
-
-    #[test]
     fn test_playlist_video_as_ref() {
         // Create a PlaylistVideo variant for testing
         let video = Video::from("video.mp4");
@@ -338,17 +292,6 @@ mod tests {
 
         // Ensure that the reference matches the expected string
         assert_eq!(video_ref, "video.mp4");
-    }
-
-    #[test]
-    fn test_playlist_video_inner_to_path_str_none() {
-        // Create a dummy FileStore for testing purposes with no matching file
-        let file_store = FileStore::default();
-
-        let non_existing_file_inner = Video::from("non_existent.mp4");
-
-        // Ensure that to_path_str returns None for a non-existing file
-        assert_eq!(non_existing_file_inner.to_path_str(&file_store), None);
     }
 
     #[test]
