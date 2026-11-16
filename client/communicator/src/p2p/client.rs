@@ -1,22 +1,18 @@
-use anyhow::Result;
 use async_trait::async_trait;
 use libp2p::core::ConnectedPoint;
 use libp2p::core::transport::ListenerId;
-use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, dcutr, ping};
 use niketsu_core::communicator::{
     ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
 };
-use niketsu_core::log_err_msg;
 use tracing::{debug, info, warn};
 
 use super::links::{Closed, Opened};
 use super::member::Membership;
-use super::outbox::Outbox;
+use super::stream::StreamEvent;
 use super::{
-    Behaviour, BehaviourEvent, ChunkRoutes, HostLink, MessageResponse, Role, Session,
-    StatusResponse, Stop, TransportBehaviourEvent,
+    Behaviour, BehaviourEvent, ChunkRoutes, HostLink, Role, Session, Stop, TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
 
@@ -25,11 +21,6 @@ pub(crate) struct ClientRole {
     /// The listener on the host's circuit, which lives as long as the
     /// reservation on the host's relay does.
     host_reservation: Option<ListenerId>,
-    /// The request to join the room, until the host answers it.
-    join: Option<OutboundRequestId>,
-    /// What this peer sends the host, its intents, which reach the host in
-    /// the order sent.
-    outbox: Outbox<OutboundRequestId>,
 }
 
 impl ClientRole {
@@ -43,7 +34,7 @@ impl ClientRole {
     ) -> Self {
         // A client starts out with nothing but the circuit to the host being
         // dialed, and is connected once that led to a direct connection and
-        // the host took it into the room.
+        // its stream to the host is open on it.
         let session = Session::new(
             swarm,
             membership,
@@ -56,8 +47,6 @@ impl ClientRole {
         Self {
             session,
             host_reservation: None,
-            join: None,
-            outbox: Outbox::default(),
         }
     }
 
@@ -70,9 +59,7 @@ impl ClientRole {
         match event.result {
             // a circuit's round trip includes the detour over the relay
             Ok(rtt) if self.session.links.is_direct(&host, event.connection) => {
-                if let Err(error) = self.session.forward(HostRoundTripMsg { rtt }) {
-                    warn!(%error, "Failed to report round trip to core");
-                }
+                self.session.forward(HostRoundTripMsg { rtt });
             }
             Ok(_) => {}
             Err(error) => {
@@ -99,12 +86,11 @@ impl ClientRole {
         }
     }
 
-    /// Asks the host to take this peer into the room.
+    /// Joins the room: opens the stream to the host on the direct
+    /// connection that exists now.
     fn on_host_linked(&mut self, addr: &Multiaddr) {
-        let net = &mut self.session.net;
-        net.host_link = HostLink::direct(addr);
-        let host = net.host;
-        self.join = Some(net.send_request(&host, NiketsuMessage::Join));
+        self.session.net.host_link = HostLink::direct(addr);
+        self.session.streams.join(self.session.net.host);
         self.reserve_host_circuit();
     }
 
@@ -158,31 +144,6 @@ impl ClientRole {
         } else {
             debug!(%error, ?peer_id, %connection_id, "Outgoing connection error");
         }
-    }
-
-    /// The host did not take the message on its way to it: it refused it,
-    /// the request timed out or the connection closed. Whether the host
-    /// applied it is unknown, and what waits behind it would reach the
-    /// host out of step, so the session ends as with a lost host, and
-    /// what waits goes with it. The core connects anew and is greeted with
-    /// the room.
-    fn lose_host(&mut self, why: &dyn std::fmt::Debug) {
-        warn!(?why, "The host did not take a message; leaving the room");
-        self.session.net.stop(Stop::HostLost);
-    }
-
-    /// The host took this peer into the room: it answered the request to
-    /// join, or sent the room's first message, which can arrive before
-    /// that answer. The client is connected from here on. The core learns
-    /// of it here: after the host took this peer in, so the core's first
-    /// requests reach a member, and before the host's first message, so
-    /// the core starts the connection afresh before it follows the room.
-    fn joined(&mut self) {
-        if self.join.take().is_none() {
-            return;
-        }
-        let res = self.session.forward(ConnectedMsg { is_host: false });
-        log_err_msg!(res, "Failed to send connected message to core");
     }
 }
 
@@ -257,81 +218,27 @@ impl Role for ClientRole {
         }
     }
 
-    fn handle_swarm_request(
-        &mut self,
-        msg: NiketsuMessage,
-        channel: ResponseChannel<MessageResponse>,
-        peer_id: PeerId,
-    ) -> Result<()> {
-        debug!("Received swarm request {msg:?}");
-        // only the host speaks for the room, and only to its members
-        if peer_id != self.session.net.host {
-            return self.session.respond_with_err(msg, channel);
-        }
-        self.joined();
-        use NiketsuMessage::*;
-        match msg {
-            RoomState(m) => self.session.send_to_core(m, channel),
-            Line(m) => self.session.send_to_core(m, channel),
-            other => self.session.respond_with_err(other, channel),
-        }
-    }
-
-    fn on_msg_response(
-        &mut self,
-        peer: PeerId,
-        request_id: OutboundRequestId,
-        response: MessageResponse,
-    ) {
-        debug!(?response, %peer, "Received response");
-        if self.join != Some(request_id) {
-            let net = &mut self.session.net;
-            let host = net.host;
-            match response.0 {
-                StatusResponse::Ok => {
-                    self.outbox
-                        .answered(&request_id, |msg| net.send_request(&host, msg));
-                }
-                StatusResponse::Err if self.outbox.is_on_its_way(&request_id) => {
-                    self.lose_host(&response)
-                }
-                StatusResponse::Err => {}
-            }
-            return;
-        }
-        match response.0 {
-            StatusResponse::Ok => self.joined(),
-            StatusResponse::Err => {
-                self.join = None;
-                warn!(%peer, "The host refused to take this peer into the room");
+    /// The client is connected once its stream to the host is open: the
+    /// core hears of it before anything the host wrote, so it starts the
+    /// connection afresh before it follows the room. When the stream ends
+    /// the session ends as with a lost host, whatever the cause: the host
+    /// turned the client down or dropped it, or a write did not get
+    /// through. Whether the host applied what was written last is unknown
+    /// then; the core connects anew and takes the room's state.
+    fn on_stream_event(&mut self, event: StreamEvent) {
+        match event {
+            StreamEvent::Opened(_) => self.session.forward(ConnectedMsg { is_host: false }),
+            StreamEvent::Refused(_) => {
+                warn!("Failed to open the stream to the host");
                 self.session.net.stop(Stop::HostUnreachable);
             }
-        }
-    }
-
-    fn on_msg_req_resp_other(
-        &mut self,
-        event: request_response::Event<super::MessageRequest, MessageResponse>,
-    ) {
-        match event {
-            request_response::Event::OutboundFailure {
-                peer,
-                request_id,
-                error,
-                ..
-            } => {
-                let host = self.session.net.host;
-                if self.join == Some(request_id) {
-                    warn!(%error, %host, "Failed to join the room");
-                    self.session.net.stop(Stop::HostUnreachable);
-                } else if peer == host && self.outbox.is_on_its_way(&request_id) {
-                    self.lose_host(&error);
-                }
+            StreamEvent::Received(_, NiketsuMessage::RoomState(msg)) => self.session.forward(msg),
+            StreamEvent::Received(_, NiketsuMessage::Line(msg)) => self.session.forward(msg),
+            StreamEvent::Received(_, other) => debug!(?other, "Not for the host to send"),
+            StreamEvent::Ended(_) => {
+                warn!("The stream to the host ended; leaving the room");
+                self.session.net.stop(Stop::HostLost);
             }
-            other => debug!(
-                ?other,
-                "Received request response event that is not handled"
-            ),
         }
     }
 
@@ -339,10 +246,7 @@ impl Role for ClientRole {
         let OutgoingMessage::Intent(intent) = msg else {
             return Some(msg);
         };
-        let net = &mut self.session.net;
-        let host = net.host;
-        self.outbox
-            .push(intent.into(), |msg| net.send_request(&host, msg));
+        self.session.streams.send(intent.into(), |_| true);
         None
     }
 }
@@ -357,24 +261,27 @@ mod tests {
     use libp2p::core::transport::MemoryTransport;
     use libp2p::core::upgrade::Version;
     use libp2p::multiaddr::Protocol;
-    use libp2p::request_response::{Event, Message};
     use libp2p::swarm::NetworkBehaviour;
-    use libp2p::{Transport, noise, yamux};
+    use libp2p::{Stream, Transport, noise, yamux};
+    use libp2p_stream::IncomingStreams;
     use niketsu_core::chunk::ChunkRoute;
     use niketsu_core::communicator::{Intent, RoomStateMsg};
     use tokio::sync::mpsc::unbounded_channel;
+    use tokio::time::timeout;
 
     use super::*;
-    use crate::p2p::{MessagingBehaviour, messaging};
+    use crate::p2p::member::MemberTag;
+    use crate::p2p::stream::{PROTOCOL, read_frame, write_frame};
 
     const ROOM: &str = "room";
     const PASSWORD: &str = "secret";
+    const PATIENCE: Duration = Duration::from_secs(5);
 
     /// What the host's side needs for the client to keep its connection:
-    /// the room's messages, and pings.
+    /// the room's streams, and pings.
     #[derive(NetworkBehaviour)]
     struct HostSide {
-        messaging: MessagingBehaviour,
+        streams: libp2p_stream::Behaviour,
         ping: ping::Behaviour,
     }
 
@@ -401,7 +308,9 @@ mod tests {
     /// A client role dialing the test's host side, and the test's ends of
     /// the channels to the client's core.
     struct Setup {
-        host_side: Swarm<HostSide>,
+        /// Where the client's stream arrives, if the host side takes the
+        /// room's streams.
+        arriving: Option<IncomingStreams>,
         host_membership: Membership,
         /// The client's peer id.
         peer: PeerId,
@@ -411,9 +320,45 @@ mod tests {
         run: tokio::task::JoinHandle<Stop>,
     }
 
-    async fn start() -> Setup {
+    impl Setup {
+        /// The client's stream once it presented the client's tag.
+        async fn accept(&mut self) -> Stream {
+            let arriving = self.arriving.as_mut().unwrap();
+            let (from, mut stream) = timeout(PATIENCE, arriving.next())
+                .await
+                .expect("the client never opened its stream")
+                .unwrap();
+            assert_eq!(from, self.peer);
+            let tag: MemberTag = timeout(PATIENCE, read_frame(&mut stream))
+                .await
+                .expect("the client never presented its tag")
+                .unwrap();
+            assert!(self.host_membership.admits(&self.peer, &tag));
+            stream
+        }
+
+        /// What the core hears next beside the round trips the pings
+        /// measure.
+        async fn heard(&mut self) -> IncomingMessage {
+            let next = async {
+                loop {
+                    match self.to_core.recv().await.unwrap() {
+                        IncomingMessage::HostRoundTrip(_) => continue,
+                        msg => return msg,
+                    }
+                }
+            };
+            timeout(PATIENCE, next)
+                .await
+                .expect("the core hears nothing")
+        }
+    }
+
+    /// A client dialing a host side that takes the room's streams if
+    /// `accepts`.
+    async fn start(accepts: bool) -> Setup {
         let mut host_side = swarm(|_, _| HostSide {
-            messaging: messaging(),
+            streams: libp2p_stream::Behaviour::new(),
             ping: ping::Behaviour::default(),
         });
         let host = *host_side.local_peer_id();
@@ -424,6 +369,13 @@ mod tests {
             }
         };
         let host_membership = Membership::new(ROOM.into(), PASSWORD.into(), &host);
+        let mut control = host_side.behaviour_mut().streams.new_control();
+        let arriving = accepts.then(|| control.accept(PROTOCOL).unwrap());
+        tokio::spawn(async move {
+            loop {
+                host_side.select_next_some().await;
+            }
+        });
 
         let mut client =
             swarm(|key, relay_client| Behaviour::new(key, relay_client, false).unwrap());
@@ -446,7 +398,7 @@ mod tests {
         );
         let run = tokio::spawn(async move { role.run().await });
         Setup {
-            host_side,
+            arriving,
             host_membership,
             peer,
             core,
@@ -455,55 +407,25 @@ mod tests {
         }
     }
 
-    /// The next room message the client sends the host side.
-    async fn next_request(
-        host_side: &mut Swarm<HostSide>,
-    ) -> (NiketsuMessage, ResponseChannel<MessageResponse>) {
-        loop {
-            if let SwarmEvent::Behaviour(HostSideEvent::Messaging(Event::Message {
-                message:
-                    Message::Request {
-                        request, channel, ..
-                    },
-                ..
-            })) = host_side.select_next_some().await
-            {
-                return (request.msg, channel);
-            }
-        }
-    }
-
-    /// Whether the client sends the host side nothing for a while.
-    async fn sends_nothing(host_side: &mut Swarm<HostSide>) -> bool {
-        let wait = Duration::from_millis(300);
-        tokio::time::timeout(wait, next_request(host_side))
-            .await
-            .is_err()
-    }
-
-    /// The host side takes the client into the room.
-    async fn join(setup: &mut Setup) {
-        let patience = Duration::from_secs(5);
-        let (msg, channel) = tokio::time::timeout(patience, next_request(&mut setup.host_side))
-            .await
-            .expect("the client never asked to join");
-        assert_eq!(msg, NiketsuMessage::Join);
-        let messaging = &mut setup.host_side.behaviour_mut().messaging;
-        let ok = MessageResponse(StatusResponse::Ok);
-        messaging.send_response(channel, ok).unwrap();
-    }
-
     fn line(message: &str) -> Intent {
         Intent::Chat(message.into())
     }
 
-    /// The client's intents, chat lines among them, reach the host in the
-    /// order the core sent them, one at a time: the next goes out once the
-    /// host answered the one before.
+    /// The client joins by opening its stream with its member tag, and its
+    /// intents, chat lines among them, reach the host in the order the
+    /// core sent them.
     #[tokio::test(flavor = "multi_thread")]
-    async fn intents_and_chat_reach_the_host_in_the_order_sent() {
-        let mut setup = start().await;
-        join(&mut setup).await;
+    async fn the_client_joins_with_its_tag_and_its_intents_arrive_in_order() {
+        let mut setup = start(true).await;
+        let mut stream = setup.accept().await;
+        let connected = setup.heard().await;
+        assert!(
+            matches!(
+                connected,
+                IncomingMessage::Connected(ConnectedMsg { is_host: false })
+            ),
+            "{connected:?}"
+        );
 
         let sent = [
             Intent::Pause,
@@ -515,141 +437,66 @@ mod tests {
         for intent in &sent {
             setup.core.send(intent.clone().into()).unwrap();
         }
-        let sent: Vec<NiketsuMessage> = sent.into_iter().map(NiketsuMessage::from).collect();
-
-        let mut received = Vec::new();
-        for _ in &sent {
-            let patience = Duration::from_secs(5);
-            let next = next_request(&mut setup.host_side);
-            let (msg, channel) = tokio::time::timeout(patience, next)
+        for intent in sent {
+            let msg: NiketsuMessage = timeout(PATIENCE, read_frame(&mut stream))
                 .await
-                .expect("the client stopped sending");
-            received.push(msg);
-            assert!(
-                sends_nothing(&mut setup.host_side).await,
-                "a second message while one is unanswered"
-            );
-            let messaging = &mut setup.host_side.behaviour_mut().messaging;
-            let ok = MessageResponse(StatusResponse::Ok);
-            messaging.send_response(channel, ok).unwrap();
-        }
-        assert_eq!(received, sent);
-    }
-
-    /// A message the host does not take ends the client's session as a
-    /// lost host, and what waited behind it goes with the session: a
-    /// refusal, and a request the host drops unanswered.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn the_client_leaves_a_host_that_does_not_take_its_message() {
-        for refuses in [true, false] {
-            let mut setup = start().await;
-            join(&mut setup).await;
-            setup.core.send(Intent::Pause.into()).unwrap();
-            setup.core.send(line("behind it").into()).unwrap();
-
-            let patience = Duration::from_secs(5);
-            let next = next_request(&mut setup.host_side);
-            let (msg, channel) = tokio::time::timeout(patience, next).await.unwrap();
-            assert_eq!(msg, Intent::Pause.into());
-            if refuses {
-                let messaging = &mut setup.host_side.behaviour_mut().messaging;
-                let refusal = MessageResponse(StatusResponse::Err);
-                messaging.send_response(channel, refusal).unwrap();
-            } else {
-                drop(channel);
-            }
-            let ended = async {
-                tokio::select! {
-                    stop = &mut setup.run => stop.unwrap(),
-                    _ = next_request(&mut setup.host_side) => panic!("the next message went out"),
-                }
-            };
-            let stop = tokio::time::timeout(patience, ended).await;
-            assert_eq!(stop.ok(), Some(Stop::HostLost), "refuses: {refuses}");
+                .expect("the client stopped sending")
+                .unwrap();
+            assert_eq!(msg, intent.into());
         }
     }
 
-    /// The host's first message can overtake its answer to the request to
-    /// join. The core hears of the connection before that message all the
-    /// same, so starting the connection afresh does not wipe what the host
-    /// sent.
+    /// The core hears of the connection before the host's first message,
+    /// also when the host writes it the moment the stream arrives, so
+    /// starting the connection afresh does not wipe what the host sent.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_core_hears_of_the_connection_before_the_hosts_first_message() {
-        let Setup {
-            mut host_side,
-            host_membership,
-            peer,
-            core: _core,
-            mut to_core,
-            ..
-        } = start().await;
-
-        // the host answers the request to join only once the client took
-        // the room's first message
+        let mut setup = start(true).await;
+        let mut stream = setup.accept().await;
         let state = RoomStateMsg {
             jumps: 3,
             ..Default::default()
         };
-        let mut join = None;
-        let mut first = None;
-        let serve = async {
-            loop {
-                let SwarmEvent::Behaviour(HostSideEvent::Messaging(event)) =
-                    host_side.select_next_some().await
-                else {
-                    continue;
-                };
-                let messaging = &mut host_side.behaviour_mut().messaging;
-                match event {
-                    Event::Message {
-                        message:
-                            Message::Request {
-                                request, channel, ..
-                            },
-                        ..
-                    } if request.msg == NiketsuMessage::Join => {
-                        join = Some(channel);
-                        let msg = host_membership.tag(NiketsuMessage::RoomState(state.clone()));
-                        first = Some(messaging.send_request(&peer, msg));
-                    }
-                    Event::Message {
-                        message: Message::Response { request_id, .. },
-                        ..
-                    } if Some(request_id) == first => {
-                        let ok = MessageResponse(StatusResponse::Ok);
-                        messaging.send_response(join.take().unwrap(), ok).unwrap();
-                        return;
-                    }
-                    _ => {}
-                }
-            }
-        };
-        tokio::time::timeout(Duration::from_secs(5), serve)
-            .await
-            .expect("the client never took the host's first message");
+        let first = NiketsuMessage::RoomState(state.clone());
+        write_frame(&mut stream, &first).await.unwrap();
 
-        // what the core hears beside the round trips the pings measure
-        let mut next = async || loop {
-            match to_core.recv().await.unwrap() {
-                IncomingMessage::HostRoundTrip(_) => continue,
-                msg => return msg,
-            }
-        };
-        let connected = tokio::time::timeout(Duration::from_secs(5), next()).await;
+        let connected = setup.heard().await;
         assert!(
-            matches!(
-                connected,
-                Ok(IncomingMessage::Connected(ConnectedMsg {
-                    is_host: false,
-                    ..
-                }))
-            ),
+            matches!(connected, IncomingMessage::Connected(_)),
             "the core first hears of the connection: {connected:?}"
         );
-        let followed = tokio::time::timeout(Duration::from_secs(5), next()).await;
+        let followed = setup.heard().await;
         assert!(
-            matches!(&followed, Ok(IncomingMessage::RoomState(m)) if *m == state),
+            matches!(&followed, IncomingMessage::RoomState(m) if *m == state),
             "then the host's first message: {followed:?}"
         );
+    }
+
+    /// When the host ends the stream, the client's session ends as with a
+    /// lost host, and an intent the core sent meanwhile goes with it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_client_leaves_a_host_that_ends_its_stream() {
+        let mut setup = start(true).await;
+        let stream = setup.accept().await;
+        setup.heard().await;
+        drop(stream);
+        setup.core.send(Intent::Pause.into()).unwrap();
+        let stop = timeout(PATIENCE, &mut setup.run).await;
+        assert_eq!(stop.unwrap().unwrap(), Stop::HostLost);
+    }
+
+    /// A peer that takes no streams of the room hosts none: the client
+    /// never is connected, and its session ends with an unreachable host.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_client_gives_up_on_a_peer_that_hosts_no_room() {
+        let mut setup = start(false).await;
+        let stop = timeout(PATIENCE, &mut setup.run).await;
+        assert_eq!(stop.unwrap().unwrap(), Stop::HostUnreachable);
+        while let Ok(msg) = setup.to_core.try_recv() {
+            assert!(
+                matches!(msg, IncomingMessage::HostRoundTrip(_)),
+                "the core heard of a room: {msg:?}"
+            );
+        }
     }
 }

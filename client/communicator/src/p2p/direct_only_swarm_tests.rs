@@ -482,3 +482,201 @@ async fn protocols_are_gated_to_direct_connections_on_a_real_swarm() {
     .await
     .expect("relay circuit did not close within timeout");
 }
+
+/// The room's streams inside [`DirectOnly`], as the production behaviour
+/// has them.
+#[derive(NetworkBehaviour)]
+struct Streaming {
+    relay_client: relay::client::Behaviour,
+    streams: DirectOnly<libp2p_stream::Behaviour>,
+}
+
+/// A peer that opens its streams over any connection, the circuit
+/// included.
+#[derive(NetworkBehaviour)]
+struct UnwrappedStreaming {
+    relay_client: relay::client::Behaviour,
+    streams: libp2p_stream::Behaviour,
+}
+
+const STREAM: StreamProtocol = StreamProtocol::new("/direct-only-stream-test/1");
+
+/// Runs both swarms until `done` is.
+async fn while_running<A: NetworkBehaviour, B: NetworkBehaviour, T>(
+    a: &mut Swarm<A>,
+    b: &mut Swarm<B>,
+    what: &str,
+    done: impl Future<Output = T>,
+) -> T {
+    tokio::pin!(done);
+    timeout(TIMEOUT, async {
+        loop {
+            tokio::select! {
+                out = &mut done => return out,
+                _ = a.select_next_some() => {}
+                _ = b.select_next_some() => {}
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("never happened: {what}"))
+}
+
+/// What the room's stream builds on: `libp2p-stream` inside [`DirectOnly`]
+/// opens no stream over a circuit and waits for a direct connection
+/// instead, the stream then runs on the direct connection and outlives the
+/// circuit, and it ends for both sides when the direct connection closes.
+/// A peer that asks for the protocol over the circuit is refused.
+#[tokio::test]
+async fn a_stream_opens_on_a_direct_connection_only_and_ends_with_it() {
+    use futures::{AsyncReadExt, AsyncWriteExt};
+
+    let mut relay = relay_swarm();
+    let relay_peer_id = *relay.local_peer_id();
+    let relay_addr = listen(&mut relay, "/memory/0".parse().unwrap()).await;
+    relay.add_external_address(relay_addr.clone());
+    tokio::spawn(async move {
+        loop {
+            relay.select_next_some().await;
+        }
+    });
+
+    let streaming = |relay_client| Streaming {
+        relay_client,
+        streams: DirectOnly::new(libp2p_stream::Behaviour::new()),
+    };
+    let mut host = swarm(streaming);
+    let host_peer_id = *host.local_peer_id();
+    let host_direct_addr = listen(&mut host, "/memory/0".parse().unwrap()).await;
+    let circuit_addr = relay_addr
+        .with(Protocol::P2p(relay_peer_id))
+        .with(Protocol::P2pCircuit);
+    listen(&mut host, circuit_addr.clone()).await;
+    let host_circuit = circuit_addr.with(Protocol::P2p(host_peer_id));
+    let mut incoming = host
+        .behaviour_mut()
+        .streams
+        .inner_mut()
+        .new_control()
+        .accept(STREAM)
+        .unwrap();
+
+    let mut dialer = swarm(streaming);
+    dialer.dial(host_circuit.clone()).unwrap();
+    let circuit = connection_to(&mut dialer, &mut host, true).await;
+
+    // over the circuit alone the stream does not open, and its failed dial
+    // (the peer is connected) does not fail it either
+    let mut control = dialer.behaviour_mut().streams.inner_mut().new_control();
+    let mut open = tokio::spawn(async move { control.open_stream(host_peer_id, STREAM).await });
+    let quiet = tokio::time::sleep(Duration::from_millis(500));
+    while_running(&mut dialer, &mut host, "a quiet half second", quiet).await;
+    assert!(!open.is_finished(), "the stream opened over the circuit");
+
+    // a peer that does not wrap the behaviour asks over the circuit and is
+    // refused
+    let mut unwrapped = swarm(|relay_client| UnwrappedStreaming {
+        relay_client,
+        streams: libp2p_stream::Behaviour::new(),
+    });
+    unwrapped.dial(host_circuit).unwrap();
+    let mut unwrapped_control = unwrapped.behaviour_mut().streams.new_control();
+    let refused = unwrapped_control.open_stream(host_peer_id, STREAM);
+    let refused = while_running(&mut unwrapped, &mut host, "the refusal", refused).await;
+    assert!(
+        matches!(
+            refused,
+            Err(libp2p_stream::OpenStreamError::UnsupportedProtocol(_))
+        ),
+        "{refused:?}"
+    );
+    drop(unwrapped);
+
+    // the direct connection opens the waiting stream
+    dialer
+        .dial(host_direct_addr.with(Protocol::P2p(host_peer_id)))
+        .unwrap();
+    let direct = connection_to(&mut dialer, &mut host, false).await;
+    let opened = while_running(&mut dialer, &mut host, "the stream opens", &mut open).await;
+    let mut ours = opened.unwrap().expect("the stream failed to open");
+    ours.write_all(b"one").await.unwrap();
+    ours.flush().await.unwrap();
+    let accept = incoming.next();
+    let (from, mut theirs) = while_running(&mut dialer, &mut host, "the host accepts", accept)
+        .await
+        .unwrap();
+    assert_eq!(from, *dialer.local_peer_id());
+    let mut buf = [0; 3];
+    let read = theirs.read_exact(&mut buf);
+    while_running(&mut dialer, &mut host, "the host reads", read)
+        .await
+        .unwrap();
+    assert_eq!(&buf, b"one");
+
+    // the stream is not on the circuit: it outlives it
+    assert!(dialer.close_connection(circuit));
+    timeout(TIMEOUT, async {
+        loop {
+            tokio::select! {
+                event = dialer.select_next_some() => {
+                    if matches!(event, SwarmEvent::ConnectionClosed { connection_id, .. } if connection_id == circuit) {
+                        break;
+                    }
+                }
+                _ = host.select_next_some() => {}
+            }
+        }
+    })
+    .await
+    .expect("the circuit never closed");
+    theirs.write_all(b"two").await.unwrap();
+    theirs.flush().await.unwrap();
+    let read = ours.read_exact(&mut buf);
+    while_running(&mut dialer, &mut host, "the dialer reads", read)
+        .await
+        .unwrap();
+    assert_eq!(&buf, b"two");
+
+    // and ends with the direct connection, for both sides
+    assert!(dialer.close_connection(direct));
+    let mut rest = Vec::new();
+    let ended = theirs.read_to_end(&mut rest);
+    let ended = while_running(&mut dialer, &mut host, "the host's end ends", ended).await;
+    println!("the host's end after the connection closed: {ended:?}");
+    let ended = ours.read_to_end(&mut rest);
+    let ended = while_running(&mut dialer, &mut host, "the dialer's end ends", ended).await;
+    println!("the dialer's end after the connection closed: {ended:?}");
+    let written = async {
+        ours.write_all(b"three").await?;
+        ours.flush().await
+    };
+    let written = while_running(&mut dialer, &mut host, "the write fails", written).await;
+    assert!(written.is_err(), "a write into a closed connection passed");
+}
+
+/// The next connection of `dialer` to `host`, which is a circuit iff
+/// `relayed`.
+async fn connection_to(
+    dialer: &mut Swarm<Streaming>,
+    host: &mut Swarm<Streaming>,
+    relayed: bool,
+) -> libp2p::swarm::ConnectionId {
+    let host_peer_id = *host.local_peer_id();
+    timeout(TIMEOUT, async {
+        loop {
+            tokio::select! {
+                event = dialer.select_next_some() => {
+                    if let SwarmEvent::ConnectionEstablished { peer_id, connection_id, endpoint, .. } = event
+                        && peer_id == host_peer_id
+                    {
+                        assert_eq!(endpoint.is_relayed(), relayed);
+                        return connection_id;
+                    }
+                }
+                _ = host.select_next_some() => {}
+            }
+        }
+    })
+    .await
+    .expect("no connection to the host within timeout")
+}

@@ -1,8 +1,9 @@
 use niketsu_core::communicator::*;
 use serde::{Deserialize, Serialize};
 
-/// The room messages, each a direct request between the host and a
-/// member. File sharing has its own protocol (see `p2p/file_share`).
+/// The room messages, each a frame on the stream between the host and a
+/// member (see `p2p/stream`). File sharing has its own protocol (see
+/// `p2p/file_share`).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
@@ -15,9 +16,6 @@ pub(super) enum NiketsuMessage {
     /// A client asks the host for a change of the room. A field rather
     /// than a newtype: the tag of a message needs a map to go in.
     Intent { intent: Intent },
-    /// A client asks the host to take it into the room. Only the
-    /// communicator sees it.
-    Join,
 }
 
 impl From<Intent> for NiketsuMessage {
@@ -37,7 +35,7 @@ mod tests {
 
     use super::*;
 
-    /// The codec of direct requests.
+    /// The codec of a frame.
     fn cbor_roundtrip(msg: NiketsuMessage) -> NiketsuMessage {
         let bytes = cbor4ii::serde::to_vec(Vec::new(), &msg).unwrap();
         cbor4ii::serde::from_slice(&bytes).unwrap()
@@ -85,7 +83,6 @@ mod tests {
                     author: PeerId::random(),
                 },
             }),
-            NiketsuMessage::Join,
         ];
         for msg in messages {
             assert_eq!(cbor_roundtrip(msg.clone()), msg);

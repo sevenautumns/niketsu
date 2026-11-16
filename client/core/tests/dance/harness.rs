@@ -603,23 +603,23 @@ impl Peer {
 // Room: the in-memory relay. Owns the routing rules of the dance.
 // ------------------------------------------------------------------
 
-/// What the host sends one member, as the outbox in
-/// `client/communicator/src/p2p/host.rs` sends it: in order, one message
-/// on its way at a time, a waiting room state giving way to a newer one,
-/// and the playlist only until the member took it. Delivery is instant
-/// unless the test holds the link.
+/// What the host sends one member, as the member's stream in
+/// `client/communicator/src/p2p/stream.rs` carries it: in order, one
+/// message being written at a time, a waiting room state giving way to a
+/// newer one, and each playlist once. Delivery is instant unless the test
+/// holds the link.
 #[derive(Debug, Default)]
 struct Link {
-    /// The last playlist the member took.
+    /// The last playlist written to the member.
     playlist: Option<Playlist>,
-    /// While the test holds the link: the message on its way, then what
-    /// waits behind it.
+    /// While the test holds the link: the message being written, then
+    /// what waits behind it.
     held: Option<VecDeque<IncomingMessage>>,
 }
 
 impl Link {
     /// `msg` as it goes out now: a room state without the playlist the
-    /// member took already.
+    /// member was sent already.
     fn send(&mut self, mut msg: IncomingMessage) -> IncomingMessage {
         if let IncomingMessage::RoomState(state) = &mut msg {
             if state.playlist == self.playlist {
@@ -631,7 +631,7 @@ impl Link {
         msg
     }
 
-    /// Queues `msg` behind the one on its way, where a newer room state
+    /// Queues `msg` behind the one being written, where a newer room state
     /// takes the place of a waiting one at the back of the queue.
     fn wait(queue: &mut VecDeque<IncomingMessage>, msg: IncomingMessage) {
         if matches!(msg, IncomingMessage::RoomState(_)) {
@@ -654,7 +654,7 @@ impl Link {
 pub struct Room {
     pub peers: Vec<Peer>,
     host: usize,
-    /// The host's outbox to each member, by the member's index.
+    /// The host's stream to each member, by the member's index.
     links: HashMap<usize, Link>,
     /// What a fresh host finds saved for the room; nothing unless set.
     saved: Option<SavedPlaylistLoader>,
@@ -825,16 +825,16 @@ impl Room {
         self.peers[host].heartbeat();
     }
 
-    /// The next message the host sends `member` stays on its way until
-    /// [`Room::release_link`]; what the host sends it after that waits
-    /// behind it.
+    /// The next message the host sends `member` is not written through
+    /// until [`Room::release_link`]; what the host sends it after that
+    /// waits behind it.
     pub fn hold_link(&mut self, member: usize) {
         let link = self.links.get_mut(&member).expect("not a member");
         link.held.get_or_insert_with(VecDeque::new);
     }
 
-    /// The member answers the message on its way, and gets what waited
-    /// behind it, in order.
+    /// The member gets the message being written, and what waited behind
+    /// it, in order.
     pub fn release_link(&mut self, member: usize) {
         let link = self.links.get_mut(&member).expect("not a member");
         let held = link.held.take().unwrap_or_default();
@@ -852,8 +852,8 @@ impl Room {
         self.deliver(index, DisconnectedMsg { reason });
     }
 
-    /// The connections between `member` and the host close. The host drops
-    /// the member, and with it what waited on its way there; the member's
+    /// The stream between `member` and the host ends. The host drops the
+    /// member, and with it what waited to be written there; the member's
     /// session ends, and what it sent since the last pump goes with it.
     /// The member is in no room until [`Room::reconnect`].
     pub fn lose_connection(&mut self, member: usize) {
@@ -871,22 +871,13 @@ impl Room {
         self.connect_client(member);
     }
 
-    /// The message on its way to `member` fails. The host drops the member,
-    /// and with it what waited behind the message; the member's session
-    /// ends with its connections, and it connects again.
+    /// The stream between `member` and the host ends on a write that did
+    /// not get through, whichever side wrote: what waited to be written to
+    /// the member goes with it, and so does what the member sent since the
+    /// last pump, which the host never handles. The member joins again.
     pub fn fail_link(&mut self, member: usize) {
         self.lose_connection(member);
         self.reconnect(member);
-    }
-
-    /// The first message `client` sent since the last pump fails on its
-    /// way to the host, which never handles it. The client's session ends
-    /// as with a lost host, and what waited behind the message goes with
-    /// it; the host sees the client's connections close, and the client
-    /// connects again.
-    pub fn fail_request(&mut self, client: usize) {
-        self.lose_connection(client);
-        self.reconnect(client);
     }
 
     /// The network holds back everything `index` sent since the last pump:

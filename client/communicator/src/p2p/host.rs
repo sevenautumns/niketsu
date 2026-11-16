@@ -1,28 +1,28 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
 use async_trait::async_trait;
 use libp2p::core::ConnectedPoint;
 use libp2p::core::transport::ListenerId;
 use libp2p::multiaddr::Protocol;
-use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, SwarmEvent};
-use libp2p::{Multiaddr, PeerId, Swarm, mdns};
+use libp2p::{Multiaddr, PeerId, Swarm, mdns, ping};
 use niketsu_core::communicator::{
     ConnectedMsg, IncomingMessage, OutgoingMessage, PeerDisconnectedMsg, PeerIntentMsg,
 };
-use niketsu_core::log_err_msg;
 use tracing::{debug, error, info, warn};
 
 use super::links::{Closed, Opened};
 use super::member::Membership;
-use super::outbox::Outbox;
+use super::stream::StreamEvent;
 use super::{
-    Behaviour, BehaviourEvent, ChunkRoutes, FileShareBehaviourEvent, HostLink, MessageRequest,
-    MessageResponse, Role, Session, StatusResponse, Stop,
+    Behaviour, BehaviourEvent, ChunkRoutes, FileShareBehaviourEvent, HostLink, Role, Session, Stop,
+    TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
 
+/// The host of a room. Its members are the peers whose stream is open
+/// (see [`super::stream`]): each gets what the host sends the room, from
+/// the moment the host admitted its stream until that stream ends.
 pub(crate) struct HostRole {
     session: Session,
     relay_peer_id: PeerId,
@@ -31,11 +31,6 @@ pub(crate) struct HostRole {
     reservation: ListenerId,
     /// Where mDNS found a peer on the local network.
     lan_addrs: HashMap<PeerId, Multiaddr>,
-    /// The peers the host took into the room, from their request to join
-    /// until their last direct connection closes or a message to them
-    /// fails. Only they get what the host sends to the room, through their
-    /// outbox.
-    members: HashMap<PeerId, Outbox<OutboundRequestId>>,
 }
 
 impl HostRole {
@@ -53,7 +48,7 @@ impl HostRole {
         message_sender
             .send(ConnectedMsg { is_host: true }.into())
             .ok();
-        let session = Session::new(
+        let mut session = Session::new(
             swarm,
             membership,
             host,
@@ -62,12 +57,12 @@ impl HostRole {
             message_sender,
             chunk_routes,
         );
+        session.streams.accept();
         Self {
             session,
             relay_peer_id,
             reservation,
             lan_addrs: HashMap::default(),
-            members: HashMap::default(),
         }
     }
 
@@ -117,36 +112,20 @@ impl HostRole {
         }
     }
 
-    /// Takes a peer that asked to join into the room. A peer joins again
-    /// with each session, also while connections of its previous one are
-    /// open, and starts over with an empty outbox each time. The core
-    /// learns of the member from the status it sends once it is in.
-    fn welcome(&mut self, peer_id: PeerId) {
-        self.members.insert(peer_id, Outbox::default());
-    }
-
-    /// Sends `msg` to every member but its `author`, whose chat shows it
-    /// already.
-    fn send_to_members(&mut self, msg: NiketsuMessage, author: Option<PeerId>) {
-        let net = &mut self.session.net;
-        for (peer, outbox) in &mut self.members {
-            if Some(*peer) != author {
-                outbox.push(msg.clone(), |msg| net.send_request(peer, msg));
-            }
+    /// A peer that does not answer its pings is gone, and a connection
+    /// that stays open to it would keep its stream open: nothing fails on
+    /// a stream to a peer that went silent until much was written to it.
+    fn on_ping(&mut self, event: ping::Event) {
+        if event.peer == self.relay_peer_id {
+            return;
         }
-    }
-
-    /// A member did not take the message on its way to it: it refused it,
-    /// the request timed out or its connection closed. Whether the member
-    /// applied it is unknown, and what waits behind it would reach the
-    /// member out of step, so the host drops the member and closes its
-    /// connections. The member's session ends with them; it connects anew
-    /// and is greeted with the room.
-    fn drop_member(&mut self, peer: PeerId, why: &dyn std::fmt::Debug) {
-        warn!(%peer, ?why, "A member did not take a message; dropping it from the room");
-        self.members.remove(&peer);
-        if self.session.net.swarm.disconnect_peer_id(peer).is_err() {
-            debug!(%peer, "The dropped member had no connection left");
+        match event.result {
+            // a peer that speaks no ping has not gone silent
+            Ok(_) | Err(ping::Failure::Unsupported) => {}
+            Err(error) => {
+                warn!(peer = %event.peer, %error, "Ping to peer failed, closing connection");
+                self.session.net.swarm.close_connection(event.connection);
+            }
         }
     }
 }
@@ -180,7 +159,7 @@ impl Role for HostRole {
         }
         // A circuit is the client's to close: the client gives up on a host
         // whose circuit closes before the direct connection shows up there.
-        // A connection makes no member; a peer joins with a request.
+        // A connection makes no member; a peer joins with its stream.
         match opened {
             Opened::Rendezvous => {
                 debug!(%peer_id, "Client connected via relay; awaiting direct connection");
@@ -211,13 +190,9 @@ impl Role for HostRole {
             return;
         }
         match closed {
-            // the core forgets a peer that joined, and ignores one that never
-            // did
+            // a member's stream ends with the connection it is on
             Closed::Unlinked => {
                 debug!(%peer_id, ?cause, "Peer disconnected");
-                self.members.remove(&peer_id);
-                let res = self.session.forward(PeerDisconnectedMsg { peer: peer_id });
-                log_err_msg!(res, "Failed to report disconnected peer to core");
                 // a circuit it left open is a peer starting over
                 self.dial_on_lan(peer_id);
             }
@@ -229,8 +204,10 @@ impl Role for HostRole {
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
         use BehaviourEvent::*;
         use FileShareBehaviourEvent as F;
+        use TransportBehaviourEvent as T;
         match event {
             SwarmEvent::Behaviour(FileShare(F::Mdns(e))) => self.on_mdns(e),
+            SwarmEvent::Behaviour(Transport(T::Ping(e))) => self.on_ping(e),
             // Without the reservation nobody can join the room, also when
             // the connection to the relay is still up.
             SwarmEvent::ListenerClosed {
@@ -245,87 +222,39 @@ impl Role for HostRole {
         }
     }
 
-    fn handle_swarm_request(
-        &mut self,
-        msg: NiketsuMessage,
-        channel: ResponseChannel<MessageResponse>,
-        peer_id: PeerId,
-    ) -> Result<()> {
-        debug!(message = ?msg, peer = ?peer_id, "Handling request message from swarm");
-        use NiketsuMessage::*;
-        match msg {
-            Join => {
-                self.welcome(peer_id);
-                self.session.acknowledge(channel)
-            }
-            Intent { intent } => {
-                let msg = PeerIntentMsg {
-                    peer: peer_id,
-                    intent,
-                };
-                self.session.send_to_core(msg, channel)
-            }
-            other => self.session.respond_with_err(other, channel),
-        }
-    }
-
-    /// A member answered the message on its way to it, or a request of a
-    /// session it has left.
-    fn on_msg_response(
-        &mut self,
-        peer: PeerId,
-        request_id: OutboundRequestId,
-        response: MessageResponse,
-    ) {
-        let net = &mut self.session.net;
-        let Some(outbox) = self.members.get_mut(&peer) else {
-            return debug!(%peer, ?response, "Answer from a peer outside the room");
-        };
-        match response.0 {
-            StatusResponse::Ok => {
-                if !outbox.answered(&request_id, |msg| net.send_request(&peer, msg)) {
-                    debug!(%peer, "Answer to a request of an earlier session");
-                }
-            }
-            StatusResponse::Err if outbox.is_on_its_way(&request_id) => {
-                self.drop_member(peer, &response)
-            }
-            StatusResponse::Err => debug!(%peer, "Refusal of a request of an earlier session"),
-        }
-    }
-
-    fn on_msg_req_resp_other(
-        &mut self,
-        event: request_response::Event<MessageRequest, MessageResponse>,
-    ) {
+    /// The core learns of a member from the status the member sends once
+    /// its stream is open, and of its leaving when that stream ends,
+    /// whatever the cause: the member ended it, its connection closed, or
+    /// a write to it did not get through. Whether the member took what was
+    /// written last is unknown then; it connects anew and is greeted with
+    /// the room.
+    fn on_stream_event(&mut self, event: StreamEvent) {
         match event {
-            request_response::Event::OutboundFailure {
-                peer,
-                request_id,
-                error,
-                ..
-            } if self
-                .members
-                .get(&peer)
-                .is_some_and(|outbox| outbox.is_on_its_way(&request_id)) =>
-            {
-                self.drop_member(peer, &error)
+            StreamEvent::Opened(peer) => info!(%peer, "A peer joined the room"),
+            StreamEvent::Refused(peer) => warn!(%peer, "Turned down a peer without the room's tag"),
+            StreamEvent::Received(peer, NiketsuMessage::Intent { intent }) => {
+                self.session.forward(PeerIntentMsg { peer, intent })
             }
-            other => debug!(
-                ?other,
-                "Received request response event that is not handled"
-            ),
+            StreamEvent::Received(peer, other) => {
+                debug!(%peer, ?other, "Not for a member to send")
+            }
+            StreamEvent::Ended(peer) => {
+                info!(%peer, "A member's stream ended");
+                self.session.forward(PeerDisconnectedMsg { peer });
+            }
         }
     }
 
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Option<OutgoingMessage> {
+        let streams = &mut self.session.streams;
         match msg {
             OutgoingMessage::RoomState(state) => {
-                self.send_to_members(NiketsuMessage::RoomState(state), None)
+                streams.send(NiketsuMessage::RoomState(state), |_| true)
             }
+            // the author's chat shows its line already
             OutgoingMessage::Line(line) => {
                 let author = line.author();
-                self.send_to_members(NiketsuMessage::Line(line), author)
+                streams.send(NiketsuMessage::Line(line), |peer| Some(*peer) != author)
             }
             other => return Some(other),
         }
@@ -334,21 +263,21 @@ impl Role for HostRole {
 }
 
 /// The host's fan-out with real swarms over the memory transport: a host
-/// role and test peers next to it, which speak the message protocol
+/// role and test peers next to it, which speak the room's stream protocol
 /// directly.
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    use futures::StreamExt;
+    use futures::{AsyncReadExt, StreamExt};
     use libp2p::core::muxing::StreamMuxerBox;
     use libp2p::core::transport::{Boxed, MemoryTransport};
     use libp2p::core::upgrade::Version;
-    use libp2p::request_response::{Event, Message, ProtocolSupport};
+    use libp2p::request_response::{self, Event, Message, ProtocolSupport};
     use libp2p::{StreamProtocol, Transport, noise, yamux};
+    use libp2p_stream::Control;
     use niketsu_core::chunk::{ChunkRequest, ChunkRoute, ProvideRoute, SharedFile};
     use niketsu_core::communicator::{Intent, LineKind, LineMsg, RoomStateMsg};
     use niketsu_core::playlist::Playlist;
@@ -357,14 +286,14 @@ mod tests {
     use super::*;
     use crate::p2p::file_share::{ChunkBytes, FileShareRequest, FileShareResponseResult};
     use crate::p2p::member::Tagged;
-    use crate::p2p::messaging;
+    use crate::p2p::stream::{PROTOCOL, read_frame, write_frame};
     use crate::timing::MESSAGE_REQUEST_TIMEOUT;
 
     const ROOM: &str = "room";
     const PASSWORD: &str = "secret";
 
-    /// Well below the time a request may wait for its answer, so a member
-    /// that waits on another's answer misses it.
+    /// Well below the time a write may take, so a member that waits on
+    /// another's stream misses it.
     const PROMPT: Duration = Duration::from_secs(2);
 
     async fn eventually(what: &str, holds: impl Fn() -> bool) {
@@ -457,93 +386,107 @@ mod tests {
         (host, addr, core, seen)
     }
 
-    /// A peer connected to the host, and what the host sent it.
+    /// A peer with a direct connection to the host.
     struct Neighbour {
+        host: PeerId,
         peer: PeerId,
-        received: Arc<Mutex<Vec<NiketsuMessage>>>,
-        /// Whether the host took the peer into the room: it answered the
-        /// request to join.
-        joined: Arc<AtomicBool>,
-        outbox: UnboundedSender<NiketsuMessage>,
+        control: Control,
     }
 
     impl Neighbour {
-        /// Connects to the host knowing the room by `password`, asks to
-        /// join if `joins`, and answers what the host sends if `answers`.
-        fn start(
-            host: PeerId,
-            addr: &Multiaddr,
-            password: &str,
-            joins: bool,
-            answers: bool,
-        ) -> Self {
+        async fn connect(host: PeerId, addr: &Multiaddr) -> Self {
             let mut swarm = libp2p::SwarmBuilder::with_new_identity()
                 .with_tokio()
                 .with_other_transport(memory)
                 .unwrap()
-                .with_behaviour(|_| messaging())
+                .with_behaviour(|_| libp2p_stream::Behaviour::new())
                 .unwrap()
                 .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
                 .build();
             let peer = *swarm.local_peer_id();
-            let membership = Membership::new(ROOM.into(), password.into(), &peer);
+            let control = swarm.behaviour().new_control();
             swarm.dial(addr.clone()).unwrap();
-            let received = Arc::<Mutex<Vec<NiketsuMessage>>>::default();
-            let (outbox, mut requests) = unbounded_channel();
-            if joins {
-                outbox.send(NiketsuMessage::Join).unwrap();
+            loop {
+                if let SwarmEvent::ConnectionEstablished { .. } = swarm.select_next_some().await {
+                    break;
+                }
             }
-            let log = Arc::clone(&received);
-            let joined = Arc::<AtomicBool>::default();
-            let took_in = Arc::clone(&joined);
             tokio::spawn(async move {
-                let mut unanswered = Vec::new();
-                let mut join = None;
                 loop {
-                    tokio::select! {
-                        Some(msg) = requests.recv() => {
-                            let joining = msg == NiketsuMessage::Join;
-                            let id = swarm.behaviour_mut().send_request(&host, membership.tag(msg));
-                            if joining {
-                                join = Some(id);
-                            }
-                        }
-                        event = swarm.select_next_some() => {
-                            let SwarmEvent::Behaviour(Event::Message { message, .. }) = event else {
-                                continue;
-                            };
-                            let (request, channel) = match message {
-                                Message::Request { request, channel, .. } => (request, channel),
-                                Message::Response { request_id, response } => {
-                                    if Some(request_id) == join && response.0 == StatusResponse::Ok {
-                                        took_in.store(true, Ordering::SeqCst);
-                                    }
-                                    continue;
-                                }
-                            };
-                            log.lock().unwrap().push(request.msg);
-                            if answers {
-                                let ok = MessageResponse(StatusResponse::Ok);
-                                swarm.behaviour_mut().send_response(channel, ok).unwrap();
-                            } else {
-                                unanswered.push(channel);
-                            }
-                        }
-                    }
+                    swarm.select_next_some().await;
                 }
             });
             Self {
+                host,
                 peer,
-                received,
-                joined,
-                outbox,
+                control,
             }
         }
 
-        fn joined(&self) -> bool {
-            self.joined.load(Ordering::SeqCst)
+        /// Opens a stream to the host and presents the tag of this peer in
+        /// the room with `password`. With `reads`, what the host writes is
+        /// taken off the stream.
+        async fn join(&mut self, password: &str, reads: bool) -> Seat {
+            let membership = Membership::new(ROOM.into(), password.into(), &self.peer);
+            let stream = self.control.open_stream(self.host, PROTOCOL).await.unwrap();
+            let (mut read, mut write) = stream.split();
+            write_frame(&mut write, &membership.own_tag())
+                .await
+                .unwrap();
+            let received = Arc::<Mutex<Vec<NiketsuMessage>>>::default();
+            let log = Arc::clone(&received);
+            let (outbox, mut asked) = unbounded_channel::<NiketsuMessage>();
+            let writing = tokio::spawn(async move {
+                while let Some(msg) = asked.recv().await {
+                    if write_frame(&mut write, &msg).await.is_err() {
+                        return;
+                    }
+                }
+                // holds the stream open
+                std::future::pending().await
+            });
+            let reading = tokio::spawn(async move {
+                if !reads {
+                    // holds the stream open without taking anything
+                    return std::future::pending().await;
+                }
+                while let Ok(msg) = read_frame(&mut read).await {
+                    log.lock().unwrap().push(msg);
+                }
+            });
+            Seat {
+                received,
+                outbox,
+                stream: [writing.abort_handle(), reading.abort_handle()],
+            }
         }
 
+        /// Joins the room and reads what the host writes.
+        async fn member(host: PeerId, addr: &Multiaddr) -> (Self, Seat) {
+            let mut neighbour = Self::connect(host, addr).await;
+            let seat = neighbour.join(PASSWORD, true).await;
+            (neighbour, seat)
+        }
+    }
+
+    /// A peer's end of one stream to the host. The stream ends when this
+    /// is dropped.
+    struct Seat {
+        received: Arc<Mutex<Vec<NiketsuMessage>>>,
+        outbox: UnboundedSender<NiketsuMessage>,
+        /// The tasks that hold the two halves of the stream.
+        stream: [tokio::task::AbortHandle; 2],
+    }
+
+    impl Drop for Seat {
+        fn drop(&mut self) {
+            for half in &self.stream {
+                half.abort();
+            }
+        }
+    }
+
+    impl Seat {
         fn received(&self) -> Vec<NiketsuMessage> {
             self.received.lock().unwrap().clone()
         }
@@ -614,6 +557,21 @@ mod tests {
         to_core.lock().unwrap().iter().any(asked)
     }
 
+    /// The peer asks for `intent` and the host's core hears it: the host
+    /// has admitted the peer's stream by then.
+    async fn heard(
+        to_core: &Mutex<Vec<IncomingMessage>>,
+        neighbour: &Neighbour,
+        seat: &Seat,
+        intent: Intent,
+    ) {
+        seat.ask(intent.clone());
+        eventually("the host's core hears the member", || {
+            asked(to_core, neighbour.peer, &intent)
+        })
+        .await;
+    }
+
     /// What the core hands the host role for it to send `msg` to the room.
     fn from_core(msg: &NiketsuMessage) -> OutgoingMessage {
         match msg.clone() {
@@ -633,30 +591,36 @@ mod tests {
     /// Every member gets what the host sends the room in the order sent:
     /// every line, and of the room states at least the newest, a waiting
     /// one giving way to a newer one. A chat line goes to everyone but its
-    /// author. A member's intent reaches the host's core. A peer next to
-    /// the host that is not a member gets nothing, whether it knows the
-    /// room and never joined or was refused, and what a refused peer asks
-    /// never reaches the core.
+    /// author. A member's intents reach the host's core in the order sent.
+    /// A peer next to the host that is not a member gets nothing, whether
+    /// it never opened a stream or presented a wrong tag, and what a
+    /// refused peer asks never reaches the core.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_host_sends_each_member_the_room_in_order_and_outsiders_nothing() {
         let (host, addr, core, to_core) = host().await;
-        let one = Neighbour::start(host, &addr, PASSWORD, true, true);
-        let two = Neighbour::start(host, &addr, PASSWORD, true, true);
-        let lurker = Neighbour::start(host, &addr, PASSWORD, false, true);
-        let intruder = Neighbour::start(host, &addr, "guess", true, true);
-        eventually("the host takes in both members", || {
-            one.joined() && two.joined()
-        })
-        .await;
+        let (one, ones) = Neighbour::member(host, &addr).await;
+        let (two, twos) = Neighbour::member(host, &addr).await;
+        let _lurker = Neighbour::connect(host, &addr).await;
+        let mut intruder = Neighbour::connect(host, &addr).await;
+        let intruders = intruder.join("guess", true).await;
 
-        let from_one = Intent::Chat("from one".into());
         let from_intruder = Intent::Chat("from the intruder".into());
-        one.ask(from_one.clone());
-        intruder.ask(from_intruder.clone());
-        eventually("the host's core hears the member", || {
-            asked(&to_core, one.peer, &from_one)
-        })
-        .await;
+        intruders.ask(from_intruder.clone());
+        let from_one: Vec<Intent> = (0..20).map(|i| Intent::Chat(format!("{i}"))).collect();
+        for intent in &from_one {
+            ones.ask(intent.clone());
+        }
+        heard(&to_core, &one, &ones, Intent::Chat("from one".into())).await;
+        heard(&to_core, &two, &twos, Intent::Chat("from two".into())).await;
+        let from = |peer: PeerId| {
+            let intent = |msg: &IncomingMessage| match msg {
+                IncomingMessage::PeerIntent(m) if m.peer == peer => Some(m.intent.clone()),
+                _ => None,
+            };
+            let heard = to_core.lock().unwrap();
+            heard.iter().filter_map(intent).collect::<Vec<_>>()
+        };
+        assert_eq!(from(one.peer)[..20], from_one, "in the order sent");
 
         let mut sent: Vec<NiketsuMessage> = Vec::new();
         for i in 1..=30 {
@@ -677,12 +641,12 @@ mod tests {
         let last = NiketsuMessage::RoomState(state(30));
         let final_line = sent.last().unwrap();
         let ones_line = NiketsuMessage::Line(chat("from one", one.peer));
-        for member in [&one, &two] {
+        for (member, seat) in [(&one, &ones), (&two, &twos)] {
             eventually("every member gets the last message", || {
-                member.has(final_line)
+                seat.has(final_line)
             })
             .await;
-            let received = member.received();
+            let received = seat.received();
             assert!(in_order(&received, &sent), "out of order: {received:#?}");
             let line_for_member = |msg: &&NiketsuMessage| match msg {
                 NiketsuMessage::Line(line) => line.author() != Some(member.peer),
@@ -700,57 +664,73 @@ mod tests {
             assert_eq!(newest, Some(&last), "the newest state is the last");
         }
 
-        assert!(two.has(&ones_line));
-        assert!(!one.has(&ones_line), "the author shows its line already");
-        for outsider in [&lurker, &intruder] {
-            assert_eq!(outsider.received(), [], "an outsider got the room");
-            assert!(!outsider.joined());
-        }
-        assert!(!asked(&to_core, intruder.peer, &from_intruder));
+        assert!(twos.has(&ones_line));
+        assert!(!ones.has(&ones_line), "the author shows its line already");
+        assert_eq!(intruders.received(), [], "an outsider got the room");
+        assert_eq!(from(intruder.peer), []);
     }
 
-    /// A member that does not answer gets nothing past the message on its
-    /// way and holds up no one. Once that request times out, the host drops
-    /// the member and closes its connection, which the core hears as the
-    /// member leaving.
+    /// A member that takes nothing off its stream holds up no one. Once a
+    /// write to it does not finish in time, the host ends its stream,
+    /// which the core hears as the member leaving.
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_member_that_does_not_answer_holds_up_no_one_and_is_dropped() {
+    async fn a_member_that_takes_nothing_holds_up_no_one_and_is_dropped() {
         let (host, addr, core, to_core) = host().await;
-        let quick = Neighbour::start(host, &addr, PASSWORD, true, true);
-        let silent = Neighbour::start(host, &addr, PASSWORD, true, false);
-        eventually("the host takes in both members", || {
-            quick.joined() && silent.joined()
-        })
-        .await;
+        let (quick, quicks) = Neighbour::member(host, &addr).await;
+        let mut stuck = Neighbour::connect(host, &addr).await;
+        let stucks = stuck.join(PASSWORD, false).await;
+        heard(&to_core, &quick, &quicks, Intent::Pause).await;
+        heard(&to_core, &stuck, &stucks, Intent::Pause).await;
 
-        let room = [
-            NiketsuMessage::RoomState(state(1)),
-            NiketsuMessage::Line(action("someone paused playback")),
-            NiketsuMessage::RoomState(state(2)),
-            NiketsuMessage::Line(chat("from the host", host)),
-        ];
+        // more than a stream takes while nobody reads from it
+        let room: Vec<NiketsuMessage> = (0..8)
+            .map(|i| NiketsuMessage::Line(chat(&format!("{i}").repeat(200_000), host)))
+            .collect();
         for msg in &room {
             core.send(from_core(msg)).unwrap();
         }
         eventually("the quick member gets everything", || {
-            quick.received() == room
+            quicks.received() == room
         })
         .await;
-        // whatever the host sends the silent member is on its way by now
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        assert_eq!(silent.received(), room[..1], "one message on its way");
+        assert!(!departed(&to_core).contains(&stuck.peer));
 
         eventually_within(
             MESSAGE_REQUEST_TIMEOUT + PROMPT,
-            "the host drops the silent member",
-            || departed(&to_core).contains(&silent.peer),
+            "the host drops the member that takes nothing",
+            || departed(&to_core).contains(&stuck.peer),
         )
         .await;
         assert!(!departed(&to_core).contains(&quick.peer));
         core.send(state(3).into()).unwrap();
         let after = NiketsuMessage::RoomState(state(3));
-        eventually("the quick member goes on", || quick.has(&after)).await;
-        assert_eq!(silent.received(), room[..1]);
+        eventually("the quick member goes on", || quicks.has(&after)).await;
+    }
+
+    /// The core hears a member leave when its stream ends. A member that
+    /// joins again while its earlier stream is open is the same member to
+    /// the core: its new stream gets the room, and the end of the earlier
+    /// one is no leaving.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_member_leaves_with_its_stream_and_not_with_one_it_replaced() {
+        let (host, addr, core, to_core) = host().await;
+        let (mut member, earlier) = Neighbour::member(host, &addr).await;
+        heard(&to_core, &member, &earlier, Intent::Pause).await;
+
+        let again = member.join(PASSWORD, true).await;
+        heard(&to_core, &member, &again, Intent::Start).await;
+        drop(earlier);
+        core.send(state(1).into()).unwrap();
+        let first = NiketsuMessage::RoomState(state(1));
+        eventually("the new stream gets the room", || again.has(&first)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(departed(&to_core), HashSet::new());
+
+        drop(again);
+        eventually("the core hears the member leave", || {
+            departed(&to_core).contains(&member.peer)
+        })
+        .await;
     }
 
     /// What a peer that streams speaks: the file share protocol.
@@ -851,14 +831,14 @@ mod tests {
         assert!(answer.is_err(), "a withdrawn offer was served");
     }
 
-    /// A room state carries the playlist to a member until the member
-    /// answered one that carried it, and a new playlist once again. A
-    /// member that joins later gets the playlist with its first state.
+    /// A room state carries the playlist to a member once, and a new
+    /// playlist once again. A member that joins later gets the playlist
+    /// with its first state.
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_member_gets_the_playlist_until_it_took_it() {
-        let (host, addr, core, _to_core) = host().await;
-        let early = Neighbour::start(host, &addr, PASSWORD, true, true);
-        eventually("the host takes in the member", || early.joined()).await;
+    async fn a_member_gets_each_playlist_once() {
+        let (host, addr, core, to_core) = host().await;
+        let (early, earlys) = Neighbour::member(host, &addr).await;
+        heard(&to_core, &early, &earlys, Intent::Pause).await;
 
         let states = [
             with_playlist(1, "ep1"),
@@ -869,25 +849,25 @@ mod tests {
         for (i, state) in states.into_iter().enumerate() {
             core.send(state.into()).unwrap();
             eventually("the member gets the state", || {
-                early.playlists().len() == i + 1
+                earlys.playlists().len() == i + 1
             })
             .await;
         }
         let ep1 = Some(Playlist::from_iter(["ep1"]));
         let ep3 = Some(Playlist::from_iter(["ep3"]));
-        assert_eq!(early.playlists(), [ep1, None, ep3.clone(), None]);
+        assert_eq!(earlys.playlists(), [ep1, None, ep3.clone(), None]);
 
-        let late = Neighbour::start(host, &addr, PASSWORD, true, true);
-        eventually("the host takes in the late member", || late.joined()).await;
+        let (late, lates) = Neighbour::member(host, &addr).await;
+        heard(&to_core, &late, &lates, Intent::Pause).await;
         core.send(with_playlist(5, "ep3").into()).unwrap();
         eventually("the late member gets the playlist", || {
-            late.playlists() == [ep3.clone()]
+            lates.playlists() == [ep3.clone()]
         })
         .await;
         eventually("the early member gets the state without", || {
-            early.playlists().len() == 5
+            earlys.playlists().len() == 5
         })
         .await;
-        assert_eq!(early.playlists()[4], None);
+        assert_eq!(earlys.playlists()[4], None);
     }
 }

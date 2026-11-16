@@ -1711,7 +1711,7 @@ async fn a_selection_the_host_never_got_gives_way_to_the_rooms() {
         "the player waits for the room"
     );
 
-    room.fail_request(bob);
+    room.fail_link(bob);
     room.pump();
     let player = room.peer(bob).player.state();
     assert_eq!(player.video, Some(Video::from("ep2")));
@@ -1802,8 +1802,8 @@ async fn a_playlist_reaches_each_member_once() {
     }
 }
 
-/// A message the host's outbox cannot deliver drops its member from the
-/// room. The member connects again and is greeted with what it missed,
+/// A message the host cannot write to a member's stream ends the stream
+/// and drops the member from the room. The member connects again and is greeted with what it missed,
 /// the playlist included.
 #[tokio::test(start_paused = true)]
 async fn a_member_whose_message_failed_rejoins_with_the_rooms_playlist() {
@@ -1934,8 +1934,8 @@ async fn a_playlist_change_while_intents_are_pending_still_reaches_the_client() 
 }
 
 /// A client's playlist edit that has not reached the host shadows the
-/// room's while its intent may still be answered. When the request fails,
-/// the client's session ends, and the client shows the room's playlist
+/// room's while the host may still handle its intent. When the client's
+/// stream ends instead, the client's session ends, and the client shows the room's playlist
 /// again.
 #[tokio::test(start_paused = true)]
 async fn a_playlist_edit_the_host_never_got_gives_way_to_the_rooms() {
@@ -1962,7 +1962,7 @@ async fn a_playlist_edit_the_host_never_got_gives_way_to_the_rooms() {
     assert_eq!(room.peer(bob).ui.state().playlist, edit);
     assert_eq!(room.peer(bob).playlist(), playlist, "the room's is kept");
 
-    room.fail_request(bob);
+    room.fail_link(bob);
     room.pump();
     assert_eq!(room.peer(bob).playlist(), playlist);
     assert_eq!(room.peer(bob).ui.state().playlist, playlist);
@@ -2010,7 +2010,7 @@ async fn a_client_whose_message_failed_rejoins_and_follows_the_room() {
 
     room.peer(bob).player.set(|player| player.paused = true);
     room.peer(bob).act(PlayerPause);
-    room.fail_request(bob);
+    room.fail_link(bob);
     room.pump();
 
     for who in [alice, bob, charlie] {

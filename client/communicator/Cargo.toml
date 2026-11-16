@@ -13,15 +13,16 @@ tokio.workspace = true
 serde.workspace = true
 serde_bytes = "0.11"
 async-trait.workspace = true
+# the codec of libp2p's request_response::cbor, for the frames of the room's stream
+cbor4ii = { version = "0.3", features = [ "serde1", "use_std" ] }
 either = "1"
 futures = "0.3"
 libp2p = { workspace = true, features = [ "dcutr", "dns", "identify", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat", "mdns" ] }
+libp2p-stream = "0.4.0-alpha"
 sha256 = "1.6"
 subtle = "2.6"
 
 [dev-dependencies]
-# the codec of libp2p's request_response::cbor, to measure what goes on the wire
-cbor4ii = { version = "0.3", features = [ "serde1", "use_std" ] }
 niketsu-relay.path = "../../relay"
 tempfile = "3.24"
 tracing-subscriber.workspace = true

@@ -43,7 +43,7 @@ pub struct HostRoundTripMsg {
 ///
 /// The playlist is too large to go with every heartbeat. The host's core
 /// attaches it to every state, and the host's communicator leaves it out
-/// for a member that has acknowledged a state carrying that playlist.
+/// for a member it has sent that playlist already.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoomStateMsg {

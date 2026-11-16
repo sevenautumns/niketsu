@@ -20,15 +20,14 @@ use niketsu_core::chunk::{ChunkFetch, ProvideRoute};
 use niketsu_core::communicator::{IncomingMessage, OutgoingMessage};
 use niketsu_core::log_err_msg;
 use niketsu_core::room::RoomName;
-use serde::{Deserialize, Serialize};
+use stream::{StreamEvent, Streams};
 use tokio::spawn;
-use tracing::{debug, trace, warn};
+use tracing::{debug, warn};
 
 use crate::Node;
-use crate::messages::NiketsuMessage;
 use crate::timing::{
-    DIRECT_CONNECT_TIMEOUT, FILE_REQUEST_TIMEOUT, IDLE_CONNECTION_TIMEOUT, MESSAGE_REQUEST_TIMEOUT,
-    PING_INTERVAL, PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT, QUIC_IDLE_TIMEOUT,
+    DIRECT_CONNECT_TIMEOUT, FILE_REQUEST_TIMEOUT, IDLE_CONNECTION_TIMEOUT, PING_INTERVAL,
+    PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT, QUIC_IDLE_TIMEOUT,
 };
 
 mod auth;
@@ -43,7 +42,7 @@ mod file_share;
 mod host;
 mod links;
 mod member;
-mod outbox;
+mod stream;
 
 pub(crate) use auth::AuthDenied;
 use direct_only::DirectOnly;
@@ -57,6 +56,7 @@ use member::{Membership, Tagged};
 enum LoopEvent {
     Swarm(SwarmEvent<BehaviourEvent>),
     Core(Option<OutgoingMessage>),
+    Stream(StreamEvent),
     /// The local player needs a chunk of a file another peer offers.
     FetchChunk(ChunkFetch),
     /// The local video provider read a chunk for another peer.
@@ -145,9 +145,9 @@ pub(crate) struct TransportBehaviour {
     auth: auth::AuthBehaviour,
 }
 
-/// The room's messages, between the host and each member.
-pub(crate) type MessagingBehaviour =
-    request_response::cbor::Behaviour<MessageRequest, MessageResponse>;
+/// The room's messages, on a stream between the host and each member (see
+/// [`stream`]).
+pub(crate) type MessagingBehaviour = libp2p_stream::Behaviour;
 
 /// P2P file sharing: chunk transfer, and mDNS for the addresses of peers on
 /// the local network. Who offers a video is in the room's state.
@@ -184,7 +184,7 @@ impl Behaviour {
                 ),
                 auth: auth::AuthBehaviour::new(),
             },
-            messaging: DirectOnly::new(messaging()),
+            messaging: DirectOnly::new(MessagingBehaviour::new()),
             file_share: DirectOnly::new(FileShareBehaviour {
                 request_response: request_response::cbor::Behaviour::new(
                     [(StreamProtocol::new("/fileshare/1"), ProtocolSupport::Full)],
@@ -199,50 +199,18 @@ impl Behaviour {
     }
 }
 
-fn messaging() -> MessagingBehaviour {
-    request_response::Behaviour::with_codec(
-        request_response::cbor::codec::Codec::default()
-            .set_request_size_maximum(MESSAGE_SIZE_MAXIMUM),
-        [(
-            StreamProtocol::new("/niketsu-message/1"),
-            ProtocolSupport::Full,
-        )],
-        request_response::Config::default().with_request_timeout(MESSAGE_REQUEST_TIMEOUT),
-    )
-}
-
-pub(crate) type MessageRequest = Tagged<NiketsuMessage>;
-
-/// The most a direct message may take on the wire; the receiver drops a
-/// larger one. It bounds the room's playlist.
-pub(crate) const MESSAGE_SIZE_MAXIMUM: u64 = 1024 * 1024;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct MessageResponse(StatusResponse);
-
-/// Whether the receiver took a request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum StatusResponse {
-    Ok,
-    Err,
-}
-
 /// The role a peer has in the room: its host or a client. The provided
-/// methods are the event loop and everything both roles share (direct
-/// messages, file sharing); a role supplies its own message handling and
-/// the residual swarm events.
+/// methods are the event loop and everything both roles share (the
+/// connections, file sharing); a role supplies what it does with the
+/// room's streams and the residual swarm events.
 #[async_trait]
 pub(crate) trait Role: Send {
     fn session(&mut self) -> &mut Session;
     /// Sends what the core asks of this role, and hands back a message
     /// that only the other role sends.
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Option<OutgoingMessage>;
-    fn handle_swarm_request(
-        &mut self,
-        msg: NiketsuMessage,
-        channel: ResponseChannel<MessageResponse>,
-        peer_id: PeerId,
-    ) -> Result<()>;
+    /// What happened on the room's streams, see [`StreamEvent`].
+    fn on_stream_event(&mut self, event: StreamEvent);
     /// A connection to `peer` opened, and what that means for the link to
     /// it.
     fn on_opened(
@@ -264,37 +232,17 @@ pub(crate) trait Role: Send {
     /// Role-specific swarm events not covered by `dispatch_swarm_event`.
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>);
 
-    /// The answer to a direct request this peer sent.
-    fn on_msg_response(
-        &mut self,
-        peer: PeerId,
-        _request_id: OutboundRequestId,
-        response: MessageResponse,
-    ) {
-        debug!(?response, %peer, "Received response");
-    }
-
-    /// Request-response events other than `Message` (role-specific logging).
-    fn on_msg_req_resp_other(
-        &mut self,
-        event: request_response::Event<MessageRequest, MessageResponse>,
-    ) {
-        debug!(
-            ?event,
-            "Received request response event that is not handled"
-        );
-    }
-
     async fn run(&mut self) -> Stop {
         loop {
             if let Some(stop) = self.session().net.stop {
                 return stop;
             }
             let next = {
-                let net = &mut self.session().net;
+                let Session { net, streams, .. } = self.session();
                 tokio::select! {
                     event = net.swarm.select_next_some() => LoopEvent::Swarm(event),
                     msg = net.core_receiver.recv() => LoopEvent::Core(msg),
+                    event = streams.next() => LoopEvent::Stream(event),
                     Some(fetch) = net.chunk_fetches.recv() => LoopEvent::FetchChunk(fetch),
                     Some((channel, bytes)) = net.chunk_reads.next() => {
                         LoopEvent::ChunkRead(channel, bytes)
@@ -312,6 +260,10 @@ pub(crate) trait Role: Send {
                     if let Some(msg) = self.handle_core_message(msg) {
                         debug!(?msg, "Dropping a core message of the other role");
                     }
+                }
+                LoopEvent::Stream(event) => {
+                    debug!(?event, "Handling event from the room's streams");
+                    self.on_stream_event(event);
                 }
                 LoopEvent::FetchChunk(fetch) => self.session().fs_fetch_chunk(fetch),
                 LoopEvent::ChunkRead(channel, bytes) => {
@@ -335,7 +287,6 @@ pub(crate) trait Role: Send {
         use BehaviourEvent::*;
         use FileShareBehaviourEvent as F;
         match event {
-            SwarmEvent::Behaviour(Messaging(e)) => self.on_msg_req_resp(e),
             SwarmEvent::Behaviour(FileShare(F::RequestResponse(e))) => {
                 self.session().fs_req_resp_event(e)
             }
@@ -361,39 +312,11 @@ pub(crate) trait Role: Send {
             other => self.handle_swarm_event(other),
         }
     }
-
-    fn on_msg_req_resp(&mut self, event: request_response::Event<MessageRequest, MessageResponse>) {
-        match event {
-            request_response::Event::Message { peer, message, .. } => match message {
-                request_response::Message::Request {
-                    request, channel, ..
-                } => {
-                    let Tagged { tag, msg } = request;
-                    trace!(?msg, "Received request");
-                    let res = match self.session().net.membership.admits(&peer, &tag) {
-                        true => self.handle_swarm_request(msg, channel, peer),
-                        false => self.session().respond_with_err(msg, channel),
-                    };
-                    log_err_msg!(res, "Failed to handle incoming message");
-                }
-                request_response::Message::Response {
-                    request_id,
-                    response,
-                } => self.on_msg_response(peer, request_id, response),
-            },
-            other => self.on_msg_req_resp_other(other),
-        }
-    }
 }
 
 /// Shorthands for what the session asks of its swarm's behaviours.
 pub(super) trait SwarmExt {
     fn auth(&mut self) -> &mut auth::AuthBehaviour;
-    fn send_message_response(
-        &mut self,
-        channel: ResponseChannel<MessageResponse>,
-        msg: MessageResponse,
-    ) -> Result<()>;
     fn send_file_response(
         &mut self,
         channel: ResponseChannel<FileShareResponseResult>,
@@ -404,24 +327,6 @@ pub(super) trait SwarmExt {
 impl SwarmExt for Swarm<Behaviour> {
     fn auth(&mut self) -> &mut auth::AuthBehaviour {
         &mut self.behaviour_mut().transport.auth
-    }
-
-    fn send_message_response(
-        &mut self,
-        channel: ResponseChannel<MessageResponse>,
-        msg: MessageResponse,
-    ) -> Result<()> {
-        let res = self
-            .behaviour_mut()
-            .messaging
-            .inner_mut()
-            .send_response(channel, msg);
-
-        match res {
-            Ok(_) => debug!("Successfully sent response status"),
-            Err(e) => bail!("Failed to send response status {e:?}"),
-        }
-        Ok(())
     }
 
     fn send_file_response(
@@ -542,12 +447,15 @@ pub(crate) struct Session {
     /// The connections to every peer, kept by the shared dispatch. A role
     /// hears what each one means for the link to its peer.
     links: Links,
+    /// The room's streams: a host's to its members, a client's to its
+    /// host.
+    streams: Streams,
     pending_chunks: PendingChunks,
 }
 
 impl Session {
     fn new(
-        swarm: Swarm<Behaviour>,
+        mut swarm: Swarm<Behaviour>,
         membership: Membership,
         host: PeerId,
         host_link: HostLink,
@@ -555,6 +463,8 @@ impl Session {
         message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
         chunk_routes: ChunkRoutes,
     ) -> Self {
+        let control = swarm.behaviour_mut().messaging.inner_mut().new_control();
+        let streams = Streams::new(control, membership.clone());
         let net = Net {
             swarm,
             membership,
@@ -571,43 +481,17 @@ impl Session {
         Self {
             net,
             links: Links::default(),
+            streams,
             pending_chunks: PendingChunks::default(),
         }
     }
 
-    /// Hands a room message from the network to the core.
-    pub fn forward(&mut self, msg: impl Into<IncomingMessage>) -> Result<()> {
-        self.net.message_sender.send(msg.into())?;
-        Ok(())
-    }
-
-    pub fn respond_with_err(
-        &mut self,
-        msg: NiketsuMessage,
-        channel: ResponseChannel<MessageResponse>,
-    ) -> Result<()> {
-        let resp = MessageResponse(StatusResponse::Err);
-        self.net.swarm.send_message_response(channel, resp)?;
-        bail!("Received unexpected direct message: {msg:?}");
-    }
-
-    /// Answers a direct request that needs no further handling.
-    pub fn acknowledge(&mut self, channel: ResponseChannel<MessageResponse>) -> Result<()> {
-        let resp = MessageResponse(StatusResponse::Ok);
-        self.net.swarm.send_message_response(channel, resp)
-    }
-
-    /// Hands a direct request to the core and acknowledges it.
-    pub fn send_to_core(
-        &mut self,
-        msg: impl Into<IncomingMessage>,
-        channel: ResponseChannel<MessageResponse>,
-    ) -> Result<()> {
-        let resp = match self.net.message_sender.send(msg.into()) {
-            Ok(_) => MessageResponse(StatusResponse::Ok),
-            Err(_) => MessageResponse(StatusResponse::Err),
-        };
-        self.net.swarm.send_message_response(channel, resp)
+    /// Hands the core a message. A core that is gone has dropped the
+    /// session, and the run loop ends on that by itself.
+    pub fn forward(&mut self, msg: impl Into<IncomingMessage>) {
+        if self.net.message_sender.send(msg.into()).is_err() {
+            debug!("The core is gone; dropping a message for it");
+        }
     }
 }
 
@@ -637,12 +521,6 @@ impl Net {
     /// reason given is the one reported.
     pub fn stop(&mut self, why: Stop) {
         self.stop.get_or_insert(why);
-    }
-
-    pub fn send_request(&mut self, peer: &PeerId, msg: NiketsuMessage) -> OutboundRequestId {
-        let msg = self.membership.tag(msg);
-        let messaging = self.swarm.behaviour_mut().messaging.inner_mut();
-        messaging.send_request(peer, msg)
     }
 
     pub fn send_file_request(&mut self, peer: &PeerId, msg: FileShareRequest) -> OutboundRequestId {
@@ -676,7 +554,9 @@ mod tests {
     use niketsu_core::playlist::{Playlist, Video};
     use niketsu_core::user::User;
 
+    use super::stream::MESSAGE_SIZE_MAXIMUM;
     use super::*;
+    use crate::messages::NiketsuMessage;
 
     /// A playlist of `len` episodes with names as long as a release's.
     fn long_playlist(len: usize) -> Playlist {
@@ -717,10 +597,9 @@ mod tests {
         }
     }
 
-    /// What a message puts on the wire: the request-response codec's cbor.
+    /// What a message puts on the wire: its frame's cbor.
     fn wire_size(msg: NiketsuMessage) -> u64 {
-        let membership = Membership::new("a room".into(), "a password".into(), &PeerId::random());
-        let bytes = cbor4ii::serde::to_vec(Vec::new(), &membership.tag(msg)).unwrap();
+        let bytes = cbor4ii::serde::to_vec(Vec::new(), &msg).unwrap();
         bytes.len() as u64
     }
 

@@ -53,7 +53,8 @@ pub(crate) const HOST_CIRCUIT_DURATION: Duration = FILE_REQUEST_TIMEOUT.saturati
 /// renews it.
 pub(crate) const HOST_RESERVATION_DURATION: Duration = Duration::from_secs(3600);
 
-/// How long a direct message may wait for its answer.
+/// How long the room's stream may take to open, to present its tag, and
+/// to take one message. A stream that takes longer ends.
 pub(crate) const MESSAGE_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long a QUIC handshake may take.

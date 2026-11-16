@@ -57,7 +57,7 @@ pub struct EndpointInfo {
 #[derive(Clone, Debug, PartialEq)]
 pub enum OutgoingMessage {
     /// From the host: everything the room agrees on, to every member, with
-    /// the playlist, which a member gets until it has it. Each member gets
+    /// the playlist, which a member gets once. Each member gets
     /// the host's messages in the order the host sent them, except that a
     /// room state still waiting for its turn gives way to a newer one.
     RoomState(RoomStateMsg),

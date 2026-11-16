@@ -2,10 +2,10 @@
 //!
 //! A peer's *member tag* is a digest of the room, its password and the
 //! peer's id: whoever knows room and password can compute the tag of any
-//! peer, nobody else can. A peer presents its own tag with every request,
-//! and the receiver checks it against the remote libp2p authenticated. A
-//! tag is worth nothing to anyone but its peer, so it can travel in the
-//! clear and be reused.
+//! peer, nobody else can. A peer presents its own tag once on the room's
+//! stream and with every file-share request, and the receiver checks it
+//! against the remote libp2p authenticated. A tag is worth nothing to
+//! anyone but its peer, so it can travel in the clear and be reused.
 
 use libp2p::PeerId;
 use niketsu_core::room::RoomName;
@@ -54,9 +54,14 @@ impl Membership {
         }
     }
 
+    /// This peer's own tag.
+    pub fn own_tag(&self) -> MemberTag {
+        self.local.clone()
+    }
+
     pub fn tag<T>(&self, msg: T) -> Tagged<T> {
         Tagged {
-            tag: self.local.clone(),
+            tag: self.own_tag(),
             msg,
         }
     }
