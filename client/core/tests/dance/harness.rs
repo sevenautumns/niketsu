@@ -16,7 +16,7 @@ use niketsu_core::config::Config;
 use niketsu_core::file_database::{
     FileDatabaseEvent, FileDatabaseTrait, FileEntry, FileStore, UpdateComplete,
 };
-use niketsu_core::heartbeat::Heartbeat;
+use niketsu_core::heartbeat::{HEARTBEAT_INTERVAL, Heartbeat};
 use niketsu_core::player::{
     MediaPlayerEvent, MediaPlayerTrait, PlayerFailed, PlayerFileEnd, PlayerLoaded, Source,
 };
@@ -199,9 +199,11 @@ impl MediaPlayerTrait for FakePlayer {
         }
     }
 
+    /// Like mpv, the player has no position while it seeks.
     fn get_position(&mut self) -> Option<Duration> {
         let state = self.lock();
-        state.video.as_ref().map(|_| state.position)
+        let landed = state.video.is_some() && state.seek_target.is_none();
+        landed.then_some(state.position)
     }
 
     /// Like mpv, the player loads paused and reports when it has loaded.
@@ -799,6 +801,17 @@ impl Room {
     /// that plays.
     pub async fn pass(&mut self, by: Duration) {
         tokio::time::advance(by).await;
+    }
+
+    /// The clock moves on by `by` with every pacemaker ticking, so each
+    /// peer sees for that long how far its player is from the room.
+    pub async fn watch(&mut self, by: Duration) {
+        let ticks = by.as_millis() / HEARTBEAT_INTERVAL.as_millis();
+        for _ in 0..ticks {
+            self.pass(HEARTBEAT_INTERVAL).await;
+            self.heartbeat();
+            self.pump();
+        }
     }
 
     /// Every peer's pacemaker ticks once, clients first so the host's

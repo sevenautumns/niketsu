@@ -30,7 +30,11 @@ fn pause(room: &mut Room, who: usize) {
 
 /// The player of `who` ends up at `secs` without telling anyone.
 fn drift(room: &mut Room, who: usize, secs: u64) {
-    let position = Duration::from_secs(secs);
+    put(room, who, Duration::from_secs(secs));
+}
+
+/// The player of `who` ends up at `position` without telling anyone.
+fn put(room: &mut Room, who: usize, position: Duration) {
     room.peer(who)
         .player
         .set(|player| player.position = position);
@@ -120,10 +124,12 @@ async fn the_room_does_not_start_until_everyone_has_loaded() {
 
 /// A player within the tolerance is left alone — no seek and, above all, no
 /// speed correction, which would be audible for as long as it takes to close
-/// the gap. Drifting past the tolerance costs one seek. The host's player
-/// is corrected like a client's.
+/// the gap. Being off by more costs one seek: at once for a player behind
+/// the room, and for one that looks ahead of it once it has looked so for a
+/// few seconds, since a late room state makes a level player look ahead.
+/// The host's player is corrected like a client's.
 #[tokio::test(start_paused = true)]
-async fn small_drift_is_tolerated_and_larger_drift_hard_syncs() {
+async fn a_small_offset_is_tolerated_and_a_larger_one_costs_one_seek() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
     let bob = room.join("bob", &["ep1"]);
@@ -138,46 +144,52 @@ async fn small_drift_is_tolerated_and_larger_drift_hard_syncs() {
     room.pump();
     start(&mut room, alice);
     room.pump();
-    room.pass(100 * SECOND).await;
+    room.watch(100 * SECOND).await;
+    let mut at = 100 * SECOND;
+    let tick = SECOND / 2;
 
     for who in [alice, bob] {
-        // 2 seconds behind the room — within the tolerance
-        drift(&mut room, who, 98);
-        room.heartbeat();
-        room.pump();
+        // 0.4 seconds behind the room — within the tolerance
+        put(&mut room, who, at - SECOND * 2 / 5);
+        room.watch(5 * SECOND).await;
+        at += 5 * SECOND;
 
         let player = room.peer(who).player.state();
         assert_eq!(
             player.position,
-            98 * SECOND,
-            "a drift within the tolerance must not cause a seek"
+            at - SECOND * 2 / 5,
+            "an offset within the tolerance must not cause a seek"
         );
         assert_eq!(
             player.speed, 1.0,
-            "a drift must never be corrected by changing the speed"
+            "an offset must never be corrected by changing the speed"
         );
 
-        // drifted past the tolerance: one seek puts the player back
-        drift(&mut room, who, 95);
-        room.heartbeat();
-        room.pump();
+        // fallen behind by more: one seek puts the player back
+        put(&mut room, who, at - 2 * SECOND);
+        room.watch(tick).await;
+        at += tick;
 
         let player = room.peer(who).player.state();
-        assert_eq!(
-            player.position,
-            100 * SECOND,
-            "a drift past the tolerance must hard-sync"
-        );
+        assert_eq!(player.position, at, "a player behind must hard-sync");
         assert_eq!(player.speed, 1.0);
 
-        // ...and so does a player that ran ahead
-        drift(&mut room, who, 110);
-        room.heartbeat();
-        room.pump();
-
+        // a player ahead may only look so for a late state
+        put(&mut room, who, at + 2 * SECOND);
+        room.watch(3 * SECOND).await;
+        at += 3 * SECOND;
         assert_eq!(
             position(&mut room, who),
-            100 * SECOND,
+            at + 2 * SECOND,
+            "a player that looks ahead is watched before it is moved"
+        );
+
+        // ...and is put back when it is ahead for as long as it is watched
+        room.watch(tick).await;
+        at += tick;
+        assert_eq!(
+            position(&mut room, who),
+            at,
             "a player ahead of the room must hard-sync too"
         );
     }
@@ -347,13 +359,12 @@ async fn a_new_host_is_the_position_authority() {
     // the room plays by bob's clock now: a drifting alice is corrected
     start(&mut room, bob);
     room.pump();
-    room.pass(100 * SECOND).await;
+    room.watch(100 * SECOND).await;
     drift(&mut room, alice, 95);
-    room.heartbeat();
-    room.pump();
+    room.watch(SECOND).await;
     assert_eq!(
         position(&mut room, alice),
-        100 * SECOND,
+        101 * SECOND,
         "the old host must follow the new host's clock"
     );
 
@@ -363,7 +374,7 @@ async fn a_new_host_is_the_position_authority() {
     room.pump();
     assert_eq!(
         position(&mut room, bob),
-        100 * SECOND,
+        101 * SECOND,
         "the old host's player must not move anyone"
     );
 }
@@ -466,15 +477,14 @@ async fn late_joiner_adopts_the_running_speed() {
     );
     assert_eq!(player.position, 150 * SECOND);
 
-    // the joiner reconciles against that speed too, so it tolerates the
-    // same drift as everyone else instead of being hard-synced constantly
-    drift(&mut room, charlie, 147);
-    room.heartbeat();
-    room.pump();
+    // the joiner is judged at that speed too: 0.6 seconds behind is beyond
+    // the tolerance at 1x, but not at 1.5x
+    put(&mut room, charlie, Duration::from_millis(149_400));
+    room.watch(5 * SECOND).await;
 
     assert_eq!(
         position(&mut room, charlie),
-        147 * SECOND,
+        Duration::from_millis(156_900),
         "the joiner's tolerance must scale with the room's speed"
     );
 }
@@ -554,30 +564,26 @@ async fn host_speed_change_propagates_and_scales_the_tolerance() {
         "speed change must propagate"
     );
 
-    // 4 seconds apart is beyond the tolerance at 1x, but not at 2x
+    // 0.8 seconds behind is beyond the tolerance at 1x, but not at 2x
     start(&mut room, alice);
     room.pump();
-    room.pass(50 * SECOND).await;
+    room.watch(50 * SECOND).await;
     assert_eq!(position(&mut room, alice), 100 * SECOND);
-    drift(&mut room, bob, 96);
-    room.peer(alice).heartbeat();
-    room.pump();
+    put(&mut room, bob, Duration::from_millis(99_200));
+    room.watch(5 * SECOND).await;
 
     assert_eq!(
         room.peer(bob).player.state().position,
-        Duration::from_secs(96),
+        Duration::from_millis(109_200),
         "the tolerance must scale with the speed the room plays at"
     );
 
-    // 7 seconds is beyond it even at double speed
-    room.peer(bob)
-        .player
-        .set(|player| player.position = Duration::from_secs(93));
-    room.peer(alice).heartbeat();
-    room.pump();
+    // 1.5 seconds is beyond it even at double speed
+    put(&mut room, bob, Duration::from_millis(108_500));
+    room.watch(SECOND / 2).await;
 
     let bob_player = room.peer(bob).player.state();
-    assert_eq!(bob_player.position, Duration::from_secs(100));
+    assert_eq!(bob_player.position, Duration::from_secs(111));
     assert_eq!(
         bob_player.speed, 2.0,
         "hard-syncing must leave the room's speed alone"
@@ -612,13 +618,11 @@ async fn client_speed_change_survives_the_next_heartbeat() {
         "speed change must propagate"
     );
 
-    // both play in sync; the next host heartbeat reconciles bob against
-    // the room's clock and must leave his speed alone
+    // both play in sync; the host's heartbeats judge bob against the
+    // room's clock and must leave his speed alone
     start(&mut room, alice);
     room.pump();
-    room.pass(100 * SECOND).await;
-    room.peer(alice).heartbeat();
-    room.pump();
+    room.watch(100 * SECOND).await;
 
     assert_eq!(
         room.peer(bob).player.state().speed,
@@ -1255,11 +1259,10 @@ async fn a_state_older_than_a_seek_moves_nobody_back() {
     }
 
     // the room's clock counts as ever for what comes after the seek
-    room.pass(20 * SECOND).await;
+    room.watch(20 * SECOND).await;
     drift(&mut room, charlie, 310);
-    room.heartbeat();
-    room.pump();
-    assert_eq!(position(&mut room, charlie), 320 * SECOND);
+    room.watch(SECOND).await;
+    assert_eq!(position(&mut room, charlie), 321 * SECOND);
 }
 
 /// The host's player takes a moment to seek and reports the old position
@@ -1299,6 +1302,41 @@ async fn a_host_player_slow_to_seek_does_not_drag_the_room_back() {
     room.pump();
     for who in [alice, bob, charlie, dave] {
         assert_eq!(position(&mut room, who), 310 * SECOND, "peer {who}");
+    }
+}
+
+/// A player on its way to a position has none, so nothing is made of where
+/// it is: it is left to land, and brought in line with where the room went
+/// meanwhile once it has.
+#[tokio::test(start_paused = true)]
+async fn a_player_that_seeks_is_left_to_land() {
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
+    room.peer(bob).player.set(|player| player.seek_lag = true);
+
+    // bob's player stalled, and is told to catch up
+    let behind = position(&mut room, alice);
+    room.watch(5 * SECOND).await;
+    put(&mut room, bob, behind);
+    room.watch(SECOND / 2).await;
+    let told = position(&mut room, alice);
+
+    // the room plays on and jumps while bob's player is on its way
+    room.watch(5 * SECOND).await;
+    seek(&mut room, charlie, 300);
+    room.pump();
+    room.watch(5 * SECOND).await;
+    room.peer(bob).player.land_seek();
+    assert_eq!(
+        position(&mut room, bob),
+        told,
+        "a player on its way must not be told to seek again"
+    );
+
+    room.peer(bob).player.set(|player| player.seek_lag = false);
+    room.watch(SECOND / 2).await;
+    for who in [alice, bob, charlie] {
+        let at = Duration::from_millis(305_500);
+        assert_eq!(position(&mut room, who), at, "peer {who}");
     }
 }
 
@@ -1360,28 +1398,32 @@ async fn a_client_the_host_still_knows_counts_its_intents_anew() {
 }
 
 /// A seek shorter than the tolerance moves every peer by exactly that much:
-/// a jump is set, not reconciled.
+/// a jump is set, not judged by the offset it leaves.
 #[tokio::test(start_paused = true)]
 async fn a_seek_within_the_tolerance_reaches_every_peer() {
     let (mut room, alice, bob, charlie) = three_playing_ep1().await;
 
-    seek(&mut room, bob, 12);
+    let to = Duration::from_millis(10_300);
+    put(&mut room, bob, to);
+    room.peer(bob).act(PlayerPositionChange::new(to));
     room.pump();
     for who in [alice, bob, charlie] {
         assert_eq!(
             room.peer(who).player.state().position,
-            Duration::from_secs(12),
-            "a client's 2s seek must reach everyone"
+            to,
+            "a client's 0.3s seek must reach everyone"
         );
     }
 
-    seek(&mut room, alice, 14);
+    let to = Duration::from_millis(10_600);
+    put(&mut room, alice, to);
+    room.peer(alice).act(PlayerPositionChange::new(to));
     room.pump();
     for who in [alice, bob, charlie] {
         assert_eq!(
             room.peer(who).player.state().position,
-            Duration::from_secs(14),
-            "the host's 2s seek must reach everyone"
+            to,
+            "the host's 0.3s seek must reach everyone"
         );
     }
 }
@@ -1420,7 +1462,7 @@ async fn two_clients_acting_at_once_end_in_the_hosts_order() {
 }
 
 /// The host's position is half a round trip old when it arrives; a playing
-/// client reconciles against where the host is by now, a paused one against
+/// client is judged against where the host is by now, a paused one against
 /// the reported position as is.
 #[tokio::test(start_paused = true)]
 async fn clients_compensate_the_host_position_for_the_network_delay() {
@@ -1443,24 +1485,20 @@ async fn clients_compensate_the_host_position_for_the_network_delay() {
 
     start(&mut room, alice);
     room.pump();
-    room.pass(100 * SECOND).await;
+    room.watch(100 * SECOND).await;
     drift(&mut room, bob, 90);
-    room.peer(alice).heartbeat();
-    room.pump();
+    room.watch(SECOND).await;
     assert_eq!(
         position(&mut room, bob),
-        Duration::from_millis(100_200),
+        Duration::from_millis(101_200),
         "a playing room is half the quietest round trip further by now"
     );
 
-    // 2.6s ahead of the reported position, but only 2.4s ahead of where
+    // 0.6s ahead of the reported position, but only 0.4s ahead of where
     // the room is by now: within the tolerance
-    room.peer(bob)
-        .player
-        .set(|player| player.position = Duration::from_millis(102_600));
-    room.peer(alice).heartbeat();
-    room.pump();
-    assert_eq!(position(&mut room, bob), Duration::from_millis(102_600));
+    put(&mut room, bob, Duration::from_millis(101_600));
+    room.watch(5 * SECOND).await;
+    assert_eq!(position(&mut room, bob), Duration::from_millis(106_600));
 
     // a paused room does not move while the message travels
     pause(&mut room, alice);
@@ -1468,7 +1506,7 @@ async fn clients_compensate_the_host_position_for_the_network_delay() {
     drift(&mut room, bob, 90);
     room.peer(alice).heartbeat();
     room.pump();
-    assert_eq!(position(&mut room, bob), 100 * SECOND);
+    assert_eq!(position(&mut room, bob), 106 * SECOND);
 }
 
 /// A room moving to another host keeps its state: the new host does not

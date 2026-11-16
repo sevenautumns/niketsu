@@ -6,7 +6,6 @@ use crate::config::Config;
 use crate::file_database::FileDatabaseTrait;
 use crate::logging::ChatLogger;
 use crate::player::MediaPlayerTrait;
-use crate::player::wrapper::MediaPlayerWrapper;
 use crate::playlist::file::PlaylistBrowser;
 use crate::room::{Authority, Followed, Role, RoomState};
 use crate::ui::UserInterfaceTrait;
@@ -46,7 +45,7 @@ impl From<CoreBuilder> for CoreModel {
             followed: Followed::default(),
             communicator: builder.communicator,
             database: builder.file_database,
-            player: MediaPlayerWrapper::new(builder.player),
+            player: builder.player,
             ui: builder.ui,
             config: builder.config,
             saved_playlist: builder.saved_playlist,

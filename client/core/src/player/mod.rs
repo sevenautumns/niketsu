@@ -12,7 +12,7 @@ use super::communicator::Intent;
 use super::ui::PlayerMessage;
 use super::{CoreModel, EventHandler};
 
-pub mod wrapper;
+pub mod offset;
 
 /// The player follows the room: the core tells it what to load and where
 /// to be, and asks it only where it is itself. Its events report what its
@@ -24,9 +24,12 @@ pub trait MediaPlayerTrait: std::fmt::Debug + Send {
     fn pause(&mut self);
     fn is_paused(&self) -> Option<bool>;
     fn set_speed(&mut self, speed: f64);
+    /// The room is at `pos` now, and the player is to be there with it. A
+    /// playing player aims ahead by what the room plays until it lands.
     fn set_position(&mut self, pos: Duration);
     /// Where the player is in what it has loaded. It has no position
-    /// while it holds nothing or is still loading.
+    /// while it holds nothing, is still loading or is on its way to
+    /// another position.
     fn get_position(&mut self) -> Option<Duration>;
     /// Loads `source` paused at `pos`, in place of what the player holds.
     fn load(&mut self, source: Source, pos: Duration);

@@ -17,7 +17,8 @@ use tracing::{debug, warn};
 use crate::CoreModel;
 use crate::chunk::SharedFile;
 use crate::communicator::{Intent, RoomStateMsg};
-use crate::player::{MediaPlayerTrait, Source};
+use crate::player::Source;
+use crate::player::offset::{ALIGNMENT, Offset};
 use crate::playlist::{Playlist, Video, VideoInner};
 use crate::sync::ClientSync;
 use crate::ui::PlayerMessage;
@@ -103,6 +104,8 @@ pub struct Followed {
     /// The jumps of the timeline the player's position was last brought in
     /// line with.
     pub(crate) jumps: Option<u64>,
+    /// How far the player has been from the room while both played on.
+    offset: Offset,
 }
 
 impl Default for Followed {
@@ -118,6 +121,7 @@ impl Default for Followed {
             loaded: false,
             speed: 1.0,
             jumps: None,
+            offset: Offset::default(),
         }
     }
 }
@@ -412,7 +416,8 @@ impl CoreModel {
     /// Brings the player's speed, play state and position in line with the
     /// room's timeline. A position the room jumped to and one the room is
     /// paused at are taken exactly; while the room plays on, the player
-    /// only has to be within the tolerance.
+    /// is judged by its offset over a few seconds. A player without a
+    /// position is brought in line once it has one.
     fn follow_playback(&mut self, now: Instant) {
         let timeline = self.state.timeline;
         if self.followed.speed != timeline.speed() {
@@ -424,16 +429,28 @@ impl CoreModel {
             (Some(false), true) => self.player.pause(),
             _ => {}
         }
-        if !self.followed.loaded {
-            return;
+        let at = match self.followed.loaded {
+            true => self.player.get_position(),
+            false => None,
+        };
+        let Some(at) = at else {
+            return self.followed.offset.restart();
+        };
+        let room = timeline.position_at(now);
+        let jumped = self.followed.jumps.replace(timeline.jumps()) != Some(timeline.jumps());
+        let off = match jumped || timeline.paused() {
+            true => at.abs_diff(room) > ALIGNMENT,
+            false => self
+                .followed
+                .offset
+                .measure(at, room, timeline.speed(), now),
+        };
+        if off {
+            debug!(?at, ?room, "putting the player where the room is");
+            self.player.set_position(room);
         }
-        let position = timeline.position_at(now);
-        let jumped = self.followed.jumps != Some(timeline.jumps());
-        self.followed.jumps = Some(timeline.jumps());
-        if jumped || timeline.paused() {
-            self.player.align(position);
-        } else {
-            self.player.reconcile(position, timeline.speed());
+        if off || jumped || timeline.paused() {
+            self.followed.offset.restart();
         }
     }
 

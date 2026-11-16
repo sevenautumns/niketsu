@@ -4,6 +4,7 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Poll, Waker};
+use std::time::Instant;
 
 use arc_swap::ArcSwapOption;
 use enum_dispatch::enum_dispatch;
@@ -142,8 +143,8 @@ impl MpvEventTrait for MpvRestart {
         if mpv.get_property_flag(MpvProperty::Seeking).unwrap_or(false) {
             return None;
         }
-        let at = mpv.get_position()?;
-        let moved_to = mpv.status.seeks.landed(at)?;
+        let at = mpv.position()?;
+        let moved_to = mpv.status.seeks.landed(at, Instant::now())?;
         Some(PlayerPositionChange::new(moved_to).into())
     }
 }

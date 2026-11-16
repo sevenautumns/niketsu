@@ -47,6 +47,11 @@
 //!   file ends with EOF or ERROR as it would have at its end.
 //! - `stop`, a load in place of the stream and destroying mpv call the
 //!   cancel callback and return once a read that waits has returned.
+//! - A playing mpv keeps its distance to a clock: read every 100 ms for
+//!   5 s, the position of the clip stayed within 45 ms of it, a frame of
+//!   the clip being 40 ms. An exact seek in the local clip lands 5 to 35 ms
+//!   after it was asked for, and aimed ahead by what the last one took it
+//!   lands within 70 ms of the clock.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::PathBuf;
@@ -546,6 +551,69 @@ fn the_adapter_tells_its_users_seeks_from_the_apps() {
     mpv.unload();
     assert!(next(&mut mpv, SHORT).is_none(), "an unload is reported");
     assert_eq!(mpv.get_position(), None);
+}
+
+/// How many seconds the adapter is ahead of a room that was at `room` at
+/// `since` and plays on, read every tenth of a second for `long`. `None`
+/// while the adapter has no position.
+fn offsets(mpv: &mut Mpv, room: Duration, since: Instant, long: Duration) -> Vec<Option<f64>> {
+    let until = Instant::now() + long;
+    let mut offsets = vec![];
+    while Instant::now() < until {
+        let reported = next(mpv, Duration::from_millis(100));
+        assert!(reported.is_none(), "the adapter reported {reported:?}");
+        let at = mpv.get_position();
+        let room = room + since.elapsed();
+        offsets.push(at.map(|at| at.as_secs_f64() - room.as_secs_f64()));
+    }
+    offsets
+}
+
+/// The smallest and the largest of the offsets the adapter had a position
+/// at.
+fn range(offsets: &[Option<f64>]) -> (f64, f64) {
+    let known = offsets.iter().flatten();
+    let least = known.clone().fold(f64::INFINITY, |a, b| a.min(*b));
+    let most = known.fold(f64::NEG_INFINITY, |a, b| a.max(*b));
+    (least, most)
+}
+
+/// The adapter on real mpv against a clock, as the core follows a room
+/// with it: a playing mpv keeps its offset, has no position while it
+/// seeks, and a seek aimed ahead by what the last one took lands level.
+#[test]
+#[ignore = "needs mpv on the path to encode its clip; run by hand"]
+fn the_adapter_plays_by_the_clock_and_lands_its_seeks_on_the_room() {
+    let secs = Duration::from_secs_f64;
+    let mut mpv = Mpv::headless(FetchRoute::default()).expect("mpv starts");
+    mpv.load(Source::File(clip().into()), secs(10.0));
+    assert!(matches!(
+        next(&mut mpv, SHORT),
+        Some(MediaPlayerEvent::Loaded(_))
+    ));
+
+    mpv.start();
+    let since = Instant::now();
+    let playing = offsets(&mut mpv, secs(10.0), since, Duration::from_secs(5));
+    let (least, most) = range(&playing);
+    println!("playing for 5 s: {least:+.3} to {most:+.3} s from the clock");
+    assert!(playing.iter().all(Option::is_some));
+    assert!(most - least < 0.1, "the offset moved by {} s", most - least);
+
+    for to in [60.0, 30.0, 95.0, 20.0] {
+        let since = Instant::now();
+        mpv.set_position(secs(to));
+        assert_eq!(mpv.get_position(), None, "a seeking player has a position");
+        let landed = offsets(&mut mpv, secs(to), since, Duration::from_secs(2));
+        let (least, most) = range(&landed);
+        let seeking = landed.iter().take_while(|at| at.is_none()).count();
+        println!(
+            "seek to {to}: no position for {seeking} reads, then {least:+.3} to {most:+.3} s \
+             from the room, the next aims {:?} ahead",
+            mpv.status.seeks.lead(1.0)
+        );
+        assert!(most - least < 0.1, "the offset moved by {} s", most - least);
+    }
 }
 
 /// What the peer offering the clip does with a chunk request.

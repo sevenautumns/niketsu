@@ -4,7 +4,6 @@ use enum_dispatch::enum_dispatch;
 use futures::future::OptionFuture;
 use logging::ChatLogger;
 use once_cell::sync::Lazy;
-use player::wrapper::MediaPlayerWrapper;
 use playlist::Video;
 use playlist::handler::PlaylistHandler;
 use room::{Followed, Role, RoomName, RoomState};
@@ -54,7 +53,7 @@ pub type PlaylistSaver = fn(&RoomName, &PlaylistHandler);
 #[derive(Debug)]
 pub struct CoreModel {
     pub communicator: Box<dyn CommunicatorTrait>,
-    pub player: MediaPlayerWrapper,
+    pub player: Box<dyn MediaPlayerTrait>,
     pub ui: Box<dyn UserInterfaceTrait>,
     pub database: Box<dyn FileDatabaseTrait>,
     pub video_provider: Box<dyn VideoProviderTrait>,

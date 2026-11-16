@@ -48,8 +48,8 @@ pub struct HostRoundTripMsg {
 #[serde(rename_all = "camelCase")]
 pub struct RoomStateMsg {
     /// Bumped whenever the position jumps, by a seek or a selection. A
-    /// follower sets such a position exactly; any other only has to be
-    /// within the tolerance.
+    /// follower sets such a position exactly; with any other its player is
+    /// judged by the offset it keeps.
     pub jumps: u64,
     pub playlist: Option<Playlist>,
     pub video: Option<Video>,

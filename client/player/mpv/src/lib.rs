@@ -2,7 +2,7 @@ use std::ffi::{CStr, CString, c_int, c_void};
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -334,6 +334,16 @@ impl Mpv {
         }
     }
 
+    /// What mpv reads as the position of the app's load, once it loaded.
+    fn position(&self) -> Option<Duration> {
+        if !self.status.loaded {
+            return None;
+        }
+        self.get_property_f64(MpvProperty::PlaybackTime)
+            .ok()
+            .map(Duration::from_secs_f64)
+    }
+
     fn build_cmd(cmd: &[&CStr]) -> Vec<*const libc::c_char> {
         let mut cmd_ptr = vec![];
         for c in cmd {
@@ -404,27 +414,37 @@ impl MediaPlayerTrait for Mpv {
     }
 
     /// Seeks exactly, whatever the user's mpv configuration makes of a
-    /// seek, so the landing can be told from a seek of the user.
+    /// seek, so the landing can be told from a seek of the user. While it
+    /// plays, the seek goes to where the room will be when it lands.
     fn set_position(&mut self, pos: Duration) {
         if !self.status.loaded {
             debug!(?pos, "no file is loaded, ignoring set_position");
             return;
         }
+        let lead = match self.status.paused {
+            true => Duration::ZERO,
+            false => self.status.seeks.lead(self.status.speed),
+        };
+        let pos = pos + lead;
         let cmd: CString = MpvCommand::Seek.into();
         let target = CString::new(pos.as_secs_f64().to_string()).expect("a number has no nul");
         match self.send_command(&[&cmd, &target, c"absolute+exact"]) {
-            Ok(_) => self.status.seeks.ask(pos),
+            Ok(_) => self.status.seeks.ask(pos, Instant::now()),
             Err(error) => error!(%error, ?pos, "mpv refused to seek"),
         }
     }
 
+    /// During a seek mpv reads the position it was asked for, so a player
+    /// that seeks has none.
     fn get_position(&mut self) -> Option<Duration> {
-        if !self.status.loaded {
+        let seeking = || {
+            self.get_property_flag(MpvProperty::Seeking)
+                .unwrap_or(false)
+        };
+        if self.status.seeks.pending() || seeking() {
             return None;
         }
-        self.get_property_f64(MpvProperty::PlaybackTime)
-            .ok()
-            .map(Duration::from_secs_f64)
+        self.position()
     }
 
     /// Loads paused. The load is finished when mpv restarts playback for
