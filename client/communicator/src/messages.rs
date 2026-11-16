@@ -20,33 +20,9 @@ pub(super) enum NiketsuMessage {
     Join,
 }
 
-/// `From<$msg> for NiketsuMessage`, one variant per message.
-macro_rules! wire_from {
-    ($($msg:ty => $variant:ident),* $(,)?) => {
-        $(impl From<$msg> for NiketsuMessage {
-            fn from(value: $msg) -> Self {
-                Self::$variant(value)
-            }
-        })*
-    };
-}
-
-wire_from! {
-    RoomStateMsg => RoomState,
-    LineMsg => Line,
-}
-
 impl From<Intent> for NiketsuMessage {
     fn from(intent: Intent) -> Self {
         Self::Intent { intent }
-    }
-}
-
-impl From<ClientRequest> for NiketsuMessage {
-    fn from(value: ClientRequest) -> Self {
-        match value {
-            ClientRequest::Intent(intent) => intent.into(),
-        }
     }
 }
 

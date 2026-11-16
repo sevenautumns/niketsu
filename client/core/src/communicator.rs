@@ -46,69 +46,44 @@ pub struct EndpointInfo {
     pub password: String,
 }
 
-/// What the core asks the communicator to deliver. The communicator decides
-/// only *how* a message travels for its role (from the host to each member,
-/// or from a client to the host); *whether* and *what* to send is decided
-/// here.
+/// What the core asks the communicator to deliver. Whether and what to
+/// send is decided here; the communicator decides only how a message
+/// travels.
 ///
-/// Messages are grouped by the role that may send them, so each role's
-/// handler matches exhaustively over its own group. Which role the core
-/// holds is a runtime fact (the relay assigns it on connect, and a message
-/// can still be queued while the role changes), so a message of the other
-/// role's group can still reach a handler; it is dropped there.
+/// Which role the core holds is a runtime fact (the relay assigns it on
+/// connect, and a message can still be queued while the role changes), so
+/// a message can reach a communicator that has the other role. It is
+/// dropped there.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OutgoingMessage {
-    Host(HostInstruction),
-    Client(ClientRequest),
-}
-
-/// What only the host sends. Each member gets the host's messages in the
-/// order the host sent them, except that a room state still waiting for
-/// its turn gives way to a newer one.
-#[derive(Clone, Debug, PartialEq)]
-pub enum HostInstruction {
-    /// Everything the room agrees on, sent to every member with the
-    /// playlist, which a member gets until it has it.
+    /// From the host: everything the room agrees on, to every member, with
+    /// the playlist, which a member gets until it has it. Each member gets
+    /// the host's messages in the order the host sent them, except that a
+    /// room state still waiting for its turn gives way to a newer one.
     RoomState(RoomStateMsg),
-    /// A line of the room's chat, sent to every member but the author of a
-    /// chat line.
+    /// From the host: a line of the room's chat, to every member but the
+    /// author of a chat line.
     Line(LineMsg),
-}
-
-/// What only a client sends: a request to the host.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ClientRequest {
+    /// From a client: a request to the host.
     Intent(Intent),
 }
 
-impl From<HostInstruction> for OutgoingMessage {
-    fn from(value: HostInstruction) -> Self {
-        Self::Host(value)
+impl From<RoomStateMsg> for OutgoingMessage {
+    fn from(value: RoomStateMsg) -> Self {
+        Self::RoomState(value)
     }
 }
 
-impl From<ClientRequest> for OutgoingMessage {
-    fn from(value: ClientRequest) -> Self {
-        Self::Client(value)
+impl From<LineMsg> for OutgoingMessage {
+    fn from(value: LineMsg) -> Self {
+        Self::Line(value)
     }
 }
 
-/// `From<$msg> for OutgoingMessage` for messages whose sending role follows
-/// from their type.
-macro_rules! outgoing_from {
-    ($($msg:ty => $outer:ident($group:ident::$variant:ident)),* $(,)?) => {
-        $(impl From<$msg> for OutgoingMessage {
-            fn from(value: $msg) -> Self {
-                Self::$outer($group::$variant(value))
-            }
-        })*
-    };
-}
-
-outgoing_from! {
-    RoomStateMsg => Host(HostInstruction::RoomState),
-    LineMsg => Host(HostInstruction::Line),
-    Intent => Client(ClientRequest::Intent),
+impl From<Intent> for OutgoingMessage {
+    fn from(value: Intent) -> Self {
+        Self::Intent(value)
+    }
 }
 
 /// What the communicator hands the core. Each message is an event of the

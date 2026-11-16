@@ -9,8 +9,7 @@ use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
 use libp2p::swarm::{ConnectionError, ConnectionId, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, mdns};
 use niketsu_core::communicator::{
-    ConnectedMsg, HostInstruction, IncomingMessage, OutgoingMessage, PeerDisconnectedMsg,
-    PeerIntentMsg, RoomStateMsg,
+    ConnectedMsg, IncomingMessage, OutgoingMessage, PeerDisconnectedMsg, PeerIntentMsg,
 };
 use niketsu_core::log_err_msg;
 use tracing::{debug, error, info, warn};
@@ -124,25 +123,6 @@ impl HostRole {
     /// learns of the member from the status it sends once it is in.
     fn welcome(&mut self, peer_id: PeerId) {
         self.members.insert(peer_id, Outbox::default());
-    }
-
-    fn on_core_instruction(&mut self, instruction: HostInstruction) {
-        use HostInstruction::*;
-        match instruction {
-            RoomState(m) => self.publish(m),
-            Line(m) => {
-                let author = m.author();
-                self.send_to_members(m.into(), author)
-            }
-        }
-    }
-
-    /// Sends the room's state to every member.
-    fn publish(&mut self, state: RoomStateMsg) {
-        let net = &mut self.session.net;
-        for (peer, outbox) in &mut self.members {
-            outbox.push(state.clone().into(), |msg| net.send_request(peer, msg));
-        }
     }
 
     /// Sends `msg` to every member but its `author`, whose chat shows it
@@ -338,15 +318,18 @@ impl Role for HostRole {
         }
     }
 
-    fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()> {
-        debug!(host = %self.session.net.host, ?msg, "Handling core message");
+    fn handle_core_message(&mut self, msg: OutgoingMessage) -> Option<OutgoingMessage> {
         match msg {
-            OutgoingMessage::Host(m) => {
-                self.on_core_instruction(m);
-                Ok(())
+            OutgoingMessage::RoomState(state) => {
+                self.send_to_members(NiketsuMessage::RoomState(state), None)
             }
-            OutgoingMessage::Client(m) => self.session.drop_for_other_role(m),
+            OutgoingMessage::Line(line) => {
+                let author = line.author();
+                self.send_to_members(NiketsuMessage::Line(line), author)
+            }
+            other => return Some(other),
         }
+        None
     }
 }
 
@@ -367,7 +350,7 @@ mod tests {
     use libp2p::request_response::{Event, Message, ProtocolSupport};
     use libp2p::{StreamProtocol, Transport, noise, yamux};
     use niketsu_core::chunk::{ChunkRequest, ChunkRoute, ProvideRoute, SharedFile};
-    use niketsu_core::communicator::{Intent, LineKind, LineMsg};
+    use niketsu_core::communicator::{Intent, LineKind, LineMsg, RoomStateMsg};
     use niketsu_core::playlist::Playlist;
     use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
@@ -677,15 +660,15 @@ mod tests {
 
         let mut sent: Vec<NiketsuMessage> = Vec::new();
         for i in 1..=30 {
-            sent.push(state(i).into());
+            sent.push(NiketsuMessage::RoomState(state(i)));
             if i % 3 == 0 {
-                sent.push(action(&format!("action {i}")).into());
+                sent.push(NiketsuMessage::Line(action(&format!("action {i}"))));
             }
             if i % 5 == 0 {
-                sent.push(chat(&format!("chat {i}"), host).into());
+                sent.push(NiketsuMessage::Line(chat(&format!("chat {i}"), host)));
             }
             if i == 14 {
-                sent.push(chat("from one", one.peer).into());
+                sent.push(NiketsuMessage::Line(chat("from one", one.peer)));
             }
         }
         for msg in &sent {

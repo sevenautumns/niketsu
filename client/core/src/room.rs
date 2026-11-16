@@ -27,7 +27,7 @@ use crate::user::{User, UserStatus};
 mod state;
 mod users;
 
-pub use state::{RoomState, Timeline, select_next};
+pub use state::{RoomState, Timeline};
 pub use users::NameSuffixes;
 
 pub type RoomName = ArcStr;

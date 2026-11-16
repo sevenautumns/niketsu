@@ -261,46 +261,16 @@ fn selection(video: Option<Video>) -> Intent {
     }
 }
 
-/// When the playlist shrank and the video playing was removed, picks the
-/// video that took its place by walking the common prefix of the old and
-/// new playlist.
-pub fn select_next(
-    current_playlist: &Playlist,
-    current_video: Option<&Video>,
-    new_playlist: &Playlist,
-) -> Option<Video> {
-    if new_playlist.len() >= current_playlist.len() {
+/// The video an edit of the playlist selects: when the edit removed the
+/// `selected` video, the one now at its index, or the last one when the
+/// playlist ends before that.
+fn select_next(old: &Playlist, selected: Option<&Video>, new: &Playlist) -> Option<Video> {
+    let selected = selected?;
+    if new.find(selected).is_some() {
         return None;
     }
-
-    let mut new_position = 0;
-    let max_len = new_playlist.len();
-    if let Some(current_video) = current_video {
-        for old_video in current_playlist.iter() {
-            if let Some(new_video) = new_playlist.get(new_position) {
-                debug!(?current_video, ?new_video, "Current video and old");
-                if new_video == current_video {
-                    // No need to select if current video is still in playlist
-                    return None;
-                }
-
-                if old_video == current_video {
-                    break;
-                }
-
-                if *new_video == *old_video {
-                    new_position += 1;
-                }
-
-                if new_position >= max_len {
-                    new_position -= 1;
-                    break;
-                }
-            }
-        }
-    }
-
-    new_playlist.get(new_position).cloned()
+    let index = old.find(selected)?;
+    new.get(index).or(new.iter().last()).cloned()
 }
 
 #[cfg(test)]
@@ -853,15 +823,20 @@ mod tests {
         assert!(select_next(&old, Some(&a), &playlist(&[])).is_none());
     }
 
-    // Documents current behavior: with nothing selected, any shrink of the
-    // playlist selects the new first video. Whether that is intended is an
-    // open question; see select_next.
     #[test]
-    fn select_next_without_selection_picks_first_video() {
+    fn select_next_without_selection_selects_nothing() {
         let old = playlist(&["a", "b", "c"]);
 
-        let result = select_next(&old, None, &playlist(&["a", "b"]));
+        assert!(select_next(&old, None, &playlist(&["a", "b"])).is_none());
+    }
 
-        assert_eq!(selected(result), Some("a".into()));
+    #[test]
+    fn select_next_picks_the_video_now_at_the_index_of_the_removed_one() {
+        let old = playlist(&["a", "b", "c", "d", "e"]);
+        let c = Video::from("c");
+
+        let result = select_next(&old, Some(&c), &playlist(&["a", "d", "e"]));
+
+        assert_eq!(selected(result), Some("e".into()));
     }
 }

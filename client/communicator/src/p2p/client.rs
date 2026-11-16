@@ -160,13 +160,6 @@ impl ClientRole {
         }
     }
 
-    fn send_to_host(&mut self, msg: NiketsuMessage) -> Result<()> {
-        let net = &mut self.session.net;
-        let host = net.host;
-        self.outbox.push(msg, |msg| net.send_request(&host, msg));
-        Ok(())
-    }
-
     /// The host did not take the message on its way to it: it refused it,
     /// the request timed out or the connection closed. Whether the host
     /// applied it is unknown, and what waits behind it would reach the
@@ -342,12 +335,15 @@ impl Role for ClientRole {
         }
     }
 
-    fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()> {
-        debug!(?msg, host = %self.session.net.host, peer = %self.session.net.swarm.local_peer_id(), "Handling core message");
-        match msg {
-            OutgoingMessage::Client(m) => self.send_to_host(m.into()),
-            OutgoingMessage::Host(m) => self.session.drop_for_other_role(m),
-        }
+    fn handle_core_message(&mut self, msg: OutgoingMessage) -> Option<OutgoingMessage> {
+        let OutgoingMessage::Intent(intent) = msg else {
+            return Some(msg);
+        };
+        let net = &mut self.session.net;
+        let host = net.host;
+        self.outbox
+            .push(intent.into(), |msg| net.send_request(&host, msg));
+        None
     }
 }
 
@@ -613,7 +609,7 @@ mod tests {
                         ..
                     } if request.msg == NiketsuMessage::Join => {
                         join = Some(channel);
-                        let msg = host_membership.tag(state.clone().into());
+                        let msg = host_membership.tag(NiketsuMessage::RoomState(state.clone()));
                         first = Some(messaging.send_request(&peer, msg));
                     }
                     Event::Message {

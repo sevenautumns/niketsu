@@ -234,7 +234,9 @@ pub(crate) enum StatusResponse {
 #[async_trait]
 pub(crate) trait Role: Send {
     fn session(&mut self) -> &mut Session;
-    fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()>;
+    /// Sends what the core asks of this role, and hands back a message
+    /// that only the other role sends.
+    fn handle_core_message(&mut self, msg: OutgoingMessage) -> Option<OutgoingMessage>;
     fn handle_swarm_request(
         &mut self,
         msg: NiketsuMessage,
@@ -304,8 +306,12 @@ pub(crate) trait Role: Send {
                 LoopEvent::Swarm(event) => self.dispatch_swarm_event(event),
                 LoopEvent::Core(Some(msg)) => {
                     debug!(?msg, "Handling core message");
-                    let res = self.handle_core_message(msg);
-                    log_err_msg!(res, "Handling message caused error");
+                    // the core still acts on a role this session does not
+                    // have, e.g. before it has seen the `ConnectedMsg` of a
+                    // reconnect
+                    if let Some(msg) = self.handle_core_message(msg) {
+                        debug!(?msg, "Dropping a core message of the other role");
+                    }
                 }
                 LoopEvent::FetchChunk(fetch) => self.session().fs_fetch_chunk(fetch),
                 LoopEvent::ChunkRead(channel, bytes) => {
@@ -567,15 +573,6 @@ impl Session {
             links: Links::default(),
             pending_chunks: PendingChunks::default(),
         }
-    }
-
-    /// A message of the other role's group reaches a role only when the
-    /// core still acts on a role this connection does not have, e.g. while
-    /// the core has not yet seen the `ConnectedMsg` of a reconnect. It has no
-    /// meaning here.
-    pub fn drop_for_other_role(&self, msg: impl std::fmt::Debug) -> Result<()> {
-        warn!(?msg, "Dropping a core message meant for the other role");
-        Ok(())
     }
 
     /// Hands a room message from the network to the core.

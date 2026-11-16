@@ -8,9 +8,8 @@ use async_trait::async_trait;
 use niketsu_core::builder::CoreBuilder;
 use niketsu_core::chunk::SharedFile;
 use niketsu_core::communicator::{
-    ClientRequest, CommunicatorTrait, ConnectedMsg, DisconnectedMsg, EndpointInfo, HostInstruction,
-    HostRoundTripMsg, IncomingMessage, OutgoingMessage, PeerDisconnectedMsg, PeerId, PeerIntentMsg,
-    RoomStateMsg,
+    CommunicatorTrait, ConnectedMsg, DisconnectedMsg, EndpointInfo, HostRoundTripMsg,
+    IncomingMessage, OutgoingMessage, PeerDisconnectedMsg, PeerId, PeerIntentMsg, RoomStateMsg,
 };
 use niketsu_core::config::Config;
 use niketsu_core::file_database::{
@@ -981,27 +980,32 @@ impl Room {
     /// from what its provider offers, see
     /// [`Room::fail_streams_nobody_serves`].
     fn route(&mut self, from: usize, msg: OutgoingMessage) -> Vec<(usize, IncomingMessage)> {
-        // like the role handlers, a peer's messages of the other role's
-        // group go nowhere
+        // like a role of the communicator, a peer sends only what its role
+        // sends, and the rest goes nowhere
         let from_host = from == self.host;
+        let peer = self.peers[from].id;
         match msg {
-            OutgoingMessage::Host(m) if from_host => self.route_instruction(from, m),
-            OutgoingMessage::Client(m) if !from_host => self.route_request(from, m),
-            OutgoingMessage::Host(_) | OutgoingMessage::Client(_) => vec![],
+            OutgoingMessage::RoomState(m) if from_host => {
+                self.send_to_members(from, None, m.into())
+            }
+            OutgoingMessage::Line(m) if from_host => {
+                self.send_to_members(from, m.author(), m.into())
+            }
+            OutgoingMessage::Intent(intent) if !from_host => {
+                vec![(self.host, PeerIntentMsg { peer, intent }.into())]
+            }
+            _ => vec![],
         }
     }
 
-    /// The host's instructions, to every member but the author of a chat
-    /// line.
-    fn route_instruction(
+    /// What the host `from` sends, to every member but the `author` of a
+    /// chat line.
+    fn send_to_members(
         &mut self,
         from: usize,
-        msg: HostInstruction,
+        author: Option<PeerId>,
+        msg: IncomingMessage,
     ) -> Vec<(usize, IncomingMessage)> {
-        let (author, msg): (Option<PeerId>, IncomingMessage) = match msg {
-            HostInstruction::RoomState(m) => (None, m.into()),
-            HostInstruction::Line(m) => (m.author(), m.into()),
-        };
         let members = self.members(from).into_iter();
         let members: Vec<usize> = members
             .filter(|to| Some(self.peers[*to].id) != author)
@@ -1034,18 +1038,5 @@ impl Room {
             }
             None => Some((member, link.send(msg))),
         }
-    }
-
-    /// A client's requests go directly to the host.
-    fn route_request(
-        &mut self,
-        from: usize,
-        request: ClientRequest,
-    ) -> Vec<(usize, IncomingMessage)> {
-        let peer = self.peers[from].id;
-        let msg = match request {
-            ClientRequest::Intent(intent) => PeerIntentMsg { peer, intent }.into(),
-        };
-        vec![(self.host, msg)]
     }
 }

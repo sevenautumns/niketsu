@@ -28,7 +28,6 @@ toml.workspace = true
 serde_with = "3.16"
 fuzzy-matcher = "0.3"
 futures = "0.3"
-num-traits = "0.2"
 whoami = "2.0"
 serde_yaml = "0.9"
 typed-builder = "0.23"
