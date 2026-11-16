@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use niketsu::cli::Args;
 use niketsu_communicator::P2PCommunicator;
@@ -43,7 +43,7 @@ async fn run_app(args: Args) -> Result<()> {
 
     let fetch = ChunkRoute::default();
     let provide = ChunkRoute::default();
-    let player = Mpv::new(fetch.clone()).unwrap();
+    let player = Mpv::new(fetch.clone()).context("mpv could not be started")?;
     let communicator = P2PCommunicator::new(fetch, provide.clone());
     let video_provider = VideoProvider::new(provide);
     let mut file_database = FileDatabase::default();

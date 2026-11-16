@@ -62,6 +62,12 @@ impl VideoInner {
             VideoInner::Url(url) => url.as_str(),
         }
     }
+
+    /// `value` as a URL if it has a host. A file name holds no slash, so
+    /// it never has one, even when its text before a colon reads as a scheme.
+    fn parse_url(value: &str) -> Option<Url> {
+        Url::parse(value).ok().filter(Url::has_host)
+    }
 }
 
 impl AsRef<str> for Video {
@@ -78,10 +84,9 @@ impl From<&str> for Video {
 
 impl From<&str> for VideoInner {
     fn from(value: &str) -> Self {
-        if let Ok(url) = Url::parse(value) {
-            Self::Url(Arc::new(url))
-        } else {
-            Self::File(value.into())
+        match Self::parse_url(value) {
+            Some(url) => Self::Url(Arc::new(url)),
+            None => Self::File(value.into()),
         }
     }
 }
@@ -94,10 +99,9 @@ impl From<&ArcStr> for Video {
 
 impl From<&ArcStr> for VideoInner {
     fn from(value: &ArcStr) -> Self {
-        if let Ok(url) = Url::parse(value) {
-            Self::Url(Arc::new(url))
-        } else {
-            Self::File(value.clone())
+        match Self::parse_url(value) {
+            Some(url) => Self::Url(Arc::new(url)),
+            None => Self::File(value.clone()),
         }
     }
 }
@@ -262,6 +266,41 @@ mod tests {
 
         assert!(!file_video.is_url());
         assert!(url_video.is_url());
+    }
+
+    #[test]
+    fn a_name_with_a_scheme_but_no_host_is_a_file() {
+        for name in ["Re:Zero - 01.mkv", "Fate: Zero.mkv", "C:foo.mkv"] {
+            assert!(Url::parse(name).is_ok(), "{name} parses as a URL");
+            assert!(!Video::from(name).is_url(), "{name}");
+            assert!(!Video::from(&ArcStr::from(name)).is_url(), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_url_with_a_host_is_a_url() {
+        let url = "https://www.example.com/watch/video.mp4?t=10&list=a";
+        assert!(Video::from(url).is_url());
+        assert!(Video::from(&ArcStr::from(url)).is_url());
+        assert_eq!(Video::from(url).as_str(), url);
+    }
+
+    #[test]
+    fn an_ordinary_name_is_a_file() {
+        assert!(!Video::from("[Group] Show - 01.mkv").is_url());
+    }
+
+    #[test]
+    fn a_saved_video_keeps_its_variant() {
+        let file = Video::from("Re:Zero - 01.mkv");
+        let url = Video::from("https://www.example.com/video.mp4");
+        let saved = serde_yaml::to_string(&[&file, &url]).unwrap();
+        assert_eq!(
+            saved,
+            "- File: Re:Zero - 01.mkv\n- Url: https://www.example.com/video.mp4\n"
+        );
+        let read: Vec<Video> = serde_yaml::from_str(&saved).unwrap();
+        assert_eq!(read, [file, url]);
     }
 
     #[test]

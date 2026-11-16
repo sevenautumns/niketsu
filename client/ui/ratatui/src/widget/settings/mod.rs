@@ -121,10 +121,11 @@ impl SettingsWidgetState {
         }
     }
 
-    pub fn collect_input(&self) -> (String, u16, bool, bool) {
+    /// The settings as entered, or `None` while the port is not a port.
+    pub fn collect_input(&self) -> Option<(String, u16, bool, bool)> {
         let relay = self.relay.get_input();
-        let port = self.port.get_input().parse::<u16>().unwrap();
-        (relay, port, self.auto_connect, self.auto_share)
+        let port = self.port.get_input().parse::<u16>().ok()?;
+        Some((relay, port, self.auto_connect, self.auto_share))
     }
 }
 
@@ -240,4 +241,33 @@ fn create_selection_button<'a>(
         block = block.style(theme.base());
     }
     Paragraph::new(Text::raw(name)).block(block)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_port_that_is_not_a_port_is_not_collected() {
+        let config = Config::default();
+        let mut state = SettingsWidgetState::new(&config, &ThemeSelection::default());
+        assert_eq!(
+            state.collect_input().map(|input| input.1),
+            Some(config.port)
+        );
+
+        state.next_state();
+        state.handle_input(KeyCode::Char('x').into());
+        assert_eq!(state.collect_input(), None);
+    }
+
+    #[test]
+    fn a_port_above_the_range_is_not_collected() {
+        let mut state = SettingsWidgetState::new(&Config::default(), &ThemeSelection::default());
+        state.next_state();
+        for _ in 0..8 {
+            state.handle_input(KeyCode::Char('9').into());
+        }
+        assert_eq!(state.collect_input(), None);
+    }
 }
