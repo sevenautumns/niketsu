@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/build-client.yml'
       - 'client/**'
+      - 'protocol/**'
       - 'Cargo.*'
       - 'flake.*'
   push:

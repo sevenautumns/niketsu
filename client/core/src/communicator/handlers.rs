@@ -1,0 +1,62 @@
+//! What the core does with each message the communicator hands it.
+
+use tracing::trace;
+
+use super::messages::*;
+use crate::room::Role;
+use crate::ui::PlayerMessage;
+use crate::{CoreModel, EventHandler};
+
+impl EventHandler for ConnectedMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(is_host = self.is_host, "connected to the room");
+        model.connected(self.is_host);
+        model.ui.is_host(self.is_host);
+        model.ui.player_message(PlayerMessage::from(self));
+    }
+}
+
+impl EventHandler for DisconnectedMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(reason = %self.reason, "in no room");
+        model.ui.player_message(PlayerMessage::from(self));
+        model.disconnected();
+    }
+}
+
+impl EventHandler for PeerDisconnectedMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(peer = %self.peer, "peer disconnected");
+        model.peer_left(self.peer);
+    }
+}
+
+impl EventHandler for PeerIntentMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(peer = %self.peer, intent = ?self.intent, "peer intent");
+        model.handle_intent(self.peer, self.intent);
+    }
+}
+
+impl EventHandler for HostRoundTripMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(rtt = ?self.rtt, "host round trip");
+        if let Role::Follower(sync) = &mut model.role {
+            sync.delay.push(self.rtt);
+        }
+    }
+}
+
+impl EventHandler for RoomStateMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!("received room state");
+        model.take_room_state(self);
+    }
+}
+
+impl EventHandler for LineMsg {
+    fn handle(self, model: &mut CoreModel) {
+        trace!(line = ?self, "received");
+        model.ui.player_message(PlayerMessage::from(self));
+    }
+}

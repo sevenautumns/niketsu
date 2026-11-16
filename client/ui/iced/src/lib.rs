@@ -1,9 +1,5 @@
-use std::sync::Arc;
-
-use arc_swap::ArcSwap;
 use iced::Executor;
 use niketsu_core::util::RingBuffer;
-use once_cell::sync::Lazy;
 
 mod config;
 mod main_window;
@@ -12,7 +8,7 @@ mod styling;
 mod view;
 mod widget;
 
-pub static TEXT_SIZE: Lazy<ArcSwap<f32>> = Lazy::new(|| ArcSwap::new(Arc::new(14.0)));
+pub const TEXT_SIZE: f32 = 14.0;
 
 pub use self::view::View as IcedUI;
 

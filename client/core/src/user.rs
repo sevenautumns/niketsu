@@ -1,13 +1,54 @@
 use arcstr::ArcStr;
 use serde::{Deserialize, Serialize};
 
+use super::chunk::SharedFile;
+use super::playlist::Video;
 use super::ui::UserChange;
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, Default)]
+/// A user of the room, as the room's authority keeps it and publishes it.
+/// What a user says about a video names that video, and counts while the
+/// room has it selected: nobody clears it when the selection changes.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct User {
+    /// The name the room knows the user by. The authority gives a user
+    /// whose name another user goes by a name of its own.
+    pub name: ArcStr,
+    pub ready: bool,
+    /// The video the user's player has loaded.
+    pub loaded: Option<Video>,
+    /// The file the user offers to the others.
+    pub offers: Option<SharedFile>,
+    /// How many intents of this user the authority has applied in the
+    /// user's session. In a user's own status it is how many intents the
+    /// user sent before that status, from which the authority counts on:
+    /// a user that joins again counts anew, also when the authority still
+    /// knows it from its previous session.
+    pub handled: u64,
+}
+
+impl User {
+    /// Whether the user's player has `video` loaded.
+    pub fn has_loaded(&self, video: &Video) -> bool {
+        self.loaded.as_ref() == Some(video)
+    }
+
+    /// What the user offers of `video`.
+    pub fn offer_of(&self, video: &Video) -> Option<&SharedFile> {
+        self.offers
+            .as_ref()
+            .filter(|file| file.name == video.as_str())
+    }
+}
+
+/// A user as the UI shows it: by name, ready or not, and what it offers of
+/// the selected video. Users are told apart and ordered by name, which is
+/// what the user list is sorted by.
+#[derive(Debug, Clone, Eq, Default)]
 pub struct UserStatus {
     pub name: ArcStr,
     pub ready: bool,
+    pub offers: Option<SharedFile>,
 }
 
 impl UserStatus {
@@ -29,6 +70,7 @@ impl From<UserChange> for UserStatus {
         Self {
             name: value.name,
             ready: value.ready,
+            ..Default::default()
         }
     }
 }

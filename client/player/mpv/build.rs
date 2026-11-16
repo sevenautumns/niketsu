@@ -8,7 +8,10 @@ fn main() -> Result<()> {
     let outdir = std::env::var_os("OUT_DIR").context("No outdir found")?;
 
     let bindings = bindgen::Builder::default()
-        .header_contents("mpv.h", "#include <mpv/client.h>")
+        .header_contents(
+            "mpv.h",
+            "#include <mpv/client.h>\n#include <mpv/stream_cb.h>",
+        )
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .parse_callbacks(Box::new(CustomCallback))
         .default_enum_style(EnumVariation::Rust {

@@ -1,565 +1,502 @@
-use std::time::Duration;
-
-use anyhow::{Result, bail};
 use async_trait::async_trait;
-use enum_dispatch::enum_dispatch;
-use futures::StreamExt;
 use libp2p::core::ConnectedPoint;
-use libp2p::kad::{self};
-use libp2p::request_response::{self, ResponseChannel};
+use libp2p::core::transport::ListenerId;
 use libp2p::swarm::{ConnectionError, ConnectionId, DialError, Swarm, SwarmEvent};
-use libp2p::{Multiaddr, PeerId, dcutr, gossipsub, ping};
+use libp2p::{Multiaddr, PeerId, dcutr, ping};
 use niketsu_core::communicator::{
-    ConnectedMsg, PlaylistMsg, SeekMsg, SelectMsg, UserStatusMsg, VideoStatusMsg,
+    ConnectedMsg, HostRoundTripMsg, IncomingMessage, OutgoingMessage,
 };
-use niketsu_core::log_err_msg;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, warn};
 
-use super::file_share::{FileShareEventHandler, FileShareRequest, FileShareResponseResult};
+use super::links::{Closed, Opened};
+use super::member::Membership;
+use super::stream::StreamEvent;
 use super::{
-    Behaviour, BehaviourEvent, CommunicationHandler, CommunicationHandlerTrait, MessageResponse,
-    SwarmHandler,
+    Behaviour, BehaviourEvent, ChunkRoutes, HostLink, Role, Session, Stop, TransportBehaviourEvent,
 };
 use crate::messages::NiketsuMessage;
-use crate::p2p::MessageRequest;
-use crate::p2p::file_share::FileShareCoreMessageHandler;
 
-#[enum_dispatch]
-pub(crate) trait ClientSwarmEventHandler {
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler);
+pub(crate) struct ClientRole {
+    session: Session,
+    /// The listener on the host's circuit, which lives as long as the
+    /// reservation on the host's relay does.
+    host_reservation: Option<ListenerId>,
 }
 
-#[enum_dispatch(ClientSwarmEventHandler)]
-enum ClientSwarmEvent {
-    Ping(ping::Event),
-    Dcutr(dcutr::Event),
-    GossipSub(gossipsub::Event),
-    MessageRequestResponse(request_response::Event<MessageRequest, MessageResponse>),
-    FileShareRequestResponse(request_response::Event<FileShareRequest, FileShareResponseResult>),
-    Kademlia(kad::Event),
-    ConnectionEstablished(ConnectionEstablished),
-    ConnectionClosed(ConnectionClosed),
-    OutgoingConnectionError(OutgoingConnectionError),
-    Other(Box<SwarmEvent<BehaviourEvent>>),
-}
-
-impl ClientSwarmEvent {
-    fn from(event: SwarmEvent<BehaviourEvent>) -> Self {
-        match event {
-            SwarmEvent::Behaviour(BehaviourEvent::Ping(event)) => ClientSwarmEvent::Ping(event),
-            SwarmEvent::Behaviour(BehaviourEvent::Dcutr(event)) => ClientSwarmEvent::Dcutr(event),
-            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(event)) => {
-                ClientSwarmEvent::GossipSub(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::MessageRequestResponse(event)) => {
-                ClientSwarmEvent::MessageRequestResponse(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::FileshareRequestResponse(event)) => {
-                ClientSwarmEvent::FileShareRequestResponse(event)
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
-                ClientSwarmEvent::Kademlia(event)
-            }
-            SwarmEvent::ConnectionEstablished {
-                peer_id,
-                connection_id,
-                endpoint,
-                ..
-            } => ClientSwarmEvent::ConnectionEstablished(ConnectionEstablished {
-                peer_id,
-                connection_id,
-                endpoint,
-            }),
-            SwarmEvent::ConnectionClosed {
-                peer_id,
-                cause,
-                connection_id,
-                ..
-            } => ClientSwarmEvent::ConnectionClosed(ConnectionClosed {
-                peer_id,
-                cause,
-                connection_id,
-            }),
-            SwarmEvent::OutgoingConnectionError {
-                connection_id,
-                peer_id,
-                error,
-            } => ClientSwarmEvent::OutgoingConnectionError(OutgoingConnectionError {
-                connection_id,
-                peer_id,
-                error,
-            }),
-            _ => ClientSwarmEvent::Other(Box::new(event)),
-        }
-    }
-}
-
-impl ClientSwarmEventHandler for ping::Event {
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        debug!("Received ping!");
-        if self.peer != handler.handler.host {
-            return;
-        }
-
-        if let Some(conn) = handler.host_conn
-            && self.connection == conn
-        {
-            match self.result {
-                Ok(d) => handler.delay = d,
-                Err(error) => warn!(%error, "Failed to get ping rtt"),
-            }
-        };
-    }
-}
-
-impl ClientSwarmEventHandler for dcutr::Event {
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        match self.result {
-            Ok(res) => {
-                handler.host_conn = Some(res);
-
-                info!("Established direct connection. Closing connection to relay");
-                if let Some(conn) = handler.relay_conn {
-                    handler.handler.swarm.close_connection(conn);
-                }
-
-                let gossip = &mut handler.handler.swarm.behaviour_mut().gossipsub;
-                gossip.add_explicit_peer(&self.remote_peer_id);
-            }
-            Err(error) => error!(
-                %self.remote_peer_id, %error,
-                "Direct connection (hole punching) failed"
-            ),
-        }
-    }
-}
-
-impl ClientSwarmEventHandler for gossipsub::Event {
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        match self {
-            gossipsub::Event::Message {
-                propagation_source,
-                message_id,
-                message,
-            } => {
-                debug!(%message_id, %message_id, msg = %String::from_utf8_lossy(&message.data),
-                    "Received gossipsub message",
-                );
-                let res = handler.handle_swarm_broadcast(message.data, propagation_source);
-                log_err_msg!(res, "Failed to handle broadcast message");
-            }
-            gossipsub_event => debug!(
-                ?gossipsub_event,
-                "Received gossipsub event that is not handled"
-            ),
-        }
-    }
-}
-
-impl ClientSwarmEventHandler for request_response::Event<MessageRequest, MessageResponse> {
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        match self {
-            request_response::Event::Message { peer, message, .. } => match message {
-                request_response::Message::Request {
-                    request, channel, ..
-                } => {
-                    let req = request.0;
-                    trace!(?req, "Received request");
-                    let res = handler.handle_swarm_request(req, channel, peer);
-                    log_err_msg!(res, "Failed to handle incoming message");
-                }
-                request_response::Message::Response { response, .. } => {
-                    debug!(?response, "Received response");
-                    let res = handler.handle_swarm_response(response, peer);
-                    log_err_msg!(res, "Failed to handle incoming message");
-                }
-            },
-            request_response::Event::OutboundFailure { peer, error, .. } => {
-                let host = handler.handler.host;
-                if peer == handler.handler.host {
-                    warn!(%error, %peer, %host, "Outbound failure for request response" );
-                }
-            }
-            request_response::Event::ResponseSent {
-                peer,
-                connection_id,
-                request_id,
-            } => {
-                debug!(
-                    ?peer,
-                    ?connection_id,
-                    ?request_id,
-                    "Received response sent event"
-                );
-            }
-            request_response_event => debug!(
-                ?request_response_event,
-                "Received request response event that is not handled"
-            ),
-        }
-    }
-}
-
-impl ClientSwarmEventHandler
-    for request_response::Event<FileShareRequest, FileShareResponseResult>
-{
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        FileShareEventHandler::handle_event(self, &mut handler.handler);
-    }
-}
-
-impl ClientSwarmEventHandler for kad::Event {
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        FileShareEventHandler::handle_event(self, &mut handler.handler);
-    }
-}
-
-struct ConnectionEstablished {
-    peer_id: PeerId,
-    connection_id: ConnectionId,
-    endpoint: ConnectedPoint,
-}
-
-impl ClientSwarmEventHandler for ConnectionEstablished {
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        if self.peer_id != handler.handler.host {
-            return;
-        }
-
-        let gossip = &mut handler.handler.swarm.behaviour_mut().gossipsub;
-        gossip.add_explicit_peer(&self.peer_id);
-
-        if self.endpoint.is_relayed() {
-            handler.relay_conn = Some(self.connection_id);
-        } else {
-            info!(%self.connection_id, ?self.endpoint, "Direct connection to host established!");
-            handler
-                .handler
-                .swarm
-                .behaviour_mut()
-                .kademlia
-                .add_address(&self.peer_id, self.endpoint.get_remote_address().clone());
-        }
-        if let Err(error) = handler.handler.message_sender.send(ConnectedMsg.into()) {
-            warn!(%error, "Failed to send connected message to core");
-        }
-    }
-}
-
-struct ConnectionClosed {
-    peer_id: PeerId,
-    cause: Option<ConnectionError>,
-    connection_id: ConnectionId,
-}
-
-impl ClientSwarmEventHandler for ConnectionClosed {
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        if self.peer_id == handler.handler.host
-            && !handler.handler.swarm.is_connected(&self.peer_id)
-        {
-            warn!(?self.cause, ?self.peer_id, host = %handler.handler.host, %self.connection_id, "Connection to host closed");
-            handler.handler.core_receiver.close();
-        }
-    }
-}
-
-struct OutgoingConnectionError {
-    connection_id: ConnectionId,
-    peer_id: Option<PeerId>,
-    error: DialError,
-}
-
-impl ClientSwarmEventHandler for OutgoingConnectionError {
-    fn handle_swarm_event(self, handler: &mut ClientCommunicationHandler) {
-        let Some(pid) = self.peer_id else {
-            warn!(%self.error, "Outgoing connection error with unknown peer");
-            return;
-        };
-
-        if let Some(conn) = handler.host_conn
-            && self.connection_id != conn
-        {
-            warn!(%self.error, %self.connection_id, "Outgoing connection error with non-host. Ignoring");
-            return;
-        }
-
-        if pid == handler.handler.host && !handler.handler.swarm.is_connected(&pid) {
-            warn!(?self.error, ?self.peer_id, host = %handler.handler.host, %self.connection_id, "Connection error to host");
-            handler.handler.core_receiver.close();
-        }
-    }
-}
-
-impl ClientSwarmEventHandler for Box<SwarmEvent<BehaviourEvent>> {
-    fn handle_swarm_event(self, _handler: &mut ClientCommunicationHandler) {
-        debug!(event = ?self, "Received not captured event")
-    }
-}
-
-#[enum_dispatch]
-pub(crate) trait ClientCoreMessageHandler {
-    fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()>;
-}
-
-impl ClientCoreMessageHandler for UserStatusMsg {
-    fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        let host = handler.handler.host;
-        handler.handler.swarm.send_request(&host, self.into());
-        Ok(())
-    }
-}
-
-impl ClientCoreMessageHandler for PlaylistMsg {
-    fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        let host = handler.handler.host;
-        handler.handler.swarm.send_request(&host, self.into());
-        Ok(())
-    }
-}
-
-impl ClientCoreMessageHandler for VideoStatusMsg {
-    fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        if self.position != handler.video_status.position {
-            handler.is_seeking = false;
-            handler.video_status = self;
-        }
-        Ok(())
-    }
-}
-
-impl ClientCoreMessageHandler for SelectMsg {
-    fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        let topic = handler.handler.topic.clone();
-        handler.handler.reset_requests_responses();
-        handler.handler.swarm.try_broadcast(topic, self.into())
-    }
-}
-
-impl ClientCoreMessageHandler for NiketsuMessage {
-    fn handle_core_message(self, handler: &mut ClientCommunicationHandler) -> Result<()> {
-        let topic = handler.handler.topic.clone();
-        handler.handler.swarm.try_broadcast(topic, self)
-    }
-}
-
-#[enum_dispatch()]
-trait ClientSwarmBroadcastHandler {
-    fn handle_swarm_broadcast(
-        self,
-        peer_id: PeerId,
-        handler: &mut ClientCommunicationHandler,
-    ) -> Result<()>;
-}
-
-#[enum_dispatch(ClientSwarmBroadcastHandler)]
-enum ClientSwarmBroadcast {
-    VideoStatus(VideoStatusMsg),
-    Select(SelectMsg),
-    Seek(SeekMsg),
-    Passthrough(PassthroughMsg),
-    Other(NiketsuMessage),
-}
-
-impl ClientSwarmBroadcast {
-    fn from(message: NiketsuMessage) -> Self {
-        match message {
-            NiketsuMessage::VideoStatus(msg) => ClientSwarmBroadcast::VideoStatus(msg),
-            NiketsuMessage::Seek(msg) => ClientSwarmBroadcast::Seek(msg),
-            NiketsuMessage::Select(msg) => ClientSwarmBroadcast::Select(msg),
-            NiketsuMessage::Join(_)
-            | NiketsuMessage::StatusList(_)
-            | NiketsuMessage::Pause(_)
-            | NiketsuMessage::Start(_)
-            | NiketsuMessage::PlaybackSpeed(_)
-            | NiketsuMessage::UserMessage(_)
-            | NiketsuMessage::ServerMessage(_) => {
-                ClientSwarmBroadcast::Passthrough(PassthroughMsg {
-                    niketsu_msg: message,
-                })
-            }
-            msg => ClientSwarmBroadcast::Other(msg),
-        }
-    }
-}
-
-impl ClientSwarmBroadcastHandler for VideoStatusMsg {
-    fn handle_swarm_broadcast(
-        self,
-        peer_id: PeerId,
-        handler: &mut ClientCommunicationHandler,
-    ) -> Result<()> {
-        if peer_id != handler.handler.host {
-            bail!("Received video status from non-host peer: {peer_id:?}")
-        }
-
-        if handler.is_seeking {
-            debug!("can not determine client position during seek");
-            return Ok(());
-        }
-
-        let mut video_status = self.clone();
-        if let Some(pos) = video_status.position {
-            debug!("add delay to position");
-            if !video_status.paused {
-                video_status.position = Some(pos + handler.delay.div_f64(2.0));
-            }
-        }
-
-        handler.handler.message_sender.send(video_status.into())?;
-        Ok(())
-    }
-}
-
-impl ClientSwarmBroadcastHandler for SelectMsg {
-    fn handle_swarm_broadcast(
-        self,
-        _peer_id: PeerId,
-        handler: &mut ClientCommunicationHandler,
-    ) -> Result<()> {
-        handler.handler.reset_requests_responses();
-        handler.handler.message_sender.send(self.into())?;
-        Ok(())
-    }
-}
-
-impl ClientSwarmBroadcastHandler for SeekMsg {
-    fn handle_swarm_broadcast(
-        self,
-        _peer_id: PeerId,
-        handler: &mut ClientCommunicationHandler,
-    ) -> Result<()> {
-        handler.is_seeking = true;
-        handler.handler.message_sender.send(self.into())?;
-        Ok(())
-    }
-}
-
-struct PassthroughMsg {
-    niketsu_msg: NiketsuMessage,
-}
-
-impl ClientSwarmBroadcastHandler for PassthroughMsg {
-    fn handle_swarm_broadcast(
-        self,
-        _peer_id: PeerId,
-        handler: &mut ClientCommunicationHandler,
-    ) -> Result<()> {
-        handler.handler.message_sender.send(self.niketsu_msg)?;
-        Ok(())
-    }
-}
-
-impl ClientSwarmBroadcastHandler for NiketsuMessage {
-    fn handle_swarm_broadcast(
-        self,
-        _peer_id: PeerId,
-        handler: &mut ClientCommunicationHandler,
-    ) -> Result<()> {
-        handler.handler.message_sender.send(self)?;
-        Ok(())
-    }
-}
-
-pub(crate) struct ClientCommunicationHandler {
-    handler: CommunicationHandler,
-    host_conn: Option<ConnectionId>,
-    relay_conn: Option<ConnectionId>,
-    video_status: VideoStatusMsg,
-    is_seeking: bool,
-    delay: Duration,
-}
-
-impl ClientCommunicationHandler {
+impl ClientRole {
     pub(crate) fn new(
         swarm: Swarm<Behaviour>,
-        topic: gossipsub::IdentTopic,
+        membership: Membership,
         host: PeerId,
-        relay_addr: Multiaddr,
-        core_receiver: tokio::sync::mpsc::UnboundedReceiver<NiketsuMessage>,
-        message_sender: tokio::sync::mpsc::UnboundedSender<NiketsuMessage>,
+        core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
+        message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
+        chunk_routes: ChunkRoutes,
     ) -> Self {
-        let handler = CommunicationHandler::new(
+        // A client starts out with nothing but the circuit to the host being
+        // dialed, and is connected once that led to a direct connection and
+        // its stream to the host is open on it.
+        let session = Session::new(
             swarm,
-            topic,
+            membership,
             host,
-            relay_addr,
+            HostLink::rendezvous(),
             core_receiver,
             message_sender,
+            chunk_routes,
         );
         Self {
-            handler,
-            host_conn: None,
-            relay_conn: None,
-            video_status: VideoStatusMsg::default(),
-            is_seeking: false,
-            delay: Duration::default(),
+            session,
+            host_reservation: None,
+        }
+    }
+
+    fn on_ping(&mut self, event: ping::Event) {
+        let host = self.session.net.host;
+        if event.peer != host {
+            return;
+        }
+
+        match event.result {
+            // a circuit's round trip includes the detour over the relay
+            Ok(rtt) if self.session.links.is_direct(&host, event.connection) => {
+                self.session.forward(HostRoundTripMsg { rtt });
+            }
+            Ok(_) => {}
+            Err(error) => {
+                warn!(%error, "Ping to host failed, closing connection");
+                self.session.net.swarm.close_connection(event.connection);
+            }
+        }
+    }
+
+    fn on_dcutr(&mut self, event: dcutr::Event) {
+        let host = self.session.net.host;
+        let peer = event.remote_peer_id;
+        // A successful punch shows up as a direct connection, like any other
+        // way of getting one.
+        let Err(error) = event.result else {
+            return;
+        };
+        warn!(%peer, %error, "Hole punching failed");
+        // A punch is one of several ways to a direct connection (the host
+        // also dials on the LAN), and a file-share peer is not needed for
+        // the room. Without the host there is no room, though.
+        if peer == host && !self.session.links.is_linked(&host) {
+            self.session.net.stop(Stop::HostUnreachable);
+        }
+    }
+
+    /// Joins the room: opens the stream to the host on the direct
+    /// connection that exists now.
+    fn on_host_linked(&mut self, addr: &Multiaddr) {
+        self.session.net.host_link = HostLink::direct(addr);
+        self.session.streams.join(self.session.net.host);
+        self.reserve_host_circuit();
+    }
+
+    /// Reserves a slot on the host's relay, where other clients reach us
+    /// for file-share hole punches. One reservation at a time: every
+    /// `listen_on` of the circuit spawns a listener whose renewals count
+    /// against the host relay's per-peer rate limit.
+    fn reserve_host_circuit(&mut self) {
+        let Some(host_circuit) = self.session.net.host_circuit() else {
+            return;
+        };
+        match self.session.net.swarm.listen_on(host_circuit.clone()) {
+            Ok(listener) => {
+                info!(%host_circuit, "Reserving slot on host relay");
+                self.host_reservation = Some(listener);
+            }
+            Err(err) => warn!(?err, %host_circuit, "Failed to listen on host relay circuit"),
+        }
+    }
+
+    /// A reservation belongs to the connection it was made on, and its
+    /// listener closes with it. While another direct connection keeps the
+    /// host linked, the slot is reserved again there. A reservation the
+    /// host's relay ended itself is not asked for again.
+    fn on_listener_closed(&mut self, listener: ListenerId, reason: std::io::Result<()>) {
+        if self.host_reservation != Some(listener) {
+            return debug!(?listener, ?reason, "Listener closed");
+        }
+        self.host_reservation = None;
+        let host = self.session.net.host;
+        match reason {
+            Ok(()) if self.session.links.is_linked(&host) => {
+                info!("Reservation on host relay closed with its connection");
+                self.reserve_host_circuit();
+            }
+            Ok(()) => debug!("Reservation on host relay closed with the link to the host"),
+            Err(error) => warn!(%error, "Host relay ended the reservation"),
+        }
+    }
+
+    fn on_outgoing_connection_error(
+        &mut self,
+        connection_id: ConnectionId,
+        peer_id: Option<PeerId>,
+        error: DialError,
+    ) {
+        let host = self.session.net.host;
+        if peer_id == Some(host) && !self.session.links.is_connected(&host) {
+            warn!(%error, %host, %connection_id, "Failed to reach the host");
+            self.session.net.stop(Stop::HostUnreachable);
+        } else {
+            debug!(%error, ?peer_id, %connection_id, "Outgoing connection error");
         }
     }
 }
 
 #[async_trait]
-impl CommunicationHandlerTrait for ClientCommunicationHandler {
-    async fn run(&mut self) {
-        loop {
-            let base = &mut self.handler.base;
-            tokio::select! {
-                event = base.swarm.select_next_some() => self.handle_swarm_event(event),
-                msg = base.core_receiver.recv() => match msg {
-                    Some(msg) => {
-                        debug!(?msg, "Message from core");
-                        let res = self.handle_core_message(msg);
-                        log_err_msg!(res, "Handling message caused error");
-                    },
-                    None => {
-                        error!("Channel of core closed. Stopping p2p client event loop");
-                        break
-                    }
-                },
+impl Role for ClientRole {
+    fn session(&mut self) -> &mut Session {
+        &mut self.session
+    }
+
+    fn on_opened(
+        &mut self,
+        peer_id: PeerId,
+        connection_id: ConnectionId,
+        endpoint: ConnectedPoint,
+        opened: Opened,
+    ) {
+        let swarm = &mut self.session.net.swarm;
+        match opened {
+            Opened::Rendezvous => debug!(%peer_id, "Relay circuit established"),
+            Opened::SpareCircuit => {
+                debug!(%peer_id, "Closing relay circuit, direct connection already exists");
+                swarm.close_connection(connection_id);
             }
+            Opened::Linked { circuits } => {
+                info!(%peer_id, ?endpoint, "Direct connection established");
+                for circuit in circuits {
+                    swarm.close_connection(circuit);
+                }
+                if peer_id == self.session.net.host {
+                    self.on_host_linked(endpoint.get_remote_address());
+                }
+            }
+            Opened::AnotherDirect => debug!(%peer_id, "Another direct connection established"),
+        }
+    }
+
+    fn on_closed(
+        &mut self,
+        peer_id: PeerId,
+        connection_id: ConnectionId,
+        cause: Option<ConnectionError>,
+        closed: Closed,
+    ) {
+        if peer_id == self.session.net.host {
+            let stop = match closed {
+                Closed::Unlinked => Stop::HostLost,
+                Closed::RendezvousLost => Stop::HostUnreachable,
+                Closed::Unchanged => return,
+            };
+            warn!(?cause, %peer_id, %connection_id, "Connection to host closed");
+            self.session.net.stop(stop);
         }
     }
 
     fn handle_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
-        debug!(?event, host = %self.handler.host, peer = %self.handler.swarm.local_peer_id(), "Handling swarm event");
-        let client_event = ClientSwarmEvent::from(event);
-        client_event.handle_swarm_event(self);
-    }
-
-    fn handle_core_message(&mut self, msg: NiketsuMessage) -> Result<()> {
-        debug!(?msg, host = %self.handler.host, peer = %self.handler.swarm.local_peer_id(), "Handling core message");
-        use FileShareCoreMessageHandler as FH;
-        use NiketsuMessage::*;
-        match msg {
-            VideoStatus(msg) => ClientCoreMessageHandler::handle_core_message(msg, self),
-            Select(msg) => ClientCoreMessageHandler::handle_core_message(msg, self),
-            Playlist(msg) => ClientCoreMessageHandler::handle_core_message(msg, self),
-            Status(msg) => ClientCoreMessageHandler::handle_core_message(msg, self),
-            FileRequest(msg) => FH::handle_core_message(msg, &mut self.handler),
-            FileResponse(msg) => FH::handle_core_message(msg, &mut self.handler),
-            ChunkRequest(msg) => FH::handle_core_message(msg, &mut self.handler),
-            ChunkResponse(msg) => FH::handle_core_message(msg, &mut self.handler),
-            VideoShare(msg) => FH::handle_core_message(msg, &mut self.handler),
-            msg => msg.broadcast(&mut self.handler),
+        use BehaviourEvent::*;
+        use TransportBehaviourEvent as T;
+        match event {
+            SwarmEvent::Behaviour(Transport(T::Ping(e))) => self.on_ping(e),
+            SwarmEvent::Behaviour(Transport(T::Dcutr(e))) => self.on_dcutr(e),
+            SwarmEvent::OutgoingConnectionError {
+                connection_id,
+                peer_id,
+                error,
+            } => self.on_outgoing_connection_error(connection_id, peer_id, error),
+            SwarmEvent::ListenerClosed {
+                listener_id,
+                reason,
+                ..
+            } => self.on_listener_closed(listener_id, reason),
+            other => debug!(event = ?other, "Received not captured event"),
         }
     }
 
-    fn handle_swarm_request(
-        &mut self,
-        msg: NiketsuMessage,
-        channel: ResponseChannel<MessageResponse>,
-        peer_id: PeerId,
-    ) -> Result<()> {
-        debug!("Received swarm request {msg:?}");
-        match msg {
-            msg if peer_id == self.handler.host => msg.send_to_core(channel, &mut self.handler),
-            msg => msg.respond_with_err(channel, &mut self.handler),
+    /// The client is connected once its stream to the host is open: the
+    /// core hears of it before anything the host wrote, so it starts the
+    /// connection afresh before it follows the room. When the stream ends
+    /// the session ends as with a lost host, whatever the cause: the host
+    /// turned the client down or dropped it, or a write did not get
+    /// through. Whether the host applied what was written last is unknown
+    /// then; the core connects anew and takes the room's state.
+    fn on_stream_event(&mut self, event: StreamEvent) {
+        match event {
+            StreamEvent::Opened(_) => self.session.forward(ConnectedMsg { is_host: false }),
+            StreamEvent::Refused(_) => {
+                warn!("Failed to open the stream to the host");
+                self.session.net.stop(Stop::HostUnreachable);
+            }
+            StreamEvent::Received(_, NiketsuMessage::RoomState(msg)) => self.session.forward(msg),
+            StreamEvent::Received(_, NiketsuMessage::Line(msg)) => self.session.forward(msg),
+            StreamEvent::Received(_, other) => debug!(?other, "Not for the host to send"),
+            StreamEvent::Ended(_) => {
+                warn!("The stream to the host ended; leaving the room");
+                self.session.net.stop(Stop::HostLost);
+            }
         }
     }
 
-    fn handle_swarm_broadcast(&mut self, msg: Vec<u8>, peer_id: PeerId) -> Result<()> {
-        let niketsu_msg: NiketsuMessage = msg.try_into()?;
-        debug!(message = ?niketsu_msg, "Received broadcast");
-        let swarm_broadcast = ClientSwarmBroadcast::from(niketsu_msg);
-        swarm_broadcast.handle_swarm_broadcast(peer_id, self)
+    fn handle_core_message(&mut self, msg: OutgoingMessage) -> Option<OutgoingMessage> {
+        let OutgoingMessage::Intent(intent) = msg else {
+            return Some(msg);
+        };
+        self.session.streams.send(intent.into(), |_| true);
+        None
+    }
+}
+
+/// A client role against a host played by the test over the memory
+/// transport.
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use futures::StreamExt;
+    use libp2p::core::transport::MemoryTransport;
+    use libp2p::core::upgrade::Version;
+    use libp2p::multiaddr::Protocol;
+    use libp2p::swarm::NetworkBehaviour;
+    use libp2p::{Stream, Transport, noise, yamux};
+    use libp2p_stream::IncomingStreams;
+    use niketsu_core::chunk::ChunkRoute;
+    use niketsu_core::communicator::{Intent, RoomStateMsg};
+    use tokio::sync::mpsc::unbounded_channel;
+    use tokio::time::timeout;
+
+    use super::*;
+    use crate::p2p::member::MemberTag;
+    use crate::p2p::stream::{PROTOCOL, read_frame, write_frame};
+
+    const ROOM: &str = "room";
+    const PASSWORD: &str = "secret";
+    const PATIENCE: Duration = Duration::from_secs(5);
+
+    /// What the host's side needs for the client to keep its connection:
+    /// the room's streams, and pings.
+    #[derive(NetworkBehaviour)]
+    struct HostSide {
+        streams: libp2p_stream::Behaviour,
+        ping: ping::Behaviour,
+    }
+
+    fn swarm<B: NetworkBehaviour>(
+        behaviour: impl FnOnce(&libp2p::identity::Keypair, libp2p::relay::client::Behaviour) -> B,
+    ) -> Swarm<B> {
+        libp2p::SwarmBuilder::with_new_identity()
+            .with_tokio()
+            .with_other_transport(|key| {
+                Ok(MemoryTransport::default()
+                    .upgrade(Version::V1)
+                    .authenticate(noise::Config::new(key)?)
+                    .multiplex(yamux::Config::default()))
+            })
+            .unwrap()
+            .with_relay_client(noise::Config::new, yamux::Config::default)
+            .unwrap()
+            .with_behaviour(|key, relay_client| behaviour(key, relay_client))
+            .unwrap()
+            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+            .build()
+    }
+
+    /// A client role dialing the test's host side, and the test's ends of
+    /// the channels to the client's core.
+    struct Setup {
+        /// Where the client's stream arrives, if the host side takes the
+        /// room's streams.
+        arriving: Option<IncomingStreams>,
+        host_membership: Membership,
+        /// The client's peer id.
+        peer: PeerId,
+        core: tokio::sync::mpsc::UnboundedSender<OutgoingMessage>,
+        to_core: tokio::sync::mpsc::UnboundedReceiver<IncomingMessage>,
+        /// Why the client's session ended, once it has.
+        run: tokio::task::JoinHandle<Stop>,
+    }
+
+    impl Setup {
+        /// The client's stream once it presented the client's tag.
+        async fn accept(&mut self) -> Stream {
+            let arriving = self.arriving.as_mut().unwrap();
+            let (from, mut stream) = timeout(PATIENCE, arriving.next())
+                .await
+                .expect("the client never opened its stream")
+                .unwrap();
+            assert_eq!(from, self.peer);
+            let tag: MemberTag = timeout(PATIENCE, read_frame(&mut stream))
+                .await
+                .expect("the client never presented its tag")
+                .unwrap();
+            assert!(self.host_membership.admits(&self.peer, &tag));
+            stream
+        }
+
+        /// What the core hears next beside the round trips the pings
+        /// measure.
+        async fn heard(&mut self) -> IncomingMessage {
+            let next = async {
+                loop {
+                    match self.to_core.recv().await.unwrap() {
+                        IncomingMessage::HostRoundTrip(_) => continue,
+                        msg => return msg,
+                    }
+                }
+            };
+            timeout(PATIENCE, next)
+                .await
+                .expect("the core hears nothing")
+        }
+    }
+
+    /// A client dialing a host side that takes the room's streams if
+    /// `accepts`.
+    async fn start(accepts: bool) -> Setup {
+        let mut host_side = swarm(|_, _| HostSide {
+            streams: libp2p_stream::Behaviour::new(),
+            ping: ping::Behaviour::default(),
+        });
+        let host = *host_side.local_peer_id();
+        host_side.listen_on("/memory/0".parse().unwrap()).unwrap();
+        let addr = loop {
+            if let SwarmEvent::NewListenAddr { address, .. } = host_side.select_next_some().await {
+                break address.with(Protocol::P2p(host));
+            }
+        };
+        let host_membership = Membership::new(ROOM.into(), PASSWORD.into(), &host);
+        let mut control = host_side.behaviour_mut().streams.new_control();
+        let arriving = accepts.then(|| control.accept(PROTOCOL).unwrap());
+        tokio::spawn(async move {
+            loop {
+                host_side.select_next_some().await;
+            }
+        });
+
+        let mut client =
+            swarm(|key, relay_client| Behaviour::new(key, relay_client, false).unwrap());
+        let peer = *client.local_peer_id();
+        client.dial(addr).unwrap();
+        let (core, core_receiver) = unbounded_channel();
+        let (message_sender, to_core) = unbounded_channel();
+        let routes = ChunkRoutes {
+            fetch: ChunkRoute::default(),
+            provide: ChunkRoute::default(),
+        };
+        let membership = Membership::new(ROOM.into(), PASSWORD.into(), &peer);
+        let mut role = ClientRole::new(
+            client,
+            membership,
+            host,
+            core_receiver,
+            message_sender,
+            routes,
+        );
+        let run = tokio::spawn(async move { role.run().await });
+        Setup {
+            arriving,
+            host_membership,
+            peer,
+            core,
+            to_core,
+            run,
+        }
+    }
+
+    fn line(message: &str) -> Intent {
+        Intent::Chat(message.into())
+    }
+
+    /// The client joins by opening its stream with its member tag, and its
+    /// intents, chat lines among them, reach the host in the order the
+    /// core sent them.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_client_joins_with_its_tag_and_its_intents_arrive_in_order() {
+        let mut setup = start(true).await;
+        let mut stream = setup.accept().await;
+        let connected = setup.heard().await;
+        assert!(
+            matches!(
+                connected,
+                IncomingMessage::Connected(ConnectedMsg { is_host: false })
+            ),
+            "{connected:?}"
+        );
+
+        let sent = [
+            Intent::Pause,
+            line("one"),
+            Intent::Speed(1.5),
+            Intent::Start,
+            line("two"),
+        ];
+        for intent in &sent {
+            setup.core.send(intent.clone().into()).unwrap();
+        }
+        for intent in sent {
+            let msg: NiketsuMessage = timeout(PATIENCE, read_frame(&mut stream))
+                .await
+                .expect("the client stopped sending")
+                .unwrap();
+            assert_eq!(msg, intent.into());
+        }
+    }
+
+    /// The core hears of the connection before the host's first message,
+    /// also when the host writes it the moment the stream arrives, so
+    /// starting the connection afresh does not wipe what the host sent.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_core_hears_of_the_connection_before_the_hosts_first_message() {
+        let mut setup = start(true).await;
+        let mut stream = setup.accept().await;
+        let state = RoomStateMsg {
+            jumps: 3,
+            ..Default::default()
+        };
+        let first = NiketsuMessage::RoomState(state.clone());
+        write_frame(&mut stream, &first).await.unwrap();
+
+        let connected = setup.heard().await;
+        assert!(
+            matches!(connected, IncomingMessage::Connected(_)),
+            "the core first hears of the connection: {connected:?}"
+        );
+        let followed = setup.heard().await;
+        assert!(
+            matches!(&followed, IncomingMessage::RoomState(m) if *m == state),
+            "then the host's first message: {followed:?}"
+        );
+    }
+
+    /// When the host ends the stream, the client's session ends as with a
+    /// lost host, and an intent the core sent meanwhile goes with it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_client_leaves_a_host_that_ends_its_stream() {
+        let mut setup = start(true).await;
+        let stream = setup.accept().await;
+        setup.heard().await;
+        drop(stream);
+        setup.core.send(Intent::Pause.into()).unwrap();
+        let stop = timeout(PATIENCE, &mut setup.run).await;
+        assert_eq!(stop.unwrap().unwrap(), Stop::HostLost);
+    }
+
+    /// A peer that takes no streams of the room hosts none: the client
+    /// never is connected, and its session ends with an unreachable host.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_client_gives_up_on_a_peer_that_hosts_no_room() {
+        let mut setup = start(false).await;
+        let stop = timeout(PATIENCE, &mut setup.run).await;
+        assert_eq!(stop.unwrap().unwrap(), Stop::HostUnreachable);
+        while let Ok(msg) = setup.to_core.try_recv() {
+            assert!(
+                matches!(msg, IncomingMessage::HostRoundTrip(_)),
+                "the core heard of a room: {msg:?}"
+            );
+        }
     }
 }

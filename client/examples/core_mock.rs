@@ -38,7 +38,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
         };
         mock.user_list.insert(UserStatus {
             name: "ThisUser".into(),
-            ready: false,
+            ..Default::default()
         });
         mock
     }
@@ -136,6 +136,7 @@ impl<T: UserInterfaceTrait> CoreMock<T> {
         let user = UserStatus {
             name: arcstr::format!("User{i}"),
             ready,
+            ..Default::default()
         };
         self.user_list.insert(user);
     }

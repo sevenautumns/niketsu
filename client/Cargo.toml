@@ -14,16 +14,13 @@ ratatui = ["dep:niketsu-ratatui"]
 [dependencies]
 niketsu-core.path = "core"
 niketsu-mpv.path = "player/mpv"
-niketsu-video-server.path = "player/video_server"
 niketsu-communicator.path = "communicator"
 niketsu-iced = { path = "ui/iced", optional = true }
 niketsu-ratatui = { path = "ui/ratatui", optional = true }
 anyhow.workspace = true
 tokio.workspace = true
 strum.workspace = true
-directories.workspace = true
 tracing.workspace = true
-whoami = "2.0"
 clap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

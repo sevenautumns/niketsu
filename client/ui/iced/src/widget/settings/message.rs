@@ -106,6 +106,7 @@ impl SettingsWidgetMessageTrait for ConnectApplyCloseSave {
     fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
         ConnectApplyClose.handle(state, model);
         log_err!(state.config().save());
+        log_err!(state.iced_config().save());
     }
 }
 
@@ -116,6 +117,7 @@ impl SettingsWidgetMessageTrait for ApplyCloseSave {
     fn handle(self, state: &mut SettingsWidgetState, model: &UiModel) {
         ApplyClose.handle(state, model);
         log_err!(state.config().save());
+        log_err!(state.iced_config().save());
     }
 }
 

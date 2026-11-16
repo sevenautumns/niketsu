@@ -1,142 +1,179 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
-use std::time::Duration;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use anyhow::Result;
-use async_std::stream::StreamExt;
-use async_std::sync::RwLock;
-use bcrypt::{DEFAULT_COST, hash, verify};
+use futures::StreamExt;
 use libp2p::core::Multiaddr;
 use libp2p::core::multiaddr::Protocol;
 use libp2p::identity::Keypair;
-use libp2p::request_response::{self, ProtocolSupport, ResponseChannel};
+use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, StreamProtocol, Swarm, identify, noise, ping, relay, tcp, yamux};
-use serde::{Deserialize, Serialize};
+use niketsu_protocol::{AUTH_PROTOCOL, AuthRequest, AuthResponse, AuthStatus};
+use subtle::ConstantTimeEq;
 use tracing::debug;
 
-use crate::config::Config;
+use crate::timing::{
+    CIRCUIT_DURATION, IDLE_CONNECTION_TIMEOUT, PING_INTERVAL, PING_TIMEOUT, QUIC_HANDSHAKE_TIMEOUT,
+    QUIC_IDLE_TIMEOUT,
+};
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
     relay: relay::Behaviour,
     ping: ping::Behaviour,
     identify: identify::Behaviour,
-    init_request_response: request_response::cbor::Behaviour<InitRequest, InitResponse>,
+    auth: request_response::cbor::Behaviour<AuthRequest, AuthResponse>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct InitRequest {
-    room: String,
-    password: String,
-}
+/// The digest of a room's password as its host sent it. It is a digest
+/// already and never leaves memory, so it is kept as it is.
+struct PasswordDigest(String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum ResponseStatus {
-    Ok,
-    Err,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InitResponse {
-    status: ResponseStatus,
-    peer_id: Option<PeerId>, // peer id of room if found
-}
-
-struct PasswordHash(String);
-
-impl From<InitRequest> for PasswordHash {
-    fn from(value: InitRequest) -> Self {
-        PasswordHash(hash(value.password.clone(), DEFAULT_COST).unwrap_or(value.password))
+impl PasswordDigest {
+    /// Compares in constant time, so the time of an answer does not tell
+    /// how much of a guess was right.
+    fn matches(&self, digest: &str) -> bool {
+        self.0.as_bytes().ct_eq(digest.as_bytes()).into()
     }
 }
 
-impl PasswordHash {
-    fn verify(&self, password: String) -> bool {
-        verify(password, &self.0).unwrap_or(false)
+fn granted(host: Option<PeerId>) -> AuthResponse {
+    AuthResponse {
+        status: AuthStatus::Ok,
+        peer_id: host,
+    }
+}
+
+fn denied() -> AuthResponse {
+    AuthResponse {
+        status: AuthStatus::Err,
+        peer_id: None,
     }
 }
 
 type RoomName = String;
 
-pub struct Relay {
-    swarm: Swarm<Behaviour>,
-    rooms: Arc<RwLock<HashMap<RoomName, (PeerId, PasswordHash)>>>,
-    hosts: Arc<RwLock<HashMap<PeerId, RoomName>>>,
+struct Room {
+    host: PeerId,
+    password: PasswordDigest,
 }
 
-pub fn new(config: Config) -> Result<Relay> {
-    let keypair = Keypair::from_protobuf_encoding(config.keypair.unwrap().as_slice())?;
-    let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
-    quic_config.handshake_timeout = Duration::from_secs(10);
-    quic_config.max_idle_timeout = 5 * 1000;
+/// The open rooms and who hosts them. A peer hosts at most one room, and
+/// `hosts` is the reverse of `rooms`.
+#[derive(Default)]
+struct Rooms {
+    rooms: HashMap<RoomName, Room>,
+    hosts: HashMap<PeerId, RoomName>,
+}
 
-    let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
-        .with_tokio()
-        .with_tcp(
-            tcp::Config::default(),
-            noise::Config::new,
-            yamux::Config::default,
-        )?
-        .with_quic_config(|_| quic_config)
-        .with_behaviour(|key| Behaviour {
-            relay: relay::Behaviour::new(
-                key.public().to_peer_id(),
-                libp2p::relay::Config::default(),
-            ),
-            ping: ping::Behaviour::new(
-                ping::Config::new()
-                    .with_timeout(Duration::from_secs(5))
-                    .with_interval(Duration::from_secs(2)),
-            ),
-            identify: identify::Behaviour::new(identify::Config::new(
-                "/identify/1".to_string(),
-                key.public(),
-            )),
-            init_request_response: request_response::cbor::Behaviour::new(
-                [(
-                    StreamProtocol::new("/authorisation/1"),
-                    ProtocolSupport::Full,
-                )],
-                request_response::Config::default(),
-            ),
-        })?
-        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(10)))
-        .build();
+impl Rooms {
+    /// Answers `peer` asking for a room: it joins the room with its
+    /// password and learns who hosts it, or opens it when nobody does.
+    fn answer(&mut self, peer: PeerId, request: AuthRequest) -> AuthResponse {
+        let AuthRequest { room, password } = request;
 
-    let listen_addr_tcp_ipv4 = Multiaddr::empty()
-        .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
-        .with(Protocol::Tcp(config.port));
-    let listen_addr_tcp_ipv6 = Multiaddr::empty()
-        .with(Protocol::from(Ipv6Addr::UNSPECIFIED))
-        .with(Protocol::Tcp(config.port));
-    swarm.listen_on(listen_addr_tcp_ipv4)?;
-    swarm.listen_on(listen_addr_tcp_ipv6)?;
+        let Some(open) = self.get(&room) else {
+            debug!(%peer, %room, "Opened room");
+            self.open(room, peer, PasswordDigest(password));
+            return granted(None);
+        };
+        if !open.password.matches(&password) {
+            debug!(%peer, %room, "Refused to join room: wrong password");
+            return denied();
+        }
+        debug!(%peer, %room, host = %open.host, "Joined room");
+        // A host asking for its own room is told of no other host.
+        granted(Some(open.host).filter(|host| *host != peer))
+    }
 
-    let listen_addr_quic_ipv4 = Multiaddr::empty()
-        .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
-        .with(Protocol::Udp(config.port))
-        .with(Protocol::QuicV1);
-    let listen_addr_quic_ipv6 = Multiaddr::empty()
-        .with(Protocol::from(Ipv6Addr::UNSPECIFIED))
-        .with(Protocol::Udp(config.port))
-        .with(Protocol::QuicV1);
-    swarm.listen_on(listen_addr_quic_ipv4)?;
-    swarm.listen_on(listen_addr_quic_ipv6)?;
+    fn get(&self, name: &str) -> Option<&Room> {
+        self.rooms.get(name)
+    }
 
-    let rooms: Arc<RwLock<HashMap<String, (PeerId, PasswordHash)>>> =
-        Arc::new(RwLock::new(HashMap::new()));
-    let hosts: Arc<RwLock<HashMap<PeerId, String>>> = Arc::new(RwLock::new(HashMap::new()));
+    fn open(&mut self, name: RoomName, host: PeerId, password: PasswordDigest) {
+        self.close_hosted_by(host);
+        self.hosts.insert(host, name.clone());
+        self.rooms.insert(name, Room { host, password });
+    }
 
-    Ok(Relay {
-        swarm,
-        rooms,
-        hosts,
-    })
+    fn close_hosted_by(&mut self, host: PeerId) {
+        if let Some(name) = self.hosts.remove(&host) {
+            self.rooms.remove(&name);
+        }
+    }
+}
+
+pub struct Relay {
+    swarm: Swarm<Behaviour>,
+    rooms: Rooms,
 }
 
 impl Relay {
+    /// A relay that listens on `port` on every interface, over TCP and QUIC.
+    pub fn new(keypair: Keypair, port: u16) -> Result<Self> {
+        let mut quic_config = libp2p::quic::Config::new(&keypair.clone());
+        quic_config.handshake_timeout = QUIC_HANDSHAKE_TIMEOUT;
+        quic_config.max_idle_timeout = QUIC_IDLE_TIMEOUT.as_millis() as u32;
+
+        let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
+            .with_tokio()
+            .with_tcp(
+                tcp::Config::default(),
+                noise::Config::new,
+                yamux::Config::default,
+            )?
+            .with_quic_config(|_| quic_config)
+            .with_behaviour(|key| Behaviour {
+                relay: relay::Behaviour::new(
+                    key.public().to_peer_id(),
+                    // Circuits through the public relay are only a hole-punch
+                    // rendezvous: the client keeps all niketsu protocols off
+                    // relayed connections (see DirectOnly in the communicator), so
+                    // nothing but identify/DCUtR/ping ever flows here, for no
+                    // longer than a client waits for its punch (see
+                    // CIRCUIT_DURATION). The byte cap guards against peers
+                    // that don't play by DirectOnly's rules.
+                    relay::Config {
+                        max_circuits: 128,
+                        max_circuits_per_peer: 4,
+                        max_circuit_duration: CIRCUIT_DURATION,
+                        max_circuit_bytes: 128 * 1024,
+                        ..Default::default()
+                    },
+                ),
+                ping: ping::Behaviour::new(
+                    ping::Config::new()
+                        .with_interval(PING_INTERVAL)
+                        .with_timeout(PING_TIMEOUT),
+                ),
+                identify: identify::Behaviour::new(identify::Config::new(
+                    "/identify/1".to_string(),
+                    key.public(),
+                )),
+                auth: request_response::cbor::Behaviour::new(
+                    [(StreamProtocol::new(AUTH_PROTOCOL), ProtocolSupport::Full)],
+                    request_response::Config::default(),
+                ),
+            })?
+            .with_swarm_config(|c| c.with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT))
+            .build();
+
+        for ip in [
+            IpAddr::from(Ipv4Addr::UNSPECIFIED),
+            IpAddr::from(Ipv6Addr::UNSPECIFIED),
+        ] {
+            let ip = Multiaddr::from(ip);
+            swarm.listen_on(ip.clone().with(Protocol::Tcp(port)))?;
+            swarm.listen_on(ip.with(Protocol::Udp(port)).with(Protocol::QuicV1))?;
+        }
+
+        Ok(Self {
+            swarm,
+            rooms: Rooms::default(),
+        })
+    }
+
     pub fn peer_id(&self) -> &PeerId {
         self.swarm.local_peer_id()
     }
@@ -148,77 +185,109 @@ impl Relay {
                     info: identify::Info { observed_addr, .. },
                     ..
                 })) => {
-                    self.swarm.add_external_address(observed_addr.clone());
-                    debug!("Added external node");
+                    debug!(%observed_addr, "Added external address");
+                    self.swarm.add_external_address(observed_addr);
                 }
-                SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                    debug!(?cause, "Connection closed");
-                    self.close_node(peer_id).await;
+                // A host is gone with its last connection; a peer may hold
+                // several, e.g. over TCP and QUIC.
+                SwarmEvent::ConnectionClosed {
+                    peer_id,
+                    cause,
+                    num_established,
+                    ..
+                } => {
+                    debug!(%peer_id, ?cause, num_established, "Connection closed");
+                    if num_established == 0 {
+                        self.rooms.close_hosted_by(peer_id);
+                    }
                 }
                 SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                    if let Some(pid) = peer_id {
-                        self.close_node(pid).await;
+                    debug!(?peer_id, ?error, "Outgoing connection failed");
+                    if let Some(peer_id) = peer_id
+                        && !self.swarm.is_connected(&peer_id)
+                    {
+                        self.rooms.close_hosted_by(peer_id);
                     }
-                    debug!(?error, "Connection closed due to an error");
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::InitRequestResponse(
-                    request_response::Event::Message { peer, message, .. },
-                )) => match message {
+                SwarmEvent::Behaviour(BehaviourEvent::Auth(request_response::Event::Message {
+                    peer,
+                    message,
+                    ..
+                })) => match message {
                     request_response::Message::Request {
                         request, channel, ..
                     } => {
-                        self.handle_init_request(peer, request, channel).await;
+                        let response = self.rooms.answer(peer, request);
+                        let auth = &mut self.swarm.behaviour_mut().auth;
+                        if auth.send_response(channel, response).is_err() {
+                            debug!(%peer, "Peer left before its auth request was answered");
+                        }
                     }
                     request_response::Message::Response { .. } => {
-                        debug!("Received init response. This should not happen")
+                        debug!(%peer, "Ignored an auth response: the relay asks nothing");
                     }
                 },
                 _ => {}
             }
         }
     }
+}
 
-    async fn close_node(&mut self, peer_id: PeerId) {
-        let mut m = self.hosts.write().await;
-        let mut r = self.rooms.write().await;
-        if let Some(room) = m.get(&peer_id) {
-            r.remove(room);
-            m.remove(&peer_id);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn password() -> PasswordDigest {
+        PasswordDigest(String::new())
+    }
+
+    fn ask(room: &str, password: &str) -> AuthRequest {
+        AuthRequest {
+            room: room.into(),
+            password: password.into(),
         }
     }
 
-    async fn handle_init_request(
-        &mut self,
-        peer: PeerId,
-        request: InitRequest,
-        channel: ResponseChannel<InitResponse>,
-    ) {
-        debug!("Received request from client");
-        let mut r = self.rooms.write().await;
-        let mut status = ResponseStatus::Ok;
-        let mut peer_id: Option<PeerId> = None;
-        if let Some((pid, req)) = r.get(request.room.as_str()) {
-            if req.verify(request.password) {
-                // host is available and password is correct
-                if *pid != peer {
-                    debug!("Authentication successfull");
-                    peer_id = Some(*pid);
-                }
-            } else {
-                debug!("Authentication failed");
-                status = ResponseStatus::Err;
-            }
-        } else {
-            // else no error and query client will be host
-            debug!("Creating new room");
-            let mut m = self.hosts.write().await;
-            m.insert(peer, request.room.clone());
-            r.insert(request.room.clone(), (peer, request.into()));
-        }
-        self.swarm
-            .behaviour_mut()
-            .init_request_response
-            .send_response(channel, InitResponse { status, peer_id })
-            .unwrap_or_default();
+    #[test]
+    fn a_room_names_its_host_to_those_with_its_password() {
+        let (alice, bob) = (PeerId::random(), PeerId::random());
+        let mut rooms = Rooms::default();
+        assert_eq!(rooms.answer(alice, ask("room", "secret")), granted(None));
+        assert_eq!(rooms.answer(bob, ask("room", "guess")), denied());
+        assert_eq!(
+            rooms.answer(bob, ask("room", "secret")),
+            granted(Some(alice))
+        );
+        assert_eq!(rooms.answer(alice, ask("room", "secret")), granted(None));
+    }
+
+    #[test]
+    fn a_host_asking_for_its_room_with_another_password_is_denied() {
+        let alice = PeerId::random();
+        let mut rooms = Rooms::default();
+        assert_eq!(rooms.answer(alice, ask("room", "secret")), granted(None));
+        assert_eq!(rooms.answer(alice, ask("room", "guess")), denied());
+        assert_eq!(rooms.answer(alice, ask("room", "secret")), granted(None));
+    }
+
+    #[test]
+    fn a_digest_matches_only_itself() {
+        let digest = PasswordDigest("secret".into());
+        assert!(digest.matches("secret"));
+        assert!(!digest.matches("secreT"));
+        assert!(!digest.matches("secre"));
+        assert!(!digest.matches("secrets"));
+        assert!(!digest.matches(""));
+    }
+
+    #[test]
+    fn a_host_opening_another_room_leaves_the_first() {
+        let alice = PeerId::random();
+        let mut rooms = Rooms::default();
+        rooms.open("first".into(), alice, password());
+        rooms.open("second".into(), alice, password());
+        assert!(rooms.get("first").is_none());
+        rooms.close_hosted_by(alice);
+        assert!(rooms.get("second").is_none());
     }
 }

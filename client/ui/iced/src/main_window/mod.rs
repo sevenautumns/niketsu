@@ -1,263 +1,127 @@
-use iced::advanced::widget::Operation;
-use iced::event::Status;
-use iced::keyboard::Key;
-use iced::keyboard::key::Named;
-use iced::mouse::Cursor;
-use iced::widget::{Button, Column, Container, Id, Row, Scrollable, Text};
-use iced::{Element, Event, Length, Rectangle, Renderer, Theme};
+use iced::widget::text::Wrapping;
+use iced::widget::{Button, Column, Container, Id, PaneGrid, Row, Scrollable, Text, pane_grid};
+use iced::{Element, Length};
 
 use self::message::{MainMessage, ReadyButton};
 use super::message::Message;
 use super::view::ViewModel;
-use super::widget::chat::ChatWidget;
-use super::widget::database::DatabaseWidget;
 use super::widget::playlist::PlaylistWidget;
-use super::widget::rooms::RoomsWidget;
-use crate::main_window::message::ShareButton;
-use crate::message::ToggleReady;
+use super::widget::{chat, database, file_search, rooms, settings};
+use crate::main_window::message::{RequestButton, ShareButton};
+use crate::message::PaneResized;
 use crate::styling::ContainerBorder;
-use crate::widget::file_search::FileSearchWidget;
-use crate::widget::settings::SettingsWidget;
 
 pub(super) mod message;
 
 const SPACING: f32 = 5.0;
+/// Extra grabbable space around the pane split, in pixels.
+const RESIZE_LEEWAY: f32 = 10.0;
 
-pub struct MainView<'a> {
-    base: Element<'a, Message>,
+/// The two resizable halves of the main window.
+#[derive(Debug, Clone, Copy)]
+pub enum PaneKind {
+    Chat,
+    Controls,
 }
 
-impl<'a> MainView<'a> {
-    pub fn new(view_model: &'a ViewModel) -> Self {
-        let mut ready_btn: Button<Message>;
-        match view_model.user().ready {
-            true => {
-                ready_btn = Button::new(
-                    Text::new("Ready")
-                        .width(Length::Fill)
-                        .align_x(iced::alignment::Horizontal::Center),
-                )
-                .style(iced::widget::button::success)
-            }
-            false => {
-                ready_btn = Button::new(
-                    Text::new("Not Ready")
-                        .width(Length::Fill)
-                        .align_x(iced::alignment::Horizontal::Center),
-                )
-                .style(iced::widget::button::danger)
-            }
-        }
-        ready_btn = ready_btn.on_press(MainMessage::from(ReadyButton).into());
+pub fn view(view_model: &ViewModel) -> Element<'_, Message> {
+    Container::new(
+        PaneGrid::new(&view_model.panes, |_, kind, _| {
+            pane_grid::Content::new(match kind {
+                PaneKind::Chat => chat_pane(view_model),
+                PaneKind::Controls => controls_pane(view_model),
+            })
+        })
+        .on_resize(RESIZE_LEEWAY, |event| PaneResized(event).into())
+        .spacing(SPACING),
+    )
+    .padding(SPACING)
+    .into()
+}
 
-        let mut share_btn: Button<Message>;
-        match view_model.is_sharing() {
-            true => {
-                share_btn = Button::new(
-                    Text::new("sharing")
-                        .width(Length::Fill)
-                        .align_x(iced::alignment::Horizontal::Center),
-                )
-                .style(iced::widget::button::success)
-            }
-            false => {
-                share_btn = Button::new(
-                    Text::new("Not sharing")
-                        .width(Length::Fill)
-                        .align_x(iced::alignment::Horizontal::Center),
-                )
-                .style(iced::widget::button::danger)
-            }
-        }
-        share_btn = share_btn.on_press(MainMessage::from(ShareButton).into());
+fn chat_pane(view_model: &ViewModel) -> Element<'_, Message> {
+    Column::new()
+        .push(
+            Row::new()
+                .push(settings::open_button())
+                .push(file_search::open_button())
+                .spacing(SPACING),
+        )
+        .push(chat::view(&view_model.chat_widget_state))
+        .spacing(SPACING)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
 
-        let base = Row::new()
-            .push(
+/// A bottom-row button label: centered, never wrapping to a second
+/// line, so the row keeps a single-line height at any pane width.
+fn button_label(label: &str) -> Text<'_> {
+    Text::new(label)
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Center)
+        .wrapping(Wrapping::None)
+}
+
+fn controls_pane(view_model: &ViewModel) -> Element<'_, Message> {
+    let ready_btn = match view_model.user().ready {
+        true => Button::new(button_label("Ready")).style(iced::widget::button::success),
+        false => Button::new(button_label("Not Ready")).style(iced::widget::button::danger),
+    }
+    .clip(true)
+    .on_press(MainMessage::from(ReadyButton).into());
+
+    let share_btn = match view_model.is_sharing() {
+        true => Button::new(button_label("sharing")).style(iced::widget::button::success),
+        false => Button::new(button_label("Not sharing")).style(iced::widget::button::danger),
+    }
+    .clip(true)
+    .on_press(MainMessage::from(ShareButton).into());
+
+    let request_btn = Button::new(button_label("Request"))
+        .clip(true)
+        .on_press(MainMessage::from(RequestButton).into());
+
+    Column::new()
+        .push(database::view(&view_model.database_widget_state))
+        .push(
+            Container::new(
                 Column::new()
-                    .push(
-                        Row::new()
-                            .push(SettingsWidget::new(view_model.get_settings_widget_state()))
-                            .push(FileSearchWidget::new(
-                                view_model.get_file_search_widget_state(),
-                            ))
-                            .spacing(SPACING),
-                    )
-                    .push(ChatWidget::new(view_model.get_chat_widget_state()))
-                    .spacing(SPACING)
+                    .push(Text::new(view_model.users_widget_state.room_name()))
+                    .push(rooms::view(
+                        &view_model.users_widget_state,
+                        &view_model.user(),
+                        view_model.is_host(),
+                    ))
                     .width(Length::Fill)
                     .height(Length::Fill),
             )
-            .push(
-                Column::new()
-                    .push(DatabaseWidget::new(view_model.get_database_widget_state()))
-                    .push(
-                        Container::new(RoomsWidget::new(
-                            view_model.get_rooms_widget_state(),
-                            &view_model.user(),
-                        ))
-                        .style(ContainerBorder::theme)
-                        .padding(SPACING)
-                        .width(Length::Fill)
-                        .height(Length::Fill),
-                    )
-                    .push(
-                        Container::new(
-                            Scrollable::new(PlaylistWidget::new(
-                                view_model.get_playlist_widget_state().clone(),
-                                view_model.playing_video(),
-                            ))
-                            .width(Length::Fill)
-                            .id(Id::new("playlist")),
-                        )
-                        .style(ContainerBorder::theme)
-                        .padding(SPACING)
-                        .height(Length::Fill),
-                    )
-                    .push(
-                        Row::new()
-                            .push(ready_btn.width(Length::FillPortion(2)))
-                            .push(share_btn.width(Length::FillPortion(1)))
-                            .spacing(SPACING),
-                    )
-                    .width(Length::Fill)
-                    .spacing(SPACING),
-            )
-            .spacing(SPACING)
+            .style(ContainerBorder::theme)
             .padding(SPACING)
-            .into();
-        Self { base }
-    }
-}
-
-impl iced::advanced::Widget<Message, Theme, Renderer> for MainView<'_> {
-    fn size(&self) -> iced::Size<Length> {
-        self.base.as_widget().size()
-    }
-
-    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
-        vec![iced::advanced::widget::Tree::new(&self.base)]
-    }
-
-    fn layout(
-        &mut self,
-        tree: &mut iced::advanced::widget::Tree,
-        renderer: &Renderer,
-        limits: &iced::advanced::layout::Limits,
-    ) -> iced::advanced::layout::Node {
-        self.base
-            .as_widget_mut()
-            .layout(&mut tree.children[0], renderer, limits)
-    }
-
-    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
-        tree.diff_children(std::slice::from_ref(&self.base))
-    }
-
-    fn draw(
-        &self,
-        state: &iced::advanced::widget::Tree,
-        renderer: &mut Renderer,
-        theme: &Theme,
-        style: &iced::advanced::renderer::Style,
-        layout: iced::advanced::Layout<'_>,
-        cursor: iced::advanced::mouse::Cursor,
-        viewport: &iced::Rectangle,
-    ) {
-        self.base.as_widget().draw(
-            &state.children[0],
-            renderer,
-            theme,
-            style,
-            layout,
-            cursor,
-            viewport,
-        );
-    }
-
-    fn operate(
-        &mut self,
-        state: &mut iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'_>,
-        renderer: &Renderer,
-        operation: &mut dyn Operation,
-    ) {
-        self.base
-            .as_widget_mut()
-            .operate(&mut state.children[0], layout, renderer, operation);
-    }
-
-    fn mouse_interaction(
-        &self,
-        state: &iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'_>,
-        cursor: Cursor,
-        viewport: &Rectangle,
-        renderer: &Renderer,
-    ) -> iced::advanced::mouse::Interaction {
-        self.base.as_widget().mouse_interaction(
-            &state.children[0],
-            layout,
-            cursor,
-            viewport,
-            renderer,
+            .width(Length::Fill)
+            .height(Length::Fill),
         )
-    }
-
-    fn update(
-        &mut self,
-        state: &mut iced::advanced::widget::Tree,
-        event: &iced::Event,
-        layout: iced::advanced::Layout<'_>,
-        cursor: Cursor,
-        renderer: &Renderer,
-        clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, Message>,
-        viewport: &Rectangle,
-    ) {
-        self.base.as_widget_mut().update(
-            &mut state.children[0],
-            event,
-            layout,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            viewport,
-        );
-        shell.request_redraw();
-
-        let status = shell.event_status();
-        if let Status::Ignored = status
-            && let Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key: Key::Named(Named::Space),
-                ..
-            }) = event
-        {
-            shell.publish(ToggleReady.into());
-            shell.capture_event();
-        }
-    }
-
-    fn overlay<'b>(
-        &'b mut self,
-        state: &'b mut iced::advanced::widget::Tree,
-        layout: iced::advanced::Layout<'b>,
-        renderer: &Renderer,
-        rectangle: &iced::Rectangle,
-        translation: iced::Vector,
-    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
-        self.base.as_widget_mut().overlay(
-            &mut state.children[0],
-            layout,
-            renderer,
-            rectangle,
-            translation,
+        .push(
+            Container::new(
+                Scrollable::new(PlaylistWidget::new(
+                    &view_model.playlist_widget_state,
+                    view_model.playing_video(),
+                ))
+                .width(Length::Fill)
+                .id(Id::new("playlist")),
+            )
+            .style(ContainerBorder::theme)
+            .padding(SPACING)
+            .height(Length::Fill),
         )
-    }
-}
-
-impl<'a> From<MainView<'a>> for Element<'a, Message> {
-    fn from(msgs: MainView<'a>) -> Self {
-        Self::new(msgs)
-    }
+        .push(
+            Row::new()
+                .push(ready_btn.width(Length::FillPortion(4)))
+                .push(share_btn.width(Length::FillPortion(1)))
+                .push(request_btn.width(Length::FillPortion(1)))
+                .spacing(SPACING),
+        )
+        .width(Length::Fill)
+        .spacing(SPACING)
+        .into()
 }

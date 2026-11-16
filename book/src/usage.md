@@ -18,7 +18,7 @@ After installing, you're greeted by this UI:
 
 <img src="./images/niketsu_iced.png" alt="Client" style="height: 40rem;"/>
 
-Use `niketsu-client` to binge content in real-time with your crew. Whether you're into YouTube or good ol' offline videos, we got you covered. Just make sure the source names match across clients. Server logic is "slowest client wins," so no lag-advantage here.
+Use `niketsu-client` to binge content in real-time with your crew. Whether you're into YouTube or good ol' offline videos, we got you covered. Just make sure the source names match across clients. The room runs on its host's clock and every player follows it; a player that has to buffer pauses the room for everyone, so no lag-advantage here.
 
 #### Let's Dive Deep 🌊
 
@@ -82,8 +82,7 @@ Configurations can be set via toml or cli found at .`~/.config/niketsu-relay/con
 
 ##### Parameters 📋
 ```toml
-ipv6 = true
-keypair = [] # byte array of ed25519 private key
+keypair = [] # byte array of the relay's keypair in its protobuf encoding
 port = 7766
 ```
 

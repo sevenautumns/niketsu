@@ -20,9 +20,12 @@ impl EventHandler for Settings {
                 KeyCode::Down | KeyCode::Tab => view.app.settings_widget_state.next_state(),
                 KeyCode::Char(' ') => view.app.settings_widget_state.handle_input(*key),
                 KeyCode::Enter => {
+                    let Some((relay, port, auto_connect, auto_share)) =
+                        view.app.settings_widget_state.collect_input()
+                    else {
+                        return;
+                    };
                     view.app.reset_overlay();
-                    let (relay, port, auto_connect, auto_share) =
-                        view.app.settings_widget_state.collect_input();
                     view.save_settings(
                         relay.clone(),
                         port,

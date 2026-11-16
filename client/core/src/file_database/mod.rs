@@ -7,7 +7,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use arcstr::ArcStr;
 use async_trait::async_trait;
-use chrono::Local;
 use enum_dispatch::enum_dispatch;
 use im::Vector;
 use itertools::Itertools;
@@ -16,8 +15,7 @@ use tokio::task::JoinHandle;
 use tracing::{trace, warn};
 
 use self::updater::FileDatabaseUpdater;
-use super::player::MediaPlayerTrait;
-use super::ui::{MessageLevel, MessageSource, PlayerMessage, PlayerMessageInner};
+use super::ui::{MessageLevel, MessageSource, PlayerMessage};
 use super::{CoreModel, EventHandler};
 use crate::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
 
@@ -51,13 +49,11 @@ pub struct UpdateComplete;
 
 impl From<UpdateComplete> for PlayerMessage {
     fn from(_: UpdateComplete) -> Self {
-        PlayerMessageInner {
-            message: "Filedatabase update complete".to_string(),
-            source: MessageSource::Internal,
-            level: MessageLevel::Normal,
-            timestamp: Local::now(),
-        }
-        .into()
+        PlayerMessage::new(
+            "Filedatabase update complete",
+            MessageSource::Internal,
+            MessageLevel::Normal,
+        )
     }
 }
 
@@ -68,7 +64,7 @@ impl EventHandler for UpdateComplete {
         model.ui.file_database_status(1.0);
         model.ui.file_database(database.clone());
         model.ui.player_message(PlayerMessage::from(self));
-        model.player.maybe_reload_video(database)
+        model.files_changed();
     }
 }
 
@@ -331,10 +327,6 @@ impl PartialEq for FileStore {
     }
 }
 
-pub trait FilePathSearch {
-    fn get_file_path(&self, filename: &str) -> Option<String>;
-}
-
 impl FileStore {
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -369,13 +361,6 @@ impl FuzzySearchable<FileEntry> for FileStore {
 
     fn len(&self) -> usize {
         self.store.len()
-    }
-}
-
-impl FilePathSearch for FileStore {
-    fn get_file_path(&self, filename: &str) -> Option<String> {
-        self.find_file(filename)
-            .and_then(|entry| entry.path().as_os_str().to_str().map(str::to_string))
     }
 }
 

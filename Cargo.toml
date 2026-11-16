@@ -6,6 +6,7 @@ members = [
   "client/player/mpv",
   "client/ui/iced",
   "client/ui/ratatui",
+  "protocol",
   "relay",
 ]
 resolver = "2"
@@ -29,7 +30,6 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 tracing-appender = "0.2"
 toml = "1.1.0"
-ordered-float = "5"
 libp2p = "0.56"
 chrono = "0.4"
 multiaddr = "0.18"

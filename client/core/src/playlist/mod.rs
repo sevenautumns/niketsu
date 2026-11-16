@@ -7,7 +7,6 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::FilePathSearch;
 use crate::fuzzy::{FuzzyEntry, FuzzySearch, FuzzySearchable};
 
 pub mod file;
@@ -57,18 +56,17 @@ impl VideoInner {
         matches!(self, Self::Url(_))
     }
 
-    pub fn to_path_str(&self, f: &dyn FilePathSearch) -> Option<String> {
-        match self {
-            VideoInner::File(name) => f.get_file_path(name),
-            VideoInner::Url(url) => Some(url.as_str().to_string()),
-        }
-    }
-
     pub fn as_str(&self) -> &str {
         match self {
             VideoInner::File(name) => name,
             VideoInner::Url(url) => url.as_str(),
         }
+    }
+
+    /// `value` as a URL if it has a host. A file name holds no slash, so
+    /// it never has one, even when its text before a colon reads as a scheme.
+    fn parse_url(value: &str) -> Option<Url> {
+        Url::parse(value).ok().filter(Url::has_host)
     }
 }
 
@@ -86,10 +84,9 @@ impl From<&str> for Video {
 
 impl From<&str> for VideoInner {
     fn from(value: &str) -> Self {
-        if let Ok(url) = Url::parse(value) {
-            Self::Url(Arc::new(url))
-        } else {
-            Self::File(value.into())
+        match Self::parse_url(value) {
+            Some(url) => Self::Url(Arc::new(url)),
+            None => Self::File(value.into()),
         }
     }
 }
@@ -102,10 +99,9 @@ impl From<&ArcStr> for Video {
 
 impl From<&ArcStr> for VideoInner {
     fn from(value: &ArcStr) -> Self {
-        if let Ok(url) = Url::parse(value) {
-            Self::Url(Arc::new(url))
-        } else {
-            Self::File(value.clone())
+        match Self::parse_url(value) {
+            Some(url) => Self::Url(Arc::new(url)),
+            None => Self::File(value.clone()),
         }
     }
 }
@@ -261,11 +257,7 @@ impl FuzzySearchable<Video> for Playlist {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-    use crate::FileStore;
-    use crate::file_database::FileEntry;
 
     #[test]
     fn test_is_url() {
@@ -277,16 +269,38 @@ mod tests {
     }
 
     #[test]
-    fn test_to_path_str_with_url() {
-        let db = FileStore::default();
-        let video_inner = Video::from("https://www.example.com/video.mp4");
+    fn a_name_with_a_scheme_but_no_host_is_a_file() {
+        for name in ["Re:Zero - 01.mkv", "Fate: Zero.mkv", "C:foo.mkv"] {
+            assert!(Url::parse(name).is_ok(), "{name} parses as a URL");
+            assert!(!Video::from(name).is_url(), "{name}");
+            assert!(!Video::from(&ArcStr::from(name)).is_url(), "{name}");
+        }
+    }
 
-        let path_str = video_inner.to_path_str(&db);
+    #[test]
+    fn a_url_with_a_host_is_a_url() {
+        let url = "https://www.example.com/watch/video.mp4?t=10&list=a";
+        assert!(Video::from(url).is_url());
+        assert!(Video::from(&ArcStr::from(url)).is_url());
+        assert_eq!(Video::from(url).as_str(), url);
+    }
 
+    #[test]
+    fn an_ordinary_name_is_a_file() {
+        assert!(!Video::from("[Group] Show - 01.mkv").is_url());
+    }
+
+    #[test]
+    fn a_saved_video_keeps_its_variant() {
+        let file = Video::from("Re:Zero - 01.mkv");
+        let url = Video::from("https://www.example.com/video.mp4");
+        let saved = serde_yaml::to_string(&[&file, &url]).unwrap();
         assert_eq!(
-            path_str,
-            Some("https://www.example.com/video.mp4".to_string())
+            saved,
+            "- File: Re:Zero - 01.mkv\n- Url: https://www.example.com/video.mp4\n"
         );
+        let read: Vec<Video> = serde_yaml::from_str(&saved).unwrap();
+        assert_eq!(read, [file, url]);
     }
 
     #[test]
@@ -308,27 +322,6 @@ mod tests {
     }
 
     #[test]
-    fn test_playlist_video_inner_to_path_str() {
-        let file_store = FileStore::from_iter([FileEntry::new(
-            "video.mp4".to_string(),
-            PathBuf::from("/path/to/video.mp4"),
-            None,
-        )]);
-
-        let file_inner = Video::from("video.mp4");
-        let url_inner = Video::from("https://example.com/video.mp4");
-
-        assert_eq!(
-            file_inner.to_path_str(&file_store),
-            Some("/path/to/video.mp4".to_string())
-        );
-        assert_eq!(
-            url_inner.to_path_str(&file_store),
-            Some("https://example.com/video.mp4".to_string())
-        );
-    }
-
-    #[test]
     fn test_playlist_video_as_ref() {
         // Create a PlaylistVideo variant for testing
         let video = Video::from("video.mp4");
@@ -338,17 +331,6 @@ mod tests {
 
         // Ensure that the reference matches the expected string
         assert_eq!(video_ref, "video.mp4");
-    }
-
-    #[test]
-    fn test_playlist_video_inner_to_path_str_none() {
-        // Create a dummy FileStore for testing purposes with no matching file
-        let file_store = FileStore::default();
-
-        let non_existing_file_inner = Video::from("non_existent.mp4");
-
-        // Ensure that to_path_str returns None for a non-existing file
-        assert_eq!(non_existing_file_inner.to_path_str(&file_store), None);
     }
 
     #[test]
