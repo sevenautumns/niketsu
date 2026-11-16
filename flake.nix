@@ -138,6 +138,7 @@
         };
         devShells.default = pkgs.mkShell {
           inputsFrom = [ packages.niketsu-client ];
+          LD_LIBRARY_PATH = lib.optionalString isLinux (lib.makeLibraryPath libraries);
           nativeBuildInputs = with pkgs; [
             rust-toolchain
             cargo-audit
