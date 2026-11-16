@@ -600,7 +600,7 @@ impl Peer {
 }
 
 // ------------------------------------------------------------------
-// Room: the in-memory relay. Owns the routing rules of the dance.
+// Room: the in-memory network. Owns the routing rules of the dance.
 // ------------------------------------------------------------------
 
 /// What the host sends one member, as the member's stream in

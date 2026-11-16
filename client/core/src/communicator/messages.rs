@@ -16,7 +16,7 @@ pub struct ConnectedMsg {
     pub is_host: bool,
 }
 
-/// The last direct connection to a peer closed.
+/// A member's room stream to the host ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeerDisconnectedMsg {
     pub peer: PeerId,

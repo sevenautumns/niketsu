@@ -15,8 +15,9 @@ use super::{CoreModel, EventHandler};
 pub mod offset;
 
 /// The player follows the room: the core tells it what to load and where
-/// to be, and asks it only where it is itself. Its events report what its
-/// own user did in it, and what became of a load.
+/// to be, and asks it only about its own state, never about the room's.
+/// Its events report what its own user did in it, and what became of a
+/// load.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait MediaPlayerTrait: std::fmt::Debug + Send {

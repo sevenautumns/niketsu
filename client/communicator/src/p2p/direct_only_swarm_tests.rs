@@ -1,6 +1,7 @@
 //! Swarm-level tests for [`DirectOnly`]: three in-process swarms (relay, host,
 //! dialer) over the memory transport, mirroring the production layout of an
-//! un-wrapped relay client next to `DirectOnly`-wrapped messaging behaviours.
+//! un-wrapped relay client next to the `DirectOnly`-wrapped room stream and
+//! file share behaviours.
 //!
 //! The unit tests in [`super::direct_only`] feed hand-crafted `FromSwarm`
 //! events into the wrapper, so they encode — rather than verify — what the
@@ -43,7 +44,8 @@ struct Pong(u32);
 
 /// Same shape as the production behaviour: hole-punch transport plumbing
 /// (here just the relay client) un-wrapped, application protocols inside
-/// [`DirectOnly`].
+/// [`DirectOnly`]. A request-response protocol, as the file share uses,
+/// stands in for them.
 #[derive(NetworkBehaviour)]
 struct TestBehaviour {
     relay_client: relay::client::Behaviour,

@@ -210,7 +210,7 @@ impl CoreModel {
         self.state.users = BTreeMap::from([(self.me(), self.own_user())]);
     }
 
-    /// The host drops a peer whose last connection closed.
+    /// The host drops a peer whose room stream ended.
     pub(crate) fn peer_left(&mut self, peer: PeerId) {
         if !self.is_authority() || self.state.users.remove(&peer).is_none() {
             return debug!(%peer, "disconnected peer was not in this core's room");
@@ -401,8 +401,8 @@ impl CoreModel {
         }
     }
 
-    /// The file database knows other files than before. A selected video
-    /// the player had nothing to play from is loaded if it is among them.
+    /// The file database's files changed. A selected video the player had
+    /// nothing to play from is loaded if it is among them.
     pub(crate) fn files_changed(&mut self) {
         if self.followed.source.is_some() {
             return;

@@ -1803,8 +1803,8 @@ async fn a_playlist_reaches_each_member_once() {
 }
 
 /// A message the host cannot write to a member's stream ends the stream
-/// and drops the member from the room. The member connects again and is greeted with what it missed,
-/// the playlist included.
+/// and drops the member from the room. The member connects again and is
+/// greeted with what it missed, the playlist included.
 #[tokio::test(start_paused = true)]
 async fn a_member_whose_message_failed_rejoins_with_the_rooms_playlist() {
     let mut room = Room::new();
@@ -1935,8 +1935,8 @@ async fn a_playlist_change_while_intents_are_pending_still_reaches_the_client() 
 
 /// A client's playlist edit that has not reached the host shadows the
 /// room's while the host may still handle its intent. When the client's
-/// stream ends instead, the client's session ends, and the client shows the room's playlist
-/// again.
+/// stream ends instead, the client's session ends, and the client shows
+/// the room's playlist again.
 #[tokio::test(start_paused = true)]
 async fn a_playlist_edit_the_host_never_got_gives_way_to_the_rooms() {
     let mut room = Room::new();

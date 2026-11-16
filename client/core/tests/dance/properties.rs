@@ -221,12 +221,12 @@ fn assert_offers_are_real(room: &mut Room) {
 
 proptest! {
     /// After ANY sequence of user actions — including the room moving to
-    /// another host and peers joining mid-session — the room goes quiescent (pump panics on
-    /// a message storm) and every peer agrees on the playlist, the loaded
-    /// video, the video and playlist shown in the UI, and the playlist
-    /// selection. After a few quiet heartbeats everyone also agrees with
-    /// the host on paused/playing, and no player reads a stream when no
-    /// provider is announced.
+    /// another host and peers joining mid-session — the room goes
+    /// quiescent (pump panics on a message storm) and every peer agrees on
+    /// the playlist, the loaded video, the video and playlist shown in the
+    /// UI, and the playlist selection. After a few quiet heartbeats
+    /// everyone also agrees with the host on paused/playing, and no player
+    /// reads a stream when no provider is announced.
     #[test]
     fn any_dance_converges(actions in prop::collection::vec(action(), 1..40)) {
         let rt = tokio::runtime::Builder::new_current_thread()

@@ -82,8 +82,7 @@ Configurations can be set via toml or cli found at .`~/.config/niketsu-relay/con
 
 ##### Parameters 📋
 ```toml
-ipv6 = true
-keypair = [] # byte array of ed25519 private key
+keypair = [] # byte array of the relay's keypair in its protobuf encoding
 port = 7766
 ```
 

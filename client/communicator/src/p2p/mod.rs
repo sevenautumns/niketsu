@@ -338,8 +338,8 @@ impl SwarmExt for Swarm<Behaviour> {
         let res = req_resp.send_response(channel, msg);
 
         match res {
-            Ok(_) => debug!("Successfully sent response status"),
-            Err(e) => bail!("Failed to send response status {e:?}"),
+            Ok(_) => debug!("Sent the answer to a file chunk request"),
+            Err(e) => bail!("Failed to answer a file chunk request {e:?}"),
         }
         Ok(())
     }

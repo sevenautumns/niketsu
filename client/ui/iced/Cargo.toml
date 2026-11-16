@@ -13,7 +13,6 @@ serde.workspace = true
 enum_dispatch.workspace = true
 directories.workspace = true
 itertools.workspace = true
-async-trait.workspace = true
 toml.workspace = true
 serde_with = "3.0"
 iced = { version = "0.14", features = ["tokio", "advanced"] }
