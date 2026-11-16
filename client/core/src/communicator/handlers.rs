@@ -60,16 +60,3 @@ impl EventHandler for LineMsg {
         model.ui.player_message(PlayerMessage::from(self));
     }
 }
-
-impl EventHandler for NoticeMsg {
-    fn handle(self, model: &mut CoreModel) {
-        trace!(notice = ?self, "received");
-        model.ui.player_message(PlayerMessage::from(self))
-    }
-}
-
-impl EventHandler for StreamEndedMsg {
-    fn handle(self, model: &mut CoreModel) {
-        model.video_server.stop_server();
-    }
-}

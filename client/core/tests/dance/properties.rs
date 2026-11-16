@@ -145,13 +145,15 @@ fn apply(room: &mut Room, action: Action) {
 }
 
 /// Every peer agrees on the playlist, the selection and what its UI shows,
-/// and its player holds the selected video if the peer has it.
+/// and its player holds the selected video if the peer has it or reads it
+/// from another peer.
 fn assert_room_converged(room: &mut Room) {
     let playlist = room.peer(0).playlist();
     let selected = room.peer(0).selected();
     for i in 0..room.peers.len() {
         let peer = room.peer(i);
-        let held = selected.clone().filter(|video| peer.has(video));
+        let streams = peer.player.stream().is_some();
+        let held = selected.clone().filter(|video| peer.has(video) || streams);
         let video = peer.player.state().video;
         assert_eq!(video, held, "peer {i}: the player holds another video");
     }
@@ -223,8 +225,8 @@ proptest! {
     /// a message storm) and every peer agrees on the playlist, the loaded
     /// video, the video and playlist shown in the UI, and the playlist
     /// selection. After a few quiet heartbeats everyone also agrees with
-    /// the host on paused/playing, and no video server keeps running when
-    /// no provider is announced.
+    /// the host on paused/playing, and no player reads a stream when no
+    /// provider is announced.
     #[test]
     fn any_dance_converges(actions in prop::collection::vec(action(), 1..40)) {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -280,13 +282,14 @@ proptest! {
                 }
             }
 
-            // when nobody shares a file, nobody keeps a video server
-            // running (there is nothing left to stream from)
+            // when nobody shares a file, nobody's player reads a stream
+            // (there is nothing left to stream from)
             if !room.anyone_shares() {
                 for i in 0..room.peers.len() {
+                    let peer = room.peer(i);
                     assert!(
-                        !room.peer(i).video_server.running(),
-                        "peer {i}: video server running while nobody shares"
+                        !peer.online || peer.player.stream().is_none(),
+                        "peer {i}: reads a stream while nobody shares"
                     );
                 }
             }

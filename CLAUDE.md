@@ -41,8 +41,7 @@ This is a **jj-colocated** repo: `.jj` and `.git` exist side by side. Either too
 client/                       niketsu (binary; wires everything together; entry: src/main.rs)
 client/core/                  niketsu-core: traits, CoreModel, the event loop
 client/communicator/          niketsu-communicator: libp2p (request-response through the host, relay, QUIC/TCP)
-client/player/mpv/            niketsu-mpv: libmpv FFI
-client/player/video_server/   niketsu-video-server: HTTP server that feeds mpv from peer chunks
+client/player/mpv/            niketsu-mpv: libmpv FFI; reads other peers' files through mpv's stream callbacks
 client/ui/iced/               niketsu-iced (feature-gated GUI)
 client/ui/ratatui/            niketsu-ratatui (feature-gated TUI)
 relay/                        niketsu-relay (libp2p relay + room/auth server)
@@ -54,8 +53,8 @@ Workspace `Cargo.toml` pins shared dep versions — check there before assuming 
 
 ## Architecture — the non-obvious bits
 
-- **Event-loop dispatch via `EventHandler`.** `Core::run_loop` in `client/core/src/lib.rs` is a `tokio::select!` across every subsystem (communicator, player, UI, video_server, video_provider, file_database, heartbeat). Each event type implements `EventHandler::handle(&mut CoreModel)` and mutates state + fans out side effects. To add an event: define the struct, impl `EventHandler`, wire it into the matching enum (usually via `enum_dispatch`). Don't create side channels — go through the loop.
-- **Subsystems behind traits in `niketsu-core`.** `CommunicatorTrait`, `MediaPlayerTrait`, `UserInterfaceTrait`, `FileDatabaseTrait`, `VideoServerTrait`, `VideoProviderTrait`. All are `#[cfg_attr(test, mockall::automock)]`; core tests use the generated `Mock*Trait` types.
+- **Event-loop dispatch via `EventHandler`.** `Core::run_loop` in `client/core/src/lib.rs` is a `tokio::select!` across every subsystem (communicator, player, UI, video_provider, file_database, heartbeat). Each event type implements `EventHandler::handle(&mut CoreModel)` and mutates state + fans out side effects. To add an event: define the struct, impl `EventHandler`, wire it into the matching enum (usually via `enum_dispatch`). Don't create side channels — go through the loop.
+- **Subsystems behind traits in `niketsu-core`.** `CommunicatorTrait`, `MediaPlayerTrait`, `UserInterfaceTrait`, `FileDatabaseTrait`, `VideoProviderTrait`. All are `#[cfg_attr(test, mockall::automock)]`; core tests use the generated `Mock*Trait` types.
 - **`Observed<T>` is the reactive primitive** (`client/core/src/util/observed.rs`): `ArcSwap<T>` + `Notify`. Core writes via `set()`; UIs `await changed()` then read via `get_inner()`. Reach for this before adding ad-hoc channels or `RwLock` for UI-visible state.
 - **UI → core is mpsc-only.** UIs emit `UserInterfaceEvent`s through an unbounded channel that `run_loop` drains. The UI never touches `CoreModel` directly.
 - **macOS threading.**

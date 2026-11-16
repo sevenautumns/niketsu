@@ -12,7 +12,7 @@ use crate::room::{Authority, Followed, Role, RoomState};
 use crate::ui::UserInterfaceTrait;
 use crate::user::User;
 use crate::video_provider::VideoProviderTrait;
-use crate::{Core, CoreModel, PlaylistSaver, SavedPlaylistLoader, VideoServerTrait};
+use crate::{Core, CoreModel, PlaylistSaver, SavedPlaylistLoader};
 
 #[derive(TypedBuilder)]
 #[builder(build_method(into = Core))]
@@ -21,7 +21,6 @@ pub struct CoreBuilder {
     player: Box<dyn MediaPlayerTrait>,
     communicator: Box<dyn CommunicatorTrait>,
     file_database: Box<dyn FileDatabaseTrait>,
-    video_server: Box<dyn VideoServerTrait>,
     video_provider: Box<dyn VideoProviderTrait>,
     #[builder(default)]
     chat_logger: Option<ChatLogger>,
@@ -53,7 +52,6 @@ impl From<CoreBuilder> for CoreModel {
             saved_playlist: builder.saved_playlist,
             save_playlist: builder.save_playlist,
             chat_logger: builder.chat_logger,
-            video_server: builder.video_server,
             video_provider: builder.video_provider,
             ready: false,
             running: true,

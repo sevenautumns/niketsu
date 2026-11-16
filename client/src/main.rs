@@ -12,7 +12,6 @@ use niketsu_core::logging::setup_logger;
 use niketsu_core::ui::UserInterfaceTrait;
 use niketsu_core::video_provider::VideoProvider;
 use niketsu_mpv::Mpv;
-use niketsu_video_server::VideoServer;
 
 #[cfg(all(not(feature = "ratatui"), not(feature = "iced")))]
 compile_error!(r#"any ui feature is required ["ratatui", "iced"]"#);
@@ -42,11 +41,10 @@ async fn run_app(args: Args) -> Result<()> {
         }
     }
 
-    let player = Mpv::new().unwrap();
     let fetch = ChunkRoute::default();
     let provide = ChunkRoute::default();
-    let communicator = P2PCommunicator::new(fetch.clone(), provide.clone());
-    let video_server = VideoServer::new(fetch);
+    let player = Mpv::new(fetch.clone()).unwrap();
+    let communicator = P2PCommunicator::new(fetch, provide.clone());
     let video_provider = VideoProvider::new(provide);
     let mut file_database = FileDatabase::default();
     if !args.skip_database_refresh {
@@ -58,7 +56,6 @@ async fn run_app(args: Args) -> Result<()> {
         .player(Box::new(player))
         .communicator(Box::new(communicator))
         .file_database(Box::new(file_database))
-        .video_server(Box::new(video_server))
         .video_provider(Box::new(video_provider))
         .chat_logger(chat_logger)
         .config(config)

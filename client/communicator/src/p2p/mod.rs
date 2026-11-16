@@ -3,7 +3,7 @@ use std::pin::Pin;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 pub(crate) use file_share::ChunkRoutes;
-use file_share::{ChunkRead, FileShareConsumer, FileShareRequest, FileShareResponseResult};
+use file_share::{ChunkRead, FileShareRequest, FileShareResponseResult, PendingChunks};
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use libp2p::core::ConnectedPoint;
@@ -16,8 +16,8 @@ use libp2p::{
     Multiaddr, PeerId, StreamProtocol, dcutr, identify, mdns, noise, ping, relay, tcp, yamux,
 };
 use links::{Closed, Links, Opened};
-use niketsu_core::chunk::{ChunkRequest, ProvideRoute};
-use niketsu_core::communicator::{IncomingMessage, NoticeMsg, OutgoingMessage, RoomMessage};
+use niketsu_core::chunk::{ChunkFetch, ProvideRoute};
+use niketsu_core::communicator::{IncomingMessage, OutgoingMessage};
 use niketsu_core::log_err_msg;
 use niketsu_core::room::RoomName;
 use serde::{Deserialize, Serialize};
@@ -57,8 +57,8 @@ use member::{Membership, Tagged};
 enum LoopEvent {
     Swarm(SwarmEvent<BehaviourEvent>),
     Core(Option<OutgoingMessage>),
-    /// The local video server needs a chunk from the provider.
-    FetchChunk(ChunkRequest),
+    /// The local player needs a chunk of a file another peer offers.
+    FetchChunk(ChunkFetch),
     /// The local video provider read a chunk for another peer.
     ChunkRead(ResponseChannel<FileShareResponseResult>, Option<Vec<u8>>),
     /// The rendezvous with the host took too long.
@@ -289,15 +289,11 @@ pub(crate) trait Role: Send {
                 return stop;
             }
             let next = {
-                let session = self.session();
-                let can_fetch = session.can_fetch_chunk();
-                let net = &mut session.net;
+                let net = &mut self.session().net;
                 tokio::select! {
                     event = net.swarm.select_next_some() => LoopEvent::Swarm(event),
                     msg = net.core_receiver.recv() => LoopEvent::Core(msg),
-                    Some(request) = net.chunk_fetches.recv(), if can_fetch => {
-                        LoopEvent::FetchChunk(request)
-                    }
+                    Some(fetch) = net.chunk_fetches.recv() => LoopEvent::FetchChunk(fetch),
                     Some((channel, bytes)) = net.chunk_reads.next() => {
                         LoopEvent::ChunkRead(channel, bytes)
                     }
@@ -311,10 +307,7 @@ pub(crate) trait Role: Send {
                     let res = self.handle_core_message(msg);
                     log_err_msg!(res, "Handling message caused error");
                 }
-                LoopEvent::FetchChunk(request) => {
-                    let res = self.session().fs_fetch_chunk(request);
-                    log_err_msg!(res, "Failed to fetch chunk");
-                }
+                LoopEvent::FetchChunk(fetch) => self.session().fs_fetch_chunk(fetch),
                 LoopEvent::ChunkRead(channel, bytes) => {
                     let res = self.session().fs_chunk_read(channel, bytes);
                     log_err_msg!(res, "Failed to answer chunk request");
@@ -328,18 +321,6 @@ pub(crate) trait Role: Send {
                     return Stop::HostUnreachable;
                 }
             }
-        }
-    }
-
-    /// File sharing, the same for both roles. A new selection ends the
-    /// stream of the old video with the `StreamEnded` the core sends for
-    /// every selection.
-    fn route_room_message(&mut self, msg: RoomMessage) -> Result<()> {
-        use RoomMessage::*;
-        let session = self.session();
-        match msg {
-            Stream(msg) => session.fs_stream(msg),
-            StreamEnded(_) => session.fs_stream_ended(),
         }
     }
 
@@ -555,8 +536,7 @@ pub(crate) struct Session {
     /// The connections to every peer, kept by the shared dispatch. A role
     /// hears what each one means for the link to its peer.
     links: Links,
-    /// The stream from another peer that the local video server plays.
-    consumer: Option<FileShareConsumer>,
+    pending_chunks: PendingChunks,
 }
 
 impl Session {
@@ -577,14 +557,15 @@ impl Session {
             stop: None,
             core_receiver,
             message_sender,
-            chunk_fetches: chunk_routes.fetch.serve(file_share::CHUNK_FETCHES),
+            // a reader waits for its chunk before it asks for the next
+            chunk_fetches: chunk_routes.fetch.serve(1),
             provide: chunk_routes.provide,
             chunk_reads: FuturesUnordered::new(),
         };
         Self {
             net,
             links: Links::default(),
-            consumer: None,
+            pending_chunks: PendingChunks::default(),
         }
     }
 
@@ -646,8 +627,8 @@ pub(crate) struct Net {
     stop: Option<Stop>,
     core_receiver: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
     message_sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>,
-    /// Chunk requests of the local video server.
-    chunk_fetches: tokio::sync::mpsc::Receiver<ChunkRequest>,
+    /// The chunks the local player asks for of files other peers offer.
+    chunk_fetches: tokio::sync::mpsc::Receiver<ChunkFetch>,
     /// The file this peer offers, and where chunk requests of other peers
     /// for it go to the local video provider.
     provide: ProvideRoute,
@@ -688,12 +669,6 @@ impl Net {
                 .with(Protocol::P2p(self.host))
                 .with(Protocol::P2pCircuit),
         )
-    }
-
-    /// Shows the user a line in the chat that no peer wrote.
-    pub fn tell_user(&self, message: &str) {
-        let res = self.message_sender.send(NoticeMsg::new(message).into());
-        log_err_msg!(res, "Failed to send message to core");
     }
 }
 

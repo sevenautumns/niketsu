@@ -235,7 +235,6 @@ impl Role for HostRole {
             // did
             Closed::Unlinked => {
                 debug!(%peer_id, ?cause, "Peer disconnected");
-                self.session.fs_peer_unlinked(peer_id);
                 self.members.remove(&peer_id);
                 let res = self.session.forward(PeerDisconnectedMsg { peer: peer_id });
                 log_err_msg!(res, "Failed to report disconnected peer to core");
@@ -342,7 +341,6 @@ impl Role for HostRole {
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()> {
         debug!(host = %self.session.net.host, ?msg, "Handling core message");
         match msg {
-            OutgoingMessage::Room(m) => self.route_room_message(m),
             OutgoingMessage::Host(m) => {
                 self.on_core_instruction(m);
                 Ok(())

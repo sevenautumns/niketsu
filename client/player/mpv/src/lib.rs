@@ -1,10 +1,13 @@
 use std::ffi::{CStr, CString, c_int, c_void};
 use std::mem::MaybeUninit;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
+use niketsu_core::chunk::FetchRoute;
 use niketsu_core::log_err;
 use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait, Source};
 use strum::{AsRefStr, EnumString};
@@ -13,6 +16,7 @@ use tracing::{debug, error};
 use self::bindings::*;
 use self::event::{MpvEventPipe, MpvEventTrait, PropertyValue};
 use self::seek::Seeks;
+use self::stream::Streams;
 
 mod bindings;
 mod error;
@@ -20,6 +24,7 @@ mod event;
 #[cfg(test)]
 mod probe;
 mod seek;
+mod stream;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MpvHandle(pub *mut mpv_handle);
@@ -115,9 +120,16 @@ pub struct MpvStatus {
     /// position of its own.
     loaded: bool,
     seeks: Seeks,
+    /// Set by the stream of the app's load when one of its reads failed.
+    stream_failed: Arc<AtomicBool>,
 }
 
 impl MpvStatus {
+    /// Whether the app's load is a stream that could not be read on.
+    fn stream_failed(&self) -> bool {
+        self.stream_failed.load(Ordering::Acquire)
+    }
+
     /// Whether mpv's events are about the app's load, and not about one
     /// it replaced.
     fn current(&self) -> bool {
@@ -129,6 +141,7 @@ impl MpvStatus {
         self.entry = None;
         self.loaded = false;
         self.seeks = Seeks::default();
+        self.stream_failed = Arc::default();
     }
 }
 
@@ -141,6 +154,7 @@ impl Default for MpvStatus {
             started: None,
             loaded: false,
             seeks: Seeks::default(),
+            stream_failed: Arc::default(),
         }
     }
 }
@@ -150,6 +164,9 @@ pub struct Mpv {
     status: MpvStatus,
     event_pipe: MpvEventPipe,
     handle: MpvHandle,
+    /// The streams mpv reads other peers' files through. mpv points to
+    /// them until it is destroyed.
+    streams: Arc<Streams>,
 }
 
 impl Drop for Mpv {
@@ -159,36 +176,30 @@ impl Drop for Mpv {
 }
 
 impl Mpv {
-    pub fn new() -> Result<Self> {
+    /// An mpv that reads the files other peers offer over `fetch`.
+    pub fn new(fetch: FetchRoute) -> Result<Self> {
+        Self::create(fetch)?.init()
+    }
+
+    fn create(fetch: FetchRoute) -> Result<Self> {
         let ctx = unsafe { mpv_create() };
         if ctx.is_null() {
             bail!("mpv_create() failed");
         }
         let handle = MpvHandle(ctx);
-        let event_pipe = MpvEventPipe::new(handle);
-        let status = MpvStatus::default();
-        let mpv = Self {
-            status,
+        Ok(Self {
+            status: MpvStatus::default(),
             handle,
-            event_pipe,
-        };
-
-        mpv.init()
+            event_pipe: MpvEventPipe::new(handle),
+            streams: Streams::register(handle, fetch)?,
+        })
     }
 
     /// An mpv without a window, sound or the user's configuration.
     #[cfg(test)]
-    pub(crate) fn headless() -> Result<Self> {
-        let ctx = unsafe { mpv_create() };
-        if ctx.is_null() {
-            bail!("mpv_create() failed");
-        }
-        let handle = MpvHandle(ctx);
-        let mut mpv = Self {
-            status: MpvStatus::default(),
-            handle,
-            event_pipe: MpvEventPipe::new(handle),
-        };
+    pub(crate) fn headless(fetch: FetchRoute) -> Result<Self> {
+        let mut mpv = Self::create(fetch)?;
+        let ctx = mpv.handle.0;
         for (name, value) in [(c"vo", c"null"), (c"ao", c"null"), (c"idle", c"yes")] {
             let ret = unsafe { mpv_set_option_string(ctx, name.as_ptr(), value.as_ptr()) };
             mpv_error::try_from(ret)?.ok()?;
@@ -424,16 +435,27 @@ impl MediaPlayerTrait for Mpv {
         self.status.end();
         self.pause();
         let location = match &source {
-            Source::File(path) => path.to_str().map(str::to_string),
-            Source::Url(url) => Some(url.clone()),
+            Source::File(path) => path.to_str().and_then(|path| CString::new(path).ok()),
+            Source::Url(url) => CString::new(url.as_str()).ok(),
+            Source::Stream { provider, file } => {
+                self.status.stream_failed = self.streams.offer(*provider, file.clone());
+                Some(stream::LOCATION.into())
+            }
         };
-        let Some(location) = location.and_then(|location| CString::new(location).ok()) else {
+        let Some(location) = location else {
             error!(?source, "mpv can not be given this source");
             return self.unload();
         };
         let cmd: CString = MpvCommand::Loadfile.into();
-        let start = CString::new(format!("start={}", pos.as_secs_f64())).expect("no nul");
-        match self.send_command(&[&cmd, &location, c"replace", c"0", &start]) {
+        // mpv does not take a stream of its callbacks for one of the
+        // network, and reads only a second ahead unless told to cache
+        let cache = match source {
+            Source::Stream { .. } => ",cache=yes",
+            Source::File(_) | Source::Url(_) => "",
+        };
+        let options = format!("start={}{cache}", pos.as_secs_f64());
+        let options = CString::new(options).expect("no nul");
+        match self.send_command(&[&cmd, &location, c"replace", c"0", &options]) {
             Ok(entry) => self.status.entry = entry,
             Err(error) => error!(%error, ?source, "mpv refused to load"),
         }

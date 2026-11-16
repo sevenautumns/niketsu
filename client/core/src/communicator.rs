@@ -58,19 +58,8 @@ pub struct EndpointInfo {
 /// role's group can still reach a handler; it is dropped there.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OutgoingMessage {
-    Room(RoomMessage),
     Host(HostInstruction),
     Client(ClientRequest),
-}
-
-/// Sent whichever role this core holds.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RoomMessage {
-    /// Streams from the provider it names, in place of the stream this
-    /// peer played.
-    Stream(StreamMsg),
-    /// Ends the stream this peer plays, without a word to the user.
-    StreamEnded(StreamEndedMsg),
 }
 
 /// What only the host sends. Each member gets the host's messages in the
@@ -90,12 +79,6 @@ pub enum HostInstruction {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientRequest {
     Intent(Intent),
-}
-
-impl From<RoomMessage> for OutgoingMessage {
-    fn from(value: RoomMessage) -> Self {
-        Self::Room(value)
-    }
 }
 
 impl From<HostInstruction> for OutgoingMessage {
@@ -123,8 +106,6 @@ macro_rules! outgoing_from {
 }
 
 outgoing_from! {
-    StreamMsg => Room(RoomMessage::Stream),
-    StreamEndedMsg => Room(RoomMessage::StreamEnded),
     RoomStateMsg => Host(HostInstruction::RoomState),
     LineMsg => Host(HostInstruction::Line),
     Intent => Client(ClientRequest::Intent),
@@ -139,8 +120,6 @@ pub enum IncomingMessage {
     Line(LineMsg),
     Connected(ConnectedMsg),
     Disconnected(DisconnectedMsg),
-    Notice(NoticeMsg),
-    StreamEnded(StreamEndedMsg),
     PeerDisconnected(PeerDisconnectedMsg),
     PeerIntent(PeerIntentMsg),
     HostRoundTrip(HostRoundTripMsg),

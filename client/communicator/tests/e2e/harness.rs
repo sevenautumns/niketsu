@@ -8,23 +8,21 @@ use async_trait::async_trait;
 use libp2p::identity::Keypair;
 use niketsu_communicator::P2PCommunicator;
 use niketsu_core::builder::CoreBuilder;
-use niketsu_core::chunk::ChunkRoute;
+use niketsu_core::chunk::{ChunkRoute, FetchRoute};
 use niketsu_core::config::Config;
 use niketsu_core::file_database::{FileDatabaseEvent, FileDatabaseTrait, FileEntry, FileStore};
 use niketsu_core::player::{
-    MediaPlayerEvent, MediaPlayerTrait, PlayerLoaded, PlayerPause, PlayerPositionChange,
-    PlayerStart, Source,
+    MediaPlayerEvent, MediaPlayerTrait, PlayerFailed, PlayerLoaded, PlayerPause,
+    PlayerPositionChange, PlayerStart, Source,
 };
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::UserList;
+use niketsu_core::stream::{Cancel, ReadError, Reader};
 use niketsu_core::ui::{
     PlayerMessage, UserChange, UserInterfaceEvent, UserInterfaceTrait, UserMessage,
 };
 use niketsu_core::user::UserStatus;
 use niketsu_core::video_provider::VideoProvider;
-use niketsu_video_server::VideoServer;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 use tracing::Level;
@@ -46,31 +44,6 @@ pub async fn eventually(what: &str, holds: impl Fn() -> bool) {
         assert!(Instant::now() < deadline, "never happened: {what}");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-}
-
-/// Reads a whole video the way the player does: with a ranged HTTP request
-/// to the local video server at `url`.
-pub async fn download(url: &str) -> Vec<u8> {
-    let addr = url.strip_prefix("http://").expect("not a video server url");
-    let read = async {
-        let mut stream = TcpStream::connect(addr).await.unwrap();
-        stream
-            .write_all(b"GET / HTTP/1.1\r\nRange: bytes=0-\r\n\r\n")
-            .await
-            .unwrap();
-        let mut response = Vec::new();
-        stream.read_to_end(&mut response).await.unwrap();
-        response
-    };
-    let mut response = tokio::time::timeout(PATIENCE, read)
-        .await
-        .expect("the video server never finished the response");
-    let body = response
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .expect("no HTTP header")
-        + 4;
-    response.split_off(body)
 }
 
 /// With `E2E_LOG` set, every peer of the scenario logs to stderr, which the
@@ -142,9 +115,8 @@ pub struct PlayerState {
     pub video: Option<Video>,
     pub position: Duration,
     pub paused: bool,
-    /// Where the core told the player to read from: the path of a file, or
-    /// a URL such as the one of the local video server.
-    pub source: Option<String>,
+    /// What the core told the player to play the video from.
+    pub source: Option<Source>,
     speed: f64,
 }
 
@@ -183,6 +155,15 @@ impl PlayerHandle {
         self.events
             .send(PlayerPositionChange::new(position).into())
             .unwrap();
+    }
+
+    /// The player can not read on what it plays. Like mpv, it holds
+    /// nothing from then on and reports that it failed.
+    fn fail(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.video = None;
+        state.source = None;
+        self.events.send(PlayerFailed.into()).unwrap();
     }
 }
 
@@ -252,12 +233,10 @@ impl MediaPlayerTrait for FakePlayer {
 
     /// Like mpv, the player loads paused and reports when it has loaded.
     fn load(&mut self, source: Source, pos: Duration) {
-        let (video, source) = match source {
-            Source::File(path) => (
-                Video::from(path.file_name().unwrap().to_str().unwrap()),
-                path.to_str().unwrap().to_string(),
-            ),
-            Source::Url(url) => (Video::from(url.as_str()), url),
+        let video = match &source {
+            Source::File(path) => Video::from(path.file_name().unwrap().to_str().unwrap()),
+            Source::Url(url) => Video::from(url.as_str()),
+            Source::Stream { file, .. } => Video::from(file.name.as_str()),
         };
         let mut state = self.lock();
         state.video = Some(video);
@@ -466,14 +445,17 @@ impl FileDatabaseTrait for FakeDatabase {
 
 // ------------------------------------------------------------------
 // Peer: one running core and the handles of the person using it. The
-// video server and provider are the real ones, wired to the communicator
-// like in the client binary.
+// video provider is the real one, and the stream a player is given is
+// read with the real reader, both wired to the communicator like in the
+// client binary.
 // ------------------------------------------------------------------
 
 pub struct Peer {
     pub player: PlayerHandle,
     pub ui: UiHandle,
     name: String,
+    /// Where a player of this peer gets the chunks of a stream from.
+    fetch: FetchRoute,
     core: JoinHandle<()>,
 }
 
@@ -500,7 +482,7 @@ impl Peer {
     }
 
     fn start(relay: &Relay, name: &str, files: Vec<FileEntry>, password: &str) -> Self {
-        let fetch = ChunkRoute::default();
+        let fetch = FetchRoute::default();
         let provide = ChunkRoute::default();
         let communicator = P2PCommunicator::new(fetch.clone(), provide.clone()).without_mdns();
         let (player, player_handle) = FakePlayer::new();
@@ -519,7 +501,6 @@ impl Peer {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(FakeDatabase::new(files)))
-            .video_server(Box::new(VideoServer::new(fetch)))
             .video_provider(Box::new(VideoProvider::new(provide)))
             .config(config)
             .saved_playlist(|_| None)
@@ -529,8 +510,38 @@ impl Peer {
             player: player_handle,
             ui: ui_handle,
             name: name.to_string(),
+            fetch,
             core: tokio::spawn(core.run()),
         }
+    }
+
+    /// Reads the stream the player was given from its start to its end,
+    /// the way mpv does: on a thread of its own, chunk by chunk. A stream
+    /// whose chunks do not come fails, which the player reports.
+    pub async fn read_stream(&self) -> Result<Vec<u8>, ReadError> {
+        let Some(Source::Stream { provider, file }) = self.player.state().source else {
+            panic!("the player of {} was given no stream", self.name);
+        };
+        let cancel = Arc::new(Cancel::default());
+        let mut reader = Reader::of(&file, provider, self.fetch.clone(), cancel);
+        let reading = tokio::task::spawn_blocking(move || {
+            let mut read = Vec::new();
+            let mut buf = vec![0; 100_000];
+            loop {
+                match reader.read(&mut buf)? {
+                    0 => return Ok(read),
+                    len => read.extend_from_slice(&buf[..len]),
+                }
+            }
+        });
+        let read = tokio::time::timeout(PATIENCE, reading)
+            .await
+            .expect("the read of the stream never returned")
+            .unwrap();
+        if read == Err(ReadError::Failed) {
+            self.player.fail();
+        }
+        read
     }
 
     pub fn name(&self) -> &str {

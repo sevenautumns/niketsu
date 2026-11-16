@@ -15,7 +15,8 @@ use tokio::time::Instant;
 use tracing::{debug, warn};
 
 use crate::CoreModel;
-use crate::communicator::{Intent, RoomStateMsg, StreamEndedMsg};
+use crate::chunk::SharedFile;
+use crate::communicator::{Intent, RoomStateMsg};
 use crate::player::{MediaPlayerTrait, Source};
 use crate::playlist::{Playlist, Video, VideoInner};
 use crate::sync::ClientSync;
@@ -252,10 +253,9 @@ impl CoreModel {
         }
     }
 
-    /// The peers the room shows offering `video`, with the size of their
-    /// file.
-    pub(crate) fn providers_of(&self, video: &Video) -> Vec<(PeerId, u64)> {
-        let offer = |(peer, user): (&PeerId, &User)| Some((*peer, user.offer_of(video)?.size));
+    /// The peers the room shows offering `video`, with their file.
+    pub(crate) fn providers_of(&self, video: &Video) -> Vec<(PeerId, SharedFile)> {
+        let offer = |(peer, user): (&PeerId, &User)| Some((*peer, user.offer_of(video)?.clone()));
         self.state.users.iter().filter_map(offer).collect()
     }
 
@@ -327,7 +327,9 @@ impl CoreModel {
         }
         if video_changed {
             self.followed.video = self.state.video.clone();
-            self.selection_changed();
+            // what this core shares is a file of the selected video
+            let video = self.state.video.clone();
+            self.reshare_or_stop(video.as_ref());
         }
         if video_changed || unconfirmed {
             self.ui.video_change(self.state.video.clone());
@@ -368,7 +370,8 @@ impl CoreModel {
     }
 
     /// The player plays the selected video from `source` where the room is
-    /// in it, or holds nothing.
+    /// in it, or holds nothing. A stream is one of these sources, so it
+    /// ends when the player is given anything else.
     pub(crate) fn play(&mut self, source: Option<Source>, now: Instant) {
         match source.clone() {
             Some(source) => {
@@ -404,15 +407,6 @@ impl CoreModel {
         if source.is_some() {
             self.play(source, Instant::now());
         }
-    }
-
-    /// What goes with the selection: a stream is one of the selected
-    /// video, so the stream ends, and so is what this core shares.
-    fn selection_changed(&mut self) {
-        self.video_server.stop_server();
-        self.communicator.send(StreamEndedMsg.into());
-        let video = self.state.video.clone();
-        self.reshare_or_stop(video.as_ref());
     }
 
     /// Brings the player's speed, play state and position in line with the

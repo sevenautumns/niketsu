@@ -132,31 +132,3 @@ impl LineMsg {
 pub struct DisconnectedMsg {
     pub reason: String,
 }
-
-/// A line for the chat that no user wrote: what became of a file share.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NoticeMsg {
-    pub message: String,
-}
-
-impl NoticeMsg {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-/// The local video server's chunks are fetched from `provider`, a user the
-/// room state shows offering the video.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StreamMsg {
-    pub provider: PeerId,
-}
-
-/// The stream the local video server plays has ended. The communicator
-/// tells the core when the provider's side ended it; the core tells the
-/// communicator when it ended the stream itself.
-#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct StreamEndedMsg;

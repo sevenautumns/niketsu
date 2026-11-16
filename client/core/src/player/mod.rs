@@ -3,10 +3,13 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
+use multiaddr::PeerId;
 use tokio::time::Instant;
 use tracing::trace;
 
+use super::chunk::SharedFile;
 use super::communicator::Intent;
+use super::ui::PlayerMessage;
 use super::{CoreModel, EventHandler};
 
 pub mod wrapper;
@@ -36,6 +39,12 @@ pub trait MediaPlayerTrait: std::fmt::Debug + Send {
 pub enum Source {
     File(PathBuf),
     Url(String),
+    /// The file `provider` offers, read from that peer chunk by chunk
+    /// through a [`crate::stream::Reader`].
+    Stream {
+        provider: PeerId,
+        file: SharedFile,
+    },
 }
 
 #[enum_dispatch(EventHandler)]
@@ -48,6 +57,7 @@ pub enum MediaPlayerEvent {
     SpeedChange(PlayerSpeedChange),
     Loaded(PlayerLoaded),
     FileEnd(PlayerFileEnd),
+    Failed(PlayerFailed),
     Exit(PlayerExit),
 }
 
@@ -166,11 +176,34 @@ pub struct PlayerFileEnd;
 impl EventHandler for PlayerFileEnd {
     fn handle(self, model: &mut CoreModel) {
         trace!("player file end");
-        model.video_server.stop_server();
         model.followed.source = None;
         model.followed.loaded = false;
         if let Some(video) = model.followed.player.take() {
             model.request(Intent::Ended(video));
+        }
+    }
+}
+
+/// The player could not play what it was given, or not any further: a
+/// source it can not open, or a stream whose chunks stopped coming. It
+/// holds nothing anymore. The video did not end, so the room stays where
+/// it is, and this user has the video no longer.
+#[derive(Debug, Clone)]
+pub struct PlayerFailed;
+
+impl EventHandler for PlayerFailed {
+    fn handle(self, model: &mut CoreModel) {
+        trace!("player failed");
+        let Some(source) = model.followed.source.take() else {
+            return;
+        };
+        let message = match source {
+            Source::Stream { .. } => "The stream of the video failed",
+            Source::File(_) | Source::Url(_) => "The player could not play the video",
+        };
+        model.ui.player_message(PlayerMessage::error(message));
+        if std::mem::take(&mut model.followed.loaded) {
+            model.publish_status();
         }
     }
 }

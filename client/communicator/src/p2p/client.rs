@@ -241,8 +241,6 @@ impl Role for ClientRole {
             };
             warn!(?cause, %peer_id, %connection_id, "Connection to host closed");
             self.session.net.stop(stop);
-        } else if closed == Closed::Unlinked {
-            self.session.fs_peer_unlinked(peer_id);
         }
     }
 
@@ -347,7 +345,6 @@ impl Role for ClientRole {
     fn handle_core_message(&mut self, msg: OutgoingMessage) -> Result<()> {
         debug!(?msg, host = %self.session.net.host, peer = %self.session.net.swarm.local_peer_id(), "Handling core message");
         match msg {
-            OutgoingMessage::Room(m) => self.route_room_message(m),
             OutgoingMessage::Client(m) => self.send_to_host(m.into()),
             OutgoingMessage::Host(m) => self.session.drop_for_other_role(m),
         }

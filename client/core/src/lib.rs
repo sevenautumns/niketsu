@@ -17,7 +17,6 @@ use self::heartbeat::Pacemaker;
 use self::player::*;
 use self::ui::*;
 use self::video_provider::*;
-use self::video_server::*;
 
 pub mod builder;
 pub mod chunk;
@@ -30,12 +29,12 @@ pub mod logging;
 pub mod player;
 pub mod playlist;
 pub mod room;
+pub mod stream;
 pub mod sync;
 pub mod ui;
 pub mod user;
 pub mod util;
 pub mod video_provider;
-pub mod video_server;
 
 pub static PROJECT_DIRS: Lazy<Option<ProjectDirs>> =
     Lazy::new(|| ProjectDirs::from("de", "autumnal", "niketsu"));
@@ -58,7 +57,6 @@ pub struct CoreModel {
     pub player: MediaPlayerWrapper,
     pub ui: Box<dyn UserInterfaceTrait>,
     pub database: Box<dyn FileDatabaseTrait>,
-    pub video_server: Box<dyn VideoServerTrait>,
     pub video_provider: Box<dyn VideoProviderTrait>,
     chat_logger: Option<ChatLogger>,
     pub config: Config,
@@ -145,10 +143,6 @@ impl Core {
                 ui = self.model.ui.event() => {
                     trace!("handle ui event");
                     ui.handle(&mut self.model);
-                }
-                video_server = self.model.video_server.event() => {
-                    trace!("handle video server event");
-                    video_server.handle(&mut self.model);
                 }
                 video_provider = self.model.video_provider.event() => {
                     trace!("handle video provider event");

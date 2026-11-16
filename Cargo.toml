@@ -4,7 +4,6 @@ members = [
   "client/communicator",
   "client/core",
   "client/player/mpv",
-  "client/player/video_server",
   "client/ui/iced",
   "client/ui/ratatui",
   "protocol",

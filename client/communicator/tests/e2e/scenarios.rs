@@ -4,9 +4,13 @@ use std::time::Duration;
 
 use niketsu_core::file_database::FileEntry;
 use niketsu_core::playlist::{Playlist, Video};
+use niketsu_core::stream::ReadError;
 use niketsu_core::ui;
 
-use crate::harness::{Peer, Relay, download, eventually};
+use crate::harness::{Peer, Relay, eventually};
+
+/// What a viewer is told when the stream its player reads fails.
+const STREAM_FAILED: &str = "The stream of the video failed";
 
 fn select(peer: &Peer, playlist: &[&str], video: &str) {
     peer.ui.act(ui::PlaylistChange {
@@ -190,7 +194,7 @@ async fn late_joiner_catches_up_with_the_host() {
 }
 
 /// A peer without the file plays it from the peer that shares it: what its
-/// video server hands the player is the shared file, byte for byte.
+/// player reads is the shared file, byte for byte.
 #[tokio::test(flavor = "multi_thread")]
 async fn shared_file_streams_to_a_peer_without_it() {
     let ep1 = Episode::on_disk();
@@ -274,9 +278,9 @@ async fn stopping_the_share_withdraws_the_offer_for_everyone() {
     assert_eq!(carol.player.state().source, None);
 }
 
-/// A new selection ends the stream of the old video: the viewer's video
-/// server stops, and the viewer hears nothing more of the old provider,
-/// also when that provider leaves.
+/// A new selection ends the stream of the old video: the viewer's player
+/// is given the stream no longer, and the viewer hears nothing more of the
+/// old provider, also when that provider leaves.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_selection_ends_the_stream_quietly() {
     let ep1 = Episode::on_disk();
@@ -294,15 +298,13 @@ async fn a_new_selection_ends_the_stream_quietly() {
     })
     .await;
     // carol plays the stream: her player reads it, over a direct link to bob
-    let source = ep1.open(&bob, &carol).await;
-    assert!(download(&source).await == ep1.content);
-    let video_server = source.strip_prefix("http://").unwrap().to_string();
+    ep1.stream(&bob, &carol).await;
 
     alice.ui.act(ui::VideoChange {
         video: Video::from("ep2"),
     });
-    eventually("carol's video server is gone", || {
-        std::net::TcpStream::connect(&video_server).is_err()
+    eventually("carol's player holds the stream no longer", || {
+        carol.player.state().source.is_none()
     })
     .await;
     eventually("bob's offer went with the selection", || {
@@ -318,10 +320,10 @@ async fn a_new_selection_ends_the_stream_quietly() {
     // The one wait for something not to happen: carol's connection to bob
     // closes along with his to the host.
     tokio::time::sleep(Duration::from_secs(1)).await;
-    let told = |line: &String| line.contains("provider of the file disconnected");
+    let told = |line: &String| line.contains(STREAM_FAILED);
     assert!(
         !carol.ui.state().messages.iter().any(told),
-        "carol heard of a provider she no longer streams from"
+        "carol heard of a stream she no longer plays"
     );
 }
 
@@ -349,14 +351,14 @@ async fn a_late_joiner_streams_from_the_client_that_offers_the_video() {
     .await;
 
     let carol = Peer::join(&relay, "carol", &[]);
-    let source = ep1.request(&bob, &carol).await;
-    let received = download(&source).await;
+    ep1.request(&bob, &carol).await;
+    let received = carol.read_stream().await.unwrap();
     assert!(received == ep1.content, "the stream differs from the file");
 }
 
-/// When the peer that shares a file leaves, the peer playing it is told so
-/// once and its video server stops, instead of asking for chunks nobody
-/// will send.
+/// When the peer that shares a file leaves, a read of the peer playing it
+/// fails instead of waiting for chunks nobody will send, and the viewer is
+/// told so once.
 #[tokio::test(flavor = "multi_thread")]
 async fn stream_ends_when_its_provider_leaves() {
     let ep1 = Episode::on_disk();
@@ -375,26 +377,22 @@ async fn stream_ends_when_its_provider_leaves() {
     })
     .await;
     // carol plays the stream: her player reads it, over a direct link to bob
-    let source = ep1.open(&bob, &carol).await;
-    assert!(download(&source).await == ep1.content);
-    let video_server = source.strip_prefix("http://").unwrap().to_string();
+    ep1.stream(&bob, &carol).await;
     let told = || {
-        let left = |line: &&String| line.contains("provider of the file disconnected");
-        carol.ui.state().messages.iter().filter(left).count()
+        let failed = |line: &&String| line.contains(STREAM_FAILED);
+        carol.ui.state().messages.iter().filter(failed).count()
     };
 
     assert_eq!(told(), 0);
 
     drop(bob);
-    eventually("carol hears that the provider left", || told() == 1).await;
-    eventually("carol's video server is gone", || {
-        std::net::TcpStream::connect(&video_server).is_err()
-    })
-    .await;
+    assert_eq!(carol.read_stream().await, Err(ReadError::Failed));
+    eventually("carol hears that the stream failed", || told() == 1).await;
     eventually("bob's offer left with him", || {
         carol.ui.state().offering().is_empty()
     })
     .await;
+    assert_eq!(carol.player.state().source, None);
     assert_eq!(told(), 1);
 }
 
@@ -506,25 +504,18 @@ impl Episode {
     }
 
     /// `provider` shares the selected episode, `viewer` requests it and
-    /// reads it from its video server like its player would.
+    /// reads it like its player would.
     async fn stream(&self, provider: &Peer, viewer: &Peer) {
-        let source = self.open(provider, viewer).await;
-        let received = download(&source).await;
+        provider.ui.act(ui::FileShareChange {});
+        self.request(provider, viewer).await;
+        let received = viewer.read_stream().await.unwrap();
         assert_eq!(received.len(), self.content.len());
         assert!(received == self.content, "the stream differs from the file");
     }
 
-    /// `provider` shares the selected episode and `viewer` requests it.
-    /// Returns where the viewer's player reads it from: the URL of its
-    /// video server.
-    async fn open(&self, provider: &Peer, viewer: &Peer) -> String {
-        provider.ui.act(ui::FileShareChange {});
-        self.request(provider, viewer).await
-    }
-
     /// `viewer` sees `provider` offering the selected episode and requests
-    /// it. Returns the URL of the viewer's video server.
-    async fn request(&self, provider: &Peer, viewer: &Peer) -> String {
+    /// it, which gives its player the stream.
+    async fn request(&self, provider: &Peer, viewer: &Peer) {
         eventually(
             "the viewer sees the provider offering its selection",
             || {
@@ -535,10 +526,9 @@ impl Episode {
         .await;
 
         viewer.ui.act(ui::FileRequest {});
-        eventually("the viewer's player is pointed at its video server", || {
+        eventually("the viewer's player is given the stream", || {
             viewer.player.state().source.is_some()
         })
         .await;
-        viewer.player.state().source.unwrap()
     }
 }

@@ -37,12 +37,26 @@
 //! - The user's seeks look the same as the app's: relative ones and the
 //!   percent seeks of the seek bar land on keyframes, absolute ones
 //!   exactly. A frame step is no seek.
+//! - A location of a protocol of the stream callbacks loads and seeks
+//!   like a file. mpv does not take it for a stream of the network
+//!   (`demuxer-via-network` is no) and reads one second ahead of the
+//!   position; loaded with `cache=yes` it reads ahead as far as its cache
+//!   reaches. Loading the mkv clip reads at three offsets (the start, the
+//!   index at the end, the start position), a seek at one.
+//! - A read that returns an error is the end of the stream to mpv: the
+//!   file ends with EOF or ERROR as it would have at its end.
+//! - `stop`, a load in place of the stream and destroying mpv call the
+//!   cancel callback and return once a read that waits has returned.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use niketsu_core::chunk::{FetchRoute, SharedFile};
+use niketsu_core::communicator::PeerId;
 use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait, Source};
 
 use crate::bindings::*;
@@ -447,7 +461,7 @@ fn the_adapter_tells_its_users_seeks_from_the_apps() {
     use MediaPlayerEvent::*;
     let clip = Source::File(clip().into());
     let secs = Duration::from_secs_f64;
-    let mut mpv = Mpv::headless().expect("mpv starts");
+    let mut mpv = Mpv::headless(FetchRoute::default()).expect("mpv starts");
     assert_eq!(mpv.get_position(), None);
     assert_eq!(mpv.is_paused(), None);
 
@@ -513,7 +527,7 @@ fn the_adapter_tells_its_users_seeks_from_the_apps() {
     );
 
     mpv.load(Source::File("/nonexistent/niketsu.mkv".into()), secs(0.0));
-    assert!(next(&mut mpv, SHORT).is_none(), "a failed load is reported");
+    assert!(matches!(next(&mut mpv, SHORT), Some(Failed(_))));
     assert_eq!(mpv.get_position(), None);
     assert_eq!(mpv.is_paused(), None);
 
@@ -532,4 +546,205 @@ fn the_adapter_tells_its_users_seeks_from_the_apps() {
     mpv.unload();
     assert!(next(&mut mpv, SHORT).is_none(), "an unload is reported");
     assert_eq!(mpv.get_position(), None);
+}
+
+/// What the peer offering the clip does with a chunk request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Serving {
+    /// Answers it.
+    Chunks,
+    /// Leaves it unanswered.
+    Nothing,
+    /// Turns it down.
+    Refusals,
+}
+
+/// Stands in for the communicator and the peer that offers the clip: it
+/// answers the chunk requests of the route from the clip's bytes.
+struct Provider {
+    serving: Arc<Mutex<Serving>>,
+    /// How many chunks were asked for.
+    asked: Arc<AtomicUsize>,
+    stream: Source,
+}
+
+impl Provider {
+    fn new(route: &FetchRoute) -> Self {
+        let content = std::fs::read(clip()).expect("the clip is readable");
+        let peer = PeerId::from_bytes(&[0x00, 4, 1, 1, 1, 1]).expect("an identity multihash");
+        let file = SharedFile {
+            name: "clip.mkv".into(),
+            size: content.len() as u64,
+        };
+        let provider = Self {
+            serving: Arc::new(Mutex::new(Serving::Chunks)),
+            asked: Arc::default(),
+            stream: Source::Stream {
+                provider: peer,
+                file,
+            },
+        };
+        let (serving, asked) = (provider.serving.clone(), provider.asked.clone());
+        let mut requests = route.serve(1);
+        std::thread::spawn(move || {
+            let mut unanswered = Vec::new();
+            while let Some(fetch) = requests.blocking_recv() {
+                asked.fetch_add(1, Ordering::Relaxed);
+                assert_eq!(fetch.provider, peer);
+                let request = fetch.request;
+                let serving = *serving.lock().unwrap();
+                match serving {
+                    Serving::Chunks => {
+                        let start = request.start as usize;
+                        let end = content.len().min(start + request.len as usize);
+                        request.reply.send(content[start..end].to_vec()).ok();
+                    }
+                    Serving::Nothing => unanswered.push(request),
+                    Serving::Refusals => drop(request),
+                }
+            }
+        });
+        provider
+    }
+
+    fn serve(&self, serving: Serving) {
+        *self.serving.lock().unwrap() = serving;
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(Ordering::Relaxed)
+    }
+}
+
+/// A property of mpv the adapter has no use for.
+fn property(mpv: &Mpv, name: &CStr) -> String {
+    unsafe {
+        let value = mpv_get_property_string(mpv.handle.0, name.as_ptr());
+        if value.is_null() {
+            return "unavailable".into();
+        }
+        let text = CStr::from_ptr(value).to_string_lossy().into_owned();
+        mpv_free(value as *mut c_void);
+        text
+    }
+}
+
+/// The adapter on real mpv with a file another peer offers: mpv plays it
+/// through the stream callbacks, a read that waits for a chunk does not
+/// keep mpv from unloading, and a stream whose chunks stop coming is
+/// reported as failed, not as ended.
+#[test]
+#[ignore = "needs mpv on the path to encode its clip; run by hand"]
+fn the_adapter_plays_a_stream_and_tells_its_failure_from_its_end() {
+    use MediaPlayerEvent::*;
+    let secs = Duration::from_secs_f64;
+    let long = Duration::from_secs(5);
+    let route = FetchRoute::default();
+    let provider = Provider::new(&route);
+    let mut mpv = Mpv::headless(route).expect("mpv starts");
+    // mpv caches all of a clip this small otherwise, and a seek in it
+    // reads nothing
+    for (name, value) in [
+        (c"demuxer-max-bytes", c"256KiB"),
+        (c"demuxer-max-back-bytes", c"0"),
+    ] {
+        let ret = unsafe { mpv_set_property_string(mpv.handle.0, name.as_ptr(), value.as_ptr()) };
+        assert_eq!(ret, 0, "option {name:?}");
+    }
+
+    mpv.load(provider.stream.clone(), secs(33.3));
+    let loaded = next(&mut mpv, long);
+    assert!(matches!(loaded, Some(Loaded(_))), "loading gave {loaded:?}");
+    assert_at(&mut mpv, 33.3);
+    println!("chunks asked for to load at 33.3: {}", provider.asked());
+    for name in [c"demuxer-via-network", c"cache", c"demuxer-cache-duration"] {
+        println!("{name:?} = {}", property(&mpv, name));
+    }
+
+    let before = provider.asked();
+    mpv.set_position(secs(90.0));
+    assert!(
+        next(&mut mpv, SHORT).is_none(),
+        "the app's seek is reported"
+    );
+    assert_at(&mut mpv, 90.0);
+    println!(
+        "chunks asked for to seek to 90: {}",
+        provider.asked() - before
+    );
+
+    let before = provider.asked();
+    mpv.set_position(secs(10.0));
+    mpv.start();
+    assert!(next(&mut mpv, Duration::from_secs(2)).is_none());
+    let at = mpv.get_position().expect("the player has a position");
+    assert!(at > secs(11.0) && at < secs(13.0), "played on to {at:?}");
+    println!(
+        "chunks asked for in 2 s of playing: {}, cache {} s",
+        provider.asked() - before,
+        property(&mpv, c"demuxer-cache-duration")
+    );
+
+    // mpv waits in a read for a chunk nobody sends, and unloads all the same
+    provider.serve(Serving::Nothing);
+    let before = provider.asked();
+    mpv.set_position(secs(110.0));
+    let waiting = Instant::now();
+    while provider.asked() == before {
+        assert!(waiting.elapsed() < long, "the seek asked for no chunk");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let unloading = Instant::now();
+    mpv.unload();
+    let took = unloading.elapsed();
+    assert!(took < Duration::from_millis(500), "unloading took {took:?}");
+    assert!(next(&mut mpv, SHORT).is_none(), "an unload is reported");
+    assert_eq!(mpv.get_position(), None);
+
+    // a stream that can not be opened for want of chunks failed
+    mpv.load(provider.stream.clone(), secs(0.0));
+    let replacing = Instant::now();
+    provider.serve(Serving::Refusals);
+    mpv.load(provider.stream.clone(), secs(0.0));
+    let took = replacing.elapsed();
+    assert!(took < Duration::from_millis(500), "replacing took {took:?}");
+    let failed = next(&mut mpv, long);
+    assert!(matches!(failed, Some(Failed(_))), "it gave {failed:?}");
+    assert!(
+        next(&mut mpv, SHORT).is_none(),
+        "a failure is reported twice"
+    );
+    assert_eq!(mpv.get_position(), None);
+
+    // a stream whose chunks stop coming while it plays failed, and did
+    // not end
+    provider.serve(Serving::Chunks);
+    mpv.load(provider.stream.clone(), secs(10.0));
+    assert!(matches!(next(&mut mpv, long), Some(Loaded(_))));
+    mpv.start();
+    provider.serve(Serving::Refusals);
+    mpv.set_position(secs(110.0));
+    let failed = next(&mut mpv, Duration::from_secs(30));
+    assert!(matches!(failed, Some(Failed(_))), "it gave {failed:?}");
+    assert_eq!(mpv.get_position(), None);
+
+    // the stream is read to its end like a file
+    provider.serve(Serving::Chunks);
+    mpv.load(provider.stream.clone(), secs(119.0));
+    assert!(matches!(next(&mut mpv, long), Some(Loaded(_))));
+    mpv.start();
+    let end = next(&mut mpv, long);
+    assert!(
+        matches!(end, Some(FileEnd(_))),
+        "the stream ends with {end:?}"
+    );
+
+    // mpv is destroyed while it waits in a read
+    provider.serve(Serving::Nothing);
+    mpv.load(provider.stream.clone(), secs(0.0));
+    std::thread::sleep(Duration::from_millis(100));
+    let destroying = Instant::now();
+    drop(mpv);
+    let took = destroying.elapsed();
+    assert!(took < Duration::from_secs(1), "destroying took {took:?}");
 }

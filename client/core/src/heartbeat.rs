@@ -41,6 +41,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
+    use crate::MockVideoProviderTrait;
     use crate::builder::CoreBuilder;
     use crate::communicator::MockCommunicatorTrait;
     use crate::config::Config;
@@ -49,7 +50,6 @@ mod tests {
     use crate::room::Role;
     use crate::sync::ClientSync;
     use crate::ui::MockUserInterfaceTrait;
-    use crate::{MockVideoProviderTrait, MockVideoServerTrait};
 
     #[tokio::test]
     async fn test_pacemaker() {
@@ -74,7 +74,6 @@ mod tests {
             .player(Box::new(MockMediaPlayerTrait::default()))
             .ui(Box::new(MockUserInterfaceTrait::default()))
             .file_database(Box::new(MockFileDatabaseTrait::default()))
-            .video_server(Box::new(MockVideoServerTrait::default()))
             .video_provider(Box::new(MockVideoProviderTrait::default()))
             .config(Config::default())
             .build();
@@ -96,7 +95,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(MockFileDatabaseTrait::default()))
-            .video_server(Box::new(MockVideoServerTrait::default()))
             .video_provider(Box::new(MockVideoProviderTrait::default()))
             .config(Config::default())
             .build();

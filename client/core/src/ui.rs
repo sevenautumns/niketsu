@@ -9,9 +9,11 @@ use chrono::{DateTime, Local};
 use enum_dispatch::enum_dispatch;
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
+use tokio::time::Instant;
 use tracing::{Level, trace};
 
-use super::communicator::{Intent, StreamMsg};
+use super::communicator::Intent;
+use super::player::Source;
 use super::playlist::Video;
 use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
@@ -307,22 +309,16 @@ impl EventHandler for FileRequest {
         // stuck with the same (possibly unreachable) peer. A v4 uuid is a
         // random number.
         let random = uuid::Uuid::new_v4().as_u128() as usize;
-        let providers = model.providers_of(&current_video);
-        let index = random % providers.len().max(1);
-        let Some((provider, size)) = providers.get(index).copied() else {
+        let mut providers = model.providers_of(&current_video);
+        if providers.is_empty() {
             model.ui.player_message(PlayerMessage::error(
                 "No providers found for the requested file",
             ));
-            // nothing is left to stream from
-            model.video_server.stop_server();
             return;
-        };
-
-        // the communicator streams from the provider before the video
-        // server asks it for the first chunk
-        model.communicator.send(StreamMsg { provider }.into());
-        let file_name = ArcStr::from(current_video.as_str());
-        model.video_server.start_server(file_name, size);
+        }
+        let (provider, file) = providers.swap_remove(random % providers.len());
+        let source = Source::Stream { provider, file };
+        model.play(Some(source), Instant::now());
     }
 }
 
@@ -620,6 +616,7 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::*;
+    use crate::MockVideoProviderTrait;
     use crate::builder::CoreBuilder;
     use crate::communicator::{EndpointInfo, MockCommunicatorTrait, OutgoingMessage};
     use crate::config::Config;
@@ -629,7 +626,6 @@ mod tests {
     use crate::sync::ClientSync;
     use crate::user::User;
     use crate::util::Observed;
-    use crate::{MockVideoProviderTrait, MockVideoServerTrait};
 
     // The PlaylistChange and VideoChange handlers are covered by the dance
     // suite (tests/dance), which asserts the converged room state instead
@@ -641,7 +637,6 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
         let video_provider = MockVideoProviderTrait::default();
 
         let user = arcstr::literal!("max");
@@ -674,7 +669,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
@@ -692,7 +686,6 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
         let mut video_provider = MockVideoProviderTrait::default();
         video_provider.expect_offered().return_const(None);
 
@@ -720,7 +713,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
@@ -746,7 +738,6 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
         let video_provider = MockVideoProviderTrait::default();
 
         let user = arcstr::literal!("max");
@@ -768,7 +759,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
@@ -785,7 +775,6 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
         let video_provider = MockVideoProviderTrait::default();
 
         let config = Config::default();
@@ -798,7 +787,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
@@ -816,7 +804,6 @@ mod tests {
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
         let video_provider = MockVideoProviderTrait::default();
 
         let paths = vec!["/videos".into(), "/music".into()];
@@ -836,7 +823,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();

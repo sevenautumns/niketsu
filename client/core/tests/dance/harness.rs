@@ -9,8 +9,8 @@ use niketsu_core::builder::CoreBuilder;
 use niketsu_core::chunk::SharedFile;
 use niketsu_core::communicator::{
     ClientRequest, CommunicatorTrait, ConnectedMsg, DisconnectedMsg, EndpointInfo, HostInstruction,
-    HostRoundTripMsg, IncomingMessage, NoticeMsg, OutgoingMessage, PeerDisconnectedMsg, PeerId,
-    PeerIntentMsg, RoomMessage, RoomStateMsg, StreamEndedMsg, StreamMsg,
+    HostRoundTripMsg, IncomingMessage, OutgoingMessage, PeerDisconnectedMsg, PeerId, PeerIntentMsg,
+    RoomStateMsg,
 };
 use niketsu_core::config::Config;
 use niketsu_core::file_database::{
@@ -18,7 +18,7 @@ use niketsu_core::file_database::{
 };
 use niketsu_core::heartbeat::Heartbeat;
 use niketsu_core::player::{
-    MediaPlayerEvent, MediaPlayerTrait, PlayerFileEnd, PlayerLoaded, Source,
+    MediaPlayerEvent, MediaPlayerTrait, PlayerFailed, PlayerFileEnd, PlayerLoaded, Source,
 };
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::UserList;
@@ -26,7 +26,6 @@ use niketsu_core::ui::{
     MessageSource, PlayerMessage, UserChange, UserInterfaceEvent, UserInterfaceTrait,
 };
 use niketsu_core::video_provider::{VideoProviderEvent, VideoProviderTrait};
-use niketsu_core::video_server::{VideoServerEvent, VideoServerTrait};
 use niketsu_core::{CoreModel, EventHandler, SavedPlaylistLoader};
 use tokio::time::Instant;
 
@@ -89,11 +88,13 @@ impl PlayerState {
 }
 
 /// The video a source is of: the fake database keeps every file under its
-/// name, and a URL is its own video.
+/// name, a URL is its own video, and a stream is one of the file a peer
+/// offers.
 fn video_of(source: &Source) -> Video {
     match source {
         Source::File(path) => Video::from(path.file_name().unwrap().to_str().unwrap()),
         Source::Url(url) => Video::from(url.as_str()),
+        Source::Stream { file, .. } => Video::from(file.name.as_str()),
     }
 }
 
@@ -131,6 +132,25 @@ impl PlayerHandle {
         let mut state = present(&self.0);
         state.file_loaded = true;
         state.events.push(PlayerLoaded.into());
+    }
+
+    /// The peer and the file of the stream the player reads, if it reads
+    /// one.
+    pub fn stream(&self) -> Option<(PeerId, SharedFile)> {
+        match self.0.lock().unwrap().source.clone() {
+            Some(Source::Stream { provider, file }) => Some((provider, file)),
+            _ => None,
+        }
+    }
+
+    /// The chunks of the stream the player reads stop coming. Like mpv,
+    /// it holds nothing from then on and reports that it failed.
+    fn fail_stream(&self) {
+        let mut state = present(&self.0);
+        state.source = None;
+        state.video = None;
+        state.file_loaded = false;
+        state.events.push(PlayerFailed.into());
     }
 
     fn take_events(&self) -> Vec<MediaPlayerEvent> {
@@ -391,49 +411,6 @@ impl FileDatabaseTrait for FakeDatabase {
 }
 
 // ------------------------------------------------------------------
-// Fake video server: records what it serves.
-// ------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub struct ServerHandle(Arc<Mutex<Option<SharedFile>>>);
-
-impl ServerHandle {
-    pub fn running(&self) -> bool {
-        self.0.lock().unwrap().is_some()
-    }
-
-    /// The file the server serves, by name and size.
-    pub fn serves(&self) -> Option<SharedFile> {
-        self.0.lock().unwrap().clone()
-    }
-}
-
-#[derive(Debug)]
-struct FakeVideoServer(Arc<Mutex<Option<SharedFile>>>);
-
-impl FakeVideoServer {
-    fn new() -> (Self, ServerHandle) {
-        let state = Arc::new(Mutex::new(None));
-        (Self(state.clone()), ServerHandle(state))
-    }
-}
-
-#[async_trait]
-impl VideoServerTrait for FakeVideoServer {
-    fn stop_server(&mut self) {
-        *self.0.lock().unwrap() = None;
-    }
-
-    fn start_server(&mut self, name: ArcStr, size: u64) {
-        *self.0.lock().unwrap() = Some(SharedFile { name, size });
-    }
-
-    async fn event(&mut self) -> VideoServerEvent {
-        std::future::pending().await
-    }
-}
-
-// ------------------------------------------------------------------
 // Fake video provider: records which file it provides. It opens a file
 // at once, so it offers what it provides; the test reports the file
 // ready as the real provider's task would.
@@ -484,7 +461,6 @@ pub struct Peer {
     pub model: CoreModel,
     pub player: PlayerHandle,
     pub ui: UiHandle,
-    pub video_server: ServerHandle,
     /// The transport identity the communicator reports for this peer.
     pub id: PeerId,
     /// False once the peer left the room; it then neither sends nor
@@ -511,7 +487,6 @@ impl Peer {
     ) -> Self {
         let (player, player_handle) = FakePlayer::new();
         let (ui, ui_handle) = FakeUi::new();
-        let (video_server, server_handle) = FakeVideoServer::new();
         let id = peer_id(index);
         let communicator = FakeCommunicator {
             peer: id,
@@ -529,7 +504,6 @@ impl Peer {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(FakeDatabase::new(files)))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(FakeVideoProvider::default()))
             .config(config)
             // what a room has saved is the Room's to say, independent of
@@ -541,7 +515,6 @@ impl Peer {
             model: core.model,
             player: player_handle,
             ui: ui_handle,
-            video_server: server_handle,
             id,
             online: true,
             outbox,
@@ -682,12 +655,6 @@ pub struct Room {
     host: usize,
     /// The host's outbox to each member, by the member's index.
     links: HashMap<usize, Link>,
-    /// Who streams from whom: the provider of each consumer, as its
-    /// communicator keeps it in `p2p/file_share.rs`.
-    streams: HashMap<usize, usize>,
-    /// What each peer offered when the room last looked, to end the
-    /// streams of an offer withdrawn.
-    offers: HashMap<usize, SharedFile>,
     /// What a fresh host finds saved for the room; nothing unless set.
     saved: Option<SavedPlaylistLoader>,
 }
@@ -751,15 +718,13 @@ impl Room {
     /// The host loses the room at the relay, and the room there closes
     /// with it. Everyone's session ends and everyone connects again;
     /// `target` is the first to arrive and hosts the room, the others —
-    /// the old host included — are its clients. Every communicator starts
-    /// a new session, which streams nothing; what a peer offers stays with
-    /// its provide route.
+    /// the old host included — are its clients. No chunk reaches anyone
+    /// between the sessions, so every stream fails; what a peer offers
+    /// stays with its provide route.
     pub fn rehost(&mut self, target: usize) {
         assert!(self.peers[target].online, "an offline peer hosts no room");
         self.host = target;
-        for consumer in std::mem::take(&mut self.streams).into_keys() {
-            self.deliver(consumer, StreamEndedMsg);
-        }
+        self.fail_streams(|_, _| true);
         self.links.clear();
         for index in 0..self.peers.len() {
             if self.peers[index].online {
@@ -775,7 +740,7 @@ impl Room {
     }
 
     /// The peer's connections close; the host's communicator reports it,
-    /// and the communicator of whoever streamed from it ends the stream.
+    /// and the chunk requests of whoever streamed from it fail.
     pub fn leave(&mut self, index: usize) {
         assert_ne!(index, self.host, "a host does not leave, see `rehost`");
         self.peers[index].online = false;
@@ -786,50 +751,43 @@ impl Room {
         self.end_streams_of(index);
     }
 
-    /// The session of `index` ends: the stream it played ends with it, and
-    /// so does every stream from it, as the provider's connections close.
+    /// The session of `index` ends: the stream it played fails with it,
+    /// and so does every stream from it, as the provider's connections
+    /// close.
     fn end_streams_of(&mut self, index: usize) {
-        let ended: Vec<usize> = self
-            .streams
-            .iter()
-            .filter(|(consumer, provider)| **consumer == index || **provider == index)
-            .map(|(consumer, _)| *consumer)
-            .collect();
-        for consumer in ended {
-            self.streams.remove(&consumer);
-            if self.peers[consumer].online {
-                self.deliver(consumer, StreamEndedMsg);
+        let id = self.peers[index].id;
+        self.fail_streams(|viewer, provider| viewer == index || *provider == id);
+    }
+
+    /// The player of every `viewer` online whose stream from `provider`
+    /// has `ended` gets no more chunks, and its core hears of it with the
+    /// next pump.
+    fn fail_streams(&mut self, ended: impl Fn(usize, &PeerId) -> bool) {
+        for (viewer, peer) in self.peers.iter().enumerate() {
+            let Some((provider, _)) = peer.player.stream() else {
+                continue;
+            };
+            if peer.online && ended(viewer, &provider) {
+                peer.player.fail_stream();
             }
         }
     }
 
-    /// The streams of the offers withdrawn since the room last looked end:
-    /// the provider's communicator turns their chunk requests down.
-    fn withdrawn_offers(&mut self) -> Vec<(usize, IncomingMessage)> {
-        let mut ended = Vec::new();
-        for index in 0..self.peers.len() {
-            let peer = &self.peers[index];
-            let offer = peer.online.then(|| peer.model.video_provider.offered());
-            let offer = offer.flatten();
-            let before = match &offer {
-                Some(video) => self.offers.insert(index, video.clone()),
-                None => self.offers.remove(&index),
-            };
-            if before.is_none() || before == offer {
-                continue;
-            }
-            let consumers: Vec<usize> = self
-                .streams
-                .iter()
-                .filter(|(_, provider)| **provider == index)
-                .map(|(consumer, _)| *consumer)
-                .collect();
-            for consumer in consumers {
-                self.streams.remove(&consumer);
-                ended.push((consumer, StreamEndedMsg.into()));
-            }
-        }
-        ended
+    /// The streams whose provider does not offer their file fail: the
+    /// provider's communicator turns the chunk requests down, or the
+    /// provider is gone.
+    fn fail_streams_nobody_serves(&mut self) {
+        let unserved: Vec<usize> = (0..self.peers.len())
+            .filter(|viewer| {
+                let Some((provider, file)) = self.peers[*viewer].player.stream() else {
+                    return false;
+                };
+                let provider = self.index_of(&provider).filter(|p| p != viewer);
+                let offered = provider.and_then(|p| self.peers[p].model.video_provider.offered());
+                offered != Some(file)
+            })
+            .collect();
+        self.fail_streams(|viewer, _| unserved.contains(&viewer));
     }
 
     /// A ping to the host answered after `rtt`.
@@ -960,9 +918,10 @@ impl Room {
         self.peers.iter().any(offers)
     }
 
-    /// Who `consumer` streams from, as its communicator has it.
-    pub fn provider_of(&self, consumer: usize) -> Option<usize> {
-        self.streams.get(&consumer).copied()
+    /// Who the player of `viewer` reads a stream from.
+    pub fn provider_of(&self, viewer: usize) -> Option<usize> {
+        let (provider, _) = self.peers[viewer].player.stream()?;
+        self.index_of(&provider)
     }
 
     /// Finish the reads in flight, then let every core hear its player and
@@ -971,11 +930,12 @@ impl Room {
     /// is reacting to, or the room never settles.
     pub fn pump(&mut self) {
         for _ in 0..100 {
+            self.fail_streams_nobody_serves();
             let mut heard = false;
             for peer in self.peers.iter_mut().filter(|peer| peer.online) {
                 heard |= peer.hear_player();
             }
-            let mut deliveries = self.withdrawn_offers();
+            let mut deliveries = Vec::new();
             for from in 0..self.peers.len() {
                 let outbox = self.peers[from].drain();
                 if !self.peers[from].online {
@@ -1002,14 +962,16 @@ impl Room {
     ///   through the member's [`Link`], a chat line to every member but its
     ///   author
     /// - a client's intent is a request to the host
-    /// - a file request travels directly to the provider it names, whose
-    ///   communicator answers it from what its provider offers
+    ///
+    /// The chunk requests of a player that reads a stream pass no core:
+    /// they go directly to the provider, whose communicator answers them
+    /// from what its provider offers, see
+    /// [`Room::fail_streams_nobody_serves`].
     fn route(&mut self, from: usize, msg: OutgoingMessage) -> Vec<(usize, IncomingMessage)> {
         // like the role handlers, a peer's messages of the other role's
         // group go nowhere
         let from_host = from == self.host;
         match msg {
-            OutgoingMessage::Room(m) => self.route_room(from, m),
             OutgoingMessage::Host(m) if from_host => self.route_instruction(from, m),
             OutgoingMessage::Client(m) if !from_host => self.route_request(from, m),
             OutgoingMessage::Host(_) | OutgoingMessage::Client(_) => vec![],
@@ -1072,37 +1034,5 @@ impl Room {
             ClientRequest::Intent(intent) => PeerIntentMsg { peer, intent }.into(),
         };
         vec![(self.host, msg)]
-    }
-
-    fn route_room(&mut self, from: usize, msg: RoomMessage) -> Vec<(usize, IncomingMessage)> {
-        match msg {
-            RoomMessage::Stream(m) => self.stream(from, m),
-            RoomMessage::StreamEnded(_) => {
-                self.streams.remove(&from);
-                vec![]
-            }
-        }
-    }
-
-    /// The viewer's chunk requests go to the provider, whose communicator
-    /// answers them from what its provider offers, without its core. The
-    /// stream takes the place of the one the viewer played.
-    fn stream(&mut self, from: usize, msg: StreamMsg) -> Vec<(usize, IncomingMessage)> {
-        self.streams.remove(&from);
-        let provider = self.index_of(&msg.provider).filter(|p| *p != from);
-        let offered = provider.and_then(|p| self.peers[p].model.video_provider.offered());
-        let wanted = self.peers[from].video_server.serves();
-        match provider {
-            Some(provider) if offered.is_some() && offered == wanted => {
-                self.streams.insert(from, provider);
-                vec![]
-            }
-            // the provider turns the chunk requests down or is gone: the
-            // viewer's consumer shows why and gives up
-            _ => vec![
-                (from, NoticeMsg::new("Not providing any files").into()),
-                (from, StreamEndedMsg.into()),
-            ],
-        }
     }
 }

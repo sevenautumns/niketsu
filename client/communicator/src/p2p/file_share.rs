@@ -1,33 +1,29 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use arcstr::ArcStr;
 use futures::FutureExt;
 use futures::future::BoxFuture;
-use libp2p::PeerId;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, OutboundRequestId, ResponseChannel};
-use niketsu_core::chunk::{ChunkRequest, ChunkRoute, ProvideRoute, Server, SharedFile};
-use niketsu_core::communicator::{StreamEndedMsg, StreamMsg};
+use libp2p::swarm::DialError;
+use libp2p::swarm::dial_opts::DialOpts;
+use niketsu_core::chunk::{ChunkFetch, ChunkRequest, FetchRoute, ProvideRoute, Server, SharedFile};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::oneshot;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 use super::member::Tagged;
-use super::{Net, Session, SwarmExt};
-
-/// Chunks of the local video server requested from the provider and not yet
-/// answered. The video server waits beyond that, so a slow provider slows it.
-pub(super) const CHUNK_FETCHES: usize = 4;
+use super::{Session, SwarmExt};
 
 /// The chunk routes of this peer, see [`niketsu_core::chunk`].
 #[derive(Debug, Clone)]
 pub(crate) struct ChunkRoutes {
-    /// Requests of the local video server, which the communicator fetches
-    /// from the provider.
-    pub fetch: ChunkRoute,
+    /// The chunks the local player reads of other peers' files, which the
+    /// communicator fetches from them.
+    pub fetch: FetchRoute,
     /// The file this peer offers, and where the chunk requests of other
     /// peers for it go: to the local video provider.
     pub provide: ProvideRoute,
@@ -70,23 +66,10 @@ fn server_of(provide: &ProvideRoute, video: &str) -> Result<Arc<Server<SharedFil
     }
 }
 
-/// The local video server plays a file another peer shares.
-#[derive(Debug)]
-pub struct FileShareConsumer {
-    /// Where chunks are fetched from.
-    provider: PeerId,
-    chunk_requests: HashMap<OutboundRequestId, oneshot::Sender<Vec<u8>>>,
-    /// A chunk request failed and none has succeeded since. The user hears
-    /// of a stall once, however many chunks fail in it.
-    stalled: bool,
-}
-
-impl Net {
-    /// Tells the core that the stream its video server plays has ended.
-    fn stream_stopped(&self) {
-        self.message_sender.send(StreamEndedMsg.into()).ok();
-    }
-}
+/// The chunks asked of other peers and not yet answered, with where the
+/// bytes go. A request that fails or is turned down drops its entry, which
+/// tells the reader that waits for it.
+pub(super) type PendingChunks = HashMap<OutboundRequestId, oneshot::Sender<Vec<u8>>>;
 
 impl Session {
     pub(super) fn fs_req_resp_event(
@@ -115,88 +98,51 @@ impl Session {
                 } => self.fs_swarm_response(request_id, response),
             },
             request_response::Event::OutboundFailure {
-                request_id, error, ..
+                peer,
+                request_id,
+                error,
+                ..
             } => {
-                let Some(consumer) = &mut self.consumer else {
-                    return;
-                };
-                if consumer.chunk_requests.remove(&request_id).is_none() {
-                    return;
-                }
-                if !self.links.is_linked(&consumer.provider) {
-                    // Typically a timeout because the hole punch to the
-                    // provider never produced a direct connection.
-                    warn!(
-                        ?error,
-                        "Chunk request failed without a link to the provider"
-                    );
-                    self.fs_stop_consuming("Could not reach the provider of the file");
-                } else if !std::mem::replace(&mut consumer.stalled, true) {
-                    warn!(?error, "Chunk request failed. Cache will retry.");
-                    self.net
-                        .tell_user("Chunk download timeout. Connection might be slow...");
-                }
+                warn!(%peer, ?error, "A chunk request failed");
+                self.pending_chunks.remove(&request_id);
             }
             _ => {}
         }
     }
 
-    /// Ends the stream this peer plays if `peer` provided it: with the link
-    /// to the provider gone, no chunk request can be answered.
-    pub(super) fn fs_peer_unlinked(&mut self, peer: PeerId) {
-        let Some(consumer) = &self.consumer else {
-            return;
-        };
-        if consumer.provider != peer {
-            return;
-        }
-        warn!(%peer, "The provider of the file disconnected");
-        self.fs_stop_consuming("The provider of the file disconnected");
-    }
-
-    /// Ends the stream this peer plays and tells the user `why`. The chunk
-    /// requests still pending go unanswered.
-    fn fs_stop_consuming(&mut self, why: &str) {
-        self.consumer.take();
-        self.net.tell_user(why);
-        self.net.stream_stopped();
-    }
-
-    /// The core ended the stream this peer plays. The chunk requests still
-    /// pending go unanswered.
-    pub(super) fn fs_stream_ended(&mut self) -> Result<()> {
-        self.consumer.take();
-        Ok(())
-    }
-
-    /// Whether another chunk of the local video server may be requested from
-    /// the provider, see [`CHUNK_FETCHES`].
-    pub(super) fn can_fetch_chunk(&self) -> bool {
-        match &self.consumer {
-            Some(consumer) => consumer.chunk_requests.len() < CHUNK_FETCHES,
-            None => true,
-        }
-    }
-
-    pub(super) fn fs_fetch_chunk(&mut self, request: ChunkRequest) -> Result<()> {
-        let Some(consumer) = &mut self.consumer else {
-            self.net.stream_stopped();
-            bail!("No active file share consumer");
-        };
+    /// Asks the provider of a file for a chunk of it. A provider this peer
+    /// has no connection to is dialed over the host's circuit, the
+    /// rendezvous for the hole punch; the request waits for the direct
+    /// connection and fails with the dial.
+    pub(super) fn fs_fetch_chunk(&mut self, fetch: ChunkFetch) {
+        let ChunkFetch { provider, request } = fetch;
         let ChunkRequest {
             file_name,
             start,
             len,
             reply,
         } = request;
+        let net = &mut self.net;
+        if !net.swarm.is_connected(&provider)
+            && let Some(circuit) = net.host_circuit()
+        {
+            debug!(%provider, "Dialing the provider of a file over the host's circuit");
+            let dial = DialOpts::peer_id(provider)
+                .addresses(vec![circuit.with(Protocol::P2p(provider))])
+                .build();
+            match net.swarm.dial(dial) {
+                // the dial of an earlier request is still on its way
+                Ok(()) | Err(DialError::DialPeerConditionFalse(_)) => {}
+                Err(error) => warn!(%provider, %error, "Failed to dial the provider of a file"),
+            }
+        }
         let msg = FileShareRequest {
             video: file_name,
             start,
             len,
         };
-        let request_id = self.net.send_file_request(&consumer.provider, msg);
-        consumer.chunk_requests.insert(request_id, reply);
-        Ok(())
+        let request_id = net.send_file_request(&provider, msg);
+        self.pending_chunks.insert(request_id, reply);
     }
 
     pub(super) fn fs_chunk_read(
@@ -211,35 +157,9 @@ impl Session {
         self.net.swarm.send_file_response(channel, response)
     }
 
-    /// Fetches the chunks of the local video server from the provider the
-    /// core picked, in place of whatever stream this peer played.
-    pub(super) fn fs_stream(&mut self, msg: StreamMsg) -> Result<()> {
-        let provider = msg.provider;
-        debug!(%provider, "Streaming from provider");
-        let net = &mut self.net;
-        // A provider without a connection yet is dialed over the host's
-        // circuit, the rendezvous for the hole punch.
-        if provider != net.host && !net.swarm.is_connected(&provider) {
-            match net.host_circuit() {
-                Some(circuit) => {
-                    if let Err(err) = net.swarm.dial(circuit.with(Protocol::P2p(provider))) {
-                        error!(?err, "Failed to dial file provider via host relay");
-                    }
-                }
-                None => error!("Host address unknown, cannot dial file provider via host relay"),
-            }
-        }
-        self.consumer = Some(FileShareConsumer {
-            provider,
-            chunk_requests: HashMap::default(),
-            stalled: false,
-        });
-        Ok(())
-    }
-
     /// Hands the request to the local video provider. When its queue is
-    /// full, the request is dropped unanswered; the requester sees a failed
-    /// request and its video server asks again later.
+    /// full, the request is turned down, and the requester's reader asks
+    /// again.
     fn fs_swarm_chunk_request(
         &mut self,
         request: FileShareRequest,
@@ -267,8 +187,9 @@ impl Session {
                 Ok(())
             }
             Err(TrySendError::Full(_)) => {
-                debug!("Video provider is busy, dropping chunk request");
-                Ok(())
+                debug!("Video provider is busy, declining chunk request");
+                let resp = Err(String::from("The provider is busy"));
+                self.net.swarm.send_file_response(channel, resp)
             }
             Err(TrySendError::Closed(_)) => {
                 debug!("The video provider stopped reading the file");
@@ -279,23 +200,13 @@ impl Session {
     }
 
     fn fs_swarm_response(&mut self, request_id: OutboundRequestId, resp: FileShareResponseResult) {
-        // the answer to a request of an earlier stream says nothing about
-        // the current one
-        let Some(consumer) = &mut self.consumer else {
-            return;
-        };
-        let Some(reply) = consumer.chunk_requests.remove(&request_id) else {
+        let Some(reply) = self.pending_chunks.remove(&request_id) else {
             return debug!("Ignoring the answer to a request no longer pending");
         };
         match resp {
-            Ok(ChunkBytes(bytes)) => {
-                consumer.stalled = false;
-                reply.send(bytes).ok();
-            }
-            Err(error) => {
-                warn!(%error, "The provider turned a request down");
-                self.fs_stop_consuming(&error);
-            }
+            // a reader that gave up waiting is gone
+            Ok(ChunkBytes(bytes)) => drop(reply.send(bytes)),
+            Err(error) => warn!(%error, "The provider turned a chunk request down"),
         }
     }
 }

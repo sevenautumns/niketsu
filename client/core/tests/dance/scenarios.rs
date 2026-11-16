@@ -10,7 +10,6 @@ use niketsu_core::player::{
 use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::RoomName;
-use niketsu_core::video_server::ServerOnline;
 use niketsu_core::{ui, video_provider};
 
 use crate::harness::{FILE_SIZE, Peer, Room};
@@ -184,10 +183,15 @@ async fn small_drift_is_tolerated_and_larger_drift_hard_syncs() {
     }
 }
 
-/// When the provider stops sharing, every consumer's video server stops —
-/// nobody keeps streaming from a dead provider.
+/// Whether the player of `who` reads the video from another peer.
+fn streams(room: &mut Room, who: usize) -> bool {
+    room.peer(who).player.stream().is_some()
+}
+
+/// When the provider stops sharing, the stream of every viewer fails:
+/// nobody keeps a player waiting for a dead provider.
 #[tokio::test(start_paused = true)]
-async fn provider_loss_stops_the_consumers_video_server() {
+async fn provider_loss_fails_the_viewers_stream() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
     let bob = room.join("bob", &[]);
@@ -211,10 +215,13 @@ async fn provider_loss_stops_the_consumers_video_server() {
     room.pump();
     assert!(room.peer(alice).ui.state().video_share);
 
-    // bob streams alice's copy through his local video server
+    // bob's player reads alice's copy
     room.peer(bob).act(ui::FileRequest {});
     room.pump();
-    assert!(room.peer(bob).video_server.running());
+    assert_eq!(room.provider_of(bob), Some(alice));
+    let bob_id = room.peers[bob].id;
+    let host_users = room.peer(alice).model.state.users.clone();
+    assert_eq!(host_users[&bob_id].loaded, Some(Video::from("ep1")));
 
     // alice's provider dies, e.g. the shared file disappeared
     room.peer(alice).act(video_provider::SharingStopped);
@@ -223,10 +230,14 @@ async fn provider_loss_stops_the_consumers_video_server() {
     assert!(!room.peer(alice).model.video_provider.sharing());
     assert!(!room.peer(alice).ui.state().video_share);
     assert!(
-        !room.peer(bob).video_server.running(),
-        "consumer must stop streaming from a dead provider"
+        room.peer(bob).player.state().source.is_none(),
+        "a viewer must not keep streaming from a dead provider"
     );
     assert!(offering(&mut room, bob).is_empty(), "the offer stays shown");
+    // the room knows that bob has the video no longer
+    let host_users = room.peer(alice).model.state.users.clone();
+    assert_eq!(host_users[&bob_id].loaded, None);
+    assert_eq!(room.peer(bob).selected(), Some(Video::from("ep1")));
 }
 
 /// When a video ends, whoever's player finishes first advances the shared
@@ -618,7 +629,7 @@ async fn client_speed_change_survives_the_next_heartbeat() {
 
 /// With auto-share on, selecting the next video carries the announced share
 /// over to it; selecting one the provider does not have stops the share and
-/// every consumer's video server with it.
+/// every viewer's stream with it.
 #[tokio::test(start_paused = true)]
 async fn auto_share_carries_the_share_to_the_next_selection() {
     let mut room = Room::new();
@@ -662,10 +673,10 @@ async fn auto_share_carries_the_share_to_the_next_selection() {
     // bob streams the reshared episode
     room.peer(bob).act(ui::FileRequest {});
     room.pump();
-    assert!(room.peer(bob).video_server.running());
+    assert!(streams(&mut room, bob));
 
     // ep3 is in the playlist but not in alice's file database: the share
-    // stops, the room is told, and bob's video server stops with it
+    // stops, the room is told, and bob's stream ends with it
     room.peer(alice).act(ui::VideoChange {
         video: Video::from("ep3"),
     });
@@ -673,8 +684,8 @@ async fn auto_share_carries_the_share_to_the_next_selection() {
     assert!(!room.peer(alice).model.video_provider.sharing());
     assert!(!room.peer(alice).ui.state().video_share);
     assert!(
-        !room.peer(bob).video_server.running(),
-        "consumers must not keep streaming a share that ended"
+        !streams(&mut room, bob),
+        "viewers must not keep streaming a share that ended"
     );
 }
 
@@ -724,24 +735,24 @@ async fn file_end_reshares_or_stops_like_a_manual_selection() {
     // bob streams the reshared episode
     room.peer(bob).act(ui::FileRequest {});
     room.pump();
-    assert!(room.peer(bob).video_server.running());
+    assert!(streams(&mut room, bob));
 
-    // ep2 was the last video: the share stops and bob's server with it
+    // ep2 was the last video: the share stops and bob's stream with it
     room.peer(alice).reach_end();
     room.pump();
     assert!(!room.peer(alice).model.video_provider.sharing());
     assert!(!room.peer(alice).ui.state().video_share);
     assert!(
-        !room.peer(bob).video_server.running(),
+        !streams(&mut room, bob),
         "the end of the playlist must stop the finishing peer's share"
     );
 }
 
 /// A file request when the room shows nobody offering the file asks
-/// nobody: the requester is told and its video server stops instead of
-/// waiting for chunks that will never come.
+/// nobody: the requester's player is given nothing to wait for chunks
+/// that will never come.
 #[tokio::test(start_paused = true)]
-async fn file_request_without_a_provider_stops_the_video_server() {
+async fn a_file_request_without_a_provider_asks_nobody() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
     let bob = room.join("bob", &[]);
@@ -755,30 +766,20 @@ async fn file_request_without_a_provider_stops_the_video_server() {
     });
     room.pump();
 
-    // bob's video server is still up from an earlier stream
-    room.peer(bob)
-        .model
-        .video_server
-        .start_server("ep1".into(), 1_000);
-    assert!(room.peer(bob).video_server.running());
-
     // nobody offers ep1
     room.peer(bob).act(ui::FileRequest {});
     assert!(
         room.hold(bob).is_empty(),
         "a request without a provider goes nowhere"
     );
-    assert!(
-        !room.peer(bob).video_server.running(),
-        "a request without a provider must stop the requester's video server"
-    );
+    assert_eq!(room.peer(bob).player.state().source, None);
 }
 
 /// A stream the announced provider turns down — it is not actually serving
-/// the file — stops the viewer's video server instead of leaving it up
-/// serving a stream nobody will ever feed.
+/// the file — fails, instead of leaving the viewer's player waiting for a
+/// stream nobody will ever feed.
 #[tokio::test(start_paused = true)]
-async fn a_refused_stream_stops_the_viewers_video_server() {
+async fn a_refused_stream_fails() {
     let mut room = Room::new();
     let alice = room.join("alice", &["ep1"]);
     let bob = room.join("bob", &[]);
@@ -805,12 +806,13 @@ async fn a_refused_stream_stops_the_viewers_video_server() {
     room.peer(alice).model.video_provider.stop_providing();
     assert_eq!(offering(&mut room, bob), ["alice"]);
     room.peer(bob).act(ui::FileRequest {});
+    assert_eq!(room.provider_of(bob), Some(alice));
     room.pump();
-    assert!(
-        !room.peer(bob).video_server.running(),
-        "a refused stream must stop the viewer's video server"
+    assert_eq!(
+        room.peer(bob).player.state().source,
+        None,
+        "a refused stream must not stay with the viewer's player"
     );
-    assert_eq!(room.provider_of(bob), None);
 }
 
 /// The users peer `who` sees offering the selected video.
@@ -882,8 +884,11 @@ async fn a_late_joiner_learns_who_offers_the_video() {
 
     room.peer(dave).act(ui::FileRequest {});
     room.pump();
-    assert_eq!(room.peer(dave).video_server.serves(), Some(ep1));
-    assert_eq!(room.provider_of(dave), Some(bob));
+    let stream = Source::Stream {
+        provider: room.peers[bob].id,
+        file: ep1,
+    };
+    assert_eq!(room.peer(dave).player.state().source, Some(stream));
 }
 
 /// An offer leaves the room with its user: nobody sees it any more, the
@@ -895,14 +900,14 @@ async fn an_offer_leaves_with_its_user() {
     room.pump();
     room.peer(carol).act(ui::FileRequest {});
     room.pump();
-    assert!(room.peer(carol).video_server.running());
+    assert!(streams(&mut room, carol));
 
     room.leave(bob);
     room.pump();
     for who in [alice, carol] {
         assert!(offering(&mut room, who).is_empty(), "peer {who}");
     }
-    assert!(!room.peer(carol).video_server.running());
+    assert!(!streams(&mut room, carol));
 
     room.peer(carol).act(ui::FileRequest {});
     assert!(room.hold(carol).is_empty(), "nobody is asked");
@@ -967,7 +972,7 @@ async fn a_new_host_knows_who_offers_the_video() {
 
     room.peer(alice).act(ui::FileRequest {});
     room.pump();
-    assert!(room.peer(alice).video_server.running());
+    assert_eq!(room.provider_of(alice), Some(bob));
 }
 
 /// What a user offers follows the share: shown once the file is open,
@@ -1005,7 +1010,7 @@ async fn the_offer_follows_start_and_stop_of_sharing() {
 }
 
 /// A stream is one of the selected video: a new selection ends it, and the
-/// requester's communicator streams nothing from the old provider.
+/// viewer's player reads nothing from the old provider anymore.
 #[tokio::test(start_paused = true)]
 async fn a_new_selection_ends_the_stream_of_the_old_video() {
     let (mut room, alice, bob, carol) = room_with_ep1_at_bob();
@@ -1013,14 +1018,13 @@ async fn a_new_selection_ends_the_stream_of_the_old_video() {
     room.pump();
     room.peer(carol).act(ui::FileRequest {});
     room.pump();
-    assert!(room.peer(carol).video_server.running());
+    assert!(streams(&mut room, carol));
 
     room.peer(alice).act(ui::VideoChange {
         video: Video::from("ep2"),
     });
     room.pump();
-    assert!(!room.peer(carol).video_server.running());
-    assert_eq!(room.provider_of(carol), None);
+    assert_eq!(room.peer(carol).player.state().source, None);
 }
 
 fn users(names: &[(&str, bool)]) -> Vec<(String, bool)> {
@@ -2029,7 +2033,7 @@ async fn a_follower_without_its_session_keeps_playing_and_rejoins_the_room() {
 
 /// A peer that does not have the selected video plays nothing. Its player
 /// loads the video where the room is once the core has something to play
-/// it from: the stream of its video server, or the file when the file
+/// it from: the stream of a peer that offers it, or the file when the file
 /// database finds it. A file found while the stream plays leaves the stream
 /// alone.
 #[tokio::test(start_paused = true)]
@@ -2052,13 +2056,17 @@ async fn a_peer_without_the_file_plays_it_once_it_has_a_source() {
         assert_eq!(room.peer(who).player.state().source, None, "peer {who}");
     }
 
-    let addr = "127.0.0.1:4000".parse().unwrap();
-    let file_name = "another".into();
-    room.peer(bob).act(ServerOnline { file_name, addr });
-    assert_eq!(room.peer(bob).player.state().source, None);
-    let file_name = "ep1".into();
-    room.peer(bob).act(ServerOnline { file_name, addr });
-    let stream = Some(Source::Url("http://127.0.0.1:4000".into()));
+    share(&mut room, alice, "ep1");
+    room.pump();
+    room.peer(bob).act(ui::FileRequest {});
+    room.pump();
+    let stream = Some(Source::Stream {
+        provider: room.peers[alice].id,
+        file: SharedFile {
+            name: "ep1".into(),
+            size: FILE_SIZE,
+        },
+    });
     let player = room.peer(bob).player.state();
     assert_eq!(player.source, stream);
     assert_eq!(player.position, 40 * SECOND);

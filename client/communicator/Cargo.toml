@@ -24,6 +24,5 @@ subtle = "2.6"
 # the codec of libp2p's request_response::cbor, to measure what goes on the wire
 cbor4ii = { version = "0.3", features = [ "serde1", "use_std" ] }
 niketsu-relay.path = "../../relay"
-niketsu-video-server.path = "../player/video_server"
 tempfile = "3.24"
 tracing-subscriber.workspace = true

@@ -187,6 +187,12 @@ impl MpvEventTrait for MpvEndFile {
                 mpv.status.entry = Some(first);
                 None
             }
+            // mpv takes a stream it can not read on for one that ended
+            End::Eof | End::Error(_) if mpv.status.stream_failed() => {
+                warn!("the stream mpv played failed");
+                mpv.status.end();
+                Some(PlayerFailed.into())
+            }
             // mpv reports EOF or ERROR nondeterministically for remote and
             // interrupted streams, so an error on a loaded file is the end
             // of the file
@@ -199,7 +205,7 @@ impl MpvEventTrait for MpvEndFile {
                     .map_or_else(|_| error.to_string(), |e| e.to_string());
                 warn!(%error, "mpv failed to load the file");
                 mpv.status.end();
-                None
+                Some(PlayerFailed.into())
             }
             End::Eof | End::Other => {
                 mpv.status.end();

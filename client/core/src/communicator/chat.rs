@@ -65,12 +65,6 @@ impl From<DisconnectedMsg> for PlayerMessage {
     }
 }
 
-impl From<NoticeMsg> for PlayerMessage {
-    fn from(value: NoticeMsg) -> Self {
-        PlayerMessage::new(value.message, MessageSource::Room, MessageLevel::Normal)
-    }
-}
-
 impl PlayerMessage {
     /// The line telling this core's user that the room knows them by
     /// `name`, which another user went by when they asked for theirs.
