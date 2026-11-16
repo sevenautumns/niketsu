@@ -19,6 +19,12 @@ pub struct User {
     pub loaded: Option<Video>,
     /// The file the user offers to the others.
     pub offers: Option<SharedFile>,
+    /// How many intents of this user the authority has applied in the
+    /// user's session. In a user's own status it is how many intents the
+    /// user sent before that status, from which the authority counts on:
+    /// a user that joins again counts anew, also when the authority still
+    /// knows it from its previous session.
+    pub handled: u64,
 }
 
 impl User {

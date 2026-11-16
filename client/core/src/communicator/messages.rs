@@ -37,25 +37,20 @@ pub struct HostRoundTripMsg {
 
 /// Everything the room agrees on, as the host publishes it.
 ///
-/// The host bumps `version` with every change of the room and every intent
-/// it handles; a heartbeat repeats the version and only refreshes
-/// `position`, which is where the room is at the moment the state is sent.
+/// `position` is where the room is at the moment the state is sent. Each
+/// user's `handled` tells that user whether the state is the outcome of
+/// what it asked.
 ///
 /// The playlist is too large to go with every heartbeat. The host's core
 /// attaches it to every state, and the host's communicator leaves it out
-/// for a member that has acknowledged a state carrying the playlist of
-/// `playlist_version`.
+/// for a member that has acknowledged a state carrying that playlist.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoomStateMsg {
-    pub version: u64,
     /// Bumped whenever the position jumps, by a seek or a selection. A
     /// follower sets such a position exactly; any other only has to be
     /// within the tolerance.
     pub jumps: u64,
-    /// The version of the change that set the room's playlist. It names
-    /// that playlist and is only ever compared for equality.
-    pub playlist_version: u64,
     pub playlist: Option<Playlist>,
     pub video: Option<Video>,
     #[serde(with = "serde_millis")]

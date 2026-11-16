@@ -594,7 +594,7 @@ mod tests {
         // the host answers the request to join only once the client took
         // the room's first message
         let state = RoomStateMsg {
-            version: 3,
+            jumps: 3,
             ..Default::default()
         };
         let mut join = None;

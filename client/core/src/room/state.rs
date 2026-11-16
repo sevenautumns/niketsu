@@ -138,7 +138,10 @@ impl RoomState {
     /// Does what the user at `peer` asks of the room. Returns the chat
     /// lines for what was done, each in the name the room knows the user
     /// by. A user is in the room from its first status on; until then it
-    /// has nothing else to ask.
+    /// has nothing else to ask. Every intent of a user in the room counts
+    /// as handled, also one that changes nothing: the count tells the user
+    /// that the room's state is the outcome of what it asked. A status
+    /// sets the count it goes on from, see [`User::handled`].
     pub fn apply(&mut self, peer: PeerId, intent: Intent, now: Instant) -> Vec<LineMsg> {
         let status = matches!(intent, Intent::Status(_));
         if !status && !self.users.contains_key(&peer) {
@@ -147,6 +150,9 @@ impl RoomState {
         }
         let selected = self.video.clone();
         let mut lines = self.act(peer, intent, now);
+        if let Some(user) = self.users.get_mut(&peer) {
+            user.handled += 1;
+        }
         // a new video starts paused, so a ready room starts it
         if (status || self.video != selected) && self.start_if_all_ready(now) {
             lines.extend(self.line(peer, &Intent::Start));
@@ -324,7 +330,7 @@ mod tests {
             name: name.into(),
             ready,
             loaded: loaded.map(Video::from),
-            offers: None,
+            ..Default::default()
         }
     }
 
@@ -747,6 +753,45 @@ mod tests {
         assert!(state.apply(stranger, select("ep2"), t0).is_empty());
         assert_eq!(state.video, None);
         assert!(!state.users.contains_key(&stranger));
+    }
+
+    #[test]
+    fn every_intent_of_a_user_in_the_room_counts_as_handled() {
+        let t0 = Instant::now();
+        let (mut state, bob) = room(t0);
+        let handled = |state: &RoomState, peer: PeerId| state.users[&peer].handled;
+        assert_eq!(handled(&state, bob), 1, "the status that brought bob in");
+        let alices = handled(&state, alice());
+
+        state.apply(bob, select("ep1"), t0);
+        state.apply(bob, Intent::Speed(f64::NAN), t0);
+        state.apply(bob, Intent::Ended(Video::from("ep3")), t0);
+        assert_eq!(handled(&state, bob), 4, "also what changes nothing");
+
+        let fifth = User {
+            handled: 4,
+            ..user("bob", true, None)
+        };
+        state.apply(bob, Intent::Status(fifth), t0);
+        assert_eq!(handled(&state, bob), 5, "a status says what came before");
+        assert_eq!(handled(&state, alice()), alices, "each user's own");
+
+        state.apply(peer(5), Intent::Chat("hi".into()), t0);
+        assert!(!state.users.contains_key(&peer(5)));
+    }
+
+    #[test]
+    fn a_user_that_joins_again_counts_anew() {
+        let t0 = Instant::now();
+        let (mut state, bob) = room(t0);
+        state.apply(bob, select("ep1"), t0);
+        state.apply(bob, Intent::Pause, t0);
+
+        // bob's session ended unnoticed, and the first status of his next
+        // one arrives
+        state.apply(bob, status("bob", false, None), t0);
+
+        assert_eq!(state.users[&bob].handled, 1);
     }
 
     fn selected(result: Option<Video>) -> Option<String> {

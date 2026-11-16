@@ -70,13 +70,10 @@ pub enum Role {
 }
 
 /// What only the authority over a room keeps: whether its room has other
-/// users to reach, and how its states are told apart.
+/// users to reach.
 #[derive(Debug, Clone, Default)]
 pub struct Authority {
     hosting: bool,
-    version: u64,
-    /// The version that set the playlist, see `RoomStateMsg`.
-    playlist: u64,
 }
 
 /// What this core's player and UI were last told, or reported themselves.
@@ -154,16 +151,13 @@ impl CoreModel {
             // the host knows this user and its offer from the status
             return self.publish_status();
         }
-        self.role = Role::Authority(Authority {
-            hosting: true,
-            ..Default::default()
-        });
+        self.role = Role::Authority(Authority { hosting: true });
         self.alone();
         if !followed {
             self.restore_saved(now);
         }
         self.follow(now);
-        self.publish_change(false, now);
+        self.publish_room(now);
     }
 
     /// This core is in no room, and so the authority over the state it has.
@@ -214,16 +208,17 @@ impl CoreModel {
         }
         let now = Instant::now();
         self.follow(now);
-        self.publish_change(false, now);
+        self.publish_room(now);
     }
 
     /// Asks the room for what this core's user did. The authority handles
     /// it like a peer's intent. A follower sends it to its host and leaves
     /// its state and player alone: what the user did in the player or the
-    /// UI shows there already, and the rest comes with the host's state.
+    /// UI shows there already, and the rest comes with the first state the
+    /// host publishes after it handled the intent.
     pub fn request(&mut self, intent: Intent) {
         if let Role::Follower(sync) = &mut self.role {
-            sync.intent_sent();
+            sync.sent += 1;
             return self.communicator.send(intent.into());
         }
         self.handle_intent(self.me(), intent);
@@ -240,11 +235,16 @@ impl CoreModel {
     /// file requests from.
     fn own_user(&self) -> User {
         let player = self.followed.player.clone();
+        let handled = match &self.role {
+            Role::Follower(sync) => sync.sent,
+            Role::Authority(_) => self.state.users.get(&self.me()).map_or(0, |me| me.handled),
+        };
         User {
             name: self.config.username.clone(),
             ready: self.ready,
             loaded: player.filter(|_| self.followed.loaded),
             offers: self.video_provider.offered(),
+            handled,
         }
     }
 
@@ -267,7 +267,6 @@ impl CoreModel {
             return warn!(?intent, "received an intent while following a host");
         }
         let now = Instant::now();
-        let playlist_set = matches!(intent, Intent::Playlist(_));
         let me = self.me();
         let hosting = self.is_host();
         for line in self.state.apply(peer, intent, now) {
@@ -279,19 +278,24 @@ impl CoreModel {
             }
         }
         self.follow(now);
-        self.publish_change(playlist_set, now);
+        self.publish_room(now);
     }
 
-    /// A follower takes the state its host published.
+    /// A follower takes the state its host published, unless the host
+    /// published it before it handled what this core's user asked.
     pub(crate) fn take_room_state(&mut self, mut msg: RoomStateMsg) {
+        let me = self.me();
         let Role::Follower(sync) = &mut self.role else {
             return warn!("received a room state as the room's authority");
         };
         if let Some(playlist) = msg.playlist.take() {
             sync.playlist = playlist;
         }
-        if !sync.admit(&msg) {
-            return debug!(version = msg.version, "ignoring a room state");
+        if !sync.admits(msg.users.get(&me)) {
+            return debug!(
+                sent = sync.sent,
+                "ignoring a room state from before our intents"
+            );
         }
         let now = Instant::now();
         let position = sync.host_position(msg.position, msg.paused);
@@ -415,32 +419,14 @@ impl CoreModel {
         self.publish_room(now);
     }
 
-    /// The authority publishes the room after a change, under a new
-    /// version, which also names the playlist if that is what changed.
-    fn publish_change(&mut self, playlist_set: bool, now: Instant) {
-        let Role::Authority(authority) = &mut self.role else {
-            return;
-        };
-        authority.version += 1;
-        if playlist_set {
-            authority.playlist = authority.version;
-        }
-        self.publish_room(now);
-    }
-
     /// The host publishes the room as it is at `now`.
     fn publish_room(&mut self, now: Instant) {
-        let Role::Authority(authority) = &self.role else {
-            return;
-        };
-        if !authority.hosting {
+        if !self.is_host() {
             return;
         }
         let timeline = &self.state.timeline;
         let state = RoomStateMsg {
-            version: authority.version,
             jumps: timeline.jumps(),
-            playlist_version: authority.playlist,
             playlist: Some(self.state.playlist.clone()),
             video: self.state.video.clone(),
             position: timeline.position_at(now),

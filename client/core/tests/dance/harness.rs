@@ -590,15 +590,6 @@ impl Peer {
         self.model.state.video.clone()
     }
 
-    /// The host's core never handles what this client sent since the last
-    /// pump. The communicator loses no message silently in either
-    /// direction, see [`Room::fail_link`] and [`Room::fail_request`]; this
-    /// stands for intents the host handles too late for the client to
-    /// wait for them.
-    pub fn lose_messages(&mut self) {
-        self.drain();
-    }
-
     fn drain(&mut self) -> Vec<OutgoingMessage> {
         std::mem::take(&mut self.outbox.lock().unwrap())
     }
@@ -615,8 +606,8 @@ impl Peer {
 /// unless the test holds the link.
 #[derive(Debug, Default)]
 struct Link {
-    /// The `playlist_version` of the last playlist the member took.
-    playlist: Option<u64>,
+    /// The last playlist the member took.
+    playlist: Option<Playlist>,
     /// While the test holds the link: the message on its way, then what
     /// waits behind it.
     held: Option<VecDeque<IncomingMessage>>,
@@ -627,10 +618,10 @@ impl Link {
     /// member took already.
     fn send(&mut self, mut msg: IncomingMessage) -> IncomingMessage {
         if let IncomingMessage::RoomState(state) = &mut msg {
-            if self.playlist == Some(state.playlist_version) {
+            if state.playlist == self.playlist {
                 state.playlist = None;
-            } else if state.playlist.is_some() {
-                self.playlist = Some(state.playlist_version);
+            } else {
+                self.playlist = state.playlist.clone();
             }
         }
         msg

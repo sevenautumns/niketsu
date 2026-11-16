@@ -77,9 +77,7 @@ mod tests {
         };
         let messages = [
             NiketsuMessage::RoomState(RoomStateMsg {
-                version: 3,
                 jumps: 1,
-                playlist_version: 2,
                 playlist: Some(Playlist::from_iter(["ep1", "ep2"])),
                 video: Some("ep1".into()),
                 position: Duration::from_millis(1500),

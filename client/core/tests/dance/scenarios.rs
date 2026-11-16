@@ -3,14 +3,13 @@
 use std::time::Duration;
 
 use niketsu_core::chunk::SharedFile;
-use niketsu_core::communicator::{Intent, PeerIntentMsg, RoomStateMsg};
+use niketsu_core::communicator::{DisconnectedMsg, Intent, PeerIntentMsg, RoomStateMsg};
 use niketsu_core::player::{
     PlayerFileEnd, PlayerPause, PlayerPositionChange, PlayerSpeedChange, PlayerStart,
 };
 use niketsu_core::playlist::handler::PlaylistHandler;
 use niketsu_core::playlist::{Playlist, Video};
 use niketsu_core::room::RoomName;
-use niketsu_core::sync::PENDING_STATES;
 use niketsu_core::{ui, video_provider};
 
 use crate::harness::{FILE_SIZE, Peer, Room};
@@ -1207,10 +1206,11 @@ fn seek(room: &mut Room, who: usize, secs: u64) {
     room.peer(who).act(PlayerPositionChange::new(position));
 }
 
-/// The versions of the room states that reached `who` since the last look.
-fn versions_seen(room: &mut Room, who: usize) -> Vec<u64> {
+/// The jumps of the room states that reached `who` since the last look,
+/// which tell a state from before a seek from one after it.
+fn jumps_seen(room: &mut Room, who: usize) -> Vec<u64> {
     let states = room.peer(who).take_states();
-    states.iter().map(|state| state.version).collect()
+    states.iter().map(|state| state.jumps).collect()
 }
 
 /// A state the host published before it handled a seek moves nobody back:
@@ -1232,15 +1232,15 @@ async fn a_state_older_than_a_seek_moves_nobody_back() {
         "a state that predates the seek must not undo it"
     );
 
-    versions_seen(&mut room, charlie);
+    jumps_seen(&mut room, charlie);
     room.pump();
     assert_eq!(
-        versions_seen(&mut room, charlie),
+        jumps_seen(&mut room, charlie),
         [],
         "the seek waits behind the state on its way"
     );
     room.release_link(charlie);
-    let seen = versions_seen(&mut room, charlie);
+    let seen = jumps_seen(&mut room, charlie);
     assert_eq!(seen.len(), 2, "the old state, then the seek's: {seen:?}");
     assert!(seen[0] < seen[1], "the older state comes first: {seen:?}");
     for who in [alice, bob, charlie] {
@@ -1321,6 +1321,40 @@ async fn a_state_from_before_the_host_handled_a_pause_does_not_undo_it() {
     }
 }
 
+/// A client whose session ended without the host noticing joins again, and
+/// the host still knows it from before. The host counts what it handled of
+/// the client anew, so a state from before the client's next seek does not
+/// pass for its outcome.
+#[tokio::test(start_paused = true)]
+async fn a_client_the_host_still_knows_counts_its_intents_anew() {
+    let (mut room, alice, bob, charlie) = three_playing_ep1().await;
+    seek(&mut room, bob, 100);
+    seek(&mut room, bob, 200);
+    room.pump();
+
+    let reason = "the session ended".to_string();
+    room.deliver(bob, DisconnectedMsg { reason });
+    room.reconnect(bob);
+    room.pump();
+    assert_eq!(position(&mut room, bob), 200 * SECOND, "back with the room");
+
+    room.hold_link(bob);
+    room.peer(alice).heartbeat();
+    room.pump();
+    seek(&mut room, bob, 300);
+    room.release_link(bob);
+    assert_eq!(
+        position(&mut room, bob),
+        300 * SECOND,
+        "a state that predates the seek must not undo it"
+    );
+
+    room.pump();
+    for who in [alice, bob, charlie] {
+        assert_eq!(position(&mut room, who), 300 * SECOND, "peer {who}");
+    }
+}
+
 /// A seek shorter than the tolerance moves every peer by exactly that much:
 /// a jump is set, not reconciled.
 #[tokio::test(start_paused = true)]
@@ -1349,7 +1383,9 @@ async fn a_seek_within_the_tolerance_reaches_every_peer() {
 }
 
 /// Two clients seeking at the same moment end where the host's order puts
-/// them: the room takes the one the host handled last.
+/// them: the room takes the one the host handled last. The state between
+/// the two, which shows only the first seek, does not move the second
+/// seeker's player there and back.
 #[tokio::test(start_paused = true)]
 async fn two_clients_acting_at_once_end_in_the_hosts_order() {
     let (mut room, alice, bob, charlie) = three_playing_ep1().await;
@@ -1357,6 +1393,17 @@ async fn two_clients_acting_at_once_end_in_the_hosts_order() {
     // both before either reached the host; bob's arrives first
     seek(&mut room, bob, 200);
     seek(&mut room, charlie, 300);
+    let bobs = room.hold(bob);
+    let charlies = room.hold(charlie);
+    room.release(bob, bobs);
+    room.pump();
+    assert_eq!(position(&mut room, alice), 200 * SECOND);
+    assert_eq!(
+        position(&mut room, charlie),
+        300 * SECOND,
+        "a state from before the host handled charlie's seek must not undo it"
+    );
+    room.release(charlie, charlies);
     room.pump();
 
     for who in [alice, bob, charlie] {
@@ -1579,10 +1626,10 @@ async fn every_peer_sees_an_action_line_once_the_actor_included() {
     }
 }
 
-/// A client whose selection never reached the host shows another video
-/// than the room, while its player stays with the room. Its intent shadows
-/// the room's states only for a few heartbeats; then the client shows the
-/// room's video again.
+/// A client whose selection has not reached the host shows another video
+/// than the room, while its player stays with the room. When the request
+/// fails, the client's session ends, and the client shows the room's video
+/// again.
 #[tokio::test(start_paused = true)]
 async fn a_selection_the_host_never_got_gives_way_to_the_rooms() {
     let mut room = Room::new();
@@ -1598,23 +1645,23 @@ async fn a_selection_the_host_never_got_gives_way_to_the_rooms() {
     });
     room.pump();
 
-    // bob selects ep1, which his UI shows at once, and the request is
-    // lost on its way to the host
+    // bob selects ep1, which his UI shows at once, and the request stays
+    // on its way to the host
     let ep1 = Some(Video::from("ep1"));
     room.peer(bob).ui.set(|ui| ui.playing_video = ep1.clone());
     room.peer(bob).act(ui::VideoChange {
         video: Video::from("ep1"),
     });
-    room.peer(bob).lose_messages();
+    let _on_its_way = room.hold(bob);
 
-    for _ in 0..2 {
+    for _ in 0..10 {
         room.heartbeat();
         room.pump();
     }
     assert_eq!(
         room.peer(bob).ui.state().playing_video,
         ep1,
-        "a state or two may just predate the host's answer"
+        "every state so far predates the host's answer"
     );
     assert_eq!(
         room.peer(bob).player.state().video,
@@ -1622,10 +1669,8 @@ async fn a_selection_the_host_never_got_gives_way_to_the_rooms() {
         "the player waits for the room"
     );
 
-    for _ in 0..3 {
-        room.heartbeat();
-        room.pump();
-    }
+    room.fail_request(bob);
+    room.pump();
     let player = room.peer(bob).player.state();
     assert_eq!(player.video, Some(Video::from("ep2")));
     assert_eq!(room.peer(bob).selected(), Some(Video::from("ep2")));
@@ -1846,9 +1891,10 @@ async fn a_playlist_change_while_intents_are_pending_still_reaches_the_client() 
     }
 }
 
-/// A client's playlist edit that never reached the host shadows the room
-/// only while its intent may still be answered; then the client shows the
-/// room's playlist again, which it kept from the host.
+/// A client's playlist edit that has not reached the host shadows the
+/// room's while its intent may still be answered. When the request fails,
+/// the client's session ends, and the client shows the room's playlist
+/// again.
 #[tokio::test(start_paused = true)]
 async fn a_playlist_edit_the_host_never_got_gives_way_to_the_rooms() {
     let mut room = Room::new();
@@ -1866,18 +1912,16 @@ async fn a_playlist_edit_the_host_never_got_gives_way_to_the_rooms() {
     room.peer(bob).act(ui::PlaylistChange {
         playlist: edit.clone(),
     });
-    room.peer(bob).lose_messages();
-    room.heartbeat();
-    room.pump();
-    assert_eq!(room.peer(bob).ui.state().playlist, edit);
-    assert_eq!(room.peer(bob).playlist(), playlist, "the room's is kept");
-
-    // one state ignored above, and the last of these is the first one the
-    // expired intent lets through
-    for _ in 0..PENDING_STATES {
+    let _on_its_way = room.hold(bob);
+    for _ in 0..10 {
         room.heartbeat();
         room.pump();
     }
+    assert_eq!(room.peer(bob).ui.state().playlist, edit);
+    assert_eq!(room.peer(bob).playlist(), playlist, "the room's is kept");
+
+    room.fail_request(bob);
+    room.pump();
     assert_eq!(room.peer(bob).playlist(), playlist);
     assert_eq!(room.peer(bob).ui.state().playlist, playlist);
 }

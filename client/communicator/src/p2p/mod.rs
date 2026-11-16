@@ -734,11 +734,10 @@ mod tests {
                 size: u64::MAX,
             }),
             loaded: Some(video.clone()),
+            handled: u64::MAX,
         };
         RoomStateMsg {
-            version: u64::MAX,
             jumps: u64::MAX,
-            playlist_version: u64::MAX,
             playlist,
             video: Some(video.clone()),
             users: (0..10).map(|i| (PeerId::random(), user(i))).collect(),

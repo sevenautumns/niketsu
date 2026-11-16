@@ -49,7 +49,7 @@ impl EventHandler for HostRoundTripMsg {
 
 impl EventHandler for RoomStateMsg {
     fn handle(self, model: &mut CoreModel) {
-        trace!(version = self.version, "received room state");
+        trace!("received room state");
         model.take_room_state(self);
     }
 }

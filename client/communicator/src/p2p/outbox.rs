@@ -3,6 +3,8 @@
 
 use std::collections::VecDeque;
 
+use niketsu_core::playlist::Playlist;
+
 use crate::messages::NiketsuMessage;
 
 /// The room's messages to one peer, which reach it in the order sent: one
@@ -10,23 +12,23 @@ use crate::messages::NiketsuMessage;
 /// has answered it. A room state, which only the host sends, is a full
 /// snapshot, so a newer one takes the place of one still waiting, at the
 /// back of the queue; every other message waits for its turn. A room state
-/// carries the playlist until the member has answered one that carried the
-/// playlist of its `playlist_version`.
+/// carries the playlist until the member has answered one that carried
+/// that playlist.
 ///
 /// `R` names a request on its way.
 #[derive(Debug)]
 pub(crate) struct Outbox<R> {
     on_its_way: Option<Sent<R>>,
     waiting: VecDeque<NiketsuMessage>,
-    /// The `playlist_version` of the last playlist the member took.
-    playlist: Option<u64>,
+    /// The last playlist the member took.
+    playlist: Option<Playlist>,
 }
 
 #[derive(Debug)]
 struct Sent<R> {
     request: R,
-    /// The `playlist_version` of the playlist the request carries.
-    playlist: Option<u64>,
+    /// The playlist the request carries.
+    playlist: Option<Playlist>,
 }
 
 impl<R> Default for Outbox<R> {
@@ -80,10 +82,10 @@ impl<R: PartialEq> Outbox<R> {
         };
         let mut playlist = None;
         if let NiketsuMessage::RoomState(state) = &mut msg {
-            if self.playlist == Some(state.playlist_version) {
+            if state.playlist == self.playlist {
                 state.playlist = None;
-            } else if state.playlist.is_some() {
-                playlist = Some(state.playlist_version);
+            } else {
+                playlist = state.playlist.clone();
             }
         }
         let request = send(msg);
@@ -94,7 +96,6 @@ impl<R: PartialEq> Outbox<R> {
 #[cfg(test)]
 mod tests {
     use niketsu_core::communicator::{Intent, LineKind, LineMsg, RoomStateMsg};
-    use niketsu_core::playlist::Playlist;
 
     use super::*;
 
@@ -138,21 +139,19 @@ mod tests {
         })
     }
 
-    fn state(version: u64) -> NiketsuMessage {
+    /// The `n`th state the host publishes.
+    fn state(n: u64) -> NiketsuMessage {
         NiketsuMessage::RoomState(RoomStateMsg {
-            version,
+            jumps: n,
             ..Default::default()
         })
     }
 
-    /// A state of `version` with the playlist set at `playlist_version`.
-    fn with_playlist(version: u64, playlist_version: u64) -> NiketsuMessage {
+    /// The `n`th state, with the room's `playlist`th playlist.
+    fn with_playlist(n: u64, playlist: u64) -> NiketsuMessage {
         NiketsuMessage::RoomState(RoomStateMsg {
-            version,
-            playlist_version,
-            playlist: Some(Playlist::from_iter([
-                format!("ep{playlist_version}").as_str()
-            ])),
+            jumps: n,
+            playlist: Some(Playlist::from_iter([format!("ep{playlist}").as_str()])),
             ..Default::default()
         })
     }

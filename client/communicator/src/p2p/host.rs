@@ -595,9 +595,10 @@ mod tests {
         }
     }
 
-    fn state(version: u64) -> RoomStateMsg {
+    /// The `n`th state the host publishes.
+    fn state(n: u64) -> RoomStateMsg {
         RoomStateMsg {
-            version,
+            jumps: n,
             ..Default::default()
         }
     }
@@ -610,13 +611,11 @@ mod tests {
         }
     }
 
-    /// A state of `version` with the playlist `name` set at
-    /// `playlist_version`.
-    fn with_playlist(version: u64, playlist_version: u64, name: &str) -> RoomStateMsg {
+    /// The `n`th state, with the playlist `name`.
+    fn with_playlist(n: u64, name: &str) -> RoomStateMsg {
         RoomStateMsg {
-            playlist_version,
             playlist: Some(Playlist::from_iter([name])),
-            ..state(version)
+            ..state(n)
         }
     }
 
@@ -881,10 +880,10 @@ mod tests {
         eventually("the host takes in the member", || early.joined()).await;
 
         let states = [
-            with_playlist(1, 1, "ep1"),
-            with_playlist(2, 1, "ep1"),
-            with_playlist(3, 3, "ep3"),
-            with_playlist(4, 3, "ep3"),
+            with_playlist(1, "ep1"),
+            with_playlist(2, "ep1"),
+            with_playlist(3, "ep3"),
+            with_playlist(4, "ep3"),
         ];
         for (i, state) in states.into_iter().enumerate() {
             core.send(state.into()).unwrap();
@@ -899,7 +898,7 @@ mod tests {
 
         let late = Neighbour::start(host, &addr, PASSWORD, true, true);
         eventually("the host takes in the late member", || late.joined()).await;
-        core.send(with_playlist(5, 3, "ep3").into()).unwrap();
+        core.send(with_playlist(5, "ep3").into()).unwrap();
         eventually("the late member gets the playlist", || {
             late.playlists() == [ep3.clone()]
         })
