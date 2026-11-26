@@ -5,17 +5,54 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# one run at a time, so that an older run never publishes over a newer one
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
-  tag:
-    name: Move nightly tag to latest commit
+  check:
+    name: Check
+    uses: ./.github/workflows/check.yaml
+    secrets: inherit
+
+  client:
+    name: Client
+    uses: ./.github/workflows/build-client.yml
+    secrets: inherit
+
+  relay:
+    name: Relay
+    uses: ./.github/workflows/build-relay.yml
+    secrets: inherit
+
+  publish:
+    name: Publish nightly
+    needs: [check, client, relay]
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - name: Run latest-tag
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: nightly-*
+          path: out
+          merge-multiple: true
+      - name: Move nightly tag to latest commit
         uses: EndBug/latest-tag@v1
         with:
           ref: nightly
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-Release
+        uses: softprops/action-gh-release@v3
+        with:
+          prerelease: true
+          tag_name: nightly
+          files: out/*
+          fail_on_unmatched_files: true
