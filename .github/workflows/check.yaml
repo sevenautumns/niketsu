@@ -51,6 +51,12 @@ jobs:
         with:
           name: niketsu
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cmd-format: nix develop -c {0}
+          cache-on-failure: true
+          # build outputs refer to nix store paths, which change with the flake
+          key: ${{ hashFiles('flake.nix', 'flake.lock') }}
       - name: Run verify commands
         run: nix develop --fallback --command cargo nextest run
 
