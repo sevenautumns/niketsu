@@ -3,8 +3,6 @@ use std::time::Duration;
 use tokio::time::Interval;
 use tracing::trace;
 
-use super::communicator::VideoStatusMsg;
-use super::player::MediaPlayerTrait;
 use super::{CoreModel, EventHandler};
 
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
@@ -34,40 +32,24 @@ pub struct Heartbeat;
 impl EventHandler for Heartbeat {
     fn handle(self, model: &mut CoreModel) {
         trace!("heartbeat");
-        let video = model.player.playing_video();
-        let position = model.player.get_position();
-        let speed = model.player.get_speed();
-        let paused = model.player.is_paused().unwrap_or(true);
-        let cache = model.player.cache_available();
-        let file_loaded = model.player.video_loaded();
-        model.communicator.send(
-            VideoStatusMsg {
-                video,
-                position,
-                speed,
-                paused,
-                file_loaded,
-                cache,
-            }
-            .into(),
-        );
+        model.heartbeat();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use mockall::predicate::eq;
     use tokio::time::timeout;
 
     use super::*;
+    use crate::MockVideoProviderTrait;
     use crate::builder::CoreBuilder;
-    use crate::communicator::{MockCommunicatorTrait, OutgoingMessage};
+    use crate::communicator::MockCommunicatorTrait;
     use crate::config::Config;
     use crate::file_database::MockFileDatabaseTrait;
     use crate::player::MockMediaPlayerTrait;
-    use crate::playlist::Video;
+    use crate::room::Role;
+    use crate::sync::ClientSync;
     use crate::ui::MockUserInterfaceTrait;
-    use crate::{MockVideoProviderTrait, MockVideoServerTrait};
 
     #[tokio::test]
     async fn test_pacemaker() {
@@ -83,52 +65,41 @@ mod tests {
         .unwrap_err();
     }
 
+    /// The heartbeat is the authority's: a follower's does nothing, and the
+    /// mocks fail the test on any call.
     #[test]
-    fn test_playlist_change() {
-        let mut communicator = MockCommunicatorTrait::default();
-        let mut player = MockMediaPlayerTrait::default();
-        let ui = MockUserInterfaceTrait::default();
-        let file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
-        let video_provider = MockVideoProviderTrait::default();
-
-        let video = Video::from("video2");
-        let position = Some(Duration::from_secs(15));
-        let speed = 1.5;
-        let paused = true;
-        let config = Config::default();
-        let cache = true;
-        let message = OutgoingMessage::from(VideoStatusMsg {
-            video: Some(video.clone()),
-            position,
-            speed,
-            paused,
-            file_loaded: true,
-            cache,
-        });
-
-        player.expect_playing_video().return_const::<Video>(video);
-        player.expect_get_position().return_const(position);
-        player.expect_get_speed().return_const(speed);
-        player.expect_is_paused().return_const(paused);
-        player.expect_cache_available().return_const(cache);
-        player.expect_video_loaded().return_const(true);
-        communicator
-            .expect_send()
-            .with(eq(message))
-            .once()
-            .return_const(());
-
+    fn a_followers_heartbeat_does_nothing() {
         let mut core = CoreBuilder::builder()
-            .communicator(Box::new(communicator))
+            .communicator(Box::new(MockCommunicatorTrait::with_peer()))
+            .player(Box::new(MockMediaPlayerTrait::default()))
+            .ui(Box::new(MockUserInterfaceTrait::default()))
+            .file_database(Box::new(MockFileDatabaseTrait::default()))
+            .video_provider(Box::new(MockVideoProviderTrait::default()))
+            .config(Config::default())
+            .build();
+        core.model.role = Role::Follower(ClientSync::default());
+
+        Heartbeat.handle(&mut core.model);
+    }
+
+    /// A core in no room follows its own state and has nobody to publish
+    /// it to: the mock communicator fails the test on any send.
+    #[test]
+    fn a_core_in_no_room_publishes_nothing() {
+        let mut player = MockMediaPlayerTrait::default();
+        player.expect_is_paused().return_const(None);
+        let mut ui = MockUserInterfaceTrait::default();
+        ui.expect_user_list().once().return_const(());
+        let mut core = CoreBuilder::builder()
+            .communicator(Box::new(MockCommunicatorTrait::with_peer()))
             .player(Box::new(player))
             .ui(Box::new(ui))
-            .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
-            .video_provider(Box::new(video_provider))
-            .config(config)
+            .file_database(Box::new(MockFileDatabaseTrait::default()))
+            .video_provider(Box::new(MockVideoProviderTrait::default()))
+            .config(Config::default())
             .build();
 
-        Heartbeat.handle(&mut core.model)
+        Heartbeat.handle(&mut core.model);
+        Heartbeat.handle(&mut core.model);
     }
 }

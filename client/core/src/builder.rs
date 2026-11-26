@@ -1,3 +1,4 @@
+use tokio::time::Instant;
 use typed_builder::TypedBuilder;
 
 use crate::communicator::CommunicatorTrait;
@@ -5,11 +6,12 @@ use crate::config::Config;
 use crate::file_database::FileDatabaseTrait;
 use crate::logging::ChatLogger;
 use crate::player::MediaPlayerTrait;
-use crate::player::wrapper::MediaPlayerWrapper;
-use crate::playlist::handler::PlaylistHandler;
+use crate::playlist::file::PlaylistBrowser;
+use crate::room::{Authority, Followed, Role, RoomState};
 use crate::ui::UserInterfaceTrait;
+use crate::user::User;
 use crate::video_provider::VideoProviderTrait;
-use crate::{Core, CoreModel, VideoServerTrait};
+use crate::{Core, CoreModel, PlaylistSaver, SavedPlaylistLoader};
 
 #[derive(TypedBuilder)]
 #[builder(build_method(into = Core))]
@@ -18,24 +20,37 @@ pub struct CoreBuilder {
     player: Box<dyn MediaPlayerTrait>,
     communicator: Box<dyn CommunicatorTrait>,
     file_database: Box<dyn FileDatabaseTrait>,
-    video_server: Box<dyn VideoServerTrait>,
     video_provider: Box<dyn VideoProviderTrait>,
     #[builder(default)]
     chat_logger: Option<ChatLogger>,
     config: Config,
+    #[builder(default = PlaylistBrowser::latest_for_room)]
+    saved_playlist: SavedPlaylistLoader,
+    #[builder(default = PlaylistBrowser::save)]
+    save_playlist: PlaylistSaver,
 }
 
 impl From<CoreBuilder> for CoreModel {
     fn from(builder: CoreBuilder) -> Self {
+        // in no room, the core is the authority over a room of one
+        let mut state = RoomState::new(Instant::now());
+        let me = User {
+            name: builder.config.username.clone(),
+            ..Default::default()
+        };
+        state.users.insert(builder.communicator.peer(), me);
         Self {
+            state,
+            role: Role::Authority(Authority::default()),
+            followed: Followed::default(),
             communicator: builder.communicator,
             database: builder.file_database,
-            player: MediaPlayerWrapper::new(builder.player),
+            player: builder.player,
             ui: builder.ui,
             config: builder.config,
-            playlist: PlaylistHandler::default(),
+            saved_playlist: builder.saved_playlist,
+            save_playlist: builder.save_playlist,
             chat_logger: builder.chat_logger,
-            video_server: builder.video_server,
             video_provider: builder.video_provider,
             ready: false,
             running: true,

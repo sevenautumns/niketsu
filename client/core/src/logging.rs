@@ -1,7 +1,6 @@
 use std::fs::File;
 
 use anyhow::{Context, Result};
-use chrono::Local;
 use once_cell::sync::OnceCell;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{Level, Subscriber};
@@ -13,7 +12,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::PROJECT_DIRS;
-use crate::ui::{MessageSource, PlayerMessage, PlayerMessageInner};
+use crate::ui::{MessageSource, PlayerMessage};
 
 static FILE_GUARD: OnceCell<WorkerGuard> = OnceCell::new();
 
@@ -63,15 +62,9 @@ impl<S: Subscriber> Layer<S> for ChatLoggerSender {
         let mut visitor = DefaultVisitor::new(writer, false);
         event.record(&mut visitor);
 
-        let _ = self.tx.try_send(
-            PlayerMessageInner {
-                message,
-                source: MessageSource::Internal,
-                level: (*event.metadata().level()).into(),
-                timestamp: Local::now(),
-            }
-            .into(),
-        );
+        let level = (*event.metadata().level()).into();
+        let line = PlayerMessage::new(message, MessageSource::Internal, level);
+        let _ = self.tx.try_send(line);
     }
 }
 

@@ -2,19 +2,20 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use iced::advanced::widget::Operation;
+use iced::keyboard::Key;
 use iced::keyboard::key::Named;
-use iced::keyboard::{Key, Modifiers};
 use iced::mouse::Cursor;
 use iced::widget::text::Wrapping;
-use iced::widget::{self, Column, Rule, button, text};
+use iced::widget::{Column, Container, button, row, text};
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use niketsu_core::file_database::FileStore;
 use niketsu_core::playlist::{Playlist, *};
 use tracing::trace;
 
 use self::message::*;
+use crate::TEXT_SIZE;
 use crate::message::Message;
-use crate::styling::{FileButton, FileRuleTheme};
+use crate::styling::{ModalContainer, PlaylistEntry};
 
 pub mod message;
 
@@ -22,15 +23,61 @@ pub mod message;
 pub const MAX_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 pub const PLAYLIST_SPACING: f32 = 2.0;
 
-pub struct PlaylistWidget<'a> {
-    base: Element<'a, PlaylistWidgetMessage>,
-    state: PlaylistWidgetState,
+/// How far the cursor has to travel from the press before it counts as
+/// a drag (shows the insert hint, moves the entry on release).
+const DRAG_THRESHOLD: f32 = 5.0;
+/// Height of the zones at the top and bottom of the visible playlist
+/// that trigger autoscrolling while dragging.
+const AUTOSCROLL_EDGE: f32 = 30.0;
+/// Maximum autoscroll speed in pixels per frame.
+const AUTOSCROLL_SPEED: f32 = 8.0;
+
+/// The actions modal opened by right-clicking a playlist entry.
+pub fn context_view(state: &PlaylistWidgetState) -> Element<'_, Message> {
+    let video = state
+        .context
+        .as_ref()
+        .map(|v| v.video.as_str())
+        .unwrap_or_default();
+    let play_button = button(
+        text("Play")
+            .width(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center),
+    )
+    .on_press(ContextPlay.into())
+    .width(Length::Fill);
+    let remove_button = button(
+        text("Remove")
+            .width(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center),
+    )
+    .on_press(ContextRemove.into())
+    .width(Length::Fill)
+    .style(iced::widget::button::danger);
+    let close_button = button("Close")
+        .on_press(CloseContext.into())
+        .style(iced::widget::button::secondary);
+    let top_row = row!(text(video).width(Length::Fill), close_button).spacing(5);
+    let base = Column::new()
+        .push(top_row)
+        .push(play_button)
+        .push(remove_button)
+        .spacing(5)
+        .padding(5)
+        .width(Length::Fixed(250.0));
+
+    let base: Element<'_, PlaylistWidgetMessage> =
+        Container::new(base).style(ModalContainer::theme).into();
+    base.map(Message::from)
 }
 
-impl PlaylistWidget<'_> {
-    pub fn new(state: PlaylistWidgetState, playing: Option<Video>) -> Self {
-        // TODO Add context menu
+pub struct PlaylistWidget<'a> {
+    base: Element<'a, PlaylistWidgetMessage>,
+    state: &'a PlaylistWidgetState,
+}
 
+impl<'a> PlaylistWidget<'a> {
+    pub fn new(state: &'a PlaylistWidgetState, playing: Option<Video>) -> Self {
         let mut file_btns = vec![];
         for f in state.playlist.iter() {
             let pressed = state.selected.as_ref().is_some_and(|f_i| f.eq(&f_i.video));
@@ -38,17 +85,18 @@ impl PlaylistWidget<'_> {
             if !available {
                 available = state.file_store.find_file(f.as_str()).is_some();
             }
-            let mut name = f.as_str().to_string();
-            if let Some(playing) = &playing
-                && name.eq(playing.as_str())
-            {
-                name = format!("> {name}");
-            };
+            let is_playing = playing.as_ref().is_some_and(|p| f.eq(p));
+            // A fixed-width marker slot, so labels don't shift when
+            // playback moves to another entry.
+            let marker = text(if is_playing { "▶" } else { "" })
+                .width(Length::Fixed(TEXT_SIZE + 2.0))
+                .align_x(iced::alignment::Horizontal::Center);
+            let label = text(f.as_str().to_string()).wrapping(Wrapping::None);
             file_btns.push(
-                button(text(name.clone()).wrapping(Wrapping::None))
+                button(row!(marker, label))
                     .clip(true)
                     .padding(2)
-                    .style(FileButton::theme(pressed, available))
+                    .style(PlaylistEntry::theme(pressed, available, is_playing))
                     .into(),
             );
         }
@@ -70,9 +118,11 @@ impl PlaylistWidget<'_> {
     ) -> Option<Index> {
         let files = layout.children();
         let mut closest = (f32::INFINITY, Index::default());
-        // Find closest index from overlay
+        // The insertion slots are the top edges of the rows plus one
+        // below the last row; compare vertical distance only, so a
+        // cursor near the right edge of a row doesn't snap elsewhere.
         for (i, layout) in files.enumerate() {
-            let dist = layout.position().distance(cursor_position);
+            let dist = (layout.position().y - cursor_position.y).abs();
             if dist < closest.0 {
                 closest.0 = dist;
                 closest.1.index_absolute = i;
@@ -80,18 +130,14 @@ impl PlaylistWidget<'_> {
                 closest.1.position = layout.position();
             }
         }
-        // In-case we are at the end of the file list,
-        // check if we are above or below
-        if closest.1.index_absolute == self.state.playlist.len() - 1
-            && let Some(l) = layout.children().last()
-        {
-            let top = l.position();
-            let mut bottom = top;
+        if let Some(l) = layout.children().last() {
+            let mut bottom = l.position();
             bottom.y += l.bounds().height;
-            let dist = bottom.distance(cursor_position);
+            let dist = (bottom.y - cursor_position.y).abs();
             if dist < closest.0 {
                 closest.0 = dist;
                 closest.1.index_absolute = self.state.playlist.len();
+                closest.1.index_relative = self.state.playlist.len();
                 closest.1.position = bottom;
             }
         }
@@ -177,6 +223,7 @@ impl PlaylistWidget<'_> {
     fn released(
         &self,
         file: Option<PathBuf>,
+        dragged: bool,
         state: &InnerState,
         layout: iced::advanced::layout::Layout<'_>,
         shell: &mut iced::advanced::Shell<'_, PlaylistWidgetMessage>,
@@ -195,14 +242,13 @@ impl PlaylistWidget<'_> {
                         .into(),
                     );
                 }
-                // }
             }
             FileInteraction::Pressing(_) => {
-                let pos = state.cursor_position;
-                if let Some(Index {
-                    index_relative: pos,
-                    ..
-                }) = self.closest_index(layout, pos)
+                if dragged
+                    && let Some(Index {
+                        index_relative: pos,
+                        ..
+                    }) = self.closest_index(layout, state.cursor_position)
                     && let Some(file) = &self.state.selected
                 {
                     shell.publish(
@@ -232,6 +278,14 @@ impl PlaylistWidget<'_> {
             }
             FileInteraction::None => (),
         }
+    }
+
+    /// Whether a pressed entry has been dragged past [`DRAG_THRESHOLD`].
+    fn drag_active(&self, inner: &InnerState) -> bool {
+        self.state.interaction.is_press()
+            && inner
+                .press_position
+                .is_some_and(|origin| origin.distance(inner.cursor_position) > DRAG_THRESHOLD)
     }
 
     fn deleted(&self, shell: &mut iced::advanced::Shell<'_, PlaylistWidgetMessage>) {
@@ -289,19 +343,25 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
             cursor,
             viewport,
         );
-        // Draw insert_hint
-        if self.state.interaction.is_press() {
-            let inner_state = state.state.downcast_ref::<InnerState>();
-            if let Some(Index { position: pos, .. }) =
+        // Draw insert hint
+        let inner_state = state.state.downcast_ref::<InnerState>();
+        if self.drag_active(inner_state)
+            && let Some(Index { position: pos, .. }) =
                 self.closest_index(layout, inner_state.cursor_position)
-            {
-                // Move point up by half the spacing
-                let pos = Point {
-                    y: pos.y - (PLAYLIST_SPACING / 2.0),
-                    ..pos
-                };
-                InsertHint::new(pos).draw(renderer, theme, style, layout, cursor)
-            }
+        {
+            // Move point up by half the spacing
+            let pos = Point {
+                y: pos.y - (PLAYLIST_SPACING / 2.0),
+                ..pos
+            };
+            iced::advanced::Renderer::fill_quad(
+                renderer,
+                iced::advanced::renderer::Quad {
+                    bounds: Rectangle::new(pos, Size::new(layout.bounds().width, 1.0)),
+                    ..Default::default()
+                },
+                theme.palette().text,
+            );
         }
     }
 
@@ -333,7 +393,8 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
         viewport: &iced::Rectangle,
         renderer: &Renderer,
     ) -> iced::mouse::Interaction {
-        if self.state.interaction.is_press() || self.state.interaction.is_press_extern() {
+        let inner_state = state.state.downcast_ref::<InnerState>();
+        if self.drag_active(inner_state) || self.state.interaction.is_press_extern() {
             return iced::mouse::Interaction::Grabbing;
         }
 
@@ -357,7 +418,6 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
         shell: &mut iced::advanced::Shell<'_, PlaylistWidgetMessage>,
         viewport: &iced::Rectangle,
     ) {
-        let mut _status = iced::event::Status::Ignored;
         let inner_state = state.state.downcast_mut::<InnerState>();
 
         // Workaround for if we touch the overlay
@@ -366,14 +426,17 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
         }
 
         match &event {
-            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                _status = iced::event::Status::Captured;
+            // Widgets earlier in the tree (e.g. a focused chat input)
+            // may have captured the key press already; leave it alone.
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. })
+                if !shell.is_event_captured() =>
+            {
                 // TODO arrow keys
                 if modifiers.is_empty() && *key == Key::Named(Named::Delete) {
                     self.deleted(shell)
                 }
                 // TODO use File input instead
-                if modifiers.contains(Modifiers::CTRL)
+                if modifiers.command()
                     && key.as_ref() == Key::Character("v")
                     && let Some(clipboard) =
                         clipboard.read(iced::advanced::clipboard::Kind::Standard)
@@ -390,26 +453,36 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
             iced::Event::Mouse(event) => match event {
                 iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left) => {
                     if let Cursor::Available(cursor_position) = cursor {
+                        inner_state.press_position = Some(cursor_position);
                         self.pressed(layout, cursor_position, shell)
                     }
                 }
                 iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left) => {
-                    self.released(None, inner_state, layout, shell)
+                    let dragged = self.drag_active(inner_state);
+                    inner_state.press_position = None;
+                    self.released(None, dragged, inner_state, layout, shell)
+                }
+                iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right) => {
+                    if let Cursor::Available(cursor_position) = cursor
+                        && let Some(file) = self.file_at_position(layout, cursor_position)
+                    {
+                        shell.publish(OpenContext { video: file }.into());
+                    }
                 }
                 _ => {}
             },
-            iced::Event::Touch(t) => {
-                _status = iced::event::Status::Captured;
-                match t {
-                    iced::touch::Event::FingerPressed { id: _, position } => {
-                        self.pressed(layout, *position, shell)
-                    }
-                    iced::touch::Event::FingerLifted { id: _, position: _ } => {
-                        self.released(None, inner_state, layout, shell)
-                    }
-                    _ => {}
+            iced::Event::Touch(t) => match t {
+                iced::touch::Event::FingerPressed { id: _, position } => {
+                    inner_state.press_position = Some(*position);
+                    self.pressed(layout, *position, shell)
                 }
-            }
+                iced::touch::Event::FingerLifted { id: _, position: _ } => {
+                    let dragged = self.drag_active(inner_state);
+                    inner_state.press_position = None;
+                    self.released(None, dragged, inner_state, layout, shell)
+                }
+                _ => {}
+            },
             iced::Event::Window(event) => match event {
                 iced::window::Event::FileHovered(_)
                     if !self.state.interaction.is_press_extern() =>
@@ -424,7 +497,7 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
                 }
                 iced::window::Event::FileDropped(file) => {
                     trace!(?file, "file dropped");
-                    self.released(Some(file.clone()), inner_state, layout, shell)
+                    self.released(Some(file.clone()), false, inner_state, layout, shell)
                 }
                 iced::window::Event::FilesHoveredLeft => shell.publish(
                     Interaction {
@@ -433,16 +506,30 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
                     }
                     .into(),
                 ),
+                // Scroll the surrounding Scrollable while a dragged
+                // entry hovers near the edge of the visible area.
+                iced::window::Event::RedrawRequested(_) if self.drag_active(inner_state) => {
+                    let cursor_y = inner_state.cursor_position.y;
+                    let top = viewport.y + AUTOSCROLL_EDGE;
+                    let bottom = viewport.y + viewport.height - AUTOSCROLL_EDGE;
+                    let overshoot = if cursor_y < top {
+                        cursor_y - top
+                    } else if cursor_y > bottom {
+                        cursor_y - bottom
+                    } else {
+                        0.0
+                    };
+                    if overshoot != 0.0 {
+                        let delta =
+                            (overshoot / AUTOSCROLL_EDGE).clamp(-1.0, 1.0) * AUTOSCROLL_SPEED;
+                        shell.publish(AutoScroll { delta }.into());
+                    }
+                }
                 _ => {}
             },
             _ => {}
         }
 
-        // match status {
-        //     iced::event::Status::Ignored => inner_status,
-        //     iced::event::Status::Captured => status,
-        // }
-        // TODO properly figure out if we captured something or not
         self.base.as_widget_mut().update(
             &mut state.children[0],
             event,
@@ -477,6 +564,8 @@ impl iced::advanced::Widget<PlaylistWidgetMessage, Theme, Renderer> for Playlist
 #[derive(Debug, Clone, Copy, Default)]
 struct InnerState {
     cursor_position: iced::Point,
+    /// Where the current press started; used for the drag threshold.
+    press_position: Option<iced::Point>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -485,6 +574,8 @@ pub struct PlaylistWidgetState {
     file_store: FileStore,
     selected: Option<VideoIndex>,
     interaction: FileInteraction,
+    /// The entry whose right-click actions modal is open.
+    context: Option<VideoIndex>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -502,12 +593,6 @@ impl FileInteraction {
     }
     pub fn is_press(&self) -> bool {
         matches!(self, FileInteraction::Pressing(_))
-    }
-    pub fn is_released(&self) -> bool {
-        matches!(self, FileInteraction::Released(_))
-    }
-    pub fn is_none(&self) -> bool {
-        matches!(self, FileInteraction::None)
     }
 }
 
@@ -540,13 +625,8 @@ impl PlaylistWidgetState {
         self.file_store = store
     }
 
-    pub fn video_index(&self, video: &Video) -> Option<usize> {
-        for (i, v) in self.playlist.iter().enumerate() {
-            if v.eq(video) {
-                return Some(i);
-            }
-        }
-        None
+    pub fn context_active(&self) -> bool {
+        self.context.is_some()
     }
 }
 
@@ -569,60 +649,4 @@ struct Index {
     /// The index, which is used by the playlist for moving
     index_relative: usize,
     position: Point,
-}
-
-pub struct InsertHint<'a> {
-    rule: Rule<'a, Theme>,
-    pos: iced::Point,
-}
-
-impl Default for InsertHint<'_> {
-    fn default() -> Self {
-        Self {
-            rule: widget::rule::horizontal(1).style(FileRuleTheme::theme),
-            pos: iced::Point::default(),
-        }
-    }
-}
-
-impl InsertHint<'_> {
-    pub fn new(pos: iced::Point) -> Self {
-        Self {
-            pos,
-            ..Default::default()
-        }
-    }
-
-    pub fn draw(
-        &mut self,
-        renderer: &mut Renderer,
-        theme: &Theme,
-        style: &iced::advanced::renderer::Style,
-        layout: iced::advanced::Layout<'_>,
-        cursor: Cursor,
-    ) {
-        let limits = iced::advanced::layout::Limits::new(Size::ZERO, layout.bounds().size())
-            .width(Length::Fill)
-            .height(1);
-
-        let mut node =
-            <iced::widget::Rule as iced::advanced::Widget<Message, Theme, Renderer>>::layout(
-                &mut self.rule,
-                &mut iced::advanced::widget::Tree::empty(),
-                renderer,
-                &limits,
-            );
-        node = node.move_to(self.pos);
-        let layout = iced::advanced::Layout::new(&node);
-        <iced::widget::Rule as iced::advanced::Widget<Message, Theme, Renderer>>::draw(
-            &self.rule,
-            &iced::advanced::widget::Tree::empty(),
-            renderer,
-            theme,
-            style,
-            layout,
-            cursor,
-            &layout.bounds(),
-        )
-    }
 }

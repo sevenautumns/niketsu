@@ -7,23 +7,21 @@ use arcstr::ArcStr;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use enum_dispatch::enum_dispatch;
-use multiaddr::Multiaddr;
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver as MpscReceiver, UnboundedSender as MpscSender};
+use tokio::time::Instant;
 use tracing::{Level, trace};
 
-use super::communicator::{EndpointInfo, PlaylistMsg, SelectMsg, UserMessageMsg};
-use super::player::MediaPlayerTrait;
+use super::communicator::Intent;
+use super::player::Source;
 use super::playlist::Video;
 use super::user::UserStatus;
 use super::{CoreModel, EventHandler};
 use crate::config::Config;
 use crate::file_database::FileStore;
 use crate::playlist::Playlist;
-use crate::playlist::file::PlaylistBrowser;
 use crate::room::{RoomName, UserList};
 use crate::util::{Observed, RingBuffer};
-use crate::{FileRequestMsg, OutgoingMessage, VideoShareMsg};
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -38,6 +36,7 @@ pub trait UserInterfaceTrait: std::fmt::Debug + Send {
     fn username_change(&mut self, username: ArcStr);
     fn abort(&mut self);
     fn video_share(&mut self, video_share: bool);
+    fn is_host(&mut self, is_host: bool);
 
     async fn event(&mut self) -> UserInterfaceEvent;
 }
@@ -64,14 +63,8 @@ pub struct PlaylistChange {
 impl EventHandler for PlaylistChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("playlist change message");
-        let actor = model.config.username.clone();
-        let playlist = self.playlist.clone();
-
-        model.playlist.replace(self.playlist);
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
-        model
-            .communicator
-            .send(PlaylistMsg { actor, playlist }.into())
+        model.followed.unconfirmed = true;
+        model.request(Intent::Playlist(self.playlist));
     }
 }
 
@@ -80,47 +73,14 @@ pub struct VideoChange {
     pub video: Video,
 }
 
-// the behaviour is similar to SelectMsg handling, so it might be collapsible
 impl EventHandler for VideoChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video change message");
-        let actor = model.config.username.clone();
-        let video = Some(self.video.clone());
-        let position = Duration::ZERO;
-        let mut sharing = false;
-        model.playlist.select_playing(&self.video);
-        let store = model.database.all_files();
-        model.player.load_video(self.video.clone(), position, store);
-
-        if model.config.auto_share
-            && model.video_provider.sharing()
-            && let Some(file) = model.database.find_file(self.video.as_str())
-        {
-            model.video_provider.start_providing(file);
-            let msg = VideoShareMsg::new(self.video.clone());
-            model.communicator.send(msg.into());
-            model.ui.video_share(true);
-            sharing = true;
-        }
-
-        if !sharing {
-            let msg = VideoShareMsg { video: None };
-            model.communicator.send(msg.into());
-            model.video_provider.stop_providing();
-            model.ui.video_share(false);
-        }
-
-        PlaylistBrowser::save(&model.config.room, &model.playlist);
-        model.ui.video_change(video.clone());
-
-        model.communicator.send(
-            SelectMsg {
-                actor,
-                video,
-                position,
-            }
-            .into(),
-        );
+        model.followed.unconfirmed = true;
+        model.request(Intent::Select {
+            video: Some(self.video),
+            position: Duration::ZERO,
+        });
     }
 }
 
@@ -130,24 +90,12 @@ pub struct RoomChange {
     pub room: RoomName,
 }
 
-impl RoomChange {
-    fn into_endpoint(self, addr: Multiaddr) -> EndpointInfo {
-        EndpointInfo {
-            room: self.room,
-            password: self.password,
-            addr,
-        }
-    }
-}
-
 impl EventHandler for RoomChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("room change message");
-        model.config.room.clone_from(&self.room);
-        model.config.password.clone_from(&self.password);
-        model
-            .communicator
-            .connect(self.into_endpoint(model.config.addr()));
+        model.config.room = self.room;
+        model.config.password = self.password;
+        model.connect();
     }
 }
 
@@ -162,9 +110,7 @@ impl EventHandler for UserChange {
         trace!("user change message");
         model.config.username = self.name;
         model.ready = self.ready;
-        model
-            .communicator
-            .send(model.config.status(model.ready).into());
+        model.publish_status();
     }
 }
 
@@ -173,14 +119,12 @@ pub struct UserMessage {
     pub message: String,
 }
 
+/// The room's host stamps the line with the name the room knows this user
+/// by, and tells everyone else.
 impl EventHandler for UserMessage {
     fn handle(self, model: &mut CoreModel) {
         trace!("user chat message");
-        let actor = model.config.username.clone();
-        let message = self.message;
-        model
-            .communicator
-            .send(UserMessageMsg { actor, message }.into())
+        model.request(Intent::Chat(self.message));
     }
 }
 
@@ -200,6 +144,24 @@ impl Deref for PlayerMessage {
 
     fn deref(&self) -> &Self::Target {
         self.inner.deref()
+    }
+}
+
+impl PlayerMessage {
+    /// A line for the chat, stamped with the time it is made.
+    pub fn new(message: impl Into<String>, source: MessageSource, level: MessageLevel) -> Self {
+        PlayerMessageInner {
+            message: message.into(),
+            source,
+            level,
+            timestamp: Local::now(),
+        }
+        .into()
+    }
+
+    /// Why this program cannot do what its user asked for.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::new(message, MessageSource::Internal, MessageLevel::Error)
     }
 }
 
@@ -233,7 +195,9 @@ impl std::fmt::Debug for PlayerMessageInner {
 pub enum MessageSource {
     UserMessage(ArcStr),
     UserAction(ArcStr),
-    Server,
+    /// What the room tells this user, in no user's name.
+    Room,
+    /// What this program tells its user.
     Internal,
 }
 
@@ -299,39 +263,20 @@ impl EventHandler for FileShareChange {
     fn handle(self, model: &mut CoreModel) {
         trace!("video share change message");
         if model.video_provider.sharing() {
-            model
-                .communicator
-                .send(OutgoingMessage::VideoShareChange(VideoShareMsg {
-                    video: None,
-                }));
-            model.video_provider.stop_providing();
-            model.ui.video_share(false);
-            return;
+            return model.stop_sharing();
         }
 
-        let Some(current_video) = model.player.playing_video() else {
-            model.ui.player_message(
-                PlayerMessageInner {
-                    message: "Can not provide video if none is loaded".into(),
-                    source: MessageSource::Internal,
-                    level: MessageLevel::Error,
-                    timestamp: Local::now(),
-                }
-                .into(),
-            );
+        let Some(current_video) = model.state.video.clone() else {
+            model.ui.player_message(PlayerMessage::error(
+                "Can not provide video if none is loaded",
+            ));
             return;
         };
 
         let Some(file) = model.database.find_file(current_video.as_str()) else {
-            model.ui.player_message(
-                PlayerMessageInner {
-                    message: "Can not provide current video. Not found in file database".into(),
-                    source: MessageSource::Internal,
-                    level: MessageLevel::Error,
-                    timestamp: Local::now(),
-                }
-                .into(),
-            );
+            model.ui.player_message(PlayerMessage::error(
+                "Can not provide current video. Not found in file database",
+            ));
             return;
         };
 
@@ -346,41 +291,34 @@ pub struct FileRequest {}
 impl EventHandler for FileRequest {
     fn handle(self, model: &mut CoreModel) {
         trace!("video file request message");
-        let actor = model.config.username.clone();
-
-        let Some(current_video) = model.player.playing_video() else {
-            model.ui.player_message(
-                PlayerMessageInner {
-                    message: "Can not request video if none is loaded".into(),
-                    source: MessageSource::Internal,
-                    level: MessageLevel::Error,
-                    timestamp: Local::now(),
-                }
-                .into(),
-            );
+        let Some(current_video) = model.state.video.clone() else {
+            model.ui.player_message(PlayerMessage::error(
+                "Can not request video if none is loaded",
+            ));
             return;
         };
 
         if model.database.find_file(current_video.as_str()).is_some() {
-            model.ui.player_message(
-                PlayerMessageInner {
-                    message: "Video is available in file database. Video is not requested".into(),
-                    source: MessageSource::Internal,
-                    level: MessageLevel::Error,
-                    timestamp: Local::now(),
-                }
-                .into(),
-            );
+            model.ui.player_message(PlayerMessage::error(
+                "Video is available in file database. Video is not requested",
+            ));
             return;
         };
 
-        model
-            .communicator
-            .send(OutgoingMessage::FileRequest(FileRequestMsg {
-                uuid: uuid::Uuid::new_v4(),
-                actor,
-                video: current_video,
-            }))
+        // A random provider per request, so a retry after a failure is not
+        // stuck with the same (possibly unreachable) peer. A v4 uuid is a
+        // random number.
+        let random = uuid::Uuid::new_v4().as_u128() as usize;
+        let mut providers = model.providers_of(&current_video);
+        if providers.is_empty() {
+            model.ui.player_message(PlayerMessage::error(
+                "No providers found for the requested file",
+            ));
+            return;
+        }
+        let (provider, file) = providers.swap_remove(random % providers.len());
+        let source = Source::Stream { provider, file };
+        model.play(Some(source), Instant::now());
     }
 }
 
@@ -402,11 +340,7 @@ impl EventHandler for SettingsChange {
             // we only need to trigger reconnects if a connection
             // was previously established
             if model.communicator.has_endpoint() {
-                model.communicator.connect(EndpointInfo {
-                    addr: model.config.addr(),
-                    room: model.config.room.clone(),
-                    password: model.config.password.clone(),
-                });
+                model.connect();
             }
         }
 
@@ -427,7 +361,7 @@ impl UserInterface {
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
             name: config.username.clone(),
-            ready: false,
+            ..Default::default()
         };
         let model = UiModel {
             file_database: Observed::<_>::default_with_notify(&notify),
@@ -437,6 +371,7 @@ impl UserInterface {
             user_list: Observed::<_>::default_with_notify(&notify),
             user: Observed::<_>::new(user, &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(1000), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -501,6 +436,10 @@ impl UserInterfaceTrait for UserInterface {
         self.model.video_share.set(video_share)
     }
 
+    fn is_host(&mut self, is_host: bool) {
+        self.model.is_host.set(is_host)
+    }
+
     async fn event(&mut self) -> UserInterfaceEvent {
         self.ui_events.recv().await.expect("ui event stream ended")
     }
@@ -516,6 +455,7 @@ pub struct UiModel {
     pub user: Observed<UserStatus>,
     pub messages: Observed<RingBuffer<PlayerMessage>>,
     pub video_share: Observed<bool>,
+    pub is_host: Observed<bool>,
     pub events: MpscSender<UserInterfaceEvent>,
     pub running: Observed<bool>,
     pub notify: Arc<Notify>,
@@ -554,13 +494,11 @@ impl UiModel {
 
     pub fn send_message(&self, msg: String) {
         trace!("send user message");
-        let player_message: PlayerMessage = PlayerMessageInner {
-            message: msg.clone(),
-            source: MessageSource::UserMessage(self.user.get_inner_arc().name.clone()),
-            level: MessageLevel::Normal,
-            timestamp: Local::now(),
-        }
-        .into();
+        let player_message = PlayerMessage::new(
+            msg.clone(),
+            MessageSource::UserMessage(self.user.get_inner_arc().name.clone()),
+            MessageLevel::Normal,
+        );
         self.messages.rcu(|msgs| {
             let mut msgs = RingBuffer::clone(msgs);
             msgs.push(player_message.clone());
@@ -672,142 +610,33 @@ impl UiModel {
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
-    use std::time::Duration;
 
-    use mockall::predicate::{always, eq};
-    use multiaddr::Protocol;
+    use mockall::predicate::eq;
+    use multiaddr::{Multiaddr, Protocol};
     use tokio::sync::Notify;
 
     use super::*;
+    use crate::MockVideoProviderTrait;
     use crate::builder::CoreBuilder;
-    use crate::communicator::{MockCommunicatorTrait, OutgoingMessage};
+    use crate::communicator::{EndpointInfo, MockCommunicatorTrait, OutgoingMessage};
     use crate::config::Config;
-    use crate::file_database::{FileEntry, MockFileDatabaseTrait};
+    use crate::file_database::MockFileDatabaseTrait;
     use crate::player::MockMediaPlayerTrait;
+    use crate::room::Role;
+    use crate::sync::ClientSync;
+    use crate::user::User;
     use crate::util::Observed;
-    use crate::{MockVideoProviderTrait, MockVideoServerTrait};
 
-    #[tokio::test]
-    async fn test_playlist_change() {
-        let mut communicator = MockCommunicatorTrait::default();
-        let player = MockMediaPlayerTrait::default();
-        let ui = MockUserInterfaceTrait::default();
-        let file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
-        let video_provider = MockVideoProviderTrait::default();
-
-        let user = arcstr::literal!("max");
-        let playlist = Playlist::from_iter(["video1", "video2"]);
-        let config = Config {
-            username: user.clone(),
-            ..Default::default()
-        };
-        let message = OutgoingMessage::from(PlaylistMsg {
-            actor: user.clone(),
-            playlist: playlist.clone(),
-        });
-
-        communicator
-            .expect_send()
-            .with(eq(message))
-            .once()
-            .return_const(());
-
-        let mut core = CoreBuilder::builder()
-            .communicator(Box::new(communicator))
-            .player(Box::new(player))
-            .ui(Box::new(ui))
-            .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
-            .video_provider(Box::new(video_provider))
-            .config(config)
-            .build();
-
-        let change = PlaylistChange { playlist };
-        change.handle(&mut core.model)
-    }
-
-    #[tokio::test]
-    async fn test_video_change() {
-        let mut communicator = MockCommunicatorTrait::default();
-        let mut player = MockMediaPlayerTrait::default();
-        let mut ui = MockUserInterfaceTrait::default();
-        let mut file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
-        let mut video_provider = MockVideoProviderTrait::default();
-
-        let user = arcstr::literal!("max");
-        let video = Video::from("video1");
-        let file = FileEntry::new("video1".into(), "/video1".into(), None);
-        let file_store = FileStore::from_iter([file.clone()]);
-        let pos = Duration::ZERO;
-        let config = Config {
-            username: user.clone(),
-            ..Default::default()
-        };
-        let message = OutgoingMessage::from(SelectMsg {
-            actor: user.clone(),
-            video: Some(video.clone()),
-            position: pos,
-        });
-        let empty_video_share_msg = OutgoingMessage::from(VideoShareMsg { video: None });
-
-        file_database.expect_all_files().return_const(file_store);
-        player.expect_get_speed().return_const(1.1);
-        player
-            .expect_load_video()
-            .with(eq(video.clone()), eq(pos), always())
-            .once()
-            .return_const(());
-
-        video_provider
-            .expect_stop_providing()
-            .once()
-            .return_const(());
-
-        ui.expect_video_share()
-            .with(eq(false))
-            .once()
-            .return_const(());
-
-        ui.expect_video_change()
-            .with(eq(Some(video.clone())))
-            .once()
-            .return_const(());
-
-        communicator
-            .expect_send()
-            .with(eq(message))
-            .once()
-            .return_const(());
-
-        communicator
-            .expect_send()
-            .with(eq(empty_video_share_msg))
-            .once()
-            .return_const(());
-
-        let mut core = CoreBuilder::builder()
-            .communicator(Box::new(communicator))
-            .player(Box::new(player))
-            .ui(Box::new(ui))
-            .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
-            .video_provider(Box::new(video_provider))
-            .config(config)
-            .build();
-
-        let change = VideoChange { video };
-        change.handle(&mut core.model)
-    }
+    // The PlaylistChange and VideoChange handlers are covered by the dance
+    // suite (tests/dance), which asserts the converged room state instead
+    // of pinning the handlers' call sequences on mocks.
 
     #[test]
     fn test_server_change() {
-        let mut communicator = MockCommunicatorTrait::default();
+        let mut communicator = MockCommunicatorTrait::with_peer();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
         let video_provider = MockVideoProviderTrait::default();
 
         let user = arcstr::literal!("max");
@@ -840,7 +669,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
@@ -854,12 +682,12 @@ mod tests {
 
     #[test]
     fn test_user_change() {
-        let mut communicator = MockCommunicatorTrait::default();
+        let mut communicator = MockCommunicatorTrait::with_peer();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
-        let video_provider = MockVideoProviderTrait::default();
+        let mut video_provider = MockVideoProviderTrait::default();
+        video_provider.expect_offered().return_const(None);
 
         let user = arcstr::literal!("max");
         let user_new = arcstr::literal!("moritz");
@@ -868,10 +696,11 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(UserStatus {
+        let message = OutgoingMessage::from(Intent::Status(User {
             ready,
             name: user_new.clone(),
-        });
+            ..Default::default()
+        }));
 
         communicator
             .expect_send()
@@ -884,10 +713,11 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
+        // a follower asks its host and touches nothing else
+        core.model.role = Role::Follower(ClientSync::default());
 
         assert_eq!(core.model.config.username, user);
         assert!(!core.model.ready);
@@ -904,11 +734,10 @@ mod tests {
 
     #[test]
     fn test_user_message() {
-        let mut communicator = MockCommunicatorTrait::default();
+        let mut communicator = MockCommunicatorTrait::with_peer();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
         let video_provider = MockVideoProviderTrait::default();
 
         let user = arcstr::literal!("max");
@@ -917,10 +746,7 @@ mod tests {
             username: user.clone(),
             ..Default::default()
         };
-        let message = OutgoingMessage::from(UserMessageMsg {
-            actor: user.clone(),
-            message: user_msg.clone(),
-        });
+        let message = OutgoingMessage::from(Intent::Chat(user_msg.clone()));
 
         communicator
             .expect_send()
@@ -933,10 +759,11 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
+        // a follower's line goes to its host, which stamps it
+        core.model.role = Role::Follower(ClientSync::default());
 
         let change = UserMessage { message: user_msg };
         change.handle(&mut core.model);
@@ -944,11 +771,10 @@ mod tests {
 
     #[test]
     fn test_file_database_change_start_stop() {
-        let communicator = MockCommunicatorTrait::default();
+        let communicator = MockCommunicatorTrait::with_peer();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
         let video_provider = MockVideoProviderTrait::default();
 
         let config = Config::default();
@@ -961,7 +787,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
@@ -975,11 +800,10 @@ mod tests {
 
     #[test]
     fn test_file_database_change_paths() {
-        let communicator = MockCommunicatorTrait::default();
+        let communicator = MockCommunicatorTrait::with_peer();
         let player = MockMediaPlayerTrait::default();
         let ui = MockUserInterfaceTrait::default();
         let mut file_database = MockFileDatabaseTrait::default();
-        let video_server = MockVideoServerTrait::default();
         let video_provider = MockVideoProviderTrait::default();
 
         let paths = vec!["/videos".into(), "/music".into()];
@@ -999,7 +823,6 @@ mod tests {
             .player(Box::new(player))
             .ui(Box::new(ui))
             .file_database(Box::new(file_database))
-            .video_server(Box::new(video_server))
             .video_provider(Box::new(video_provider))
             .config(config)
             .build();
@@ -1015,7 +838,7 @@ mod tests {
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
             name: arcstr::literal!("TestUser"),
-            ready: false,
+            ..Default::default()
         };
         let ui_model = UiModel {
             file_database: Observed::new(FileStore::default(), &notify),
@@ -1025,6 +848,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user, &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1043,7 +867,7 @@ mod tests {
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
             name: arcstr::literal!("TestUser"),
-            ready: false,
+            ..Default::default()
         };
         let ui_model = UiModel {
             file_database: Observed::new(FileStore::default(), &notify),
@@ -1053,6 +877,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user, &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1071,7 +896,7 @@ mod tests {
         let notify = Arc::new(Notify::new());
         let user = UserStatus {
             name: arcstr::literal!("TestUser"),
-            ready: false,
+            ..Default::default()
         };
         let ui_model = UiModel {
             file_database: Observed::new(FileStore::default(), &notify),
@@ -1081,6 +906,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(user.clone(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1106,6 +932,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1136,6 +963,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1162,6 +990,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1188,6 +1017,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1215,6 +1045,7 @@ mod tests {
             user_list: Observed::new(UserList::default(), &notify),
             user: Observed::new(UserStatus::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,
             running: Observed::new(true, &notify),
@@ -1242,6 +1073,7 @@ mod tests {
             playing_video: Observed::new(None, &notify),
             user_list: Observed::new(UserList::default(), &notify),
             video_share: Observed::new(false, &notify),
+            is_host: Observed::new(false, &notify),
             user: Observed::new(UserStatus::default(), &notify),
             messages: Observed::new(RingBuffer::new(10), &notify),
             events: tx,

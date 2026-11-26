@@ -125,8 +125,8 @@ impl StatefulWidget for ChatWidget {
                         let message = format!("User action of {user_name}{head_message}");
                         Line::styled(message, state.theme.accent())
                     }
-                    Server => {
-                        let message = format!("Server notification{head_message}");
+                    Room => {
+                        let message = format!("Room notification{head_message}");
                         Line::styled(message, state.theme.base().light_red())
                     }
                     Internal => {

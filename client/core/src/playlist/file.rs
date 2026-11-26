@@ -75,11 +75,32 @@ impl PlaylistBrowser {
             .ok()
     }
 
-    pub async fn get_first(room: &RoomName) -> Option<PlaylistHandler> {
-        let mut paths = Self::get_all_paths_for_room(room).await;
+    /// The most recently saved playlist of `room`. Blocking, but it reads a
+    /// single small file once per connection as host.
+    pub fn latest_for_room(room: &RoomName) -> Option<PlaylistHandler> {
+        let folder = Self::get_playlist_folder()?.join(room.as_str());
+        let read_dir = std::fs::read_dir(&folder)
+            .inspect_err(|error| tracing::warn!(?folder, %error, "failed to read folder"))
+            .ok()?;
+        let mut paths: Vec<PathBuf> = read_dir
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().as_ref().is_ok_and(FileType::is_file))
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|e| e.eq(EXTENSION)))
+            .collect();
         paths.sort_by_cached_key(|path| path.file_name().map(OsStr::to_os_string));
         for path in paths.iter().rev() {
-            if let playlist @ Some(_) = Self::get_playlist_from_path(path).await {
+            let playlist = std::fs::read_to_string(path)
+                .inspect_err(|error| tracing::warn!(?path, %error, "failed reading file"))
+                .ok()
+                .and_then(|playlist| {
+                    serde_yaml::from_str(&playlist)
+                        .inspect_err(
+                            |error| tracing::warn!(?path, %error, "failed parsing playlist"),
+                        )
+                        .ok()
+                });
+            if playlist.is_some() {
                 return playlist;
             }
         }

@@ -1,17 +1,17 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use niketsu::cli::Args;
 use niketsu_communicator::P2PCommunicator;
 use niketsu_core::builder::CoreBuilder;
+use niketsu_core::chunk::ChunkRoute;
 use niketsu_core::config::Config;
 use niketsu_core::file_database::FileDatabase;
 use niketsu_core::logging::setup_logger;
 use niketsu_core::ui::UserInterfaceTrait;
 use niketsu_core::video_provider::VideoProvider;
 use niketsu_mpv::Mpv;
-use niketsu_video_server::VideoServer;
 
 #[cfg(all(not(feature = "ratatui"), not(feature = "iced")))]
 compile_error!(r#"any ui feature is required ["ratatui", "iced"]"#);
@@ -41,10 +41,11 @@ async fn run_app(args: Args) -> Result<()> {
         }
     }
 
-    let player = Mpv::new().unwrap();
-    let communicator = P2PCommunicator::default();
-    let video_server = VideoServer::default();
-    let video_provider = VideoProvider::default();
+    let fetch = ChunkRoute::default();
+    let provide = ChunkRoute::default();
+    let player = Mpv::new(fetch.clone()).context("mpv could not be started")?;
+    let communicator = P2PCommunicator::new(fetch, provide.clone());
+    let video_provider = VideoProvider::new(provide);
     let mut file_database = FileDatabase::default();
     if !args.skip_database_refresh {
         file_database = FileDatabase::new(config.media_dirs.iter().map(PathBuf::from).collect());
@@ -55,7 +56,6 @@ async fn run_app(args: Args) -> Result<()> {
         .player(Box::new(player))
         .communicator(Box::new(communicator))
         .file_database(Box::new(file_database))
-        .video_server(Box::new(video_server))
         .video_provider(Box::new(video_provider))
         .chat_logger(chat_logger)
         .config(config)
@@ -69,12 +69,20 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     // Iced uses winit which owns the main thread and drives the Cocoa loop itself.
+    // On macOS, mpv also needs a running Cocoa event loop to destroy its window cleanly.
+    // When iced exits, the Cocoa loop is gone, so mpv_terminate_destroy deadlocks. We
+    // avoid this by exiting the process immediately after iced closes, mirroring the
+    // ratatui path below.
     #[cfg(feature = "iced")]
     if matches!(args.ui, niketsu::cli::UI::Iced) {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        return rt.block_on(run_app(args));
+        if let Err(e) = rt.block_on(run_app(args)) {
+            eprintln!("Error: {e:?}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
     }
 
     // Ratatui is a terminal UI and never touches Cocoa. On macOS, mpv needs NSApplication
@@ -101,7 +109,7 @@ fn main() -> Result<()> {
             let app = NSApplication::sharedApplication(mtm);
             app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
             // Blocks the main thread; mpv uses this loop to drive its video window.
-            unsafe { app.run() };
+            app.run()
         }
     }
 

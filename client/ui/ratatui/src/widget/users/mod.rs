@@ -18,6 +18,7 @@ pub struct UsersWidget;
 pub struct UsersWidgetState {
     user_list: UserList,
     user: UserStatus,
+    is_host: bool,
     list_state: ListStateWrapper,
     vertical_scroll_state: ScrollbarState,
     scroll_length: usize,
@@ -52,6 +53,10 @@ impl UsersWidgetState {
         self.user = user;
     }
 
+    pub fn set_is_host(&mut self, is_host: bool) {
+        self.is_host = is_host;
+    }
+
     pub fn toggle_ready(&mut self) {
         self.user.ready = !self.user.ready;
     }
@@ -70,13 +75,6 @@ impl UsersWidgetState {
             self.vertical_scroll_state = self.vertical_scroll_state.position(i);
         }
         self.set_active(true);
-    }
-
-    pub fn get_current_user(&self) -> Option<UserStatus> {
-        match self.list_state.selected() {
-            Some(index) => self.user_list.get(index),
-            None => None,
-        }
     }
 
     pub fn set_active(&mut self, active: bool) {
@@ -108,7 +106,11 @@ impl StatefulWidget for UsersWidget {
 
         let messages_block = Block::default()
             .style(style)
-            .title(format!("Users in room {}", state.user_list.get_room_name()))
+            .title(format!(
+                "Users in room {} [{}]",
+                state.user_list.get_room_name(),
+                if state.is_host { "HOST" } else { "CLIENT" }
+            ))
             .title_bottom(Line::from(format!("({})", state.user_list.len())).right_aligned())
             .borders(Borders::ALL);
 

@@ -1,23 +1,30 @@
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::{CStr, CString, c_int, c_void};
 use std::mem::MaybeUninit;
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
-use niketsu_core::file_database::{FilePathSearch, FileStore};
+use niketsu_core::chunk::FetchRoute;
 use niketsu_core::log_err;
-use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait};
-use niketsu_core::playlist::Video;
+use niketsu_core::player::{MediaPlayerEvent, MediaPlayerTrait, Source};
 use strum::{AsRefStr, EnumString};
-use tracing::debug;
+use tracing::{debug, error};
 
 use self::bindings::*;
 use self::event::{MpvEventPipe, MpvEventTrait, PropertyValue};
+use self::seek::Seeks;
+use self::stream::Streams;
 
 mod bindings;
 mod error;
 mod event;
+#[cfg(test)]
+mod probe;
+mod seek;
+mod stream;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MpvHandle(pub *mut mpv_handle);
@@ -36,19 +43,18 @@ pub enum MpvProperty {
     Pause,
     Speed,
     Filename,
-    Duration,
     KeepOpen,
     CachePause,
     ForceWindow,
     Idle,
     EofReached,
-    DemuxerCacheDuration,
     Config,
     InputDefaultBindings,
     InputVoKeyboard,
     InputMediaKeys,
     PausedForCache,
     CachePauseWait,
+    Seeking,
 }
 
 impl TryFrom<MpvProperty> for CString {
@@ -76,9 +82,8 @@ impl MpvProperty {
             MpvProperty::InputMediaKeys => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::CachePause => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::Speed => mpv_format::MPV_FORMAT_DOUBLE,
-            MpvProperty::DemuxerCacheDuration => mpv_format::MPV_FORMAT_DOUBLE,
-            MpvProperty::Duration => mpv_format::MPV_FORMAT_DOUBLE,
             MpvProperty::PausedForCache => mpv_format::MPV_FORMAT_FLAG,
+            MpvProperty::Seeking => mpv_format::MPV_FORMAT_FLAG,
             MpvProperty::CachePauseWait => mpv_format::MPV_FORMAT_DOUBLE,
         }
     }
@@ -89,6 +94,7 @@ impl MpvProperty {
 pub enum MpvCommand {
     Loadfile,
     Stop,
+    Seek,
     ShowText,
 }
 
@@ -98,29 +104,44 @@ impl From<MpvCommand> for CString {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum FileLoadStatus {
-    NotLoaded,
-    Loading,
-    Loaded,
-}
-
-#[derive(Debug, Clone)]
+/// What the app asked of mpv and how far mpv is with it. The play state
+/// and the speed are the ones the app knows of, so a change the user made
+/// in mpv shows as a difference.
+#[derive(Debug)]
 pub struct MpvStatus {
     paused: bool,
-    seeking: bool,
     speed: f64,
-    file: Option<Video>,
-    file_load_status: FileLoadStatus,
-    load_position: Duration,
+    /// The playlist entry mpv made of the app's load, until that ends. mpv
+    /// numbers every load, which ties its events to the load they are of.
+    entry: Option<i64>,
+    /// The playlist entry mpv's events are about at the moment.
+    started: Option<i64>,
+    /// Whether the app's load has finished. From then on the player has a
+    /// position of its own.
+    loaded: bool,
+    seeks: Seeks,
+    /// Set by the stream of the app's load when one of its reads failed.
+    stream_failed: Arc<AtomicBool>,
 }
 
 impl MpvStatus {
-    pub fn reset(&mut self) {
-        *self = Self {
-            speed: self.speed,
-            ..Default::default()
-        }
+    /// Whether the app's load is a stream that could not be read on.
+    fn stream_failed(&self) -> bool {
+        self.stream_failed.load(Ordering::Acquire)
+    }
+
+    /// Whether mpv's events are about the app's load, and not about one
+    /// it replaced.
+    fn current(&self) -> bool {
+        self.entry.is_some() && self.entry == self.started
+    }
+
+    /// The app's load is over.
+    fn end(&mut self) {
+        self.entry = None;
+        self.loaded = false;
+        self.seeks = Seeks::default();
+        self.stream_failed = Arc::default();
     }
 }
 
@@ -128,11 +149,12 @@ impl Default for MpvStatus {
     fn default() -> Self {
         Self {
             paused: true,
-            seeking: false,
             speed: 1.0,
-            file: None,
-            file_load_status: FileLoadStatus::NotLoaded,
-            load_position: Duration::ZERO,
+            entry: None,
+            started: None,
+            loaded: false,
+            seeks: Seeks::default(),
+            stream_failed: Arc::default(),
         }
     }
 }
@@ -142,6 +164,9 @@ pub struct Mpv {
     status: MpvStatus,
     event_pipe: MpvEventPipe,
     handle: MpvHandle,
+    /// The streams mpv reads other peers' files through. mpv points to
+    /// them until it is destroyed.
+    streams: Arc<Streams>,
 }
 
 impl Drop for Mpv {
@@ -151,18 +176,37 @@ impl Drop for Mpv {
 }
 
 impl Mpv {
-    pub fn new() -> Result<Self> {
-        let ctx = unsafe { mpv_create() };
-        let handle = MpvHandle(ctx);
-        let event_pipe = MpvEventPipe::new(handle);
-        let status = MpvStatus::default();
-        let mpv = Self {
-            status,
-            handle,
-            event_pipe,
-        };
+    /// An mpv that reads the files other peers offer over `fetch`.
+    pub fn new(fetch: FetchRoute) -> Result<Self> {
+        Self::create(fetch)?.init()
+    }
 
-        mpv.init()
+    fn create(fetch: FetchRoute) -> Result<Self> {
+        let ctx = unsafe { mpv_create() };
+        if ctx.is_null() {
+            bail!("mpv_create() failed");
+        }
+        let handle = MpvHandle(ctx);
+        Ok(Self {
+            status: MpvStatus::default(),
+            handle,
+            event_pipe: MpvEventPipe::new(handle),
+            streams: Streams::register(handle, fetch)?,
+        })
+    }
+
+    /// An mpv without a window, sound or the user's configuration.
+    #[cfg(test)]
+    pub(crate) fn headless(fetch: FetchRoute) -> Result<Self> {
+        let mut mpv = Self::create(fetch)?;
+        let ctx = mpv.handle.0;
+        for (name, value) in [(c"vo", c"null"), (c"ao", c"null"), (c"idle", c"yes")] {
+            let ret = unsafe { mpv_set_option_string(ctx, name.as_ptr(), value.as_ptr()) };
+            mpv_error::try_from(ret)?.ok()?;
+        }
+        mpv.init_handle()?;
+        mpv.post_init()?;
+        Ok(mpv)
     }
 
     fn init(mut self) -> Result<Self> {
@@ -246,15 +290,10 @@ impl Mpv {
 
     fn set_property(&self, prop: MpvProperty, value: PropertyValue) -> Result<()> {
         let prop: CString = prop.try_into()?;
-        unsafe {
-            let ret = mpv_set_property(
-                self.handle.0,
-                prop.as_ptr(),
-                value.format(),
-                value.as_mut_ptr(),
-            );
-            mpv_error::try_from(ret)?.ok()
-        }
+        let ret = value.with_ptr(|ptr| unsafe {
+            mpv_set_property(self.handle.0, prop.as_ptr(), value.format(), ptr)
+        });
+        mpv_error::try_from(ret)?.ok()
     }
 
     fn observe_property(&self, prop: MpvProperty) -> Result<()> {
@@ -281,7 +320,8 @@ impl Mpv {
 
     fn get_property_flag(&self, prop: MpvProperty) -> Result<bool> {
         let prop: CString = prop.try_into()?;
-        let mut data: MaybeUninit<bool> = MaybeUninit::uninit();
+        // MPV_FORMAT_FLAG writes a C int, not a single byte
+        let mut data: MaybeUninit<c_int> = MaybeUninit::uninit();
         unsafe {
             let ret = mpv_get_property(
                 self.handle.0,
@@ -290,8 +330,18 @@ impl Mpv {
                 data.as_mut_ptr() as *mut c_void,
             );
             mpv_error::try_from(ret)?.ok()?;
-            Ok(data.assume_init())
+            Ok(data.assume_init() != 0)
         }
+    }
+
+    /// What mpv reads as the position of the app's load, once it loaded.
+    fn position(&self) -> Option<Duration> {
+        if !self.status.loaded {
+            return None;
+        }
+        self.get_property_f64(MpvProperty::PlaybackTime)
+            .ok()
+            .map(Duration::from_secs_f64)
     }
 
     fn build_cmd(cmd: &[&CStr]) -> Vec<*const libc::c_char> {
@@ -303,40 +353,39 @@ impl Mpv {
         cmd_ptr
     }
 
-    fn send_command(&self, cmd: &[&CStr]) -> Result<()> {
+    /// Runs a command once mpv has taken every earlier one. Returns the
+    /// playlist entry it made, which a load does.
+    fn send_command(&self, cmd: &[&CStr]) -> Result<Option<i64>> {
         let mut cmd = Self::build_cmd(cmd);
-        let ret = unsafe { mpv_command_async(self.handle.0, 0, cmd.as_mut_ptr()) };
-        mpv_error::try_from(ret)?.ok()
+        let mut result = MaybeUninit::<mpv_node>::zeroed();
+        let ret = unsafe { mpv_command_ret(self.handle.0, cmd.as_mut_ptr(), result.as_mut_ptr()) };
+        mpv_error::try_from(ret)?.ok()?;
+        unsafe {
+            let entry = playlist_entry(result.assume_init_ref());
+            mpv_free_node_contents(result.as_mut_ptr());
+            Ok(entry)
+        }
     }
+}
 
-    fn replace_video(&mut self, path: CString) {
-        let cmd: CString = MpvCommand::Loadfile.into();
-
-        // TODO is this seeking good? apparently we would get a seek otherwise
-        self.status.seeking = true;
-
-        let start = self.status.load_position.as_secs_f64();
-        let options = format!("start={start}");
-        let options = CString::new(options).expect("Got invalid UTF-8");
-        let res = self.send_command(&[&cmd, &path, c"replace", c"0", &options]);
-        self.status.file_load_status = FileLoadStatus::Loading;
-        log_err!(res)
+/// The `playlist_entry_id` of what a load command returned.
+///
+/// # Safety
+/// `result` must be a node mpv filled in and that was not freed.
+unsafe fn playlist_entry(result: &mpv_node) -> Option<i64> {
+    if result.format != mpv_format::MPV_FORMAT_NODE_MAP {
+        return None;
     }
-
-    fn get_duration(&mut self) -> Option<Duration> {
-        self.status.file.as_ref()?;
-
-        self.get_property_f64(MpvProperty::Duration)
-            .ok()
-            .map(Duration::from_secs_f64)
-    }
-
-    fn get_cache(&mut self) -> Option<Duration> {
-        self.status.file.as_ref()?;
-
-        self.get_property_f64(MpvProperty::DemuxerCacheDuration)
-            .ok()
-            .map(Duration::from_secs_f64)
+    unsafe {
+        let list = &*result.u.list;
+        (0..list.num as usize).find_map(|i| {
+            let value = &*list.values.add(i);
+            let named = CStr::from_ptr(*list.keys.add(i)) == c"playlist_entry_id";
+            match named && value.format == mpv_format::MPV_FORMAT_INT64 {
+                true => Some(value.u.int64),
+                false => None,
+            }
+        })
     }
 }
 
@@ -344,21 +393,16 @@ impl Mpv {
 impl MediaPlayerTrait for Mpv {
     fn start(&mut self) {
         self.status.paused = false;
-        if self.status.file.is_some() {
-            log_err!(self.set_property(MpvProperty::Pause, false.into()))
-        }
+        log_err!(self.set_property(MpvProperty::Pause, false.into()))
     }
 
     fn pause(&mut self) {
         self.status.paused = true;
-        if self.status.file.is_some() {
-            let res = self.set_property(MpvProperty::Pause, true.into());
-            log_err!(res)
-        }
+        log_err!(self.set_property(MpvProperty::Pause, true.into()))
     }
 
     fn is_paused(&self) -> Option<bool> {
-        self.status.file.as_ref()?;
+        self.status.entry?;
         let paused = log_err!(self.get_property_flag(MpvProperty::Pause), true);
         Some(paused)
     }
@@ -369,116 +413,80 @@ impl MediaPlayerTrait for Mpv {
         log_err!(res)
     }
 
-    fn get_speed(&self) -> f64 {
-        let speed = self.get_property_f64(MpvProperty::Speed);
-        log_err!(speed, 1.0)
-    }
-
+    /// Seeks exactly, whatever the user's mpv configuration makes of a
+    /// seek, so the landing can be told from a seek of the user. While it
+    /// plays, the seek goes to where the room will be when it lands.
     fn set_position(&mut self, pos: Duration) {
-        if self.status.seeking {
-            debug!(?pos, "already seeking, ignoring set_position");
+        if !self.status.loaded {
+            debug!(?pos, "no file is loaded, ignoring set_position");
             return;
         }
-        if self.status.file.is_none() {
-            debug!(?pos, "no file is playing, ignoring set_position");
-            return;
+        let lead = match self.status.paused {
+            true => Duration::ZERO,
+            false => self.status.seeks.lead(self.status.speed),
+        };
+        let pos = pos + lead;
+        let cmd: CString = MpvCommand::Seek.into();
+        let target = CString::new(pos.as_secs_f64().to_string()).expect("a number has no nul");
+        match self.send_command(&[&cmd, &target, c"absolute+exact"]) {
+            Ok(_) => self.status.seeks.ask(pos, Instant::now()),
+            Err(error) => error!(%error, ?pos, "mpv refused to seek"),
         }
-        self.status.seeking = true;
-        let res = self.set_property(
-            MpvProperty::PlaybackTime,
-            PropertyValue::Double(pos.as_secs_f64()),
-        );
-        log_err!(res)
     }
 
+    /// During a seek mpv reads the position it was asked for, so a player
+    /// that seeks has none.
     fn get_position(&mut self) -> Option<Duration> {
-        self.status.file.as_ref()?;
-
-        // If the file is not loaded yet, return the expected load position
-        if !matches!(self.status.file_load_status, FileLoadStatus::Loaded) {
-            return Some(self.status.load_position);
+        let seeking = || {
+            self.get_property_flag(MpvProperty::Seeking)
+                .unwrap_or(false)
+        };
+        if self.status.seeks.pending() || seeking() {
+            return None;
         }
-
-        self.get_property_f64(MpvProperty::PlaybackTime)
-            .ok()
-            .map(Duration::from_secs_f64)
+        self.position()
     }
 
-    fn cache_available(&mut self) -> bool {
-        if self.status.file.as_ref().is_none() {
-            return false;
+    /// Loads paused. The load is finished when mpv restarts playback for
+    /// its playlist entry, which [`PlayerLoaded`] reports.
+    ///
+    /// [`PlayerLoaded`]: niketsu_core::player::PlayerLoaded
+    fn load(&mut self, source: Source, pos: Duration) {
+        self.status.end();
+        self.pause();
+        let location = match &source {
+            Source::File(path) => path.to_str().and_then(|path| CString::new(path).ok()),
+            Source::Url(url) => CString::new(url.as_str()).ok(),
+            Source::Stream { provider, file } => {
+                self.status.stream_failed = self.streams.offer(*provider, file.clone());
+                Some(stream::LOCATION.into())
+            }
         };
-        let Some(cache) = self.get_cache() else {
-            return false;
+        let Some(location) = location else {
+            error!(?source, "mpv can not be given this source");
+            return self.unload();
         };
-        if cache >= CACHE_THRESHOLD {
-            return true;
-        }
-        let Some(duration) = self.get_duration() else {
-            return false;
-        };
-        let Some(position) = self.get_position() else {
-            return false;
-        };
-        duration <= position + cache + Duration::from_secs(1)
-    }
-
-    fn load_video(&mut self, load: Video, pos: Duration, db: &FileStore) {
-        self.status.paused = true;
-        self.status.file_load_status = FileLoadStatus::NotLoaded;
-        self.status.file = Some(load.clone());
-        self.status.load_position = pos;
-
-        self.maybe_reload_video(db);
-    }
-
-    // TODO allow for an unload which sets status.file to None
-    // keep one which does not touch status.file
-    fn unload_video(&mut self) {
-        self.status.file_load_status = FileLoadStatus::NotLoaded;
-
         let cmd: CString = MpvCommand::Loadfile.into();
-        let res = self.send_command(&[&cmd, c"null://", c"replace"]);
-        log_err!(res)
-    }
-
-    fn playing_video(&self) -> Option<Video> {
-        self.status.file.clone()
-    }
-
-    fn maybe_reload_video(&mut self, f: &dyn FilePathSearch) {
-        if !matches!(self.status.file_load_status, FileLoadStatus::NotLoaded) {
-            return;
+        // mpv does not take a stream of its callbacks for one of the
+        // network, and reads only a second ahead unless told to cache
+        let cache = match source {
+            Source::Stream { .. } => ",cache=yes",
+            Source::File(_) | Source::Url(_) => "",
+        };
+        let options = format!("start={}{cache}", pos.as_secs_f64());
+        let options = CString::new(options).expect("no nul");
+        match self.send_command(&[&cmd, &location, c"replace", c"0", &options]) {
+            Ok(entry) => self.status.entry = entry,
+            Err(error) => error!(%error, ?source, "mpv refused to load"),
         }
-
-        let Some(load) = &self.status.file else {
-            self.unload_video();
-            return;
-        };
-
-        let Some(path) = load.to_path_str(f) else {
-            debug!(video = ?load, "get path from video");
-            self.unload_video();
-            return;
-        };
-
-        let path = CString::new(path).expect("got invalid utf-8");
-        self.replace_video(path);
     }
 
-    fn reload_video(&mut self, f: &dyn FilePathSearch, filename: &str) {
-        let Some(path) = f.get_file_path(filename) else {
-            debug!(?filename, "failed to get path for file");
-            self.unload_video();
-            return;
-        };
-
-        let path = CString::new(path).expect("got invalid utf-8");
-        self.replace_video(path);
-    }
-
-    fn video_loaded(&self) -> bool {
-        matches!(self.status.file_load_status, FileLoadStatus::Loaded)
+    /// `stop` ends the file with the reason STOP, which is not reported.
+    /// Idle mode and the forced window keep the window open.
+    fn unload(&mut self) {
+        self.status.end();
+        let cmd: CString = MpvCommand::Stop.into();
+        log_err!(self.send_command(&[&cmd]))
     }
 
     async fn event(&mut self) -> MediaPlayerEvent {

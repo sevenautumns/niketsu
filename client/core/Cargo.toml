@@ -20,20 +20,22 @@ once_cell.workspace = true
 serde_millis.workspace = true
 chrono.workspace = true
 multiaddr.workspace = true
+libp2p-identity = { version = "0.2", features = ["peerid", "serde"] }
 itertools.workspace = true
 async-trait.workspace = true
-ordered-float.workspace = true
 rayon.workspace = true
 toml.workspace = true
 serde_with = "3.16"
 fuzzy-matcher = "0.3"
 futures = "0.3"
-num-traits = "0.2"
 whoami = "2.0"
 serde_yaml = "0.9"
 typed-builder = "0.23"
+fake = "5.1"
 uuid = { version = "1.19.0", features = [ "v4", "serde", "fast-rng" ] } 
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.24"
 mockall = "0.14"
+proptest = "1"

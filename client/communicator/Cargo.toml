@@ -5,23 +5,24 @@ edition = "2024"
 
 [dependencies]
 niketsu-core.path = "../core"
+niketsu-protocol.path = "../../protocol"
 anyhow.workspace = true
 arcstr.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 serde.workspace = true
-im.workspace = true
-arc-swap.workspace = true
-once_cell.workspace = true
-serde_json = "1.0"
-bitcode = { version = "0.6", features = ["serde"] }
-serde_millis.workspace = true
+serde_bytes = "0.11"
 async-trait.workspace = true
-ordered-float.workspace = true
+# the codec of libp2p's request_response::cbor, for the frames of the room's stream
+cbor4ii = { version = "0.3", features = [ "serde1", "use_std" ] }
+either = "1"
 futures = "0.3"
-enum_dispatch.workspace = true
-libp2p = { workspace = true, features = [ "dcutr", "dns", "gossipsub", "identify", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat", "kad", "mdns" ] }
-futures-timer = "3.0"
-fake = "5.1"
+libp2p = { workspace = true, features = [ "dcutr", "dns", "identify", "noise", "ping", "relay", "tcp", "yamux", "quic", "macros", "tokio", "request-response", "cbor", "serde", "autonat", "mdns" ] }
+libp2p-stream = "0.4.0-alpha"
 sha256 = "1.6"
-uuid = { version = "1.19.0", features = [ "v4", "serde", "fast-rng" ] } 
+subtle = "2.6"
+
+[dev-dependencies]
+niketsu-relay.path = "../../relay"
+tempfile = "3.24"
+tracing-subscriber.workspace = true
