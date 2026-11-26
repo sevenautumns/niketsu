@@ -13,7 +13,6 @@ Refer to https://sevenautumns.github.io/niketsu for news and documentation.
 ![[Build Client Card](https://github.com/sevenautumns/niketsu/actions/workflows/build-client.yml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/build-client.yml/badge.svg)
 ![[Check Card](https://github.com/sevenautumns/niketsu/actions/workflows/check.yaml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/check.yaml/badge.svg)
 ![[Branch Card](https://github.com/sevenautumns/niketsu/actions/workflows/branch.yaml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/branch.yaml/badge.svg)
-![[Deploy Relay Card](https://github.com/sevenautumns/niketsu/actions/workflows/deploy.yml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/deploy.yml/badge.svg)
 ![[Docs Card](https://github.com/sevenautumns/niketsu/actions/workflows/book.yaml/badge.svg)](https://github.com/sevenautumns/niketsu/actions/workflows/book.yaml/badge.svg)
 [![Rust Report Card](https://rust-reportcard.xuri.me/badge/github.com/sevenautumns/niketsu)](https://rust-reportcard.xuri.me/report/github.com/sevenautumns/niketsu)
 [![Coverage Status](https://coveralls.io/repos/github/sevenautumns/niketsu/badge.svg?branch=main)](https://coveralls.io/github/sevenautumns/niketsu?branch=main)

@@ -480,7 +480,8 @@ mod tests {
         let stream = setup.accept().await;
         setup.heard().await;
         drop(stream);
-        setup.core.send(Intent::Pause.into()).unwrap();
+        // the session may already have ended and taken its receiver along
+        let _ = setup.core.send(Intent::Pause.into());
         let stop = timeout(PATIENCE, &mut setup.run).await;
         assert_eq!(stop.unwrap().unwrap(), Stop::HostLost);
     }

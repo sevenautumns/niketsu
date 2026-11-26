@@ -19,29 +19,3 @@ jobs:
           ref: nightly
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  update-deploy:
-    name: Update deploy branch
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: deploy
-          ssh-key: ${{ secrets.DEPLOY }}
-          persist-credentials: true
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Run update
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          nix flake update --commit-lock-file
-      - name: Push changes
-        uses: ad-m/github-push-action@master
-        with:
-          ssh: true
-          branch: deploy
