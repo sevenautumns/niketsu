@@ -132,38 +132,50 @@ impl HostLink {
     }
 }
 
-/// Connection setup: relay, identify, hole-punching, keepalive, and room auth.
-/// `relay_server` is off until this peer turns out to host the room (see
-/// [`host_relay`]).
-#[derive(NetworkBehaviour)]
-pub(crate) struct TransportBehaviour {
-    relay_client: relay::client::Behaviour,
-    relay_server: Toggle<relay::Behaviour>,
-    identify: identify::Behaviour,
-    dcutr: dcutr::Behaviour,
-    ping: ping::Behaviour,
-    auth: auth::AuthBehaviour,
-}
-
 /// The room's messages, on a stream between the host and each member (see
 /// [`stream`]).
 pub(crate) type MessagingBehaviour = libp2p_stream::Behaviour;
 
-/// P2P file sharing: chunk transfer, and mDNS for the addresses of peers on
-/// the local network. Who offers a video is in the room's state.
-#[derive(NetworkBehaviour)]
-pub(crate) struct FileShareBehaviour {
-    request_response:
-        request_response::cbor::Behaviour<Tagged<FileShareRequest>, FileShareResponseResult>,
-    mdns: Toggle<mdns::tokio::Behaviour>,
-}
+/// The code `NetworkBehaviour` derives has calls that are never reached, which
+/// rustc reports. An `allow` on a struct does not reach derived code, one on
+/// a module around it does.
+#[allow(unreachable_code)]
+mod derived {
+    use super::*;
 
-#[derive(NetworkBehaviour)]
-pub(crate) struct Behaviour {
-    transport: TransportBehaviour,
-    messaging: DirectOnly<MessagingBehaviour>,
-    file_share: DirectOnly<FileShareBehaviour>,
+    /// Connection setup: relay, identify, hole-punching, keepalive, and room auth.
+    /// `relay_server` is off until this peer turns out to host the room (see
+    /// [`host_relay`]).
+    #[derive(NetworkBehaviour)]
+    pub(crate) struct TransportBehaviour {
+        pub(super) relay_client: relay::client::Behaviour,
+        pub(super) relay_server: Toggle<relay::Behaviour>,
+        pub(super) identify: identify::Behaviour,
+        pub(super) dcutr: dcutr::Behaviour,
+        pub(super) ping: ping::Behaviour,
+        pub(super) auth: auth::AuthBehaviour,
+    }
+
+    /// P2P file sharing: chunk transfer, and mDNS for the addresses of peers on
+    /// the local network. Who offers a video is in the room's state.
+    #[derive(NetworkBehaviour)]
+    pub(crate) struct FileShareBehaviour {
+        pub(super) request_response:
+            request_response::cbor::Behaviour<Tagged<FileShareRequest>, FileShareResponseResult>,
+        pub(super) mdns: Toggle<mdns::tokio::Behaviour>,
+    }
+
+    #[derive(NetworkBehaviour)]
+    pub(crate) struct Behaviour {
+        pub(super) transport: TransportBehaviour,
+        pub(super) messaging: DirectOnly<MessagingBehaviour>,
+        pub(super) file_share: DirectOnly<FileShareBehaviour>,
+    }
 }
+pub(crate) use derived::{
+    Behaviour, BehaviourEvent, FileShareBehaviour, FileShareBehaviourEvent, TransportBehaviour,
+    TransportBehaviourEvent,
+};
 
 impl Behaviour {
     fn new(key: &Keypair, relay_client: relay::client::Behaviour, mdns: bool) -> Result<Self> {

@@ -2,17 +2,16 @@ name: Check Actions
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  workflow_call:
 
 jobs:
   checks:
     name: Check Nix
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@v32
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - uses: cachix/cachix-action@v17
@@ -26,9 +25,9 @@ jobs:
     name: Check Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@v32
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - uses: cachix/cachix-action@v17
@@ -42,15 +41,21 @@ jobs:
     name: Check Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@v32
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - uses: cachix/cachix-action@v17
         with:
           name: niketsu
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cmd-format: nix develop -c {0}
+          cache-on-failure: true
+          # build outputs refer to nix store paths, which change with the flake
+          key: ${{ hashFiles('flake.nix', 'flake.lock') }}
       - name: Run verify commands
         run: nix develop --fallback --command cargo nextest run
 

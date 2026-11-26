@@ -8,15 +8,14 @@ on:
       - 'protocol/**'
       - 'Cargo.*'
       - 'flake.*'
-  push:
-    branches: [main]
+  workflow_call:
 
 jobs:
   build:
     name: Build Client
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.target == 'aarch64-linux' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix: 
@@ -35,31 +34,25 @@ jobs:
           - target: x86_64-linux
             package: niketsu-client-windows
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@v32
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           extra_nix_config: |
             experimental-features = nix-command flakes
-            extra-platforms = aarch64-linux
       - uses: cachix/cachix-action@v17
         with:
           name: niketsu
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-      - uses: docker/setup-qemu-action@v4
-        if: ${{ matrix.target == 'aarch64-linux' }}
-        with:
-          platforms: arm64
       - name: Run build
         run: nix build .#packages.${{ matrix.target }}.${{ matrix.package }} --fallback
       - name: Rename
         if: ${{ matrix.package == 'niketsu-client-windows' }}
         run: mkdir out && cp result out/x86_64-${{ matrix.package }}.zip
-      - name: Pre-Release
-        uses: softprops/action-gh-release@v3
-        if: ${{ github.event_name == 'push' && matrix.package == 'niketsu-client-windows' }}
+      - uses: actions/upload-artifact@v7
+        if: ${{ matrix.package == 'niketsu-client-windows' }}
         with:
-          prerelease: true
-          tag_name: nightly
-          files: out/*
+          name: nightly-client-windows
+          path: out/*
+          if-no-files-found: error
