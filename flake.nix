@@ -134,6 +134,9 @@
             cargoTestOptions = lib.concat [ "-p ${name}" ];
             root = ./.;
             CARGO_BUILD_TARGET = static-rust-target;
+            # aws-lc is C and has to be compiled against musl, which the host's
+            # compiler does not do.
+            TARGET_CC = "${pkgs.pkgsStatic.stdenv.cc}/bin/${pkgs.pkgsStatic.stdenv.cc.targetPrefix}cc";
           };
         };
         devShells.default = pkgs.mkShell {

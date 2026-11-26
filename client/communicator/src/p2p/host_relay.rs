@@ -6,7 +6,7 @@
 //! Connections established before that keep a handler that speaks no relay
 //! protocol, which is fine: they are the ones to the public relay, and
 //! [`relay::Behaviour`] takes the swarm events of connections it never
-//! served (as of libp2p-relay 0.21.1; re-check when upgrading). It learns
+//! served (as of libp2p-relay 0.22.0; re-check when upgrading). It learns
 //! the host's external addresses from the swarm events after it is
 //! switched on, and hands them out with each reservation, so it has to be
 //! switched on before the reservation on the public relay confirms the
@@ -35,5 +35,8 @@ pub(super) fn serve(local_peer_id: PeerId) -> Toggle<relay::Behaviour> {
         max_circuit_bytes: 128 * 1024,
         ..Default::default()
     };
-    Some(relay::Behaviour::new(local_peer_id, config)).into()
+    let mut relay = relay::Behaviour::new(local_peer_id, config);
+    // Served whether or not an external address is confirmed yet.
+    relay.set_status(Some(relay::Status::Enable));
+    Some(relay).into()
 }

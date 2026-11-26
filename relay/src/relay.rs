@@ -133,8 +133,8 @@ impl Relay {
                 yamux::Config::default,
             )?
             .with_quic_config(|_| quic_config)
-            .with_behaviour(|key| Behaviour {
-                relay: relay::Behaviour::new(
+            .with_behaviour(|key| {
+                let mut relay = relay::Behaviour::new(
                     key.public().to_peer_id(),
                     // Circuits through the public relay are only a hole-punch
                     // rendezvous: the client keeps all niketsu protocols off
@@ -150,20 +150,27 @@ impl Relay {
                         max_circuit_bytes: 128 * 1024,
                         ..Default::default()
                     },
-                ),
-                ping: ping::Behaviour::new(
-                    ping::Config::new()
-                        .with_interval(PING_INTERVAL)
-                        .with_timeout(PING_TIMEOUT),
-                ),
-                identify: identify::Behaviour::new(identify::Config::new(
-                    "/identify/1".to_string(),
-                    key.public(),
-                )),
-                auth: request_response::cbor::Behaviour::new(
-                    [(StreamProtocol::new(AUTH_PROTOCOL), ProtocolSupport::Full)],
-                    request_response::Config::default(),
-                ),
+                );
+                // A relay serves from the start. On its own it would only once
+                // it knows an external address, which it first learns from a
+                // peer that may already be asking for a reservation.
+                relay.set_status(Some(relay::Status::Enable));
+                Behaviour {
+                    relay,
+                    ping: ping::Behaviour::new(
+                        ping::Config::new()
+                            .with_interval(PING_INTERVAL)
+                            .with_timeout(PING_TIMEOUT),
+                    ),
+                    identify: identify::Behaviour::new(identify::Config::new(
+                        "/identify/1".to_string(),
+                        key.public(),
+                    )),
+                    auth: request_response::cbor::Behaviour::new(
+                        [(StreamProtocol::new(AUTH_PROTOCOL), ProtocolSupport::Full)],
+                        request_response::Config::default(),
+                    ),
+                }
             })?
             .with_swarm_config(|c| c.with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT))
             .build();
