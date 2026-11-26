@@ -18,13 +18,22 @@ use crate::timing::{
     QUIC_IDLE_TIMEOUT,
 };
 
-#[derive(NetworkBehaviour)]
-struct Behaviour {
-    relay: relay::Behaviour,
-    ping: ping::Behaviour,
-    identify: identify::Behaviour,
-    auth: request_response::cbor::Behaviour<AuthRequest, AuthResponse>,
+/// The code `NetworkBehaviour` derives has calls that are never reached, which
+/// rustc reports. An `allow` on a struct does not reach derived code, one on
+/// a module around it does.
+#[allow(unreachable_code)]
+mod derived {
+    use super::*;
+
+    #[derive(NetworkBehaviour)]
+    pub(super) struct Behaviour {
+        pub(super) relay: relay::Behaviour,
+        pub(super) ping: ping::Behaviour,
+        pub(super) identify: identify::Behaviour,
+        pub(super) auth: request_response::cbor::Behaviour<AuthRequest, AuthResponse>,
+    }
 }
+use derived::{Behaviour, BehaviourEvent};
 
 /// The digest of a room's password as its host sent it. It is a digest
 /// already and never leaves memory, so it is kept as it is.
